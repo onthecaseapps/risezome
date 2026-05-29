@@ -241,12 +241,20 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     }
 
     const embedStartAt = this.#now();
+    // Use the latest finalized utterance as the embed input when available.
+    // The 30-second windowText concatenates multiple utterances and biases
+    // retrieval toward whichever topic is more-represented, so a new
+    // question piggybacking on a prior one gets the prior one's documents
+    // (which are then dedup-skipped). Latest utterance keeps retrieval
+    // sharp on the actual current question. Fall back to windowText when
+    // no final has landed yet.
+    const embedInput = latestUtterance.length > 0 ? latestUtterance : windowText.text;
     // eslint-disable-next-line no-console
-    console.log(`[pipeline.debug] embed.start trace=${traceId} chars=${String(windowText.text.length)} preview="${windowText.text.slice(0, 80).replace(/\n/g, ' ')}"`);
+    console.log(`[pipeline.debug] embed.start trace=${traceId} chars=${String(embedInput.length)} preview="${embedInput.slice(0, 80).replace(/\n/g, ' ')}"`);
     let embedded;
     try {
       embedded = await this.#embedder.embed({
-        items: [{ text: windowText.text, domain: 'text' }],
+        items: [{ text: embedInput, domain: 'text' }],
       });
       // eslint-disable-next-line no-console
       console.log(`[pipeline.debug] embed.ok trace=${traceId} dim=${String(embedded.dimension)}`);
@@ -267,7 +275,10 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     const retrieveStartAt = this.#now();
     let results;
     try {
-      results = hybridSearch(this.#db, windowText.text, vector, {
+      // BM25 leg of hybridSearch also uses this text; passing the latest
+      // utterance keeps the lexical match aligned with the embedding match
+      // so RRF doesn't mix two semantic targets.
+      results = hybridSearch(this.#db, embedInput, vector, {
         limit: this.#topK,
         minScore: this.#minScore,
         embeddingDim: this.#embedder.dimension,
@@ -429,7 +440,7 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
       // Tool answered. Synthesize with the tool source plus whatever cards
       // exist (may be zero). The synthesizer's prompt cites tool result
       // as [1] and any cards as [2..N].
-      void this.#maybeSynthesize(emittedCards, windowText.text, traceId, toolSource);
+      void this.#maybeSynthesize(emittedCards, embedInput, traceId, toolSource);
     } else if (emittedCards.length === 0) {
       // Distinguish "retrieval returned nothing" from "retrieval returned hits
       // but every one was already surfaced earlier this meeting." The
@@ -445,7 +456,7 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
         traceId,
       });
     } else {
-      void this.#maybeSynthesize(emittedCards, windowText.text, traceId, toolSource);
+      void this.#maybeSynthesize(emittedCards, embedInput, traceId, toolSource);
     }
   }
 
