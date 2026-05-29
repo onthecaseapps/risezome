@@ -93,5 +93,25 @@ describe('github/auth', () => {
       expect(outcome.ok).toBe(false);
       expect(outcome.reason).toBe('invalid-credentials');
     });
+
+    it('returns ok=true for fine-grained PATs (no X-OAuth-Scopes header)', async () => {
+      // Fine-grained PATs do not populate X-OAuth-Scopes in responses.
+      // /user succeeding without that header means the user picked per-repo
+      // permissions at PAT creation; we trust it and let per-endpoint
+      // permission failures surface as 403 on the actual resource call.
+      const client = new GithubClient({
+        fetchImpl: async () =>
+          buildResponse(
+            { login: 'nathan', html_url: 'https://github.com/nathan' },
+            { headers: {} },
+          ),
+      });
+
+      const outcome = await authenticate(client, { kind: 'pat', token: 'github_pat_test' });
+      expect(outcome.ok).toBe(true);
+      expect(outcome.reason).toBeUndefined();
+      expect(outcome.missingScopes).toEqual([]);
+      expect(outcome.identity?.login).toBe('nathan');
+    });
   });
 });

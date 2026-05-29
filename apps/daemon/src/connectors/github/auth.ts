@@ -19,11 +19,11 @@ export interface ScopeAuditResult {
 
 export async function authenticate(client: GithubClient, auth: AuthResult): Promise<AuthOutcome> {
   let user: GithubUser;
-  let scopes: readonly string[];
+  let scopesHeader: string | null;
   try {
     const res = await client.get(auth, '/user');
     user = (await res.json()) as GithubUser;
-    scopes = parseScopesHeader(res.headers.get('x-oauth-scopes'));
+    scopesHeader = res.headers.get('x-oauth-scopes');
   } catch (err) {
     if (err instanceof ConnectorAuthError) {
       return {
@@ -36,7 +36,22 @@ export async function authenticate(client: GithubClient, auth: AuthResult): Prom
     throw err;
   }
 
-  const audit = auditScopes(scopes);
+  // Fine-grained PATs do not populate the X-OAuth-Scopes response header
+  // (it's only set on responses to classic OAuth-token / classic-PAT requests).
+  // /user succeeding with no scopes header means the caller picked per-repo
+  // permissions explicitly at PAT creation time; trust that choice here and
+  // let per-endpoint permission mismatches surface as 403 on the actual
+  // resource call (pullDelta, clone, etc.) where the error is specific.
+  if (scopesHeader === null) {
+    return {
+      ok: true,
+      grantedScopes: [],
+      missingScopes: [],
+      identity: { login: user.login, url: user.html_url },
+    };
+  }
+
+  const audit = auditScopes(parseScopesHeader(scopesHeader));
   return {
     ok: audit.missingScopes.length === 0,
     ...(audit.missingScopes.length > 0 ? { reason: 'insufficient-scope' as const } : {}),
