@@ -61,12 +61,16 @@ export class Sidebar {
   readonly #syntheses = new Map<string, SynthesisRecord>();
   /**
    * UI4 hover-safe scroll: when the mouse is over the stream the user is
-   * likely reading — we suppress the auto-scroll-to-top and stash a counter
+   * likely reading. we suppress the auto-scroll-to-top and stash a counter
    * of "new content since hover started," surfaced as a pulsing badge.
    * On mouse-leave or badge click we scroll to top and reset.
    */
   #streamHovered = false;
   #pendingNewCount = 0;
+  #emptyStateEl: HTMLElement | null = null;
+  #emptyStateMsgEl: HTMLElement | null = null;
+  #emptyStateTimer: ReturnType<typeof setInterval> | null = null;
+  #lastEmptyMessageIdx = -1;
 
   constructor(options: SidebarOptions) {
     this.#streamEl = options.streamEl;
@@ -80,6 +84,79 @@ export class Sidebar {
     this.#onLogGap = options.onLogGap ?? ((): void => undefined);
     this.#onDismissGap = options.onDismissGap ?? ((): void => undefined);
     this.#wireScrollSafety();
+    this.#wireEmptyState();
+  }
+
+  // Empty-state messaging: when the stream has no cards/syntheses/gaps,
+  // a small playful placeholder rotates a quirky line every 10s. Hidden
+  // the moment the first real piece of content arrives; reappears if all
+  // content is later removed.
+  #wireEmptyState(): void {
+    const doc = this.#streamEl.ownerDocument;
+    const el = doc.createElement('div');
+    el.className = 'empty-state';
+    const msg = doc.createElement('span');
+    msg.className = 'empty-state-msg';
+    el.appendChild(msg);
+    this.#emptyStateEl = el;
+    this.#emptyStateMsgEl = msg;
+    this.#streamEl.appendChild(el);
+    this.#updateEmptyState();
+    // MutationObserver fires on any direct childList change of the stream,
+    // so we don't have to remember to call updateEmptyState() at every
+    // render/remove site. Filters out our own toggling by checking the
+    // class name on added/removed nodes.
+    const win = doc.defaultView;
+    if (win === null) return;
+    const Observer = win.MutationObserver;
+    if (Observer === undefined) return;
+    const observer = new Observer(() => this.#updateEmptyState());
+    observer.observe(this.#streamEl, { childList: true });
+  }
+
+  #updateEmptyState(): void {
+    if (this.#emptyStateEl === null) return;
+    const childCount = this.#streamEl.children.length;
+    const emptyVisible = this.#emptyStateEl.parentNode === this.#streamEl;
+    const realChildren = emptyVisible ? childCount - 1 : childCount;
+    if (realChildren === 0) {
+      if (!emptyVisible) this.#streamEl.appendChild(this.#emptyStateEl);
+      this.#rotateEmptyMessage();
+      this.#startEmptyTimer();
+    } else {
+      if (emptyVisible) this.#emptyStateEl.remove();
+      this.#stopEmptyTimer();
+    }
+  }
+
+  #startEmptyTimer(): void {
+    if (this.#emptyStateTimer !== null) return;
+    this.#emptyStateTimer = setInterval(() => this.#rotateEmptyMessage(), 10_000);
+  }
+
+  #stopEmptyTimer(): void {
+    if (this.#emptyStateTimer !== null) {
+      clearInterval(this.#emptyStateTimer);
+      this.#emptyStateTimer = null;
+    }
+  }
+
+  #rotateEmptyMessage(): void {
+    if (this.#emptyStateMsgEl === null) return;
+    const messages = EMPTY_STATE_MESSAGES;
+    if (messages.length === 0) return;
+    let idx = Math.floor(Math.random() * messages.length);
+    // Avoid showing the same message twice in a row when we can.
+    if (messages.length > 1 && idx === this.#lastEmptyMessageIdx) {
+      idx = (idx + 1) % messages.length;
+    }
+    this.#lastEmptyMessageIdx = idx;
+    this.#emptyStateMsgEl.textContent = messages[idx]!;
+  }
+
+  /** Test helper: stop the rotation timer to keep happy-dom test cleanup tidy. */
+  destroy(): void {
+    this.#stopEmptyTimer();
   }
 
   #wireScrollSafety(): void {
@@ -201,7 +278,7 @@ export class Sidebar {
     const el = doc.createElement('article');
     el.className = 'card synthesis';
     el.dataset['synthesisId'] = start.synthesisId;
-    // aria-live="off" — per-token DOM mutations would spam SR; the
+    // aria-live="off". per-token DOM mutations would spam SR; the
     // #synthesis-announce sibling element receives the final text once.
     el.setAttribute('aria-live', 'off');
 
@@ -245,7 +322,7 @@ export class Sidebar {
     const rec = this.#syntheses.get(delta.synthesisId);
     if (rec === undefined) return;
     rec.accumulatedText += delta.delta;
-    // Append text content cheaply — never re-render the whole body.
+    // Append text content cheaply. never re-render the whole body.
     rec.bodyEl.textContent = rec.accumulatedText;
     // Eager citation chip render: scan accumulated text for new [N] tokens.
     for (const match of rec.accumulatedText.matchAll(/\[(\d+)\]/g)) {
@@ -291,7 +368,7 @@ export class Sidebar {
     const rec = this.#syntheses.get(synthesisId);
     if (rec === undefined) return;
     // Return any consolidated cards back to the main stream before tearing
-    // the synthesis card down — the user expects the raw retrieval cards to
+    // the synthesis card down. the user expects the raw retrieval cards to
     // remain visible when synthesis fails/refuses/retracts.
     this.#deconsolidateRawCards(rec);
     rec.el.remove();
@@ -303,7 +380,7 @@ export class Sidebar {
   }
 
   // Moves the raw source cards out of #streamEl and into a grid inside the
-  // synthesis card. Pinned cards (which live in #pinnedEl) are skipped — the
+  // synthesis card. Pinned cards (which live in #pinnedEl) are skipped. the
   // user already decided to keep them visible, no need to duplicate.
   #consolidateRawCards(rec: SynthesisRecord): void {
     const doc = this.#streamEl.ownerDocument;
@@ -312,7 +389,7 @@ export class Sidebar {
       const cardRec = this.#cards.get(cardId);
       if (cardRec === undefined) continue;
       if (cardRec.pinned) continue;
-      // Only consolidate cards currently in the stream — if a card was
+      // Only consolidate cards currently in the stream. if a card was
       // retracted before we got here, its el is detached and we skip.
       if (cardRec.el.parentNode !== this.#streamEl) continue;
       movable.push({ record: cardRec, nextSibling: cardRec.el.nextSibling });
@@ -468,9 +545,30 @@ function formatScore(score: number): string {
   return `${Math.round(score * 100)}%`;
 }
 
-// Card action buttons (Pin / Log gap / Dismiss) — icon on the left, label
+// Card action buttons (Pin / Log gap / Dismiss). icon on the left, label
 // on the right. Single helper so styling stays consistent and adding new
 // actions is a one-liner.
+// Quirky empty-state messages playing on Upwell's oceanographic theme
+// (upwelling = deep water rising to the surface). 10-second rotation
+// keeps the HUD feeling alive during quiet stretches without becoming
+// distracting. New messages are easy to add. just append.
+export const EMPTY_STATE_MESSAGES: readonly string[] = [
+  'Waiting for some swell information to surface.',
+  'Preparing to propel pertinent payloads.',
+  'Listening for ripples in the conversation.',
+  'Casting nets across your repos.',
+  'Calm currents. Awaiting your voice.',
+  'Polling the depths of your corpus.',
+  'Riding the swell, awaiting landfall.',
+  'Sieving signal from the chatter.',
+  'Idle waters run deep. Speak to fathom them.',
+  'Buoys are bobbing, results incoming.',
+  'Calibrating the conversational compass.',
+  'Sharpening the synthesizer’s edges.',
+  'Beachcombing the corpus while you think.',
+  'Hush mode engaged. The HUD listens.',
+];
+
 function makeIconButton(
   doc: Document,
   icon: IconName,

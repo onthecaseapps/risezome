@@ -107,7 +107,7 @@ export function bootstrap(
       if (s === 'open') {
         banner.classList.add('hidden');
       } else if (s === 'disconnected') {
-        banner.textContent = 'Disconnected — reconnecting…';
+        banner.textContent = 'Disconnected. Reconnecting…';
         banner.classList.remove('hidden');
       } else {
         banner.textContent = 'Connecting…';
@@ -129,7 +129,7 @@ function requireEl(doc: Document, id: string): HTMLElement {
 // Applies the `.dark` class to <html> based on the stored override (if any)
 // or the OS preference. Tailwind v4's @custom-variant dark scopes every
 // dark: utility against this class, and the existing CSS variables also
-// flip on :root.dark — so a single class toggle re-themes the whole HUD.
+// flip on :root.dark. so a single class toggle re-themes the whole HUD.
 //
 // Storage key intentionally namespaced ('upwell:theme') so cohabiting HUDs
 // or browser-shared origins don't clash.

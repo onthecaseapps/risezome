@@ -4,7 +4,7 @@
 // webfont (no extra HTTP request, no font-src CSP allowance needed,
 // crisp at any size). Tree-shaking trims to ~1 KB per icon used.
 //
-// Per-icon imports (deep paths) keep the bundle small — importing from
+// Per-icon imports (deep paths) keep the bundle small. importing from
 // `@fortawesome/free-solid-svg-icons` directly would pull every icon.
 
 import { faSun } from '@fortawesome/free-solid-svg-icons/faSun';
@@ -37,7 +37,7 @@ export function getIconDef(name: IconName): IconDef {
  * Build a <span> wrapping an inline <svg> for the named icon. The wrapper
  * inherits color via `currentColor` so a single CSS `color: …` cascades
  * onto the icon paint. Size defaults to 1em so the icon scales with the
- * containing font-size — override via the `size` parameter for fixed-size
+ * containing font-size. override via the `size` parameter for fixed-size
  * placements.
  */
 export function renderIcon(
@@ -57,7 +57,7 @@ export function renderIcon(
   }
   const size = options.size ?? '1em';
   const pathData = Array.isArray(path) ? path.join(' ') : path;
-  // Use innerHTML for the SVG body — it's static text, not user-controlled.
+  // Use innerHTML for the SVG body. it's static text, not user-controlled.
   // innerHTML keeps the namespace correct (createElement('svg') in the HTML
   // namespace produces a non-rendering element).
   wrap.innerHTML = `<svg viewBox="0 0 ${String(width)} ${String(height)}" width="${size}" height="${size}" fill="currentColor" aria-hidden="true"><path d="${pathData}"/></svg>`;

@@ -42,7 +42,7 @@ export class SettingsPanel {
     const body = doc.createElement('section');
     body.className = 'settings-body';
     body.dataset.tab = this.#currentTab;
-    body.textContent = `${this.#currentTab} tab content — populated by U22 (credentials, consent) and U24 (telemetry).`;
+    body.textContent = `${this.#currentTab} tab content. populated by U22 (credentials, consent) and U24 (telemetry).`;
     this.#container.append(tabBar, body);
   }
 }

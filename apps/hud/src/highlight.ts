@@ -1,6 +1,6 @@
 import Prism from 'prismjs';
 
-// Component imports must respect Prism's dependency chain — each module
+// Component imports must respect Prism's dependency chain. each module
 // registers a grammar into the shared Prism.languages object, so children
 // must come after parents.
 import 'prismjs/components/prism-markup.js';

@@ -180,7 +180,7 @@ describe('Sidebar', () => {
     sidebar.appendSynthesisDelta(makeDelta('world.'));
 
     expect(bodyEl.textContent).toBe('Hello world.');
-    // Identity preserved — we didn't replace the element.
+    // Identity preserved. we didn't replace the element.
     expect(streamEl.querySelector<HTMLElement>('.synthesis-body')).toBe(initialNode);
   });
 
@@ -208,7 +208,7 @@ describe('Sidebar', () => {
     sidebar.appendSynthesisDelta(makeDelta('A [1] B [2] C [3].'));
     expect(streamEl.querySelectorAll('.citation-chip').length).toBe(3);
 
-    // Final says citations are [2] only — chips 1 and 3 should be removed.
+    // Final says citations are [2] only. chips 1 and 3 should be removed.
     sidebar.finalizeSynthesis(makeDone([2]));
     expect(streamEl.querySelector('.synthesis-cursor')).toBeNull();
     const chips = streamEl.querySelectorAll<HTMLElement>('.citation-chip');
@@ -269,6 +269,25 @@ describe('Sidebar', () => {
     sidebar.removeSynthesis('syn_a');
     expect(sidebar.visibleSynthesisCount()).toBe(1);
     expect(streamEl.querySelector('[data-synthesis-id="syn_b"]')).not.toBeNull();
+  });
+
+  // --- Empty-state placeholder ---
+
+  it('shows the empty-state placeholder when the stream has no content', () => {
+    const empty = streamEl.querySelector<HTMLElement>('.empty-state');
+    expect(empty).not.toBeNull();
+    expect(empty!.querySelector('.empty-state-msg')?.textContent).toBeTruthy();
+  });
+
+  it('hides the empty-state placeholder when a card arrives, restores when all cards are gone', async () => {
+    sidebar.renderCard(makeCard({ cardId: 'c1' }));
+    // happy-dom's MutationObserver fires asynchronously; flush.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(streamEl.querySelector('.empty-state')).toBeNull();
+
+    sidebar.retractCard({ cardId: 'c1', reason: 'manual-dismiss' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(streamEl.querySelector('.empty-state')).not.toBeNull();
   });
 
   // --- U6+UI3: consolidation ---
@@ -346,7 +365,7 @@ describe('Sidebar', () => {
     expect(badge.classList.contains('hidden')).toBe(true);
   });
 
-  it('does NOT scroll while hovering — shows pulsing badge with new count', () => {
+  it('does NOT scroll while hovering. shows pulsing badge with new count', () => {
     fireMouseEvent(streamEl, 'mouseenter');
     const scrollMock = vi.fn();
     streamEl.scrollIntoView = scrollMock as unknown as Element['scrollIntoView'];

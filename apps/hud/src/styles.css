@@ -1,5 +1,5 @@
 /*
- * Tailwind v4 — CSS-first config. The @import brings in the framework,
+ * Tailwind v4. CSS-first config. The @import brings in the framework,
  * @custom-variant lets us drive dark mode by a `.dark` class on <html>
  * (instead of `prefers-color-scheme`) so the UI2 toggle button can
  * override the OS preference. @source tells Tailwind which files to
@@ -290,7 +290,7 @@ body {
   color: inherit;
 }
 
-/* Prism token classes — scoped to .code-block so Prism defaults can't leak. */
+/* Prism token classes. scoped to .code-block so Prism defaults can't leak. */
 .code-block .token.comment,
 .code-block .token.prolog,
 .code-block .token.doctype,
@@ -492,7 +492,36 @@ body {
   display: none;
 }
 
-/* SR-only visually-hidden helper — used by #synthesis-announce so screen
+/* Quirky empty-state placeholder. Lives inside #card-stream as a soft
+   centered card-like block; visible only when the stream has no cards
+   or syntheses. The 10-second rotation runs in JS; this only owns
+   look-and-feel. */
+.empty-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 28px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-style: italic;
+  font-size: 13px;
+  text-align: center;
+  animation: empty-fade-in 250ms ease-out;
+}
+
+.empty-state-msg {
+  max-width: 36ch;
+  line-height: 1.4;
+}
+
+@keyframes empty-fade-in {
+  from { opacity: 0; }
+  to { opacity: 0.85; }
+}
+
+/* SR-only visually-hidden helper. used by #synthesis-announce so screen
    readers receive the finalized text once on synthesisDone without the
    element being visible on screen. */
 .sr-only {
