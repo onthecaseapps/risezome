@@ -296,7 +296,7 @@ describe('RetrievalPipeline', () => {
       h.window.push({
         utteranceId: `u${String(i)}`,
         text: 'rapid topic',
-        isFinal: false,
+        isFinal: true,
         startMs: 95_000 + i,
         endMs: 95_500 + i,
         revision: i,
@@ -304,6 +304,74 @@ describe('RetrievalPipeline', () => {
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(cards.length).toBe(1);
+  });
+
+  it('partial-only window does NOT fire the pipeline (no embed, no cards)', async () => {
+    teardown(h);
+    let embedCalls = 0;
+    h = await setup({ vectorFor: () => unitVectorAt(7), debounceMs: 50 });
+    indexPR(h.db, {
+      id: 'gh:partial',
+      title: 'Partial',
+      text: 'should not surface',
+      vec: unitVectorAt(7),
+    });
+    // Wrap the embedder to count calls — we expect ZERO embed calls when
+    // the window contains only partial utterances.
+    const origEmbed = h.embedder.embed.bind(h.embedder);
+    h.embedder.embed = ((req) => { embedCalls += 1; return origEmbed(req); }) as typeof h.embedder.embed;
+    const cards: CardEvent[] = [];
+    h.pipeline.on('card', (c) => cards.push(c));
+    h.window.push({
+      utteranceId: 'p1',
+      text: 'with ai',
+      isFinal: false,
+      startMs: 95_000,
+      endMs: 95_500,
+      revision: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(embedCalls).toBe(0);
+    expect(cards.length).toBe(0);
+  });
+
+  it('final arriving after a partial fires the pipeline once on the combined window', async () => {
+    teardown(h);
+    let embedCalls = 0;
+    h = await setup({ vectorFor: () => unitVectorAt(7), debounceMs: 50 });
+    indexPR(h.db, {
+      id: 'gh:lateFinal',
+      title: 'Late final',
+      text: 'real question content',
+      vec: unitVectorAt(7),
+    });
+    const origEmbed = h.embedder.embed.bind(h.embedder);
+    h.embedder.embed = ((req) => { embedCalls += 1; return origEmbed(req); }) as typeof h.embedder.embed;
+    const cards: CardEvent[] = [];
+    h.pipeline.on('card', (c) => cards.push(c));
+    // Partial first — should NOT fire (no final yet)
+    h.window.push({
+      utteranceId: 'p1',
+      text: 'with ai',
+      isFinal: false,
+      startMs: 95_000,
+      endMs: 95_500,
+      revision: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(embedCalls).toBe(0);
+    // Then a final arrives — pipeline fires
+    h.window.push({
+      utteranceId: 'u1',
+      text: 'which models are used',
+      isFinal: true,
+      startMs: 95_500,
+      endMs: 96_000,
+      revision: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(embedCalls).toBeGreaterThanOrEqual(1);
+    expect(cards.length).toBeGreaterThanOrEqual(1);
   });
 });
 

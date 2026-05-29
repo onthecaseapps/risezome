@@ -234,6 +234,27 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     const traceId = `t_${randomBytes(6).toString('hex')}`;
     this.#inflight += 1;
 
+    const latestUtterance = this.#window?.latestFinalUtteranceText() ?? '';
+
+    // --- No-final gate -------------------------------------------------------
+    // Skip the pipeline entirely when the window contains only partial
+    // utterances (no final has landed yet). Running embed/retrieve/synthesis
+    // on partials produces three concrete failures observed in dogfood:
+    //   - Synthesis refuses (LLM can't answer fragments like " with ai")
+    //     and the HUD removes the AI SUMMARY card the user just saw appear
+    //   - Bogus retrievals get surfaced AND recorded as surfaced, which then
+    //     dedup-blocks the real final's flush (synthesis.skipped reason=
+    //     all-already-surfaced)
+    //   - Voyage + Claude spend on noise
+    // The partial will be re-evaluated naturally on the next debounced flush
+    // after the final arrives.
+    if (latestUtterance.length === 0) {
+      // eslint-disable-next-line no-console
+      console.log(`[pipeline.debug] skipped trace=${traceId} reason=no-final`);
+      this.#inflight -= 1;
+      return;
+    }
+
     // --- Relevance pre-gate ---------------------------------------------------
     // Decides whether this utterance is worth running the pipeline on at all.
     // Three states from the heuristic:
@@ -245,7 +266,6 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     // The cache (session.getCachedRelevance) is checked before firing the
     // LLM so repeated identical-after-normalization utterances within the
     // 30s TTL reuse a prior skip decision without a new API call.
-    const latestUtterance = this.#window?.latestFinalUtteranceText() ?? '';
     let relevancePromise: Promise<RelevanceResult> | null = null;
     let relevanceController: AbortController | null = null;
     let relevanceStartedAt = 0;
