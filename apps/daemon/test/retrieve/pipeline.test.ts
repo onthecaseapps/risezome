@@ -340,6 +340,58 @@ describe('MeetingSession', () => {
     expect(session.pin('unknown')).toBe(false);
   });
 
+  it('hasSurfaced returns false once the TTL has elapsed (allows re-surface on a follow-up question)', () => {
+    let nowMs = 1_000_000;
+    const session = new MeetingSession('m:1', {
+      surfacedTtlMs: 120_000,
+      now: () => nowMs,
+    });
+    const card: CardEvent = {
+      cardId: 'c1',
+      docId: 'd1',
+      source: 'github',
+      type: 'issue',
+      title: 't',
+      snippet: 's',
+      score: 0.5,
+      rank: 1,
+      metadata: {},
+      surfacedAt: 0,
+      triggeredBy: 'window',
+      traceId: 'trace1',
+    };
+    session.recordSurfaced(card);
+    expect(session.hasSurfaced('d1')).toBe(true);
+    nowMs += 119_999;
+    expect(session.hasSurfaced('d1')).toBe(true);
+    nowMs += 2;
+    expect(session.hasSurfaced('d1')).toBe(false);
+  });
+
+  it('Infinity TTL preserves permanent-per-meeting dedup', () => {
+    let nowMs = 0;
+    const session = new MeetingSession('m:1', {
+      surfacedTtlMs: Infinity,
+      now: () => nowMs,
+    });
+    session.recordSurfaced({
+      cardId: 'c1',
+      docId: 'd1',
+      source: 'github',
+      type: 'issue',
+      title: 't',
+      snippet: 's',
+      score: 0.5,
+      rank: 1,
+      metadata: {},
+      surfacedAt: 0,
+      triggeredBy: 'window',
+      traceId: 'trace1',
+    });
+    nowMs = Number.MAX_SAFE_INTEGER;
+    expect(session.hasSurfaced('d1')).toBe(true);
+  });
+
   it('clear() removes all session state', () => {
     const session = new MeetingSession('m:1');
     const card: CardEvent = {

@@ -14,23 +14,48 @@ export interface ActiveSynthesis {
   readonly citedCardIds?: readonly string[];
 }
 
+export interface MeetingSessionOptions {
+  /**
+   * How long a surfaced doc is considered "already seen" for dedup
+   * purposes. After this window expires, the doc may surface again for
+   * a follow-up question. Set to `Infinity` to restore the previous
+   * permanent-per-meeting behavior.
+   *
+   * The default (120s) is short enough that a legitimately new question
+   * later in a meeting can re-surface a relevant doc, but long enough
+   * that two flushes triggered by the same utterance (debounce +
+   * windowChanged re-fire) won't show the same card twice.
+   */
+  readonly surfacedTtlMs?: number;
+  readonly now?: () => number;
+}
+
+const DEFAULT_SURFACED_TTL_MS = 120_000;
+
 export class MeetingSession {
   readonly meetingId: string;
-  readonly #surfacedIds = new Set<string>();
+  readonly #surfacedAt = new Map<string, number>();
   readonly #pinnedIds = new Set<string>();
   readonly #cards = new Map<string, CardEvent>();
   readonly #syntheses = new Map<string, ActiveSynthesis>();
+  readonly #surfacedTtlMs: number;
+  readonly #now: () => number;
 
-  constructor(meetingId: string) {
+  constructor(meetingId: string, options: MeetingSessionOptions = {}) {
     this.meetingId = meetingId;
+    this.#surfacedTtlMs = options.surfacedTtlMs ?? DEFAULT_SURFACED_TTL_MS;
+    this.#now = options.now ?? Date.now;
   }
 
   hasSurfaced(docId: string): boolean {
-    return this.#surfacedIds.has(docId);
+    const at = this.#surfacedAt.get(docId);
+    if (at === undefined) return false;
+    if (this.#surfacedTtlMs === Infinity) return true;
+    return this.#now() - at < this.#surfacedTtlMs;
   }
 
   recordSurfaced(card: CardEvent): void {
-    this.#surfacedIds.add(card.docId);
+    this.#surfacedAt.set(card.docId, this.#now());
     this.#cards.set(card.cardId, card);
   }
 
@@ -55,7 +80,7 @@ export class MeetingSession {
   }
 
   surfacedCount(): number {
-    return this.#surfacedIds.size;
+    return this.#surfacedAt.size;
   }
 
   // --- Synthesis tracking ---
@@ -111,7 +136,7 @@ export class MeetingSession {
   }
 
   clear(): void {
-    this.#surfacedIds.clear();
+    this.#surfacedAt.clear();
     this.#pinnedIds.clear();
     this.#cards.clear();
     for (const s of this.#syntheses.values()) {
