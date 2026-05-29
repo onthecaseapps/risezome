@@ -60,4 +60,35 @@ describe('chunkMarkdown', () => {
     const chunks = chunkMarkdown(md);
     expect(chunks.map((c) => c.heading)).toEqual(['Top', 'Subsection']);
   });
+
+  it('does NOT include the heading line in the chunk body (downstream re-adds it)', () => {
+    // Regression: previously the chunker kept the `## Heading` line at the
+    // start of `body`, and `pull-files.ts` prepended `## ${heading}` on top,
+    // producing chunks where the heading appeared TWICE.
+    const md = [
+      '## Outstanding Questions',
+      '',
+      'Question one body that meets the minimum body length floor.',
+    ].join('\n');
+    const chunks = chunkMarkdown(md);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]?.heading).toBe('Outstanding Questions');
+    expect(chunks[0]?.text).not.toContain('## Outstanding Questions');
+    expect(chunks[0]?.text).toContain('Question one body');
+  });
+
+  it('drops sections whose body is empty after stripping the heading line', () => {
+    // A template stub like `## Outstanding Questions\n\n## Next Section`
+    // used to embed as a chunk containing just the heading line — a
+    // degenerate vector. After the fix it disappears.
+    const md = [
+      '## Outstanding Questions',
+      '',
+      '## Next Section',
+      '',
+      'Real body content that exceeds the minimum length floor easily.',
+    ].join('\n');
+    const chunks = chunkMarkdown(md);
+    expect(chunks.map((c) => c.heading)).toEqual(['Next Section']);
+  });
 });

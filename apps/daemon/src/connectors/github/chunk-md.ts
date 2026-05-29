@@ -52,15 +52,23 @@ function splitByH2(text: string): MarkdownBlock[] {
   for (const line of lines) {
     const headingMatch = /^(#{2,6})\s+(.+?)\s*$/.exec(line);
     if (headingMatch !== null) {
-      if (current.body.trim().length > 0 || current.heading !== null) {
+      // Only push the prior block if it has actual body content. A block
+      // whose only content is its own heading line (now stripped) is a
+      // template stub — embedding it produces near-duplicate vectors and
+      // surfaces empty "## Heading / ## Heading" cards in the HUD.
+      if (current.body.trim().length > 0) {
         blocks.push(current);
       }
-      current = { heading: headingMatch[2] ?? null, body: line + '\n' };
+      // Start a new block, recording the heading but NOT including the
+      // heading line in the body. Downstream consumers (pull-files.ts)
+      // re-add the heading on top of the body so the chunk's first line
+      // is the heading exactly once — not twice.
+      current = { heading: headingMatch[2] ?? null, body: '' };
       continue;
     }
     current.body += line + '\n';
   }
-  if (current.body.trim().length > 0 || current.heading !== null) {
+  if (current.body.trim().length > 0) {
     blocks.push(current);
   }
   return blocks;
