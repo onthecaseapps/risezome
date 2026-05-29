@@ -29,6 +29,7 @@ import type {
 } from '../retrieve/contract.js';
 import { AnthropicSynthesizer, DEFAULT_ANTHROPIC_MODEL } from '../synthesize/anthropic.js';
 import { AnthropicClassifier } from '../router/anthropic-classifier.js';
+import { AnthropicRelevanceClassifier } from '../relevance/anthropic-classifier.js';
 import { SkillRegistry } from '../skills/registry.js';
 import { skills as githubSkills } from '../skills/github/index.js';
 import { hasConsent } from './consent-store.js';
@@ -82,6 +83,8 @@ export async function runServe(): Promise<number> {
   const synthesisMinScore = envFloat('UPWELL_SYNTHESIS_MIN_SCORE', 0.025);
   const synthesisTopN = envInt('UPWELL_SYNTHESIS_TOP_N', 3);
   const synthesisMaxTokens = envInt('UPWELL_SYNTHESIS_MAX_TOKENS', 150);
+  const relevanceSkipThreshold = envFloat('UPWELL_RELEVANCE_SKIP_THRESHOLD', 0.7);
+  const relevanceTimeoutMs = envInt('UPWELL_RELEVANCE_TIMEOUT_MS', 3000);
 
   const db = await openCorpusDb();
   await migrate(db);
@@ -166,6 +169,23 @@ export async function runServe(): Promise<number> {
       log('info', `router.enabled skills=${String(skillRegistry.size())}`);
     }
 
+    // Relevance pre-classifier. Same key-only instantiation pattern as the
+    // router — consent is checked per-flush inside the pipeline so
+    // revocation takes effect without a daemon restart.
+    const relevanceClassifier =
+      anthropicKey !== undefined
+        ? new AnthropicRelevanceClassifier({
+            apiKey: anthropicKey,
+            model: anthropicModel,
+            onUsage: (u) => log('info', 'relevance.usage', { ...u }),
+          })
+        : undefined;
+    if (relevanceClassifier === undefined) {
+      log('info', 'relevance.disabled reason=no-key (heuristic-only mode; ambiguous utterances default to surface)');
+    } else {
+      log('info', `relevance.enabled threshold=${String(relevanceSkipThreshold)} timeoutMs=${String(relevanceTimeoutMs)}`);
+    }
+
     const consentClosure = (): boolean => hasConsent(db, 'anthropic');
 
     const pipeline = new RetrievalPipeline({
@@ -175,13 +195,19 @@ export async function runServe(): Promise<number> {
       debounceMs: 700,
       minScore: 0,
       ...(synthesizer !== undefined && { synthesizer }),
-      // The same consent closure gates both synthesis and the router classifier.
-      ...((synthesizer !== undefined || classifier !== undefined) && { consentCheck: consentClosure }),
+      // The same consent closure gates synthesis, the router classifier,
+      // and the relevance classifier — one revocation, three behaviors
+      // silently downgrade (each emits its own per-flush log line so
+      // operators can spot it).
+      ...((synthesizer !== undefined || classifier !== undefined || relevanceClassifier !== undefined) && { consentCheck: consentClosure }),
       minSynthesisScore: synthesisMinScore,
       synthesisTopN,
       synthesisMaxTokens,
       ...(classifier !== undefined && { classifier }),
       skillRegistry,
+      ...(relevanceClassifier !== undefined && { relevanceClassifier }),
+      relevanceSkipThreshold,
+      relevanceTimeoutMs,
     });
     pipeline.attachWindow(window);
 
@@ -278,6 +304,44 @@ export async function runServe(): Promise<number> {
       log('warn', 'skill.failed', {
         traceId: e.traceId,
         name: e.name,
+        code: e.code,
+        message: e.message,
+      }),
+    );
+
+    // Relevance telemetry — log only. relevance.classified fires on every
+    // LLM call regardless of decision, giving a greppable distribution of
+    // confidence values that makes the UPWELL_RELEVANCE_SKIP_THRESHOLD env
+    // var tunable from real meeting data. relevance.skipped fires only on
+    // actual skip decisions (heuristic short-circuit, LLM above threshold,
+    // or cached prior skip).
+    pipeline.on('relevanceSkip', (e) =>
+      log('info', 'relevance.skipped', {
+        traceId: e.traceId,
+        utterance: e.utterance,
+        gate: e.gate,
+        reason: e.reason,
+        ...(e.confidence !== undefined && { confidence: e.confidence }),
+      }),
+    );
+    pipeline.on('relevanceLlmStart', (e) =>
+      log('info', 'relevance.start', {
+        traceId: e.traceId,
+        utterance: e.utterance,
+      }),
+    );
+    pipeline.on('relevanceClassified', (e) =>
+      log('info', 'relevance.classified', {
+        traceId: e.traceId,
+        utterance: e.utterance,
+        decision: e.decision,
+        confidence: e.confidence,
+        latencyMs: e.latencyMs,
+      }),
+    );
+    pipeline.on('relevanceLlmError', (e) =>
+      log('warn', 'relevance.error', {
+        traceId: e.traceId,
         code: e.code,
         message: e.message,
       }),
