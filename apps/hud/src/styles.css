@@ -1,3 +1,16 @@
+/*
+ * Tailwind v4 — CSS-first config. The @import brings in the framework,
+ * @custom-variant lets us drive dark mode by a `.dark` class on <html>
+ * (instead of `prefers-color-scheme`) so the UI2 toggle button can
+ * override the OS preference. @source tells Tailwind which files to
+ * scan for utility classes; without it we'd only get utilities used
+ * in the CSS itself.
+ */
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+@source "./*.ts";
+@source "../index.html";
+
 :root {
   color-scheme: light dark;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
@@ -34,39 +47,43 @@
   --syn-regex: #b8463a;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f1115;
-    --fg: #e6e8eb;
-    --muted: #8a8f99;
-    --border: #262a31;
-    --card-bg: #161a20;
-    --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);
-    --pinned-bg: #2a2614;
-    --provisional-bg: #1a1a25;
-    --accent: #6b8aff;
-    --gap-fg: #ffb070;
-    --error: #ff6b6b;
-    --code-bg: #0c0e12;
-    --code-fg: #e6e8eb;
-    --location-bg: #1d2128;
-    --location-fg: #a8aeb8;
-    /* Prism tokens (dark) */
-    --syn-comment: #6e7681;
-    --syn-string: #a5d6a7;
-    --syn-keyword: #c792ea;
-    --syn-type: #82aaff;
-    --syn-number: #f78c6c;
-    --syn-function: #82aaff;
-    --syn-operator: #b8c0cc;
-    --syn-punctuation: #8a8f99;
-    --syn-property: #82aaff;
-    --syn-tag: #f07178;
-    --syn-attr: #c792ea;
-    --syn-builtin: #82aaff;
-    --syn-class: #ffcb6b;
-    --syn-regex: #f78c6c;
-  }
+/*
+ * Class-based dark mode. UI2's toggle adds/removes `.dark` on <html>;
+ * the cascade flips every var in one place without re-themeing each
+ * component selector. Keeps the existing component CSS dark-mode-aware
+ * with no per-rule changes.
+ */
+:root.dark {
+  --bg: #0f1115;
+  --fg: #e6e8eb;
+  --muted: #8a8f99;
+  --border: #262a31;
+  --card-bg: #161a20;
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);
+  --pinned-bg: #2a2614;
+  --provisional-bg: #1a1a25;
+  --accent: #6b8aff;
+  --gap-fg: #ffb070;
+  --error: #ff6b6b;
+  --code-bg: #0c0e12;
+  --code-fg: #e6e8eb;
+  --location-bg: #1d2128;
+  --location-fg: #a8aeb8;
+  /* Prism tokens (dark) */
+  --syn-comment: #6e7681;
+  --syn-string: #a5d6a7;
+  --syn-keyword: #c792ea;
+  --syn-type: #82aaff;
+  --syn-number: #f78c6c;
+  --syn-function: #82aaff;
+  --syn-operator: #b8c0cc;
+  --syn-punctuation: #8a8f99;
+  --syn-property: #82aaff;
+  --syn-tag: #f07178;
+  --syn-attr: #c792ea;
+  --syn-builtin: #82aaff;
+  --syn-class: #ffcb6b;
+  --syn-regex: #f78c6c;
 }
 
 * {

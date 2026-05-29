@@ -17,6 +17,7 @@ export function bootstrap(
   doc: Document,
   config: BootstrapConfig,
 ): { sidebar: Sidebar; ws: WsClient } {
+  applyInitialTheme(doc);
   const streamEl = requireEl(doc, 'card-stream');
   const pinnedEl = requireEl(doc, 'pinned-section');
   const banner = requireEl(doc, 'connection-banner');
@@ -121,6 +122,28 @@ function requireEl(doc: Document, id: string): HTMLElement {
   const el = doc.getElementById(id);
   if (el === null) throw new Error(`HUD bootstrap: missing #${id}`);
   return el;
+}
+
+// Applies the `.dark` class to <html> based on the stored override (if any)
+// or the OS preference. Tailwind v4's @custom-variant dark scopes every
+// dark: utility against this class, and the existing CSS variables also
+// flip on :root.dark — so a single class toggle re-themes the whole HUD.
+//
+// Storage key intentionally namespaced ('upwell:theme') so cohabiting HUDs
+// or browser-shared origins don't clash.
+export const THEME_STORAGE_KEY = 'upwell:theme';
+
+function applyInitialTheme(doc: Document): void {
+  const win = doc.defaultView;
+  let mode: 'light' | 'dark';
+  const stored = win?.localStorage?.getItem(THEME_STORAGE_KEY);
+  if (stored === 'light' || stored === 'dark') {
+    mode = stored;
+  } else {
+    const prefersDark = win?.matchMedia?.('(prefers-color-scheme: dark)').matches === true;
+    mode = prefersDark ? 'dark' : 'light';
+  }
+  doc.documentElement.classList.toggle('dark', mode === 'dark');
 }
 
 if (typeof window !== 'undefined' && window.UPWELL_BOOTSTRAP !== undefined) {
