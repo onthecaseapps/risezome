@@ -826,7 +826,7 @@ describe('RetrievalPipeline — synthesis abort + retract cascade', () => {
         usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
       };
       // Wait on the signal — if aborted, throw AbortError; otherwise hang.
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((_resolve, reject) => {
         const onAbort = (): void => {
           inFlightAborted = true;
           reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));

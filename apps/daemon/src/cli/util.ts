@@ -24,6 +24,23 @@ export function envInt(name: string, fallback: number): number {
   return parsed;
 }
 
+// envFloat mirrors envInt for non-integer thresholds (e.g.,
+// UPWELL_SYNTHESIS_MIN_SCORE=0.025). Critical detail: a bare
+// Number('0,025') (European decimal) returns NaN; without
+// Number.isFinite gate that would silently disable a gate based on
+// `value >= NaN` always being false. The fallback warns and keeps the
+// gate working.
+export function envFloat(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (value === undefined || value.length === 0) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    log('warn', `Env var ${name}=${value} is not a finite number; using fallback ${String(fallback)}.`);
+    return fallback;
+  }
+  return parsed;
+}
+
 export type LogLevel = 'info' | 'warn' | 'error';
 
 export function log(level: LogLevel, message: string, meta?: Record<string, unknown>): void {

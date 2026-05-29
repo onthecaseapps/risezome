@@ -17,8 +17,19 @@ import { TranscriptWindow } from '../transcript/window.js';
 import { MeetingSession } from '../meeting/session.js';
 import { VoyageEmbedder } from '../embed/voyage.js';
 import { RetrievalPipeline } from '../retrieve/pipeline.js';
-import type { CardEvent, CardRetracted, CardUpdated } from '../retrieve/contract.js';
-import { envInt, log, optionalEnv, requireEnv } from './util.js';
+import type {
+  CardEvent,
+  CardRetracted,
+  CardUpdated,
+  SynthesisDelta,
+  SynthesisDone,
+  SynthesisError,
+  SynthesisRetracted,
+  SynthesisStart,
+} from '../retrieve/contract.js';
+import { AnthropicSynthesizer, DEFAULT_ANTHROPIC_MODEL } from '../synthesize/anthropic.js';
+import { hasConsent } from './consent-store.js';
+import { envFloat, envInt, log, optionalEnv, requireEnv } from './util.js';
 
 const HUD_DIST = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'hud', 'dist');
 
@@ -37,6 +48,11 @@ interface CardBusEvents {
   cardRetracted: [CardRetracted];
   meetingStarted: [{ meetingId: string }];
   meetingEnded: [{ meetingId: string }];
+  synthesisStart: [SynthesisStart];
+  synthesisDelta: [SynthesisDelta];
+  synthesisDone: [SynthesisDone];
+  synthesisError: [SynthesisError];
+  synthesisRetracted: [SynthesisRetracted];
 }
 
 export async function runServe(): Promise<number> {
@@ -53,6 +69,16 @@ export async function runServe(): Promise<number> {
   // noise. The query and corpus models share an .env source of truth.
   const voyageTextModel = optionalEnv('VOYAGE_TEXT_MODEL');
   const voyageCodeModel = optionalEnv('VOYAGE_CODE_MODEL');
+
+  // Synthesis is opt-in. Absent ANTHROPIC_API_KEY → no synthesizer wired,
+  // pipeline behaves exactly as before (raw cards only). The consent gate
+  // is checked per-flush via the hasConsent helper against the existing
+  // consent SQLite table.
+  const anthropicKey = optionalEnv('ANTHROPIC_API_KEY');
+  const anthropicModel = optionalEnv('ANTHROPIC_MODEL') ?? DEFAULT_ANTHROPIC_MODEL;
+  const synthesisMinScore = envFloat('UPWELL_SYNTHESIS_MIN_SCORE', 0.025);
+  const synthesisTopN = envInt('UPWELL_SYNTHESIS_TOP_N', 3);
+  const synthesisMaxTokens = envInt('UPWELL_SYNTHESIS_MAX_TOKENS', 150);
 
   const db = await openCorpusDb();
   await migrate(db);
@@ -98,7 +124,31 @@ export async function runServe(): Promise<number> {
       ...(voyageTextModel !== undefined && { textModel: voyageTextModel }),
       ...(voyageCodeModel !== undefined && { codeModel: voyageCodeModel }),
     });
-    const pipeline = new RetrievalPipeline({ db, embedder, session, debounceMs: 700, minScore: 0 });
+    const synthesizer =
+      anthropicKey !== undefined
+        ? new AnthropicSynthesizer({
+            apiKey: anthropicKey,
+            model: anthropicModel,
+            maxTokens: synthesisMaxTokens,
+            onUsage: (u) => log('info', 'synthesis.usage', { ...u }),
+          })
+        : undefined;
+    if (synthesizer === undefined) {
+      log('info', 'synthesis.disabled reason=no-key (set ANTHROPIC_API_KEY to enable)');
+    }
+
+    const pipeline = new RetrievalPipeline({
+      db,
+      embedder,
+      session,
+      debounceMs: 700,
+      minScore: 0,
+      ...(synthesizer !== undefined && { synthesizer }),
+      ...(synthesizer !== undefined && { consentCheck: (): boolean => hasConsent(db, 'anthropic') }),
+      minSynthesisScore: synthesisMinScore,
+      synthesisTopN,
+      synthesisMaxTokens,
+    });
     pipeline.attachWindow(window);
 
     let frameCount = 0;
@@ -119,6 +169,25 @@ export async function runServe(): Promise<number> {
     engine.on('error', (err) => log('error', `transcribe: ${err.message}`));
     pipeline.on('card', (card) => cardBus.emit('card', card));
     pipeline.on('error', (err) => log('error', `retrieve: ${err.message}`));
+    // Bridge synthesis events from the pipeline onto the cardBus so the
+    // broadcast loop fans them out over the WebSocket.
+    pipeline.on('synthesisStart', (e) => {
+      log('info', `synthesis.start ${e.synthesisId} sources=${String(e.sourceCardIds.length)}`);
+      cardBus.emit('synthesisStart', e);
+    });
+    pipeline.on('synthesisDelta', (e) => cardBus.emit('synthesisDelta', e));
+    pipeline.on('synthesisDone', (e) => {
+      log('info', `synthesis.done ${e.synthesisId} citations=[${e.citations.join(',')}]`);
+      cardBus.emit('synthesisDone', e);
+    });
+    pipeline.on('synthesisError', (e) => {
+      log('warn', `synthesis.error ${e.synthesisId} code=${e.code}`, e.message !== undefined ? { message: e.message } : undefined);
+      cardBus.emit('synthesisError', e);
+    });
+    pipeline.on('synthesisRetracted', (e) => {
+      log('info', `synthesis.retracted ${e.synthesisId} reason=${e.reason}`);
+      cardBus.emit('synthesisRetracted', e);
+    });
 
     await engine.start();
     await runner.start();
@@ -183,6 +252,11 @@ export async function runServe(): Promise<number> {
   cardBus.on('cardRetracted', (retracted) => broadcast({ type: 'cardRetracted', retracted }));
   cardBus.on('meetingStarted', (e) => broadcast({ type: 'meetingStarted', ...e }));
   cardBus.on('meetingEnded', (e) => broadcast({ type: 'meetingEnded', ...e }));
+  cardBus.on('synthesisStart', (e) => broadcast({ type: 'synthesisStart', ...e }));
+  cardBus.on('synthesisDelta', (e) => broadcast({ type: 'synthesisDelta', ...e }));
+  cardBus.on('synthesisDone', (e) => broadcast({ type: 'synthesisDone', ...e }));
+  cardBus.on('synthesisError', (e) => broadcast({ type: 'synthesisError', ...e }));
+  cardBus.on('synthesisRetracted', (e) => broadcast({ type: 'synthesisRetracted', ...e }));
 
   const url = `http://${server.boundHost}:${String(server.boundPort)}/`;
   log('info', `Upwell listening at ${url}`);
