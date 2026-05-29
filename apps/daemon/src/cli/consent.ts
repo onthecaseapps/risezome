@@ -3,7 +3,9 @@ import { openCorpusDb } from '../corpus/db.js';
 import { migrate } from '../corpus/migrate.js';
 import { log } from './util.js';
 
-const SUPPORTED_PROVIDERS = new Set(['deepgram', 'voyage', 'openai', 'anthropic']);
+export const SUPPORTED_PROVIDERS = new Set(['deepgram', 'voyage', 'openai', 'anthropic']);
+
+export type ConsentProvider = 'deepgram' | 'voyage' | 'openai' | 'anthropic';
 
 export async function runConsentCommand(args: readonly string[]): Promise<number> {
   const action = args[0];
