@@ -28,6 +28,9 @@ import type {
   SynthesisStart,
 } from '../retrieve/contract.js';
 import { AnthropicSynthesizer, DEFAULT_ANTHROPIC_MODEL } from '../synthesize/anthropic.js';
+import { AnthropicClassifier } from '../router/anthropic-classifier.js';
+import { SkillRegistry } from '../skills/registry.js';
+import { skills as githubSkills } from '../skills/github/index.js';
 import { hasConsent } from './consent-store.js';
 import { envFloat, envInt, log, optionalEnv, requireEnv } from './util.js';
 
@@ -137,6 +140,29 @@ export async function runServe(): Promise<number> {
       log('info', 'synthesis.disabled reason=no-key (set ANTHROPIC_API_KEY to enable)');
     }
 
+    // Router: classifier + skill registry. Instantiated on key-only (NOT
+    // on consent — consent is checked at usage time inside the pipeline so
+    // revocation takes effect on the next flush without a daemon restart).
+    // Same ANTHROPIC_API_KEY enables both synthesizer and classifier; no
+    // separate key or consent grant needed.
+    const skillRegistry = new SkillRegistry();
+    for (const s of githubSkills) skillRegistry.register(s);
+    const classifier =
+      anthropicKey !== undefined
+        ? new AnthropicClassifier({
+            apiKey: anthropicKey,
+            model: anthropicModel,
+            onUsage: (u) => log('info', 'classifier.usage', { ...u }),
+          })
+        : undefined;
+    if (classifier === undefined) {
+      log('info', 'router.disabled reason=no-key (set ANTHROPIC_API_KEY to enable)');
+    } else {
+      log('info', `router.enabled skills=${String(skillRegistry.size())}`);
+    }
+
+    const consentClosure = (): boolean => hasConsent(db, 'anthropic');
+
     const pipeline = new RetrievalPipeline({
       db,
       embedder,
@@ -144,10 +170,13 @@ export async function runServe(): Promise<number> {
       debounceMs: 700,
       minScore: 0,
       ...(synthesizer !== undefined && { synthesizer }),
-      ...(synthesizer !== undefined && { consentCheck: (): boolean => hasConsent(db, 'anthropic') }),
+      // The same consent closure gates both synthesis and the router classifier.
+      ...((synthesizer !== undefined || classifier !== undefined) && { consentCheck: consentClosure }),
       minSynthesisScore: synthesisMinScore,
       synthesisTopN,
       synthesisMaxTokens,
+      ...(classifier !== undefined && { classifier }),
+      skillRegistry,
     });
     pipeline.attachWindow(window);
 
@@ -197,6 +226,50 @@ export async function runServe(): Promise<number> {
       log('info', `synthesis.retracted ${e.synthesisId} reason=${e.reason}`);
       cardBus.emit('synthesisRetracted', e);
     });
+
+    // Router telemetry — log only; no HUD broadcast for v1. The synthesizer
+    // already surfaces the tool result inside the synthesis card, so the
+    // user-visible signal doesn't need a separate event family.
+    pipeline.on('classifierStart', (e) => log('info', 'classifier.start', { ...e }));
+    pipeline.on('classifierDone', (e) =>
+      log('info', 'classifier.done', {
+        traceId: e.traceId,
+        intent: e.intent,
+        skillName: e.skillName,
+        latencyMs: e.latencyMs,
+        ...(e.usage !== undefined && {
+          inputTokens: e.usage.inputTokens,
+          outputTokens: e.usage.outputTokens,
+          cacheReadTokens: e.usage.cacheReadTokens,
+          cacheCreationTokens: e.usage.cacheCreationTokens,
+        }),
+      }),
+    );
+    pipeline.on('classifierSkipped', (e) =>
+      log('info', 'classifier.skipped', { ...e }),
+    );
+    pipeline.on('classifierError', (e) =>
+      log('warn', 'classifier.error', { ...e }),
+    );
+    pipeline.on('skillStart', (e) =>
+      log('info', 'skill.start', { traceId: e.traceId, name: e.name, args: e.args }),
+    );
+    pipeline.on('skillDone', (e) =>
+      log('info', 'skill.done', {
+        traceId: e.traceId,
+        name: e.name,
+        latencyMs: e.latencyMs,
+        resultShape: e.resultShape,
+      }),
+    );
+    pipeline.on('skillFailed', (e) =>
+      log('warn', 'skill.failed', {
+        traceId: e.traceId,
+        name: e.name,
+        code: e.code,
+        message: e.message,
+      }),
+    );
 
     await engine.start();
     await runner.start();
