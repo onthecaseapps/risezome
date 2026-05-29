@@ -59,10 +59,20 @@ export interface SynthesisDeltaEvent {
   readonly delta: string;
 }
 
+export interface SynthesisUsageStats {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreationTokens: number;
+}
+
 export interface SynthesisDoneEvent {
   readonly synthesisId: string;
   readonly stopReason: string;
   readonly citations: readonly number[];
+  readonly usage: SynthesisUsageStats;
+  readonly ttftMs: number;
+  readonly latencyMs: number;
 }
 
 export interface SynthesisErrorEvent {

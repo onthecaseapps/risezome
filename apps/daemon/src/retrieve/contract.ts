@@ -74,10 +74,22 @@ export interface SynthesisDelta {
   readonly delta: string;
 }
 
+export interface SynthesisUsageStats {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreationTokens: number;
+}
+
 export interface SynthesisDone {
   readonly synthesisId: string;
   readonly stopReason: string;
   readonly citations: readonly number[];
+  readonly usage: SynthesisUsageStats;
+  /** Time-to-first-token: ms from synthesizer.synthesize() call to first textDelta. */
+  readonly ttftMs: number;
+  /** Total latency: ms from synthesizer.synthesize() call to done chunk. */
+  readonly latencyMs: number;
 }
 
 export interface SynthesisError {

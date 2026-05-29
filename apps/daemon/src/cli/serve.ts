@@ -177,7 +177,16 @@ export async function runServe(): Promise<number> {
     });
     pipeline.on('synthesisDelta', (e) => cardBus.emit('synthesisDelta', e));
     pipeline.on('synthesisDone', (e) => {
-      log('info', `synthesis.done ${e.synthesisId} citations=[${e.citations.join(',')}]`);
+      log('info', 'synthesis.done', {
+        synthesisId: e.synthesisId,
+        citations: e.citations,
+        ttftMs: e.ttftMs,
+        latencyMs: e.latencyMs,
+        inputTokens: e.usage.inputTokens,
+        outputTokens: e.usage.outputTokens,
+        cacheReadTokens: e.usage.cacheReadTokens,
+        cacheCreationTokens: e.usage.cacheCreationTokens,
+      });
       cardBus.emit('synthesisDone', e);
     });
     pipeline.on('synthesisError', (e) => {

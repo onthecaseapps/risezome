@@ -13,6 +13,7 @@ import {
   type SynthesisInput,
 } from '../synthesize/contract.js';
 import { parseSynthesisOutput, REFUSAL_SENTINEL } from '../synthesize/prompt.js';
+import { log } from '../cli/util.js';
 import type {
   CardEvent,
   CardRetracted,
@@ -142,10 +143,14 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     // Abort the in-flight synthesis (if any) before scheduling a new flush —
     // the next utterance has superseded the previous question, so the
     // half-streamed answer would be obsolete by the time it lands.
-    try {
-      this.#session.getActiveSynthesis()?.controller.abort();
-    } catch {
-      // already aborted
+    const active = this.#session.getActiveSynthesis();
+    if (active !== null && !active.controller.signal.aborted) {
+      log('info', 'synthesis.aborted', { synthesisId: active.synthesisId });
+      try {
+        active.controller.abort();
+      } catch {
+        // already aborted
+      }
     }
     const flushAt = this.#now();
     this.#pendingTraceContext = { windowFlushAt: flushAt };
@@ -264,13 +269,23 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     // Synthesis gate — fire-and-forget after raw cards have already shipped.
     // Gate requires: at least one newly emitted card this flush, a
     // synthesizer configured, consent granted, and the top card's RRF
-    // score above the threshold.
-    if (
-      emittedCards.length > 0
-      && this.#synthesizer !== undefined
-      && (this.#consentCheck === undefined || this.#consentCheck())
-      && emittedCards[0]!.score >= this.#minSynthesisScore
-    ) {
+    // score above the threshold. Log every skip with the reason so the
+    // calibration question ("are we gating too aggressively?") is
+    // answerable from the daemon log.
+    if (this.#synthesizer === undefined) {
+      // Silent — caller logged synthesis.disabled at startup; no per-flush noise.
+    } else if (emittedCards.length === 0) {
+      log('info', 'synthesis.skipped', { reason: 'no-results', traceId });
+    } else if (this.#consentCheck !== undefined && !this.#consentCheck()) {
+      log('info', 'synthesis.skipped', { reason: 'no-consent', traceId });
+    } else if (emittedCards[0]!.score < this.#minSynthesisScore) {
+      log('info', 'synthesis.skipped', {
+        reason: 'below-threshold',
+        topScore: emittedCards[0]!.score,
+        threshold: this.#minSynthesisScore,
+        traceId,
+      });
+    } else {
       void this.#maybeSynthesize(emittedCards, windowText.text, traceId);
     }
   }
@@ -314,6 +329,8 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     });
 
     let accumulatedText = '';
+    const callStartedAt = this.#now();
+    let firstDeltaAt: number | null = null;
     try {
       for await (const chunk of this.#synthesizer.synthesize(input, controller.signal)) {
         switch (chunk.type) {
@@ -321,10 +338,12 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
             // No-op; start was emitted to the HUD before the synthesizer call.
             continue;
           case 'textDelta':
+            if (firstDeltaAt === null) firstDeltaAt = this.#now();
             accumulatedText += chunk.delta;
             this.emit('synthesisDelta', { synthesisId, delta: chunk.delta });
             continue;
           case 'done': {
+            const doneAt = this.#now();
             const parsed = parseSynthesisOutput(accumulatedText, sources.length);
             if (parsed.isRefusal) {
               this.emit('synthesisError', { synthesisId, code: 'refused' });
@@ -338,6 +357,14 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
                 synthesisId,
                 stopReason: chunk.stopReason,
                 citations: parsed.citations,
+                usage: {
+                  inputTokens: chunk.usage.inputTokens,
+                  outputTokens: chunk.usage.outputTokens,
+                  cacheReadTokens: chunk.usage.cacheReadTokens,
+                  cacheCreationTokens: chunk.usage.cacheCreationTokens,
+                },
+                ttftMs: firstDeltaAt !== null ? firstDeltaAt - callStartedAt : doneAt - callStartedAt,
+                latencyMs: doneAt - callStartedAt,
               });
               // Do NOT clear — the synthesis stays in the session map so the
               // retract cascade can find it later. Cleared on meeting end
