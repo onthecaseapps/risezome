@@ -1,0 +1,6 @@
+@import 'tailwindcss';
+
+/* Drive dark mode by a `.dark` class on <html> (matching @upwell/hud) so a
+   future theme toggle can override the OS preference. U2 layers the ported
+   HUD design tokens on top of this. */
+@custom-variant dark (&:where(.dark, .dark *));
