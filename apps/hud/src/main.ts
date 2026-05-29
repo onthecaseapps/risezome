@@ -1,6 +1,7 @@
 import { Sidebar } from './sidebar.js';
 import { WsClient } from './ws-client.js';
 import type { ServerMessage } from './types.js';
+import { renderIcon, type IconName } from './icons.js';
 
 export interface BootstrapConfig {
   readonly wsUrl: string;
@@ -164,10 +165,15 @@ function wireThemeToggle(doc: Document): void {
 }
 
 function updateThemeIcon(doc: Document, mode: 'light' | 'dark'): void {
-  const icon = doc.querySelector<HTMLElement>('#theme-toggle .theme-toggle-icon');
-  if (icon === null) return;
-  // ☀ for light (clicking will switch to dark); ☾ for dark (clicking → light).
-  icon.textContent = mode === 'dark' ? '☾' : '☀';
+  const slot = doc.querySelector<HTMLElement>('#theme-toggle .theme-toggle-icon');
+  if (slot === null) return;
+  // Sun glyph when light is active (click → goes dark); moon when dark is
+  // active. Render fresh each time so the SVG fully replaces the prior icon
+  // instead of leaking attributes from the previous render.
+  const name: IconName = mode === 'dark' ? 'moon' : 'sun';
+  slot.replaceChildren(
+    renderIcon(doc, name, { size: '14px', ariaLabel: mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode' }),
+  );
 }
 
 if (typeof window !== 'undefined' && window.UPWELL_BOOTSTRAP !== undefined) {
