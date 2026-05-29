@@ -62,8 +62,16 @@ describe('pullRepoFiles', () => {
   });
 
   it('emits markdown chunks with domain=text and code chunks with domain=code', async () => {
-    await writeRepoFile(fakeRepoDir, 'README.md', '## Section\n\nbody content here.');
-    await writeRepoFile(fakeRepoDir, 'src/main.ts', 'export const a = 1;\n');
+    await writeRepoFile(
+      fakeRepoDir,
+      'README.md',
+      '## Section\n\nThis is body content that is meaningfully long enough to clear the chunk-floor noise guard.',
+    );
+    await writeRepoFile(
+      fakeRepoDir,
+      'src/main.ts',
+      'export const a = 1;\nexport const b = 2;\nexport const c = 3;\nexport const d = 4;\n',
+    );
 
     const result = await pullRepoFiles(TEST_AUTH, makeScope(), {
       cacheDir,
@@ -76,6 +84,8 @@ describe('pullRepoFiles', () => {
     expect(mdChunks.every((c) => c.domain === 'text')).toBe(true);
     expect(codeChunks.length).toBeGreaterThan(0);
     expect(codeChunks.every((c) => c.domain === 'code')).toBe(true);
+    // E: code chunk headers now include a `lang: <language>` tag.
+    expect(codeChunks[0]!.text).toContain('(lang: typescript)');
   });
 
   it('prepends file:line headers to code chunks so retrieval shows location', async () => {

@@ -8,26 +8,41 @@ describe('chunkMarkdown', () => {
   });
 
   it('returns a single chunk for short content with no H2', () => {
-    const md = '# Title\n\nSome introductory prose that is long enough to count.';
+    const md =
+      '# Title\n\nSome introductory prose that is long enough to count as a meaningful chunk per the minimum-size guard.';
     const chunks = chunkMarkdown(md);
     expect(chunks).toHaveLength(1);
     expect(chunks[0]?.heading).toBeNull();
     expect(chunks[0]?.text).toContain('# Title');
   });
 
+  it('drops sections shorter than the min-chunk-chars floor', () => {
+    const md = [
+      '## Quick',
+      '',
+      'Tiny.',
+      '',
+      '## Real',
+      '',
+      'This section has real body content well above the minimum-size floor so it survives the noise gate.',
+    ].join('\n');
+    const chunks = chunkMarkdown(md);
+    expect(chunks.map((c) => c.heading)).toEqual(['Real']);
+  });
+
   it('splits on H2 headings', () => {
     const md = [
       '# Title',
       '',
-      'Intro paragraph that is more than the eighty character minimum length to count as a chunk.',
+      'Intro paragraph that comfortably exceeds the eighty character minimum length to count as a chunk after trim.',
       '',
       '## First section',
       '',
-      'First section body that also exceeds the eighty character minimum.',
+      'First section body that also comfortably exceeds the eighty character minimum length per the noise gate.',
       '',
       '## Second section',
       '',
-      'Second section body that also exceeds the eighty character minimum.',
+      'Second section body that also comfortably exceeds the eighty character minimum length per the noise gate.',
     ].join('\n');
     const chunks = chunkMarkdown(md);
     expect(chunks.length).toBe(3);
@@ -51,11 +66,11 @@ describe('chunkMarkdown', () => {
     const md = [
       '## Top',
       '',
-      'Top body that is meaningfully long for our chunk floor.',
+      'Top section body that is meaningfully long enough to clear the chunk-floor guard for testing.',
       '',
       '### Subsection',
       '',
-      'Sub body that is also meaningfully long for our chunk floor.',
+      'Subsection body that is also meaningfully long enough to clear the chunk-floor guard for testing.',
     ].join('\n');
     const chunks = chunkMarkdown(md);
     expect(chunks.map((c) => c.heading)).toEqual(['Top', 'Subsection']);
@@ -68,7 +83,7 @@ describe('chunkMarkdown', () => {
     const md = [
       '## Outstanding Questions',
       '',
-      'Question one body that meets the minimum body length floor.',
+      'Question one body that is meaningfully long enough to clear the chunk-floor guard for testing.',
     ].join('\n');
     const chunks = chunkMarkdown(md);
     expect(chunks).toHaveLength(1);
@@ -86,9 +101,34 @@ describe('chunkMarkdown', () => {
       '',
       '## Next Section',
       '',
-      'Real body content that exceeds the minimum length floor easily.',
+      'Real body content that is meaningfully long enough to clear the chunk-floor guard for testing.',
     ].join('\n');
     const chunks = chunkMarkdown(md);
     expect(chunks.map((c) => c.heading)).toEqual(['Next Section']);
+  });
+
+  it('keeps fenced code blocks atomic during fixed-window splits (D)', () => {
+    // Build a section larger than maxChunkChars that contains a fenced code
+    // block; the splitter must not cleave it.
+    const filler = 'Lots of explanatory prose. '.repeat(40);
+    const md = [
+      '## Big',
+      '',
+      filler,
+      '',
+      '```typescript',
+      'function example() {',
+      '  return 42;',
+      '}',
+      '```',
+      '',
+      filler,
+    ].join('\n');
+    const chunks = chunkMarkdown(md, { maxChunkChars: 600 });
+    // No chunk should contain an unbalanced fence (opening without closing or vice versa).
+    for (const c of chunks) {
+      const fenceMatches = c.text.match(/```/g) ?? [];
+      expect(fenceMatches.length % 2).toBe(0);
+    }
   });
 });

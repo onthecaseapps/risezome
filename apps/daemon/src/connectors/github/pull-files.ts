@@ -5,6 +5,7 @@ import { ensureClone, type CloneResult } from './clone.js';
 import { walkRepoFiles, type WalkOptions } from './walk.js';
 import { chunkMarkdown } from './chunk-md.js';
 import { chunkCode } from './chunk-code.js';
+import { chunkIsMeaningful, languageForPath } from './chunk-shared.js';
 
 export interface PullRepoFilesOptions {
   readonly cacheDir: string;
@@ -61,23 +62,33 @@ export async function pullRepoFiles(
     if (file.kind === 'doc') {
       const mdChunks = chunkMarkdown(file.content);
       mdChunks.forEach((c) => {
+        const text = c.heading !== null ? `## ${c.heading}\n\n${c.text}` : c.text;
+        if (!chunkIsMeaningful(text)) return;
         chunks.push({
           chunkId: `${docId}#md:${String(c.index)}`,
           docId,
           domain: 'text',
-          text: c.heading !== null ? `## ${c.heading}\n\n${c.text}` : c.text,
+          text,
           position: c.index,
         });
       });
     } else {
+      const language = languageForPath(file.relPath);
       const codeChunks = chunkCode(file.content);
       codeChunks.forEach((c) => {
-        const header = `${file.relPath}:${String(c.startLine)}-${String(c.endLine)}`;
+        // Header carries path:lines AND a `lang:` hint so the embedded
+        // text gives the model a semantic anchor beyond the file path
+        // extension alone. Helps queries like "show me a python example"
+        // resolve to the right language even when path is something
+        // generic like `scripts/migrate.py`.
+        const header = `${file.relPath}:${String(c.startLine)}-${String(c.endLine)} (lang: ${language})`;
+        const text = `// ${header}\n${c.text}`;
+        if (!chunkIsMeaningful(text)) return;
         chunks.push({
           chunkId: `${docId}#code:${String(c.index)}`,
           docId,
           domain: 'code',
-          text: `// ${header}\n${c.text}`,
+          text,
           position: c.index,
         });
       });
