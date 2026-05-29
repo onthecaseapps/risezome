@@ -11,9 +11,13 @@
     "dev": "node --watch --import ./loader.mjs ./src/index.ts"
   },
   "dependencies": {
-    "@upwell/shared-types": "workspace:*"
+    "@fastify/websocket": "^11.0.1",
+    "@upwell/shared-types": "workspace:*",
+    "fastify": "^5.2.1"
   },
   "devDependencies": {
-    "typescript": "^5.7.3"
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.3",
+    "ws": "^8.18.0"
   }
 }
