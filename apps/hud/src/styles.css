@@ -151,6 +151,26 @@ body {
   50% { opacity: 0.35; }
 }
 
+/* Card arrival: confident slide-down + fade. Mounted by adding the
+   .is-entering class to a freshly-inserted .card; the class is removed
+   on animationend AND by a setTimeout safety net in sidebar.ts (the
+   timeout matters because animationend may not fire under
+   prefers-reduced-motion or in occluded tabs). */
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.card.is-entering {
+  animation: card-enter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 #connection-banner {
   margin-left: auto;
   font-size: 11px;
@@ -372,12 +392,9 @@ body {
 .card.synthesis {
   border-color: var(--accent);
   border-left-width: 3px;
-  animation: synthesis-fade-in 220ms ease-out;
-}
-
-@keyframes synthesis-fade-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
+  /* Arrival animation comes from .is-entering (shared with raw cards).
+     The old always-on synthesis-fade-in was removed in U1 so the
+     synthesis card and raw cards share the same motion language. */
 }
 
 .card.synthesis .ai-label {
@@ -534,4 +551,26 @@ body {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* --- prefers-reduced-motion ----------------------------------------------
+   Honor the user's reduced-motion preference WITHOUT erasing useful non-motion
+   transitions (button hover border-color, card-update flash) and WITHOUT
+   halting the connection-status pulse (it's a connection-down signal that
+   reduced-motion users still need).
+
+   Property-targeted: shorten animation/transition durations to near-zero
+   instead of `animation: none` so opacity portions of keyframes still apply
+   (at near-instant duration) and non-motion transitions keep their semantics.
+   The .status-live::before infinite pulse is explicitly re-enabled.
+   ----------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .status-live::before {
+    animation: pulse 1.6s ease-in-out infinite !important;
+  }
 }

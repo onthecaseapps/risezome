@@ -207,6 +207,7 @@ export class Sidebar {
     // Newest first: prepend so fresh meeting context is always at the top
     // of the stream instead of pushing the user to scroll for it.
     this.#streamEl.insertBefore(el, this.#streamEl.firstChild);
+    applyEnterAnimation(el);
     this.#cards.set(card.cardId, { card, el, pinned: false });
     this.#onNewContent();
   }
@@ -238,6 +239,7 @@ export class Sidebar {
     if (this.#gaps.has(gap.gapId)) return;
     const el = this.#buildGapElement(gap);
     this.#streamEl.insertBefore(el, this.#streamEl.firstChild);
+    applyEnterAnimation(el);
     this.#gaps.set(gap.gapId, el);
     this.#onNewContent();
   }
@@ -302,6 +304,7 @@ export class Sidebar {
 
     el.append(header, bodyEl, cursorEl, citationsEl);
     this.#streamEl.insertBefore(el, this.#streamEl.firstChild);
+    applyEnterAnimation(el);
 
     this.#syntheses.set(start.synthesisId, {
       synthesisId: start.synthesisId,
@@ -656,4 +659,22 @@ function buildSnippet(doc: Document, card: CardEvent): HTMLElement {
   wrap.appendChild(pre);
 
   return wrap;
+}
+
+// Adds the `is-entering` class to a freshly-inserted element and cleans it up
+// via TWO mechanisms: an `animationend` listener AND a setTimeout safety net.
+// The timeout matters because `animationend` does not fire reliably when
+// animations are suppressed (prefers-reduced-motion) or when the tab is
+// occluded. Both removals are idempotent; whichever fires first wins.
+//
+// Duration constant slightly longer than the CSS animation (220ms) so the
+// setTimeout doesn't preempt a real animation that's about to complete.
+const ENTER_ANIMATION_CLEANUP_MS = 400;
+function applyEnterAnimation(el: HTMLElement): void {
+  el.classList.add('is-entering');
+  const cleanup = (): void => {
+    el.classList.remove('is-entering');
+  };
+  el.addEventListener('animationend', cleanup, { once: true });
+  setTimeout(cleanup, ENTER_ANIMATION_CLEANUP_MS);
 }

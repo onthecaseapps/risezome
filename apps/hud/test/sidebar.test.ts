@@ -442,4 +442,87 @@ describe('Sidebar', () => {
     expect(streamEl.querySelector('.synthesis-sources-grid')).toBeNull();
     expect(streamEl.querySelector('.card.consolidated')).toBeNull();
   });
+
+  // -------------------------------------------------------------------------
+  // U1: Card arrival animation
+  // -------------------------------------------------------------------------
+
+  describe('card arrival animation (U1)', () => {
+    it('renderCard adds is-entering on the new card element', () => {
+      sidebar.renderCard(makeCard());
+      const card = streamEl.querySelector<HTMLElement>('.card');
+      expect(card).not.toBeNull();
+      expect(card!.classList.contains('is-entering')).toBe(true);
+    });
+
+    it('renderSynthesisStart adds is-entering on the synthesis card', () => {
+      sidebar.renderSynthesisStart({
+        synthesisId: 'syn_anim',
+        sourceCardIds: ['c1'],
+        traceId: 't1',
+      } as SynthesisStartEvent);
+      const synth = streamEl.querySelector<HTMLElement>('.card.synthesis');
+      expect(synth).not.toBeNull();
+      expect(synth!.classList.contains('is-entering')).toBe(true);
+    });
+
+    it('renderGap adds is-entering on the gap element', () => {
+      sidebar.renderGap(makeGap());
+      const gap = streamEl.querySelector<HTMLElement>('.gap');
+      expect(gap).not.toBeNull();
+      expect(gap!.classList.contains('is-entering')).toBe(true);
+    });
+
+    it('dispatching animationend removes is-entering', () => {
+      sidebar.renderCard(makeCard());
+      const card = streamEl.querySelector<HTMLElement>('.card')!;
+      expect(card.classList.contains('is-entering')).toBe(true);
+      card.dispatchEvent(new Event('animationend'));
+      expect(card.classList.contains('is-entering')).toBe(false);
+    });
+
+    it('setTimeout safety net removes is-entering when animationend never fires', async () => {
+      vi.useFakeTimers();
+      try {
+        sidebar.renderCard(makeCard());
+        const card = streamEl.querySelector<HTMLElement>('.card')!;
+        expect(card.classList.contains('is-entering')).toBe(true);
+        // Do NOT dispatch animationend — simulate a reduced-motion or
+        // backgrounded-tab scenario where the animation never completes.
+        vi.advanceTimersByTime(500);
+        expect(card.classList.contains('is-entering')).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('idempotent cleanup — animationend + setTimeout both firing does not throw', async () => {
+      vi.useFakeTimers();
+      try {
+        sidebar.renderCard(makeCard());
+        const card = streamEl.querySelector<HTMLElement>('.card')!;
+        card.dispatchEvent(new Event('animationend'));
+        expect(card.classList.contains('is-entering')).toBe(false);
+        // The pending timer fires — classList.remove on an already-absent
+        // class is a no-op, no error thrown.
+        expect(() => vi.advanceTimersByTime(500)).not.toThrow();
+        expect(card.classList.contains('is-entering')).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('subsequent renderCard does NOT re-add is-entering on the previous card', () => {
+      sidebar.renderCard(makeCard({ cardId: 'c1' }));
+      const first = streamEl.querySelector<HTMLElement>('.card')!;
+      first.dispatchEvent(new Event('animationend'));
+      expect(first.classList.contains('is-entering')).toBe(false);
+      sidebar.renderCard(makeCard({ cardId: 'c2', docId: 'd2' }));
+      // The first card stays clean; only the new card has is-entering.
+      expect(first.classList.contains('is-entering')).toBe(false);
+      const newest = streamEl.querySelector<HTMLElement>('.card');
+      expect(newest!.dataset['cardId']).toBe('c2');
+      expect(newest!.classList.contains('is-entering')).toBe(true);
+    });
+  });
 });
