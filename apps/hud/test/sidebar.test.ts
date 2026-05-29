@@ -578,4 +578,43 @@ describe('Sidebar', () => {
       expect((typeChip as HTMLElement | null)?.dataset['glyph']).toBe('code');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // U4: Synthesis card visual distinction
+  // -------------------------------------------------------------------------
+
+  describe('synthesis card visual distinction (U4)', () => {
+    it('synthesis card carries data-kind="synthesis"', () => {
+      sidebar.renderSynthesisStart({
+        synthesisId: 'syn_u4',
+        sourceCardIds: ['c1'],
+        traceId: 't1',
+      } as SynthesisStartEvent);
+      const synth = streamEl.querySelector<HTMLElement>('.card.synthesis');
+      expect(synth?.dataset['kind']).toBe('synthesis');
+    });
+
+    it('synthesis card has the synthesis class (left accent border + tint applied via CSS)', () => {
+      sidebar.renderSynthesisStart({
+        synthesisId: 'syn_u4b',
+        sourceCardIds: ['c1'],
+        traceId: 't1',
+      } as SynthesisStartEvent);
+      const synth = streamEl.querySelector('.card.synthesis');
+      expect(synth).not.toBeNull();
+      // border-left + background-image (tint layer) are set by CSS class.
+      // Manual visual verification is the merge gate; this test pins the
+      // class contract that the CSS hooks into.
+    });
+
+    it('synthesis-body uses the .synthesis-body class so the larger answer-text rule applies', () => {
+      sidebar.renderSynthesisStart({
+        synthesisId: 'syn_u4c',
+        sourceCardIds: [],
+        traceId: 't1',
+      } as SynthesisStartEvent);
+      const body = streamEl.querySelector('.synthesis-body');
+      expect(body).not.toBeNull();
+    });
+  });
 });

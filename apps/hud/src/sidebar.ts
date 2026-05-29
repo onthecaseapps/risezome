@@ -280,6 +280,10 @@ export class Sidebar {
     const el = doc.createElement('article');
     el.className = 'card synthesis';
     el.dataset['synthesisId'] = start.synthesisId;
+    // U4: explicit kind attribute so tests + future selectors can target
+    // the synthesis card by data attribute rather than class name (which
+    // can change as we refactor visual treatment).
+    el.dataset['kind'] = 'synthesis';
     // aria-live="off". per-token DOM mutations would spam SR; the
     // #synthesis-announce sibling element receives the final text once.
     el.setAttribute('aria-live', 'off');
