@@ -21,6 +21,7 @@ export interface DeepgramOptions {
   readonly wsFactory?: WsFactory;
   readonly maxReconnectAttempts?: number;
   readonly preStartBufferMs?: number;
+  readonly now?: () => number;
 }
 
 export type WsFactory = (
@@ -70,6 +71,7 @@ export class DeepgramTranscriptionEngine
 {
   readonly #options: DeepgramOptions;
   readonly #factory: WsFactory;
+  readonly #now: () => number;
   #ws: MinimalWebSocket | null = null;
   #ready = false;
   #stopRequested = false;
@@ -77,11 +79,18 @@ export class DeepgramTranscriptionEngine
   #currentUtteranceId: string | null = null;
   #currentRevision = 0;
   #lastSpeaker: string | null = null;
+  // Wall-clock epoch ms captured when the Deepgram WS opens. Deepgram emits
+  // `start`/`duration` in seconds-since-stream-start, but the rest of Upwell
+  // (TranscriptWindow filters, the persisted store, retrieval cutoffs) treats
+  // utterance times as wall-clock ms. Adding this offset at the engine
+  // boundary makes startMs/endMs comparable to Date.now() everywhere.
+  #connectWallclockMs: number | null = null;
 
   constructor(options: DeepgramOptions) {
     super();
     this.#options = options;
     this.#factory = options.wsFactory ?? defaultWsFactory;
+    this.#now = options.now ?? Date.now;
   }
 
   async start(): Promise<void> {
@@ -143,6 +152,7 @@ export class DeepgramTranscriptionEngine
       const onOpen = (): void => {
         this.#ready = true;
         this.#reconnects = 0;
+        this.#connectWallclockMs = this.#now();
         resolve();
       };
       const onMessage = (...args: unknown[]): void => {
@@ -226,16 +236,20 @@ export class DeepgramTranscriptionEngine
     const speaker = inferSpeaker(alt);
     const speakerKey = speaker !== undefined ? `s${String(speaker)}` : undefined;
     if (speakerKey !== undefined && speakerKey !== this.#lastSpeaker) {
-      this.emit('speakerChange', { speaker: speakerKey, atMs: msStart(parsed) });
+      const speakerBase = this.#connectWallclockMs ?? this.#now();
+      this.emit('speakerChange', { speaker: speakerKey, atMs: speakerBase + msStart(parsed) });
       this.#lastSpeaker = speakerKey;
     }
 
+    const base = this.#connectWallclockMs ?? this.#now();
+    const startMs = base + msStart(parsed);
+    const endMs = base + msEnd(parsed);
     const utterance: Utterance = {
       utteranceId,
       text: alt.transcript,
       isFinal: parsed.is_final === true,
-      startMs: msStart(parsed),
-      endMs: msEnd(parsed),
+      startMs,
+      endMs,
       revision: this.#currentRevision++,
       ...(speakerKey !== undefined && { speaker: speakerKey }),
       ...(alt.confidence !== undefined && { confidence: alt.confidence }),

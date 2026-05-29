@@ -61,8 +61,13 @@ static void install_signal_handlers(void) {
 /*
  * Minimal JSON-string-value extractor. Locates `"key":"value"` in a flat
  * object and copies the unescaped value into out (truncating if needed).
- * Returns 1 on success, 0 on miss. Sufficient for the daemon-controlled
- * input shapes; not a general JSON parser.
+ * Returns 1 on success, 0 on miss.
+ *
+ * Iterates through all occurrences of `"key"` so input like
+ * `{"type":"nonce","nonce":"<hex>"}` matches the *key* `"nonce"` (the
+ * second occurrence) and not the *value* `"nonce"` (the first). A match
+ * is only accepted when followed by optional whitespace, ':', optional
+ * whitespace, and a string literal.
  */
 static int extract_json_string_field(const char *line, const char *key,
                                      char *out, size_t out_cap) {
@@ -71,16 +76,19 @@ static int extract_json_string_field(const char *line, const char *key,
     char needle[64];
     int written = snprintf(needle, sizeof(needle), "\"%s\"", key);
     if (written <= 0 || (size_t)written >= sizeof(needle)) return 0;
-    const char *p = strstr(line, needle);
-    if (p == NULL) return 0;
-    p += (size_t)written;
-    /* Skip whitespace and the colon. */
-    while (*p == ' ' || *p == '\t') p++;
-    if (*p != ':') return 0;
-    p++;
-    while (*p == ' ' || *p == '\t') p++;
-    if (*p != '"') return 0;
-    p++;
+
+    const char *search_from = line;
+    while (1) {
+        const char *match = strstr(search_from, needle);
+        if (match == NULL) return 0;
+        const char *p = match + (size_t)written;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p != ':') { search_from = match + 1; continue; }
+        p++;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p != '"') { search_from = match + 1; continue; }
+        p++;
+
     size_t i = 0;
     while (*p != '\0' && *p != '"' && i + 1 < out_cap) {
         if (*p == '\\' && *(p + 1) != '\0') {
@@ -103,6 +111,7 @@ static int extract_json_string_field(const char *line, const char *key,
     }
     out[i] = '\0';
     return (*p == '"') ? 1 : 0;
+    }
 }
 
 static int read_line(int fd, char *buf, size_t buf_cap) {
