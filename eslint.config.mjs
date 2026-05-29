@@ -25,6 +25,7 @@ export default tseslint.config(
             'vitest.config.ts',
             '*.config.ts',
             '*.config.mjs',
+            'apps/hud/build.config.mjs',
           ],
         },
         tsconfigRootDir: import.meta.dirname,
@@ -48,6 +49,21 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/require-await': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
+    },
+  },
+  {
+    files: ['**/*.config.mjs', '**/build.config.mjs'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        Buffer: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+      },
+    },
+    rules: {
+      'no-console': 'off',
     },
   },
   prettierConfig,
