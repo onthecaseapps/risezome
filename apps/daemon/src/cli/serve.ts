@@ -124,6 +124,11 @@ export async function runServe(): Promise<number> {
     const embedder = new VoyageEmbedder({
       apiKey: voyageKey,
       onUsage: (u) => log('info', 'voyage.usage', { ...u }),
+      onRetryWait: (info) =>
+        log(
+          'warn',
+          `voyage.retry attempt=${String(info.attempt)}/${String(info.maxRetries)} wait=${String(info.waitMs)}ms reason=${info.reason}`,
+        ),
       ...(voyageTextModel !== undefined && { textModel: voyageTextModel }),
       ...(voyageCodeModel !== undefined && { codeModel: voyageCodeModel }),
     });
