@@ -946,3 +946,389 @@ describe('RetrievalPipeline — synthesis abort + retract cascade', () => {
     expect(h.events.retracted).toHaveLength(0);
   });
 });
+
+// =====================================================================
+// U5 — router integration tests
+// =====================================================================
+
+import { SkillRegistry } from '../../src/skills/registry.js';
+import type { Skill, SkillResult } from '../../src/skills/contract.js';
+import type {
+  Classifier,
+  ClassifierResult,
+  ClassifyInput,
+} from '../../src/router/contract.js';
+import { ClassifierProviderError } from '../../src/router/contract.js';
+import type {
+  ClassifierDone,
+  ClassifierError,
+  ClassifierSkipped,
+  ClassifierStart,
+  SkillDone,
+  SkillFailed,
+  SkillStart,
+} from '../../src/retrieve/contract.js';
+
+interface RouterEvents {
+  classifierStart: ClassifierStart[];
+  classifierDone: ClassifierDone[];
+  classifierSkipped: ClassifierSkipped[];
+  classifierError: ClassifierError[];
+  skillStart: SkillStart[];
+  skillDone: SkillDone[];
+  skillFailed: SkillFailed[];
+}
+
+function recordRouterEvents(pipeline: RetrievalPipeline): RouterEvents {
+  const events: RouterEvents = {
+    classifierStart: [],
+    classifierDone: [],
+    classifierSkipped: [],
+    classifierError: [],
+    skillStart: [],
+    skillDone: [],
+    skillFailed: [],
+  };
+  pipeline.on('classifierStart', (e) => events.classifierStart.push(e));
+  pipeline.on('classifierDone', (e) => events.classifierDone.push(e));
+  pipeline.on('classifierSkipped', (e) => events.classifierSkipped.push(e));
+  pipeline.on('classifierError', (e) => events.classifierError.push(e));
+  pipeline.on('skillStart', (e) => events.skillStart.push(e));
+  pipeline.on('skillDone', (e) => events.skillDone.push(e));
+  pipeline.on('skillFailed', (e) => events.skillFailed.push(e));
+  return events;
+}
+
+function fakeClassifier(
+  generate: (input: ClassifyInput, signal?: AbortSignal) => Promise<ClassifierResult>,
+): Classifier {
+  return { classify: (input, signal) => generate(input, signal) };
+}
+
+function makeRegistryWith(skills: Skill[]): SkillRegistry {
+  const r = new SkillRegistry();
+  for (const s of skills) r.register(s);
+  return r;
+}
+
+const COUNT_SKILL: Skill = {
+  source: 'github',
+  name: 'github.count',
+  description: 'count things',
+  inputSchema: { type: 'object', properties: {} },
+  handler: async (args): Promise<SkillResult> => ({
+    kind: 'count',
+    summary: '7 matching docs.',
+    raw: { count: 7, args },
+  }),
+};
+
+async function setupWithRouter(opts: {
+  classifier?: Classifier;
+  registry?: SkillRegistry;
+  synthesizer?: Synthesizer;
+  consentCheck?: () => boolean;
+}): Promise<
+  Harness & {
+    routerEvents: RouterEvents;
+    synthesisEvents: SynthesisEvents;
+  }
+> {
+  const dir = mkdtempSync(join(tmpdir(), 'upwell-pipeline-router-'));
+  const db = await openCorpusDb({ path: join(dir, 'upwell.db') });
+  await migrate(db);
+  const store = new TranscriptStore(db);
+  store.ensureMeeting('m:1', null, 0);
+  const session = new MeetingSession('m:1');
+  const nowRef = { value: 100_000 };
+  const window = new TranscriptWindow({
+    meetingId: 'm:1',
+    store,
+    now: () => nowRef.value,
+  });
+  const embedder = fakeEmbedder(() => unitVectorAt(7));
+  const pipeline = new RetrievalPipeline({
+    db,
+    embedder,
+    session,
+    debounceMs: 0,
+    minScore: 0,
+    minSynthesisScore: 0,
+    now: () => nowRef.value,
+    ...(opts.synthesizer !== undefined && { synthesizer: opts.synthesizer }),
+    ...(opts.consentCheck !== undefined && { consentCheck: opts.consentCheck }),
+    ...(opts.classifier !== undefined && { classifier: opts.classifier }),
+    ...(opts.registry !== undefined && { skillRegistry: opts.registry }),
+  });
+  pipeline.attachWindow(window);
+  const routerEvents = recordRouterEvents(pipeline);
+  const synthesisEvents = recordSynthesisEvents(pipeline);
+  return { db, store, window, session, embedder, pipeline, dir, nowRef, routerEvents, synthesisEvents };
+}
+
+describe('RetrievalPipeline — router gate', () => {
+  let h: Awaited<ReturnType<typeof setupWithRouter>>;
+
+  afterEach(() => {
+    if (h !== undefined) teardown(h);
+  });
+
+  async function pushAndFlush(window: TranscriptWindow, text: string): Promise<void> {
+    window.push({
+      utteranceId: `u_${Math.random()}`,
+      text,
+      isFinal: true,
+      startMs: 95_000,
+      endMs: 96_000,
+      revision: 0,
+    });
+    await flushDebounce();
+  }
+
+  it('does NOT call the classifier when no classifier is configured (heuristic positive)', async () => {
+    let called = false;
+    const fake = fakeClassifier(async () => {
+      called = true;
+      return { intent: 'rag' };
+    });
+    h = await setupWithRouter({ registry: makeRegistryWith([COUNT_SKILL]) });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'how many open issues are there');
+    expect(called).toBe(false);
+    void fake;
+    // No classifier but registry present + heuristic match — emits skipped no-classifier.
+    expect(h.routerEvents.classifierSkipped).toHaveLength(1);
+    expect(h.routerEvents.classifierSkipped[0]!.reason).toBe('no-classifier');
+  });
+
+  it('does NOT call the classifier when the registry is empty (no eligible skills)', async () => {
+    let called = false;
+    const fake = fakeClassifier(async () => {
+      called = true;
+      return { intent: 'rag' };
+    });
+    h = await setupWithRouter({ classifier: fake, registry: new SkillRegistry() });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'how many open issues are there');
+    expect(called).toBe(false);
+  });
+
+  it('does NOT call the classifier when consent is denied', async () => {
+    let called = false;
+    const fake = fakeClassifier(async () => {
+      called = true;
+      return { intent: 'rag' };
+    });
+    h = await setupWithRouter({
+      classifier: fake,
+      registry: makeRegistryWith([COUNT_SKILL]),
+      consentCheck: () => false,
+    });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'how many open issues are there');
+    expect(called).toBe(false);
+    expect(h.routerEvents.classifierSkipped[0]!.reason).toBe('no-consent');
+  });
+
+  it('does NOT call the classifier when the heuristic does NOT match (RAG-shaped utterance)', async () => {
+    let called = false;
+    const fake = fakeClassifier(async () => {
+      called = true;
+      return { intent: 'rag' };
+    });
+    h = await setupWithRouter({ classifier: fake, registry: makeRegistryWith([COUNT_SKILL]) });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'sidecar handshake', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'how does the sidecar handshake work');
+    expect(called).toBe(false);
+    expect(h.routerEvents.classifierStart).toHaveLength(0);
+    expect(h.routerEvents.classifierSkipped).toHaveLength(0);
+  });
+
+  it('LOAD-BEARING: heuristic matches against LATEST utterance, not full windowText', async () => {
+    let called = false;
+    const fake = fakeClassifier(async () => {
+      called = true;
+      return { intent: 'rag' };
+    });
+    h = await setupWithRouter({ classifier: fake, registry: makeRegistryWith([COUNT_SKILL]) });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    // Earlier in the meeting (stale): a tool-shaped phrase.
+    h.window.push({
+      utteranceId: 'u_old',
+      text: 'how many open issues are there',
+      isFinal: true,
+      startMs: 90_000,
+      endMs: 91_000,
+      revision: 0,
+    });
+    // Now (latest): a RAG-shaped utterance. The window contains BOTH.
+    h.window.push({
+      utteranceId: 'u_new',
+      text: 'how does the sidecar handshake work',
+      isFinal: true,
+      startMs: 95_000,
+      endMs: 96_000,
+      revision: 0,
+    });
+    await flushDebounce();
+    expect(called).toBe(false);
+    expect(h.routerEvents.classifierStart).toHaveLength(0);
+  });
+});
+
+describe('RetrievalPipeline — router outcomes', () => {
+  let h: Awaited<ReturnType<typeof setupWithRouter>>;
+
+  afterEach(() => {
+    if (h !== undefined) teardown(h);
+  });
+
+  async function pushAndFlush(window: TranscriptWindow, text: string): Promise<void> {
+    window.push({
+      utteranceId: `u_${Math.random()}`,
+      text,
+      isFinal: true,
+      startMs: 95_000,
+      endMs: 96_000,
+      revision: 0,
+    });
+    await flushDebounce();
+  }
+
+  it('Tool intent: executes skill and prepends tool result as a source to the synthesizer', async () => {
+    const synthCalls: SynthesisInput[] = [];
+    const synth = fakeSynthesizer((input) => {
+      synthCalls.push(input);
+      return yieldChunks(makeChunks('s1', ['ok [1][2].']));
+    });
+    const fake = fakeClassifier(async () => ({
+      intent: 'tool',
+      skillName: 'github.count',
+      args: { state: 'open' },
+    }));
+    h = await setupWithRouter({
+      classifier: fake,
+      registry: makeRegistryWith([COUNT_SKILL]),
+      synthesizer: synth,
+      consentCheck: () => true,
+    });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'how many open issues are there');
+
+    expect(h.routerEvents.classifierStart).toHaveLength(1);
+    expect(h.routerEvents.classifierDone).toHaveLength(1);
+    expect(h.routerEvents.classifierDone[0]!.intent).toBe('tool');
+    expect(h.routerEvents.classifierDone[0]!.skillName).toBe('github.count');
+    expect(h.routerEvents.skillStart).toHaveLength(1);
+    expect(h.routerEvents.skillDone).toHaveLength(1);
+    expect(h.routerEvents.skillDone[0]!.resultShape).toBe('count');
+
+    // Synthesizer received [toolSource, ...cardSources] with toolSource first
+    expect(synthCalls).toHaveLength(1);
+    expect(synthCalls[0]!.sources.length).toBeGreaterThanOrEqual(2);
+    expect(synthCalls[0]!.sources[0]!.title).toContain('Tool: github.count');
+    expect(synthCalls[0]!.sources[0]!.text).toContain('7 matching docs');
+  });
+
+  it('RAG intent (false alarm): synthesizer is called with cards only, no tool result', async () => {
+    const synthCalls: SynthesisInput[] = [];
+    const synth = fakeSynthesizer((input) => {
+      synthCalls.push(input);
+      return yieldChunks(makeChunks('s1', ['ok [1].']));
+    });
+    const fake = fakeClassifier(async () => ({ intent: 'rag' }));
+    h = await setupWithRouter({
+      classifier: fake,
+      registry: makeRegistryWith([COUNT_SKILL]),
+      synthesizer: synth,
+      consentCheck: () => true,
+    });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'how many open issues are there');
+
+    expect(h.routerEvents.classifierDone[0]!.intent).toBe('rag');
+    expect(h.routerEvents.skillStart).toHaveLength(0);
+    expect(synthCalls[0]!.sources[0]!.title).not.toContain('Tool:');
+  });
+
+  it('Classifier error: emits classifierError and falls through to RAG synthesis', async () => {
+    const synthCalls: SynthesisInput[] = [];
+    const synth = fakeSynthesizer((input) => {
+      synthCalls.push(input);
+      return yieldChunks(makeChunks('s1', ['ok.']));
+    });
+    const fake = fakeClassifier(async () => {
+      throw new ClassifierProviderError('auth-error', 'bad key');
+    });
+    h = await setupWithRouter({
+      classifier: fake,
+      registry: makeRegistryWith([COUNT_SKILL]),
+      synthesizer: synth,
+      consentCheck: () => true,
+    });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'how many open issues are there');
+
+    expect(h.routerEvents.classifierError).toHaveLength(1);
+    expect(h.routerEvents.classifierError[0]!.code).toBe('auth-error');
+    expect(synthCalls).toHaveLength(1);
+    expect(synthCalls[0]!.sources[0]!.title).not.toContain('Tool:');
+  });
+
+  it('Unknown skill: classifier picks a name not in registry, emits skillFailed{unknown-skill}, RAG fallback', async () => {
+    const synthCalls: SynthesisInput[] = [];
+    const synth = fakeSynthesizer((input) => {
+      synthCalls.push(input);
+      return yieldChunks(makeChunks('s1', ['ok.']));
+    });
+    const fake = fakeClassifier(async () => ({
+      intent: 'tool',
+      skillName: 'github.bogus',
+      args: {},
+    }));
+    h = await setupWithRouter({
+      classifier: fake,
+      registry: makeRegistryWith([COUNT_SKILL]),
+      synthesizer: synth,
+      consentCheck: () => true,
+    });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'how many open issues are there');
+
+    expect(h.routerEvents.classifierDone[0]!.intent).toBe('tool');
+    expect(h.routerEvents.skillFailed).toHaveLength(1);
+    expect(h.routerEvents.skillFailed[0]!.code).toBe('unknown-skill');
+    expect(synthCalls[0]!.sources[0]!.title).not.toContain('Tool:');
+  });
+
+  it('Skill throws: emits skillFailed{execution-error}, RAG fallback', async () => {
+    const synthCalls: SynthesisInput[] = [];
+    const synth = fakeSynthesizer((input) => {
+      synthCalls.push(input);
+      return yieldChunks(makeChunks('s1', ['ok.']));
+    });
+    const throwingSkill: Skill = {
+      ...COUNT_SKILL,
+      handler: async () => {
+        throw new Error('SQL boom');
+      },
+    };
+    const fake = fakeClassifier(async () => ({
+      intent: 'tool',
+      skillName: throwingSkill.name,
+      args: {},
+    }));
+    h = await setupWithRouter({
+      classifier: fake,
+      registry: makeRegistryWith([throwingSkill]),
+      synthesizer: synth,
+      consentCheck: () => true,
+    });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'how many open issues are there');
+
+    expect(h.routerEvents.skillFailed[0]!.code).toBe('execution-error');
+    expect(h.routerEvents.skillFailed[0]!.message).toContain('SQL boom');
+    expect(synthCalls[0]!.sources[0]!.title).not.toContain('Tool:');
+  });
+});

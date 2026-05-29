@@ -14,6 +14,14 @@ import {
 } from '../synthesize/contract.js';
 import { parseSynthesisOutput, REFUSAL_SENTINEL } from '../synthesize/prompt.js';
 import { log } from '../cli/util.js';
+import { isToolShaped } from '../router/heuristic.js';
+import {
+  type Classifier,
+  ClassifierProviderError,
+} from '../router/contract.js';
+import { type SkillRegistry } from '../skills/registry.js';
+import { type Skill, formatAsSource } from '../skills/contract.js';
+import type { SynthesisSource } from '../synthesize/contract.js';
 import type {
   CardEvent,
   CardRetracted,
@@ -57,6 +65,16 @@ export interface RetrievalPipelineOptions {
    */
   readonly synthesisTopN?: number;
   readonly synthesisMaxTokens?: number;
+  /**
+   * Heuristic-gated classifier. When absent, the router is disabled and
+   * the pipeline behaves exactly as the synthesis-only baseline.
+   */
+  readonly classifier?: Classifier;
+  /**
+   * Registry of skills the classifier may invoke. Both classifier AND
+   * skillRegistry with size > 0 are required for the router to fire.
+   */
+  readonly skillRegistry?: SkillRegistry;
 }
 
 const DEFAULT_WINDOW_SECONDS = 30;
@@ -80,6 +98,8 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
   readonly #minSynthesisScore: number;
   readonly #synthesisTopN: number;
   readonly #synthesisMaxTokens: number | undefined;
+  readonly #classifier: Classifier | undefined;
+  readonly #skillRegistry: SkillRegistry | undefined;
 
   #window: TranscriptWindow | null = null;
   #onChange: ((window: WindowText) => void) | null = null;
@@ -102,6 +122,8 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     this.#minSynthesisScore = options.minSynthesisScore ?? DEFAULT_MIN_SYNTHESIS_SCORE;
     this.#synthesisTopN = options.synthesisTopN ?? DEFAULT_SYNTHESIS_TOP_N;
     this.#synthesisMaxTokens = options.synthesisMaxTokens;
+    this.#classifier = options.classifier;
+    this.#skillRegistry = options.skillRegistry;
   }
 
   attachWindow(window: TranscriptWindow): void {
@@ -179,6 +201,45 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
   ): Promise<void> {
     const traceId = `t_${randomBytes(6).toString('hex')}`;
     this.#inflight += 1;
+
+    // --- Router gate -------------------------------------------------------
+    // Heuristic-gated classifier: matches on the most-recent finalized
+    // utterance (NOT the windowText, which may carry stale tool-shaped
+    // phrases from earlier in the meeting). When the heuristic fires AND the
+    // classifier + registry + consent are all configured, the classifier
+    // runs in parallel with the embed+retrieve below. The synthesizer call
+    // (later) waits for both before deciding which sources to pass.
+    //
+    // Cards from the retrieval branch still emit synchronously inside the
+    // existing loop, so the HUD's raw-card TTFT is unchanged.
+    const latestUtterance = this.#window?.latestFinalUtteranceText() ?? '';
+    let classifierPromise: ReturnType<Classifier['classify']> | null = null;
+    let classifierController: AbortController | null = null;
+    let classifierStartedAt = 0;
+    if (this.#classifier !== undefined && this.#skillRegistry !== undefined && this.#skillRegistry.size() > 0) {
+      if (latestUtterance.length > 0 && isToolShaped(latestUtterance)) {
+        if (this.#consentCheck !== undefined && !this.#consentCheck()) {
+          this.emit('classifierSkipped', { traceId, reason: 'no-consent' });
+        } else {
+          classifierController = new AbortController();
+          classifierStartedAt = this.#now();
+          this.emit('classifierStart', { traceId });
+          classifierPromise = this.#classifier.classify(
+            { utterance: latestUtterance, registry: this.#skillRegistry },
+            classifierController.signal,
+          );
+          // Swallow unhandled-rejection noise; the await later collects it.
+          classifierPromise.catch(() => undefined);
+        }
+      } else {
+        // Heuristic miss — no classifier event; the absence of classifierStart
+        // is itself the signal that the router didn't fire this flush.
+      }
+    } else if (this.#classifier === undefined && latestUtterance.length > 0 && isToolShaped(latestUtterance)) {
+      // Heuristic flagged but no classifier configured — record the skip.
+      this.emit('classifierSkipped', { traceId, reason: 'no-classifier' });
+    }
+
     const embedStartAt = this.#now();
     // eslint-disable-next-line no-console
     console.log(`[pipeline.debug] embed.start trace=${traceId} chars=${String(windowText.text.length)} preview="${windowText.text.slice(0, 80).replace(/\n/g, ' ')}"`);
@@ -266,6 +327,90 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     this.emit('trace', traceRecord);
     this.#inflight -= 1;
 
+    // --- Collect classifier result + execute skill (if any) ---------------
+    let toolSource: SynthesisSource | null = null;
+    if (classifierPromise !== null) {
+      try {
+        const result = await classifierPromise;
+        const latencyMs = this.#now() - classifierStartedAt;
+        const doneEvent: import('./contract.js').ClassifierDone = {
+          traceId,
+          intent: result.intent,
+          latencyMs,
+          ...(result.intent === 'tool' && { skillName: result.skillName }),
+        };
+        this.emit('classifierDone', doneEvent);
+
+        if (result.intent === 'tool') {
+          const skill: Skill | undefined = this.#skillRegistry?.lookup(result.skillName);
+          if (skill === undefined) {
+            this.emit('skillFailed', {
+              traceId,
+              name: result.skillName,
+              code: 'unknown-skill',
+            });
+          } else {
+            this.emit('skillStart', {
+              traceId,
+              name: result.skillName,
+              args: result.args,
+            });
+            const skillStartedAt = this.#now();
+            try {
+              const skillResult = await skill.handler(result.args, {
+                db: this.#db,
+                ...(classifierController !== null && { signal: classifierController.signal }),
+                now: this.#now,
+              });
+              // Discard the result if a newer flush has aborted the controller —
+              // abort gates result usage, not the SQL itself (which has already
+              // run synchronously inside the handler).
+              if (classifierController?.signal.aborted === true) {
+                this.emit('skillFailed', {
+                  traceId,
+                  name: result.skillName,
+                  code: 'aborted',
+                });
+              } else {
+                this.emit('skillDone', {
+                  traceId,
+                  name: result.skillName,
+                  latencyMs: this.#now() - skillStartedAt,
+                  resultShape: skillResult.kind,
+                });
+                toolSource = formatAsSource(skillResult, result.skillName, result.args);
+              }
+            } catch (err) {
+              this.emit('skillFailed', {
+                traceId,
+                name: result.skillName,
+                code: 'execution-error',
+                message: (err as Error).message,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        // Classifier failure: emit classifierError, fall through to RAG-only.
+        if (err instanceof ClassifierProviderError) {
+          this.emit('classifierError', {
+            traceId,
+            code: err.kind,
+            message: err.message,
+            ...(err.retryAfterMs !== undefined && { retryAfterMs: err.retryAfterMs }),
+          });
+        } else if (err instanceof Error && err.name === 'AbortError') {
+          // Aborted — silent, just like synthesis aborts.
+        } else {
+          this.emit('classifierError', {
+            traceId,
+            code: 'unknown',
+            message: (err as Error).message,
+          });
+        }
+      }
+    }
+
     // Synthesis gate — fire-and-forget after raw cards have already shipped.
     // Gate requires: at least one newly emitted card this flush, a
     // synthesizer configured, consent granted, and the top card's RRF
@@ -291,7 +436,7 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
         traceId,
       });
     } else {
-      void this.#maybeSynthesize(emittedCards, windowText.text, traceId);
+      void this.#maybeSynthesize(emittedCards, windowText.text, traceId, toolSource);
     }
   }
 
@@ -303,13 +448,18 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     emittedCards: readonly CardEvent[],
     utterance: string,
     traceId: string,
+    toolSource: SynthesisSource | null,
   ): Promise<void> {
     if (this.#synthesizer === undefined) return;
-    const sources = emittedCards.slice(0, this.#synthesisTopN).map((c) => ({
+    const cardSources = emittedCards.slice(0, this.#synthesisTopN).map((c) => ({
       rank: c.rank,
       title: c.title === '' ? c.docId : c.title,
       text: c.snippet,
     }));
+    // Tool result, when present, takes source[0]; cards follow. The
+    // synthesizer's existing prompt cites by 1-indexed position in the
+    // array, so [1] is the tool result and [2..N] are the cards.
+    const sources = toolSource !== null ? [toolSource, ...cardSources] : cardSources;
     const sourceCardIds = emittedCards.slice(0, this.#synthesisTopN).map((c) => c.cardId);
     const synthesisId = `syn_${randomBytes(6).toString('hex')}`;
     const controller = new AbortController();

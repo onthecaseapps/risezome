@@ -108,6 +108,25 @@ export class TranscriptWindow extends EventEmitter<TranscriptWindowEvents> {
     return this.#byId.size;
   }
 
+  /**
+   * The text of the most recently finalized utterance, or null when no
+   * final has landed yet. Used by the router heuristic: matching against
+   * the 30s windowText would produce false positives because a single
+   * tool-shaped phrase earlier in the meeting would trigger on every
+   * flush. Returning only the latest finalized utterance keeps the gate
+   * sensitive to the actual current question.
+   */
+  latestFinalUtteranceText(): string | null {
+    let latest: { startMs: number; text: string } | null = null;
+    for (const entry of this.#byId.values()) {
+      if (entry.finalAt === null) continue;
+      if (latest === null || entry.utterance.startMs > latest.startMs) {
+        latest = { startMs: entry.utterance.startMs, text: entry.utterance.text };
+      }
+    }
+    return latest?.text ?? null;
+  }
+
   #pushPartial(utterance: Utterance): void {
     const existing = this.#byId.get(utterance.utteranceId);
     if (existing !== undefined && existing.utterance.revision >= utterance.revision) return;

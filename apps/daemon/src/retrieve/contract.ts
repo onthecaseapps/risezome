@@ -104,6 +104,62 @@ export interface SynthesisRetracted {
   readonly reason: SynthesisRetractedReason;
 }
 
+export type ClassifierIntent = 'rag' | 'tool';
+export type ClassifierSkippedReason = 'heuristic-no-match' | 'no-classifier' | 'no-consent';
+export type SkillFailureCode = 'unknown-skill' | 'execution-error' | 'aborted';
+export type SkillResultKind = 'count' | 'list' | 'detail';
+
+export interface ClassifierStart {
+  readonly traceId: string;
+}
+
+export interface ClassifierDoneUsage {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreationTokens: number;
+}
+
+export interface ClassifierDone {
+  readonly traceId: string;
+  readonly intent: ClassifierIntent;
+  readonly skillName?: string;
+  readonly latencyMs: number;
+  readonly usage?: ClassifierDoneUsage;
+}
+
+export interface ClassifierSkipped {
+  readonly traceId: string;
+  readonly reason: ClassifierSkippedReason;
+}
+
+export interface ClassifierError {
+  readonly traceId: string;
+  readonly code: string;
+  readonly message?: string;
+  readonly retryAfterMs?: number;
+}
+
+export interface SkillStart {
+  readonly traceId: string;
+  readonly name: string;
+  readonly args: Record<string, unknown>;
+}
+
+export interface SkillDone {
+  readonly traceId: string;
+  readonly name: string;
+  readonly latencyMs: number;
+  readonly resultShape: SkillResultKind;
+}
+
+export interface SkillFailed {
+  readonly traceId: string;
+  readonly name?: string;
+  readonly code: SkillFailureCode;
+  readonly message?: string;
+}
+
 export interface RetrievalPipelineEvents {
   card: [CardEvent];
   cardUpdated: [CardUpdated];
@@ -115,4 +171,11 @@ export interface RetrievalPipelineEvents {
   synthesisDone: [SynthesisDone];
   synthesisError: [SynthesisError];
   synthesisRetracted: [SynthesisRetracted];
+  classifierStart: [ClassifierStart];
+  classifierDone: [ClassifierDone];
+  classifierSkipped: [ClassifierSkipped];
+  classifierError: [ClassifierError];
+  skillStart: [SkillStart];
+  skillDone: [SkillDone];
+  skillFailed: [SkillFailed];
 }
