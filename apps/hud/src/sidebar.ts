@@ -475,10 +475,33 @@ export class Sidebar {
     chip.dataset['rank'] = String(rank);
     if (typeof cardId === 'string') chip.dataset['cardId'] = cardId;
     chip.textContent = `[${String(rank)}]`;
+    // U5: hover preview via native `title` showing the source card's title.
+    // Looked up at render time from the current cards map; if the card
+    // hasn't landed yet (race) we fall back to a placeholder.
+    if (typeof cardId === 'string') {
+      const sourceCard = this.#cards.get(cardId);
+      chip.title = sourceCard !== undefined ? sourceCard.card.title : `Source ${String(rank)}`;
+    }
     chip.addEventListener('click', () => {
       if (typeof cardId !== 'string') return;
-      const target = doc.querySelector<HTMLElement>(`[data-card-id="${cardId}"]`);
-      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Scope the selector to `article[...]` so we don't accidentally
+      // match the chip itself (a button that also carries data-card-id
+      // for its own click-handler closure).
+      const target = doc.querySelector<HTMLElement>(`article[data-card-id="${cardId}"]`);
+      if (target === null) {
+        // U5: source has been retracted (or never arrived). Mute the chip
+        // explicitly so the user gets a visible signal that the click is
+        // a deliberate no-op, not a broken UI.
+        chip.dataset['sourceRetracted'] = 'true';
+        chip.title = 'Source no longer available';
+        return;
+      }
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // U5: brief "here it is" pulse on the target card so the eye
+      // finds the destination even when scrollIntoView is a no-op
+      // (target already in view).
+      target.classList.add('is-cited-target');
+      setTimeout(() => target.classList.remove('is-cited-target'), 700);
     });
     rec.citationsEl.appendChild(chip);
   }

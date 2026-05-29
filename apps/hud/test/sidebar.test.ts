@@ -238,7 +238,9 @@ describe('Sidebar', () => {
     sidebar.renderSynthesisStart(makeStart({ sourceCardIds: ['c1'] }));
     sidebar.appendSynthesisDelta(makeDelta('Per [1].'));
 
-    const raw = streamEl.querySelector<HTMLElement>('[data-card-id="c1"]')!;
+    // Specifically the article (raw card), not the chip button which
+    // also carries data-card-id for its own handler closure.
+    const raw = streamEl.querySelector<HTMLElement>('article[data-card-id="c1"]')!;
     const scrollMock = vi.fn();
     raw.scrollIntoView = scrollMock as unknown as Element['scrollIntoView'];
 
@@ -615,6 +617,98 @@ describe('Sidebar', () => {
       } as SynthesisStartEvent);
       const body = streamEl.querySelector('.synthesis-body');
       expect(body).not.toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // U5: Citation chip polish
+  // -------------------------------------------------------------------------
+
+  describe('citation chip polish (U5)', () => {
+    function setupSynthWithSource(): { chip: HTMLButtonElement; target: HTMLElement } {
+      sidebar.renderCard(makeCard({ cardId: 'c_src', title: 'The auth refactor PR' }));
+      sidebar.renderSynthesisStart({
+        synthesisId: 'syn_u5',
+        sourceCardIds: ['c_src'],
+        traceId: 't1',
+      } as SynthesisStartEvent);
+      sidebar.appendSynthesisDelta({
+        synthesisId: 'syn_u5',
+        delta: 'Some answer text. [1]',
+      } as SynthesisDeltaEvent);
+      const chip = streamEl.querySelector<HTMLButtonElement>('.citation-chip')!;
+      // Article selector — the chip also carries data-card-id, so the
+      // bare [data-card-id="..."] would match the chip first in DOM order.
+      const target = streamEl.querySelector<HTMLElement>('article[data-card-id="c_src"]')!;
+      return { chip, target };
+    }
+
+    it('citation chip is a <button> element (keyboard-focusable, Enter/Space activate)', () => {
+      const { chip } = setupSynthWithSource();
+      expect(chip.tagName).toBe('BUTTON');
+      expect(chip.type).toBe('button');
+    });
+
+    it('citation chip title equals the source card title (hover preview)', () => {
+      const { chip } = setupSynthWithSource();
+      expect(chip.title).toBe('The auth refactor PR');
+    });
+
+    it('clicking adds is-cited-target to the target card and removes it after the timeout', () => {
+      vi.useFakeTimers();
+      try {
+        const { chip, target } = setupSynthWithSource();
+        const scrollMock = vi.fn();
+        target.scrollIntoView = scrollMock as unknown as Element['scrollIntoView'];
+        chip.click();
+        expect(scrollMock).toHaveBeenCalled();
+        expect(target.classList.contains('is-cited-target')).toBe(true);
+        vi.advanceTimersByTime(800);
+        expect(target.classList.contains('is-cited-target')).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('retracted source: click does not throw, marks chip retracted, updates title', () => {
+      const { chip, target } = setupSynthWithSource();
+      const scrollMock = vi.fn();
+      target.scrollIntoView = scrollMock as unknown as Element['scrollIntoView'];
+      sidebar.retractCard({ cardId: 'c_src', reason: 'meeting-ended' });
+      expect(() => chip.click()).not.toThrow();
+      expect(scrollMock).not.toHaveBeenCalled();
+      expect(chip.dataset['sourceRetracted']).toBe('true');
+      expect(chip.title).toBe('Source no longer available');
+    });
+
+    it('target already in view: pulse still applies even if scrollIntoView is a no-op', () => {
+      vi.useFakeTimers();
+      try {
+        const { chip, target } = setupSynthWithSource();
+        // scrollIntoView is a no-op when the target is already visible. We
+        // simulate by having the spy do nothing — the pulse class behavior
+        // should be identical to a real no-op scroll.
+        target.scrollIntoView = vi.fn() as unknown as Element['scrollIntoView'];
+        chip.click();
+        expect(target.classList.contains('is-cited-target')).toBe(true);
+        vi.advanceTimersByTime(800);
+        expect(target.classList.contains('is-cited-target')).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('keyboard activation via Enter dispatches the same handler as click (native button behavior)', () => {
+      const { chip, target } = setupSynthWithSource();
+      const scrollMock = vi.fn();
+      target.scrollIntoView = scrollMock as unknown as Element['scrollIntoView'];
+      // <button> elements natively fire 'click' when Enter is pressed
+      // while focused. We simulate by calling click() directly — this
+      // pins the contract that the handler is wired to click (which Enter
+      // dispatches), not to a custom keydown listener.
+      chip.focus();
+      chip.click();
+      expect(scrollMock).toHaveBeenCalled();
     });
   });
 });
