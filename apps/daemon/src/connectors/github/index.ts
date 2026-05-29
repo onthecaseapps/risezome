@@ -10,6 +10,7 @@ import type { CanonicalDoc } from '../../corpus/types.js';
 import { GithubClient, type GithubClientOptions } from './client.js';
 import { authenticate } from './auth.js';
 import { pullRepoIssuesAndPRs } from './pull-delta.js';
+import { pullRepoFiles } from './pull-files.js';
 import type { GithubRepo } from './types.js';
 
 export const GITHUB_MANIFEST: ConnectorManifest = {
@@ -22,10 +23,13 @@ export const GITHUB_MANIFEST: ConnectorManifest = {
 
 export interface GithubConnectorOptions extends GithubClientOptions {
   readonly client?: GithubClient;
+  readonly cacheDir?: string;
+  readonly indexFiles?: boolean;
 }
 
 export function createGithubConnector(options: GithubConnectorOptions = {}): Connector {
   const client = options.client ?? new GithubClient(options);
+  const indexFiles = options.indexFiles ?? true;
   return {
     manifest: GITHUB_MANIFEST,
     async authenticate(auth: AuthResult): Promise<AuthOutcome> {
@@ -54,7 +58,22 @@ export function createGithubConnector(options: GithubConnectorOptions = {}): Con
       scope: ScopeDescriptor,
       cursor: string | null,
     ): Promise<DeltaPage> {
-      return pullRepoIssuesAndPRs(client, auth, scope, cursor);
+      const issuesPage = await pullRepoIssuesAndPRs(client, auth, scope, cursor);
+
+      // Index repo files only on the first sync for a scope (cursor === null)
+      // and only when a cacheDir is configured. Subsequent syncs leave the
+      // cloned snapshot in place; a separate refresh action discards the
+      // cache to force a re-clone.
+      if (cursor !== null || !indexFiles || options.cacheDir === undefined) {
+        return issuesPage;
+      }
+
+      const files = await pullRepoFiles(auth, scope, { cacheDir: options.cacheDir });
+      return {
+        docs: [...issuesPage.docs, ...files.docs],
+        chunks: [...issuesPage.chunks, ...files.chunks],
+        nextCursor: issuesPage.nextCursor,
+      };
     },
     getDoc(_auth: AuthResult, _docId: string): Promise<CanonicalDoc | null> {
       // v1 retrieves docs from the local corpus; live re-fetch is reserved for a follow-up.
@@ -66,3 +85,8 @@ export function createGithubConnector(options: GithubConnectorOptions = {}): Con
 export { authenticate, auditScopes } from './auth.js';
 export { GithubClient } from './client.js';
 export { encodeCursor, parseCursorSince, pullRepoIssuesAndPRs } from './pull-delta.js';
+export { chunkMarkdown, type MarkdownChunk } from './chunk-md.js';
+export { chunkCode, type CodeChunk } from './chunk-code.js';
+export { walkRepoFiles, classifyFile, type WalkedFile } from './walk.js';
+export { ensureClone, discardClone } from './clone.js';
+export { pullRepoFiles, makeCacheDir, type RepoFilesResult } from './pull-files.js';
