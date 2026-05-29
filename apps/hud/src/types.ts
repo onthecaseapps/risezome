@@ -37,6 +37,46 @@ export interface GapEvent {
   readonly createdAt: number;
 }
 
+export type SynthesisErrorCode =
+  | 'refused'
+  | 'rate-limited'
+  | 'auth-error'
+  | 'bad-request'
+  | 'network-error'
+  | 'overloaded'
+  | 'server-error'
+  | 'request-too-large'
+  | 'unknown';
+
+export interface SynthesisStartEvent {
+  readonly synthesisId: string;
+  readonly sourceCardIds: readonly string[];
+  readonly traceId: string;
+}
+
+export interface SynthesisDeltaEvent {
+  readonly synthesisId: string;
+  readonly delta: string;
+}
+
+export interface SynthesisDoneEvent {
+  readonly synthesisId: string;
+  readonly stopReason: string;
+  readonly citations: readonly number[];
+}
+
+export interface SynthesisErrorEvent {
+  readonly synthesisId: string;
+  readonly code: SynthesisErrorCode;
+  readonly message?: string;
+  readonly retryAfterMs?: number;
+}
+
+export interface SynthesisRetractedEvent {
+  readonly synthesisId: string;
+  readonly reason: 'source-retracted' | 'meeting-ended' | 'manual-dismiss';
+}
+
 export type ServerMessage =
   | { type: 'hello'; version: string }
   | { type: 'card'; card: CardEvent }
@@ -45,4 +85,9 @@ export type ServerMessage =
   | { type: 'gap'; gap: GapEvent }
   | { type: 'status'; mode: 'idle' | 'capturing' | 'processing' }
   | { type: 'meetingStarted'; meetingId: string }
-  | { type: 'meetingEnded'; meetingId: string };
+  | { type: 'meetingEnded'; meetingId: string }
+  | ({ type: 'synthesisStart' } & SynthesisStartEvent)
+  | ({ type: 'synthesisDelta' } & SynthesisDeltaEvent)
+  | ({ type: 'synthesisDone' } & SynthesisDoneEvent)
+  | ({ type: 'synthesisError' } & SynthesisErrorEvent)
+  | ({ type: 'synthesisRetracted' } & SynthesisRetractedEvent);

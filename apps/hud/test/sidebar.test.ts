@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Sidebar } from '../src/sidebar.js';
-import type { CardEvent, GapEvent } from '../src/types.js';
+import type {
+  CardEvent,
+  GapEvent,
+  SynthesisDeltaEvent,
+  SynthesisDoneEvent,
+  SynthesisStartEvent,
+} from '../src/types.js';
 
 function makeCard(overrides: Partial<CardEvent> = {}): CardEvent {
   return {
@@ -38,7 +44,8 @@ describe('Sidebar', () => {
   let sidebar: Sidebar;
 
   beforeEach(() => {
-    document.body.innerHTML = '<div id="stream"></div><div id="pinned"></div>';
+    document.body.innerHTML =
+      '<div id="stream"></div><div id="pinned"></div><div id="synthesis-announce" aria-live="polite"></div>';
     streamEl = document.getElementById('stream')!;
     pinnedEl = document.getElementById('pinned')!;
     sidebar = new Sidebar({ streamEl, pinnedEl });
@@ -123,5 +130,134 @@ describe('Sidebar', () => {
     sidebar.renderCard(makeCard());
     sidebar.renderCard(makeCard());
     expect(sidebar.visibleCardCount()).toBe(1);
+  });
+
+  // --- U6 synthesis card tests ---
+
+  function makeStart(overrides: Partial<SynthesisStartEvent> = {}): SynthesisStartEvent {
+    return {
+      synthesisId: 'syn_1',
+      sourceCardIds: ['c1', 'c2', 'c3'],
+      traceId: 't1',
+      ...overrides,
+    };
+  }
+  function makeDelta(text: string, synthesisId = 'syn_1'): SynthesisDeltaEvent {
+    return { synthesisId, delta: text };
+  }
+  function makeDone(citations: number[], synthesisId = 'syn_1'): SynthesisDoneEvent {
+    return { synthesisId, stopReason: 'end_turn', citations };
+  }
+
+  it('synthesisStart prepends a synthesis card above raw cards with aria-live=off', () => {
+    sidebar.renderCard(makeCard({ cardId: 'c1' }));
+    sidebar.renderSynthesisStart(makeStart());
+
+    const first = streamEl.firstElementChild;
+    expect(first?.classList.contains('synthesis')).toBe(true);
+    expect(first?.getAttribute('aria-live')).toBe('off');
+    expect(streamEl.querySelector('.ai-label')?.textContent).toBe('AI SUMMARY');
+    expect(streamEl.querySelector('.synthesis-cursor')).not.toBeNull();
+    expect(sidebar.visibleSynthesisCount()).toBe(1);
+  });
+
+  it('appendSynthesisDelta accumulates text via textContent (no innerHTML rewrite)', () => {
+    sidebar.renderSynthesisStart(makeStart());
+    const bodyEl = streamEl.querySelector<HTMLElement>('.synthesis-body')!;
+    const initialNode = bodyEl;
+
+    sidebar.appendSynthesisDelta(makeDelta('Hello '));
+    sidebar.appendSynthesisDelta(makeDelta('world.'));
+
+    expect(bodyEl.textContent).toBe('Hello world.');
+    // Identity preserved — we didn't replace the element.
+    expect(streamEl.querySelector<HTMLElement>('.synthesis-body')).toBe(initialNode);
+  });
+
+  it('eagerly renders citation chips per [N] token as deltas arrive', () => {
+    sidebar.renderSynthesisStart(makeStart({ sourceCardIds: ['c1', 'c2', 'c3'] }));
+    sidebar.appendSynthesisDelta(makeDelta('First [1] '));
+    expect(streamEl.querySelectorAll('.citation-chip').length).toBe(1);
+    sidebar.appendSynthesisDelta(makeDelta('then [3].'));
+    const chips = streamEl.querySelectorAll<HTMLElement>('.citation-chip');
+    expect(chips.length).toBe(2);
+    expect([...chips].map((c) => c.textContent)).toEqual(['[1]', '[3]']);
+  });
+
+  it('out-of-range [N] citations do NOT render chips (only sourceCardIds.length valid)', () => {
+    sidebar.renderSynthesisStart(makeStart({ sourceCardIds: ['c1'] }));
+    sidebar.appendSynthesisDelta(makeDelta('Per [5] and [1].'));
+    const chips = streamEl.querySelectorAll<HTMLElement>('.citation-chip');
+    expect(chips.length).toBe(1);
+    expect(chips[0]!.textContent).toBe('[1]');
+  });
+
+  it('finalizeSynthesis removes cursor, reconciles chips, announces final text', () => {
+    sidebar.renderCard(makeCard({ cardId: 'c2' }));
+    sidebar.renderSynthesisStart(makeStart({ sourceCardIds: ['c1', 'c2', 'c3'] }));
+    sidebar.appendSynthesisDelta(makeDelta('A [1] B [2] C [3].'));
+    expect(streamEl.querySelectorAll('.citation-chip').length).toBe(3);
+
+    // Final says citations are [2] only — chips 1 and 3 should be removed.
+    sidebar.finalizeSynthesis(makeDone([2]));
+    expect(streamEl.querySelector('.synthesis-cursor')).toBeNull();
+    const chips = streamEl.querySelectorAll<HTMLElement>('.citation-chip');
+    expect([...chips].map((c) => c.textContent)).toEqual(['[2]']);
+
+    const announce = document.getElementById('synthesis-announce');
+    expect(announce?.textContent).toBe('A [1] B [2] C [3].');
+  });
+
+  it('citation chip click scrolls the matching raw card into view', () => {
+    sidebar.renderCard(makeCard({ cardId: 'c1' }));
+    sidebar.renderSynthesisStart(makeStart({ sourceCardIds: ['c1'] }));
+    sidebar.appendSynthesisDelta(makeDelta('Per [1].'));
+
+    const raw = streamEl.querySelector<HTMLElement>('[data-card-id="c1"]')!;
+    const scrollMock = vi.fn();
+    raw.scrollIntoView = scrollMock as unknown as Element['scrollIntoView'];
+
+    const chip = streamEl.querySelector<HTMLElement>('.citation-chip')!;
+    chip.click();
+
+    expect(scrollMock).toHaveBeenCalled();
+  });
+
+  it('removeSynthesis drops the card silently (used by both error and retract paths)', () => {
+    sidebar.renderSynthesisStart(makeStart());
+    sidebar.appendSynthesisDelta(makeDelta('text'));
+    sidebar.removeSynthesis('syn_1');
+    expect(streamEl.querySelector('.card.synthesis')).toBeNull();
+    expect(sidebar.visibleSynthesisCount()).toBe(0);
+  });
+
+  it('retractSynthesis is equivalent to removeSynthesis', () => {
+    sidebar.renderSynthesisStart(makeStart());
+    sidebar.retractSynthesis({ synthesisId: 'syn_1', reason: 'source-retracted' });
+    expect(streamEl.querySelector('.card.synthesis')).toBeNull();
+  });
+
+  it('appendSynthesisDelta on an unknown synthesisId is a no-op (no card created)', () => {
+    sidebar.appendSynthesisDelta(makeDelta('text', 'unknown'));
+    expect(streamEl.querySelector('.card.synthesis')).toBeNull();
+  });
+
+  it('handles two concurrent syntheses with distinct ids correctly', () => {
+    sidebar.renderSynthesisStart(makeStart({ synthesisId: 'syn_a', sourceCardIds: ['c1'] }));
+    sidebar.renderSynthesisStart(makeStart({ synthesisId: 'syn_b', sourceCardIds: ['c2'] }));
+    expect(sidebar.visibleSynthesisCount()).toBe(2);
+
+    sidebar.appendSynthesisDelta(makeDelta('A', 'syn_a'));
+    sidebar.appendSynthesisDelta(makeDelta('B', 'syn_b'));
+    sidebar.appendSynthesisDelta(makeDelta('B2', 'syn_b'));
+
+    const a = streamEl.querySelector<HTMLElement>('[data-synthesis-id="syn_a"] .synthesis-body')!;
+    const b = streamEl.querySelector<HTMLElement>('[data-synthesis-id="syn_b"] .synthesis-body')!;
+    expect(a.textContent).toBe('A');
+    expect(b.textContent).toBe('BB2');
+
+    sidebar.removeSynthesis('syn_a');
+    expect(sidebar.visibleSynthesisCount()).toBe(1);
+    expect(streamEl.querySelector('[data-synthesis-id="syn_b"]')).not.toBeNull();
   });
 });

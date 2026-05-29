@@ -62,6 +62,37 @@ export function bootstrap(
         case 'status':
           setMeetingMode(msg.mode === 'idle' ? 'idle' : 'live');
           break;
+        case 'synthesisStart':
+          sidebar.renderSynthesisStart({
+            synthesisId: msg.synthesisId,
+            sourceCardIds: msg.sourceCardIds,
+            traceId: msg.traceId,
+          });
+          break;
+        case 'synthesisDelta':
+          sidebar.appendSynthesisDelta({
+            synthesisId: msg.synthesisId,
+            delta: msg.delta,
+          });
+          break;
+        case 'synthesisDone':
+          sidebar.finalizeSynthesis({
+            synthesisId: msg.synthesisId,
+            stopReason: msg.stopReason,
+            citations: msg.citations,
+          });
+          break;
+        case 'synthesisError':
+          // Both refusal and genuine errors land here. Single removal
+          // path: drop the synthesis card and let raw cards stand alone.
+          sidebar.removeSynthesis(msg.synthesisId);
+          break;
+        case 'synthesisRetracted':
+          sidebar.retractSynthesis({
+            synthesisId: msg.synthesisId,
+            reason: msg.reason,
+          });
+          break;
         default:
           break;
       }

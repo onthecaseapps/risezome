@@ -1,4 +1,13 @@
-import type { CardEvent, CardRetracted, CardUpdated, GapEvent } from './types.js';
+import type {
+  CardEvent,
+  CardRetracted,
+  CardUpdated,
+  GapEvent,
+  SynthesisDeltaEvent,
+  SynthesisDoneEvent,
+  SynthesisRetractedEvent,
+  SynthesisStartEvent,
+} from './types.js';
 import { detectLanguage, highlightCode, parseSnippet } from './highlight.js';
 
 export interface SidebarOptions {
@@ -16,19 +25,34 @@ interface CardRecord {
   pinned: boolean;
 }
 
+interface SynthesisRecord {
+  readonly synthesisId: string;
+  readonly el: HTMLElement;
+  readonly bodyEl: HTMLElement;
+  readonly cursorEl: HTMLElement;
+  readonly citationsEl: HTMLElement;
+  readonly sourceCardIds: readonly string[];
+  accumulatedText: string;
+  readonly renderedCitations: Set<number>;
+}
+
 export class Sidebar {
   readonly #streamEl: HTMLElement;
   readonly #pinnedEl: HTMLElement;
+  readonly #announceEl: HTMLElement | null;
   readonly #onPin: (cardId: string) => void;
   readonly #onUnpin: (cardId: string) => void;
   readonly #onLogGap: (gapId: string) => void;
   readonly #onDismissGap: (gapId: string) => void;
   readonly #cards = new Map<string, CardRecord>();
   readonly #gaps = new Map<string, HTMLElement>();
+  readonly #syntheses = new Map<string, SynthesisRecord>();
 
   constructor(options: SidebarOptions) {
     this.#streamEl = options.streamEl;
     this.#pinnedEl = options.pinnedEl;
+    this.#announceEl =
+      this.#streamEl.ownerDocument.getElementById('synthesis-announce');
     this.#onPin = options.onPin ?? ((): void => undefined);
     this.#onUnpin = options.onUnpin ?? ((): void => undefined);
     this.#onLogGap = options.onLogGap ?? ((): void => undefined);
@@ -96,6 +120,125 @@ export class Sidebar {
 
   visibleGapCount(): number {
     return this.#gaps.size;
+  }
+
+  visibleSynthesisCount(): number {
+    return this.#syntheses.size;
+  }
+
+  // --- Synthesis card lifecycle ---
+
+  renderSynthesisStart(start: SynthesisStartEvent): void {
+    if (this.#syntheses.has(start.synthesisId)) return;
+    const doc = this.#streamEl.ownerDocument;
+    const el = doc.createElement('article');
+    el.className = 'card synthesis';
+    el.dataset['synthesisId'] = start.synthesisId;
+    // aria-live="off" — per-token DOM mutations would spam SR; the
+    // #synthesis-announce sibling element receives the final text once.
+    el.setAttribute('aria-live', 'off');
+
+    const header = doc.createElement('div');
+    header.className = 'header';
+    const label = doc.createElement('span');
+    label.className = 'ai-label';
+    label.textContent = 'AI SUMMARY';
+    header.appendChild(label);
+
+    const bodyEl = doc.createElement('div');
+    bodyEl.className = 'synthesis-body';
+
+    const cursorEl = doc.createElement('span');
+    cursorEl.className = 'synthesis-cursor';
+    cursorEl.textContent = '▊';
+    cursorEl.setAttribute('aria-hidden', 'true');
+
+    const citationsEl = doc.createElement('div');
+    citationsEl.className = 'citations';
+
+    el.append(header, bodyEl, cursorEl, citationsEl);
+    this.#streamEl.insertBefore(el, this.#streamEl.firstChild);
+
+    this.#syntheses.set(start.synthesisId, {
+      synthesisId: start.synthesisId,
+      el,
+      bodyEl,
+      cursorEl,
+      citationsEl,
+      sourceCardIds: start.sourceCardIds,
+      accumulatedText: '',
+      renderedCitations: new Set(),
+    });
+  }
+
+  appendSynthesisDelta(delta: SynthesisDeltaEvent): void {
+    const rec = this.#syntheses.get(delta.synthesisId);
+    if (rec === undefined) return;
+    rec.accumulatedText += delta.delta;
+    // Append text content cheaply — never re-render the whole body.
+    rec.bodyEl.textContent = rec.accumulatedText;
+    // Eager citation chip render: scan accumulated text for new [N] tokens.
+    for (const match of rec.accumulatedText.matchAll(/\[(\d+)\]/g)) {
+      const n = Number(match[1]);
+      if (
+        Number.isInteger(n)
+        && n >= 1
+        && n <= rec.sourceCardIds.length
+        && !rec.renderedCitations.has(n)
+      ) {
+        rec.renderedCitations.add(n);
+        this.#renderCitationChip(rec, n);
+      }
+    }
+  }
+
+  finalizeSynthesis(done: SynthesisDoneEvent): void {
+    const rec = this.#syntheses.get(done.synthesisId);
+    if (rec === undefined) return;
+    // Remove the cursor.
+    rec.cursorEl.remove();
+    // Reconcile chips: drop any chip not in the final citation set.
+    const finalSet = new Set(done.citations);
+    const chips = Array.from(rec.citationsEl.querySelectorAll<HTMLElement>('.citation-chip'));
+    for (const chip of chips) {
+      const n = Number(chip.dataset['rank']);
+      if (!finalSet.has(n)) {
+        chip.remove();
+        rec.renderedCitations.delete(n);
+      }
+    }
+    // Announce the final text once.
+    if (this.#announceEl !== null) {
+      this.#announceEl.textContent = rec.accumulatedText;
+    }
+  }
+
+  removeSynthesis(synthesisId: string): void {
+    const rec = this.#syntheses.get(synthesisId);
+    if (rec === undefined) return;
+    rec.el.remove();
+    this.#syntheses.delete(synthesisId);
+  }
+
+  retractSynthesis(retracted: SynthesisRetractedEvent): void {
+    this.removeSynthesis(retracted.synthesisId);
+  }
+
+  #renderCitationChip(rec: SynthesisRecord, rank: number): void {
+    const doc = this.#streamEl.ownerDocument;
+    const cardId = rec.sourceCardIds[rank - 1];
+    const chip = doc.createElement('button');
+    chip.type = 'button';
+    chip.className = 'citation-chip';
+    chip.dataset['rank'] = String(rank);
+    if (typeof cardId === 'string') chip.dataset['cardId'] = cardId;
+    chip.textContent = `[${String(rank)}]`;
+    chip.addEventListener('click', () => {
+      if (typeof cardId !== 'string') return;
+      const target = doc.querySelector<HTMLElement>(`[data-card-id="${cardId}"]`);
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    rec.citationsEl.appendChild(chip);
   }
 
   #buildCardElement(card: CardEvent): HTMLElement {

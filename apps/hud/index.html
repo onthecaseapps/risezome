@@ -15,6 +15,13 @@
       </header>
       <section id="pinned-section" aria-label="Pinned cards"></section>
       <section id="card-stream" aria-label="Card stream" aria-live="polite"></section>
+      <!--
+        Separate SR-only live region for synthesis. The streaming synthesis
+        card is aria-live="off" so we don't spam announcements per-token;
+        this region receives the finalized text once on synthesisDone so
+        screen readers announce the whole answer exactly once.
+      -->
+      <div id="synthesis-announce" aria-live="polite" class="sr-only"></div>
     </main>
     <script type="module" src="/assets/main.js"></script>
   </body>
