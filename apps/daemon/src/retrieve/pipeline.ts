@@ -19,6 +19,12 @@ import {
   type Classifier,
   ClassifierProviderError,
 } from '../router/contract.js';
+import { classifyRelevanceHeuristic } from '../relevance/heuristic.js';
+import {
+  type RelevanceClassifier,
+  type RelevanceResult,
+  RelevanceProviderError,
+} from '../relevance/contract.js';
 import { type SkillRegistry } from '../skills/registry.js';
 import { type Skill, formatAsSource } from '../skills/contract.js';
 import type { SynthesisSource } from '../synthesize/contract.js';
@@ -75,6 +81,24 @@ export interface RetrievalPipelineOptions {
    * skillRegistry with size > 0 are required for the router to fire.
    */
   readonly skillRegistry?: SkillRegistry;
+  /**
+   * Utterance-relevance pre-classifier. When absent, only the heuristic
+   * pre-gate runs (clearly_filler still short-circuits at zero cost);
+   * ambiguous utterances default to surface without an LLM check.
+   */
+  readonly relevanceClassifier?: RelevanceClassifier;
+  /**
+   * Confidence threshold a `skip` decision must clear to actually skip.
+   * Below this value, the pipeline treats the decision as `surface`.
+   * Default 0.7.
+   */
+  readonly relevanceSkipThreshold?: number;
+  /**
+   * Hard timeout for the relevance classifier call (ms). On timeout the
+   * call is treated as `surface` and the pipeline continues. Default
+   * 3000ms.
+   */
+  readonly relevanceTimeoutMs?: number;
 }
 
 const DEFAULT_WINDOW_SECONDS = 30;
@@ -83,6 +107,8 @@ const DEFAULT_MIN_SCORE = 0.012; // Roughly 1 / (60+20) — anything weaker than
 const DEFAULT_TOP_K = 3;
 const DEFAULT_MIN_SYNTHESIS_SCORE = 0.025;
 const DEFAULT_SYNTHESIS_TOP_N = 3;
+const DEFAULT_RELEVANCE_SKIP_THRESHOLD = 0.7;
+const DEFAULT_RELEVANCE_TIMEOUT_MS = 3000;
 
 export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
   readonly #db: DatabaseType;
@@ -100,6 +126,9 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
   readonly #synthesisMaxTokens: number | undefined;
   readonly #classifier: Classifier | undefined;
   readonly #skillRegistry: SkillRegistry | undefined;
+  readonly #relevanceClassifier: RelevanceClassifier | undefined;
+  readonly #relevanceSkipThreshold: number;
+  readonly #relevanceTimeoutMs: number;
 
   #window: TranscriptWindow | null = null;
   #onChange: ((window: WindowText) => void) | null = null;
@@ -124,6 +153,9 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     this.#synthesisMaxTokens = options.synthesisMaxTokens;
     this.#classifier = options.classifier;
     this.#skillRegistry = options.skillRegistry;
+    this.#relevanceClassifier = options.relevanceClassifier;
+    this.#relevanceSkipThreshold = options.relevanceSkipThreshold ?? DEFAULT_RELEVANCE_SKIP_THRESHOLD;
+    this.#relevanceTimeoutMs = options.relevanceTimeoutMs ?? DEFAULT_RELEVANCE_TIMEOUT_MS;
   }
 
   attachWindow(window: TranscriptWindow): void {
@@ -202,6 +234,67 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     const traceId = `t_${randomBytes(6).toString('hex')}`;
     this.#inflight += 1;
 
+    // --- Relevance pre-gate ---------------------------------------------------
+    // Decides whether this utterance is worth running the pipeline on at all.
+    // Three states from the heuristic:
+    //   - clearly_filler      → emit relevanceSkip {gate:'heuristic'}, return
+    //   - clearly_substantive → continue, no LLM check
+    //   - ambiguous           → if classifier+consent are wired, fire it in
+    //                            parallel with the embed below; otherwise
+    //                            default to surface and continue.
+    // The cache (session.getCachedRelevance) is checked before firing the
+    // LLM so repeated identical-after-normalization utterances within the
+    // 30s TTL reuse a prior skip decision without a new API call.
+    const latestUtterance = this.#window?.latestFinalUtteranceText() ?? '';
+    let relevancePromise: Promise<RelevanceResult> | null = null;
+    let relevanceController: AbortController | null = null;
+    let relevanceStartedAt = 0;
+    if (latestUtterance.length > 0) {
+      const heuristicResult = classifyRelevanceHeuristic(latestUtterance);
+      if (heuristicResult === 'clearly_filler') {
+        this.emit('relevanceSkip', {
+          traceId,
+          utterance: latestUtterance,
+          gate: 'heuristic',
+          reason: 'matched filler pattern',
+          ...(utteranceId !== undefined && { utteranceId }),
+        });
+        this.#inflight -= 1;
+        return;
+      }
+      if (heuristicResult === 'ambiguous') {
+        const cached = this.#session.getCachedRelevance(latestUtterance);
+        if (cached !== null && cached.decision === 'skip' && cached.confidence >= this.#relevanceSkipThreshold) {
+          this.emit('relevanceSkip', {
+            traceId,
+            utterance: latestUtterance,
+            gate: 'llm-cached',
+            reason: cached.reason,
+            confidence: cached.confidence,
+            ...(utteranceId !== undefined && { utteranceId }),
+          });
+          this.#inflight -= 1;
+          return;
+        }
+        if (this.#relevanceClassifier !== undefined
+            && (this.#consentCheck === undefined || this.#consentCheck())) {
+          relevanceController = new AbortController();
+          relevanceStartedAt = this.#now();
+          this.emit('relevanceLlmStart', {
+            traceId,
+            utterance: latestUtterance,
+            ...(utteranceId !== undefined && { utteranceId }),
+          });
+          relevancePromise = withTimeout(
+            this.#relevanceClassifier.classify(latestUtterance, relevanceController.signal),
+            this.#relevanceTimeoutMs,
+            relevanceController,
+          );
+          relevancePromise.catch(() => undefined);
+        }
+      }
+    }
+
     // --- Router gate -------------------------------------------------------
     // Heuristic-gated classifier: matches on the most-recent finalized
     // utterance (NOT the windowText, which may carry stale tool-shaped
@@ -212,7 +305,6 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     //
     // Cards from the retrieval branch still emit synchronously inside the
     // existing loop, so the HUD's raw-card TTFT is unchanged.
-    const latestUtterance = this.#window?.latestFinalUtteranceText() ?? '';
     let classifierPromise: ReturnType<Classifier['classify']> | null = null;
     let classifierController: AbortController | null = null;
     let classifierStartedAt = 0;
@@ -293,6 +385,53 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
       return;
     }
     const retrieveEndAt = this.#now();
+
+    // --- Await the relevance classifier (if fired) ----------------------------
+    // Embed + retrieve have completed. Before emitting any cards we let the
+    // relevance LLM say its piece — a confident skip here drops the cards
+    // before the HUD ever sees them. Any error or timeout falls through to
+    // "surface" so a flaky classifier never blocks the pipeline.
+    if (relevancePromise !== null) {
+      try {
+        const result = await relevancePromise;
+        const latencyMs = this.#now() - relevanceStartedAt;
+        if (result.decision === 'skip') {
+          this.#session.recordRelevance(latestUtterance, result);
+        }
+        this.emit('relevanceClassified', {
+          traceId,
+          utterance: latestUtterance,
+          decision: result.decision,
+          confidence: result.decision === 'skip' ? result.confidence : null,
+          latencyMs,
+          ...(utteranceId !== undefined && { utteranceId }),
+        });
+        if (result.decision === 'skip' && result.confidence >= this.#relevanceSkipThreshold) {
+          this.emit('relevanceSkip', {
+            traceId,
+            utterance: latestUtterance,
+            gate: 'llm',
+            reason: result.reason,
+            confidence: result.confidence,
+            ...(utteranceId !== undefined && { utteranceId }),
+          });
+          this.#inflight -= 1;
+          return;
+        }
+      } catch (err) {
+        const code =
+          err instanceof RelevanceProviderError ? err.kind :
+          err instanceof Error && err.name === 'AbortError' ? 'aborted' :
+          'unknown';
+        this.emit('relevanceLlmError', {
+          traceId,
+          code,
+          message: (err as Error).message,
+          ...(utteranceId !== undefined && { utteranceId }),
+        });
+        // Treat error/timeout as surface — continue.
+      }
+    }
 
     let emitted = 0;
     let rank = 0;
@@ -634,6 +773,28 @@ export function shouldRunFtsLeg(text: string): boolean {
 // lines on GitHub by appending `#L{start}-L{end}`. For docs without that
 // header (issues, PRs, markdown) we return the doc URL untouched.
 const SNIPPET_LOCATION = /^\/\/\s+\S+:(\d+)-(\d+)\s*\r?\n/;
+
+// Wraps a promise with a hard timeout. If `ms` elapses before the promise
+// settles, the returned promise rejects with `RelevanceProviderError('timeout')`
+// and the controller is aborted so the in-flight fetch (when applicable)
+// can short-circuit. The original promise's late settlement is silently
+// discarded by the caller's await.
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  controller: AbortController,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      try { controller.abort(); } catch { /* already aborted */ }
+      reject(new RelevanceProviderError('timeout', `Relevance classifier timed out after ${String(ms)}ms`));
+    }, ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
 
 export function buildCardUrl(docUrl: string | null | undefined, snippet: string): string | null {
   if (typeof docUrl !== 'string' || docUrl.length === 0) return null;

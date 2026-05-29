@@ -1,4 +1,6 @@
 import type { CardEvent } from '../retrieve/contract.js';
+import type { RelevanceResult } from '../relevance/contract.js';
+import { normalizeForRelevance } from '../relevance/heuristic.js';
 
 export interface ActiveSynthesis {
   readonly synthesisId: string;
@@ -27,10 +29,19 @@ export interface MeetingSessionOptions {
    * windowChanged re-fire) won't show the same card twice.
    */
   readonly surfacedTtlMs?: number;
+  /**
+   * How long a `skip` relevance-classifier decision is cached for repeat
+   * utterances. Keyed by `normalizeForRelevance(utterance)` so trivial
+   * transcription variants (`yeah`, `Yeah!`, `yeah.`) collide. Only skip
+   * decisions are cached — surface decisions are not, since re-firing
+   * the classifier on surface is the cheap path.
+   */
+  readonly relevanceCacheTtlMs?: number;
   readonly now?: () => number;
 }
 
 const DEFAULT_SURFACED_TTL_MS = 120_000;
+const DEFAULT_RELEVANCE_CACHE_TTL_MS = 30_000;
 
 export class MeetingSession {
   readonly meetingId: string;
@@ -38,12 +49,15 @@ export class MeetingSession {
   readonly #pinnedIds = new Set<string>();
   readonly #cards = new Map<string, CardEvent>();
   readonly #syntheses = new Map<string, ActiveSynthesis>();
+  readonly #relevanceCache = new Map<string, { result: RelevanceResult; at: number }>();
   readonly #surfacedTtlMs: number;
+  readonly #relevanceCacheTtlMs: number;
   readonly #now: () => number;
 
   constructor(meetingId: string, options: MeetingSessionOptions = {}) {
     this.meetingId = meetingId;
     this.#surfacedTtlMs = options.surfacedTtlMs ?? DEFAULT_SURFACED_TTL_MS;
+    this.#relevanceCacheTtlMs = options.relevanceCacheTtlMs ?? DEFAULT_RELEVANCE_CACHE_TTL_MS;
     this.#now = options.now ?? Date.now;
   }
 
@@ -81,6 +95,31 @@ export class MeetingSession {
 
   surfacedCount(): number {
     return this.#surfacedAt.size;
+  }
+
+  // --- Relevance-classifier memoization ---
+  //
+  // Only `skip` decisions are recorded. Surface decisions intentionally
+  // miss the cache so a re-fire goes through the classifier again — the
+  // cost is one classifier call vs. risking a pinned wrong-surface
+  // decision when the original was borderline.
+  recordRelevance(utterance: string, result: RelevanceResult): void {
+    if (result.decision !== 'skip') return;
+    const key = normalizeForRelevance(utterance);
+    if (key.length === 0) return;
+    this.#relevanceCache.set(key, { result, at: this.#now() });
+  }
+
+  getCachedRelevance(utterance: string): RelevanceResult | null {
+    const key = normalizeForRelevance(utterance);
+    if (key.length === 0) return null;
+    const entry = this.#relevanceCache.get(key);
+    if (entry === undefined) return null;
+    if (this.#now() - entry.at >= this.#relevanceCacheTtlMs) {
+      this.#relevanceCache.delete(key);
+      return null;
+    }
+    return entry.result;
   }
 
   // --- Synthesis tracking ---
@@ -139,6 +178,7 @@ export class MeetingSession {
     this.#surfacedAt.clear();
     this.#pinnedIds.clear();
     this.#cards.clear();
+    this.#relevanceCache.clear();
     for (const s of this.#syntheses.values()) {
       try {
         s.controller.abort();

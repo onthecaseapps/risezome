@@ -1435,3 +1435,287 @@ describe('RetrievalPipeline — router outcomes', () => {
     expect(synthCalls[0]!.sources[0]!.title).not.toContain('Tool:');
   });
 });
+
+// =============================================================================
+// Utterance-relevance pre-classifier integration tests (U3).
+// =============================================================================
+
+import type { RelevanceClassifier, RelevanceResult } from '../../src/relevance/contract.js';
+import { RelevanceProviderError } from '../../src/relevance/contract.js';
+
+interface RelevanceEvents {
+  relevanceSkip: Array<{ gate: string; reason: string; utterance: string; confidence?: number }>;
+  relevanceLlmStart: Array<{ utterance: string }>;
+  relevanceClassified: Array<{ decision: string; confidence: number | null; latencyMs: number; utterance: string }>;
+  relevanceLlmError: Array<{ code: string; message?: string }>;
+}
+
+function recordRelevanceEvents(pipeline: RetrievalPipeline): RelevanceEvents {
+  const events: RelevanceEvents = {
+    relevanceSkip: [],
+    relevanceLlmStart: [],
+    relevanceClassified: [],
+    relevanceLlmError: [],
+  };
+  pipeline.on('relevanceSkip', (e) => {
+    const entry: { gate: string; reason: string; utterance: string; confidence?: number } = {
+      gate: e.gate,
+      reason: e.reason,
+      utterance: e.utterance,
+    };
+    if (e.confidence !== undefined) entry.confidence = e.confidence;
+    events.relevanceSkip.push(entry);
+  });
+  pipeline.on('relevanceLlmStart', (e) => {
+    events.relevanceLlmStart.push({ utterance: e.utterance });
+  });
+  pipeline.on('relevanceClassified', (e) => {
+    events.relevanceClassified.push({
+      decision: e.decision,
+      confidence: e.confidence,
+      latencyMs: e.latencyMs,
+      utterance: e.utterance,
+    });
+  });
+  pipeline.on('relevanceLlmError', (e) => {
+    events.relevanceLlmError.push({ code: e.code, ...(e.message !== undefined && { message: e.message }) });
+  });
+  return events;
+}
+
+function fakeRelevanceClassifier(impl: (utterance: string, signal?: AbortSignal) => Promise<RelevanceResult>): RelevanceClassifier {
+  return { classify: impl };
+}
+
+async function setupWithRelevance(opts: {
+  relevanceClassifier?: RelevanceClassifier;
+  relevanceSkipThreshold?: number;
+  relevanceTimeoutMs?: number;
+  consentCheck?: () => boolean;
+}): Promise<Harness & { relevanceEvents: RelevanceEvents; cardEvents: CardEvent[] }> {
+  const dir = mkdtempSync(join(tmpdir(), 'upwell-pipeline-relevance-'));
+  const db = await openCorpusDb({ path: join(dir, 'upwell.db') });
+  await migrate(db);
+  const store = new TranscriptStore(db);
+  store.ensureMeeting('m:1', null, 0);
+  const session = new MeetingSession('m:1');
+  const nowRef = { value: 100_000 };
+  const window = new TranscriptWindow({
+    meetingId: 'm:1',
+    store,
+    now: () => nowRef.value,
+  });
+  const embedder = fakeEmbedder(() => unitVectorAt(7));
+  const pipeline = new RetrievalPipeline({
+    db,
+    embedder,
+    session,
+    debounceMs: 0,
+    minScore: 0,
+    minSynthesisScore: 0,
+    now: () => nowRef.value,
+    ...(opts.consentCheck !== undefined && { consentCheck: opts.consentCheck }),
+    ...(opts.relevanceClassifier !== undefined && { relevanceClassifier: opts.relevanceClassifier }),
+    ...(opts.relevanceSkipThreshold !== undefined && { relevanceSkipThreshold: opts.relevanceSkipThreshold }),
+    ...(opts.relevanceTimeoutMs !== undefined && { relevanceTimeoutMs: opts.relevanceTimeoutMs }),
+  });
+  pipeline.attachWindow(window);
+  const relevanceEvents = recordRelevanceEvents(pipeline);
+  const cardEvents: CardEvent[] = [];
+  pipeline.on('card', (c) => cardEvents.push(c));
+  return { db, store, window, session, embedder, pipeline, dir, nowRef, relevanceEvents, cardEvents };
+}
+
+describe('RetrievalPipeline — relevance pre-gate', () => {
+  let h: Awaited<ReturnType<typeof setupWithRelevance>>;
+
+  afterEach(() => {
+    if (h !== undefined) teardown(h);
+  });
+
+  async function pushAndFlush(window: TranscriptWindow, text: string): Promise<void> {
+    window.push({
+      utteranceId: `u_${Math.random()}`,
+      text,
+      isFinal: true,
+      startMs: 95_000,
+      endMs: 96_000,
+      revision: 0,
+    });
+    await flushDebounce();
+  }
+
+  it('heuristic skip — "yeah" emits relevanceSkip{gate:heuristic} and no embed/cards', async () => {
+    let embedCalled = false;
+    h = await setupWithRelevance({});
+    // Wrap the embedder to detect any call (which we don't expect).
+    const origEmbed = h.embedder.embed.bind(h.embedder);
+    h.embedder.embed = ((req) => { embedCalled = true; return origEmbed(req); }) as typeof h.embedder.embed;
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'yeah');
+
+    expect(h.relevanceEvents.relevanceSkip).toHaveLength(1);
+    expect(h.relevanceEvents.relevanceSkip[0]!.gate).toBe('heuristic');
+    expect(h.cardEvents).toHaveLength(0);
+    expect(embedCalled).toBe(false);
+  });
+
+  it('heuristic surface — "how does the rag pipeline work" runs pipeline without firing the LLM', async () => {
+    let llmCalled = false;
+    const fake = fakeRelevanceClassifier(async () => { llmCalled = true; return { decision: 'surface' }; });
+    h = await setupWithRelevance({ relevanceClassifier: fake });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'how does the rag pipeline work');
+
+    expect(llmCalled).toBe(false);
+    expect(h.relevanceEvents.relevanceSkip).toHaveLength(0);
+    expect(h.relevanceEvents.relevanceLlmStart).toHaveLength(0);
+    expect(h.cardEvents.length).toBeGreaterThan(0);
+  });
+
+  it('LLM skip above threshold — relevanceSkip{gate:llm} fires; no cards emitted', async () => {
+    const fake = fakeRelevanceClassifier(async () =>
+      ({ decision: 'skip', confidence: 0.9, reason: 'social pleasantry' })
+    );
+    h = await setupWithRelevance({ relevanceClassifier: fake });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    // Ambiguous heuristic input — short non-question statement.
+    await pushAndFlush(h.window, 'the lunch order is in');
+
+    expect(h.relevanceEvents.relevanceLlmStart).toHaveLength(1);
+    expect(h.relevanceEvents.relevanceClassified).toHaveLength(1);
+    expect(h.relevanceEvents.relevanceClassified[0]!.decision).toBe('skip');
+    expect(h.relevanceEvents.relevanceSkip).toHaveLength(1);
+    expect(h.relevanceEvents.relevanceSkip[0]!.gate).toBe('llm');
+    expect(h.cardEvents).toHaveLength(0);
+  });
+
+  it('LLM skip below threshold — treated as surface, cards emitted', async () => {
+    const fake = fakeRelevanceClassifier(async () =>
+      ({ decision: 'skip', confidence: 0.5, reason: 'low confidence' })
+    );
+    h = await setupWithRelevance({ relevanceClassifier: fake, relevanceSkipThreshold: 0.7 });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'the lunch order is in');
+
+    expect(h.relevanceEvents.relevanceClassified[0]!.decision).toBe('skip');
+    expect(h.relevanceEvents.relevanceSkip).toHaveLength(0);
+    expect(h.cardEvents.length).toBeGreaterThan(0);
+  });
+
+  it('LLM surface — cards emitted, relevanceClassified records decision=surface with confidence=null', async () => {
+    const fake = fakeRelevanceClassifier(async () => ({ decision: 'surface' }));
+    h = await setupWithRelevance({ relevanceClassifier: fake });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'the lunch order is in');
+
+    expect(h.relevanceEvents.relevanceClassified[0]!.decision).toBe('surface');
+    expect(h.relevanceEvents.relevanceClassified[0]!.confidence).toBeNull();
+    expect(h.cardEvents.length).toBeGreaterThan(0);
+  });
+
+  it('no classifier configured — ambiguous utterances default to surface, no relevance events fire on the LLM path', async () => {
+    h = await setupWithRelevance({});
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'the lunch order is in');
+
+    expect(h.relevanceEvents.relevanceLlmStart).toHaveLength(0);
+    expect(h.relevanceEvents.relevanceClassified).toHaveLength(0);
+    expect(h.relevanceEvents.relevanceSkip).toHaveLength(0);
+    expect(h.cardEvents.length).toBeGreaterThan(0);
+  });
+
+  it('consent revoked — classifier present but consent denied → defaults to surface; classifier NOT called', async () => {
+    let called = false;
+    const fake = fakeRelevanceClassifier(async () => { called = true; return { decision: 'skip', confidence: 0.99, reason: 'filler' }; });
+    h = await setupWithRelevance({ relevanceClassifier: fake, consentCheck: () => false });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'the lunch order is in');
+
+    expect(called).toBe(false);
+    expect(h.relevanceEvents.relevanceSkip).toHaveLength(0);
+    expect(h.cardEvents.length).toBeGreaterThan(0);
+  });
+
+  it('classifier throws — relevanceLlmError fires, pipeline continues as surface', async () => {
+    const fake = fakeRelevanceClassifier(async () => {
+      throw new RelevanceProviderError('rate-limit', 'rate limited');
+    });
+    h = await setupWithRelevance({ relevanceClassifier: fake });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'the lunch order is in');
+
+    expect(h.relevanceEvents.relevanceLlmError).toHaveLength(1);
+    expect(h.relevanceEvents.relevanceLlmError[0]!.code).toBe('rate-limit');
+    expect(h.cardEvents.length).toBeGreaterThan(0);
+  });
+
+  it('classifier hangs past the timeout — relevanceLlmError{code:timeout}, pipeline continues as surface', async () => {
+    const fake = fakeRelevanceClassifier(
+      (_utterance, signal) =>
+        new Promise<RelevanceResult>((resolve, reject) => {
+          // Never resolve naturally; abort handler rejects.
+          signal?.addEventListener('abort', () => {
+            reject(new DOMException('aborted', 'AbortError'));
+          });
+          // Resolve guard prevents lint warnings about unused resolve.
+          void resolve;
+        })
+    );
+    h = await setupWithRelevance({ relevanceClassifier: fake, relevanceTimeoutMs: 20 });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'the lunch order is in');
+    // Wait for the timeout window + small margin.
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(h.relevanceEvents.relevanceLlmError.length).toBeGreaterThanOrEqual(1);
+    expect(h.relevanceEvents.relevanceLlmError[0]!.code).toBe('timeout');
+    expect(h.cardEvents.length).toBeGreaterThan(0);
+  });
+
+  it('memoization — same utterance text within 30s reuses cached skip (one LLM call total)', async () => {
+    let callCount = 0;
+    const fake = fakeRelevanceClassifier(async () => {
+      callCount += 1;
+      return { decision: 'skip', confidence: 0.9, reason: 'filler' };
+    });
+    h = await setupWithRelevance({ relevanceClassifier: fake });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'the lunch order is in');
+    await pushAndFlush(h.window, 'the lunch order is in');
+
+    expect(callCount).toBe(1);
+    expect(h.relevanceEvents.relevanceSkip.length).toBeGreaterThanOrEqual(2);
+    expect(h.relevanceEvents.relevanceSkip[1]!.gate).toBe('llm-cached');
+  });
+
+  it('memoization (key normalization) — "Yeah!" and "yeah" collide (but both are heuristic-filler, so test via real LLM-classified case)', async () => {
+    // Both inputs heuristic-clear are filler. Use ambiguous variants that
+    // only differ in case/punctuation to exercise the normalized-cache key.
+    let callCount = 0;
+    const fake = fakeRelevanceClassifier(async () => {
+      callCount += 1;
+      return { decision: 'skip', confidence: 0.85, reason: 'filler' };
+    });
+    h = await setupWithRelevance({ relevanceClassifier: fake });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'the lunch order is in');
+    await pushAndFlush(h.window, 'The lunch order is in.');
+
+    expect(callCount).toBe(1);
+  });
+
+  it('memoization (surface not cached) — surface decisions re-fire on the next flush', async () => {
+    let callCount = 0;
+    const fake = fakeRelevanceClassifier(async () => {
+      callCount += 1;
+      return { decision: 'surface' };
+    });
+    h = await setupWithRelevance({ relevanceClassifier: fake });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'the lunch order is in');
+    await pushAndFlush(h.window, 'the lunch order is in');
+
+    expect(callCount).toBe(2);
+  });
+});

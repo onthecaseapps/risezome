@@ -163,6 +163,44 @@ export interface SkillFailed {
   readonly message?: string;
 }
 
+// --- Utterance-relevance pre-classifier events ---
+
+export type RelevanceGate = 'heuristic' | 'llm' | 'llm-cached';
+
+export interface RelevanceSkip {
+  readonly traceId: string;
+  readonly utterance: string;
+  readonly gate: RelevanceGate;
+  readonly reason: string;
+  readonly confidence?: number;
+  readonly utteranceId?: string;
+}
+
+export interface RelevanceLlmStart {
+  readonly traceId: string;
+  readonly utterance: string;
+  readonly utteranceId?: string;
+}
+
+// Emitted on every LLM call regardless of decision. This is the
+// calibration signal: it makes the surface/skip distribution greppable
+// in daemon logs so the threshold env var becomes tunable.
+export interface RelevanceClassified {
+  readonly traceId: string;
+  readonly utterance: string;
+  readonly decision: 'surface' | 'skip';
+  readonly confidence: number | null;
+  readonly latencyMs: number;
+  readonly utteranceId?: string;
+}
+
+export interface RelevanceLlmError {
+  readonly traceId: string;
+  readonly code: string;
+  readonly message?: string;
+  readonly utteranceId?: string;
+}
+
 export interface RetrievalPipelineEvents {
   card: [CardEvent];
   cardUpdated: [CardUpdated];
@@ -181,4 +219,8 @@ export interface RetrievalPipelineEvents {
   skillStart: [SkillStart];
   skillDone: [SkillDone];
   skillFailed: [SkillFailed];
+  relevanceSkip: [RelevanceSkip];
+  relevanceLlmStart: [RelevanceLlmStart];
+  relevanceClassified: [RelevanceClassified];
+  relevanceLlmError: [RelevanceLlmError];
 }
