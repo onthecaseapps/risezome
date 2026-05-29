@@ -9,6 +9,10 @@
 
 import { faSun } from '@fortawesome/free-solid-svg-icons/faSun';
 import { faMoon } from '@fortawesome/free-solid-svg-icons/faMoon';
+import { faThumbtack } from '@fortawesome/free-solid-svg-icons/faThumbtack';
+import { faBookmark } from '@fortawesome/free-solid-svg-icons/faBookmark';
+import { faXmark } from '@fortawesome/free-solid-svg-icons/faXmark';
+import { faArrowUpRightFromSquare } from '@fortawesome/free-solid-svg-icons/faArrowUpRightFromSquare';
 
 export type IconDef = typeof faSun;
 
@@ -17,9 +21,13 @@ export type IconDef = typeof faSun;
 const Icons: Readonly<Record<string, IconDef>> = {
   sun: faSun,
   moon: faMoon,
+  thumbtack: faThumbtack,
+  bookmark: faBookmark,
+  xmark: faXmark,
+  externalLink: faArrowUpRightFromSquare,
 };
 
-export type IconName = 'sun' | 'moon';
+export type IconName = 'sun' | 'moon' | 'thumbtack' | 'bookmark' | 'xmark' | 'externalLink';
 
 export function getIconDef(name: IconName): IconDef {
   return Icons[name]!;

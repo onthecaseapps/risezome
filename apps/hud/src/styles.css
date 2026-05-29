@@ -334,11 +334,24 @@ body {
   border: 1px solid var(--border);
   color: var(--fg);
   border-radius: 6px;
-  padding: 6px 14px;
+  padding: 6px 12px;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+/* Icon button: icon on the left, label on the right. Uses inline-flex so
+   the icon's intrinsic baseline aligns with the text without per-icon
+   adjustments. */
+.card .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card .icon-btn .icon svg {
+  display: block;
 }
 
 .card button:hover {

@@ -9,6 +9,7 @@ import type {
   SynthesisStartEvent,
 } from './types.js';
 import { detectLanguage, highlightCode, parseSnippet } from './highlight.js';
+import { renderIcon, type IconName } from './icons.js';
 
 export interface SidebarOptions {
   readonly streamEl: HTMLElement;
@@ -418,11 +419,8 @@ export class Sidebar {
 
     const actions = doc.createElement('div');
     actions.className = 'actions';
-    const pinBtn = doc.createElement('button');
-    pinBtn.type = 'button';
-    pinBtn.dataset.action = 'pin';
-    pinBtn.textContent = 'Pin';
-    pinBtn.addEventListener('click', () => this.togglePin(card.cardId));
+    const pinBtn = makeIconButton(doc, 'thumbtack', 'Pin', () => this.togglePin(card.cardId));
+    pinBtn.dataset['action'] = 'pin';
     actions.append(pinBtn);
 
     el.append(header, title, snippetEl, actions);
@@ -449,14 +447,8 @@ export class Sidebar {
 
     const actions = doc.createElement('div');
     actions.className = 'actions';
-    const logBtn = doc.createElement('button');
-    logBtn.type = 'button';
-    logBtn.textContent = 'Log gap';
-    logBtn.addEventListener('click', () => this.#onLogGap(gap.gapId));
-    const dismissBtn = doc.createElement('button');
-    dismissBtn.type = 'button';
-    dismissBtn.textContent = 'Dismiss';
-    dismissBtn.addEventListener('click', () => {
+    const logBtn = makeIconButton(doc, 'bookmark', 'Log gap', () => this.#onLogGap(gap.gapId));
+    const dismissBtn = makeIconButton(doc, 'xmark', 'Dismiss', () => {
       this.#gaps.delete(gap.gapId);
       el.remove();
       this.#onDismissGap(gap.gapId);
@@ -474,6 +466,28 @@ export class Sidebar {
 
 function formatScore(score: number): string {
   return `${Math.round(score * 100)}%`;
+}
+
+// Card action buttons (Pin / Log gap / Dismiss) — icon on the left, label
+// on the right. Single helper so styling stays consistent and adding new
+// actions is a one-liner.
+function makeIconButton(
+  doc: Document,
+  icon: IconName,
+  label: string,
+  onClick: () => void,
+): HTMLButtonElement {
+  const btn = doc.createElement('button');
+  btn.type = 'button';
+  btn.className = 'icon-btn';
+  btn.title = label;
+  btn.append(renderIcon(doc, icon, { size: '12px' }));
+  const text = doc.createElement('span');
+  text.className = 'icon-btn-label';
+  text.textContent = label;
+  btn.append(text);
+  btn.addEventListener('click', onClick);
+  return btn;
 }
 
 function formatRank(rank: number): string {
