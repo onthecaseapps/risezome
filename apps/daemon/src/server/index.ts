@@ -99,7 +99,12 @@ export async function buildDaemonServer(options: DaemonServerOptions): Promise<D
   });
 
   app.addHook('onSend', (_request, reply, payload, done) => {
-    void reply.header('Content-Security-Policy', buildCspHeader(boundPort));
+    // Don't overwrite a Content-Security-Policy header the route already
+    // set — the HUD bootstrap route needs to ship its own per-request
+    // nonce-bearing policy so its inline config script can execute.
+    if (reply.getHeader('content-security-policy') === undefined) {
+      void reply.header('Content-Security-Policy', buildCspHeader(boundPort));
+    }
     void reply.header('X-Content-Type-Options', 'nosniff');
     void reply.header('Referrer-Policy', 'no-referrer');
     done(null, payload);

@@ -13,6 +13,14 @@ export interface CardEvent {
   readonly triggeredBy: CardTrigger;
   readonly utteranceId?: string;
   readonly traceId: string;
+  // Origin URL for the underlying doc (GitHub blob URL, issue URL, PR URL,
+  // etc.). For code chunks we append a `#L{start}-L{end}` anchor so the link
+  // jumps to the cited range. Absent when the connector did not provide one.
+  readonly url?: string;
+  // 1-indexed position within the current retrieval batch. Lets the HUD show
+  // "Top match" / "Match" labels instead of a raw RRF percent, which reads
+  // as "2% confidence" to humans even when the doc is the strongest result.
+  readonly rank: number;
 }
 
 export interface CardUpdated {

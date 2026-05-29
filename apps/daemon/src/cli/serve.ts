@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
+import { buildCspHeader } from '../server/csp.js';
 import { openCorpusDb } from '../corpus/db.js';
 import { migrate } from '../corpus/migrate.js';
 import type { FastifyInstance } from 'fastify';
@@ -47,6 +48,11 @@ export async function runServe(): Promise<number> {
   const sidecarSha = optionalEnv('UPWELL_SIDECAR_SHA');
   const dgKey = requireEnv('DEEPGRAM_API_KEY');
   const voyageKey = requireEnv('VOYAGE_API_KEY');
+  // These MUST mirror what `pnpm daemon index` used or the query embedding
+  // lands in a different semantic space than the corpus — search becomes
+  // noise. The query and corpus models share an .env source of truth.
+  const voyageTextModel = optionalEnv('VOYAGE_TEXT_MODEL');
+  const voyageCodeModel = optionalEnv('VOYAGE_CODE_MODEL');
 
   const db = await openCorpusDb();
   await migrate(db);
@@ -89,11 +95,21 @@ export async function runServe(): Promise<number> {
     const embedder = new VoyageEmbedder({
       apiKey: voyageKey,
       onUsage: (u) => log('info', 'voyage.usage', { ...u }),
+      ...(voyageTextModel !== undefined && { textModel: voyageTextModel }),
+      ...(voyageCodeModel !== undefined && { codeModel: voyageCodeModel }),
     });
     const pipeline = new RetrievalPipeline({ db, embedder, session, debounceMs: 700, minScore: 0 });
     pipeline.attachWindow(window);
 
-    runner.on('frame', (frame) => engine.sendFrame(frame.samples));
+    let frameCount = 0;
+    runner.on('frame', (frame) => {
+      engine.sendFrame(frame.samples);
+      frameCount += 1;
+      if (frameCount % 250 === 0) {
+        log('info', `audio.frames ${String(frameCount)} (~${String(Math.round(frameCount / 50))}s of audio)`);
+      }
+    });
+    runner.on('control', (msg) => log('info', `sidecar.control ${JSON.stringify(msg)}`));
     runner.on('error', (err) => log('error', `sidecar: ${err.message}`));
     engine.on('partial', (p) => window.push(p.utterance));
     engine.on('final', (f) => {
@@ -241,8 +257,15 @@ function wireHudRoutesOnApp(
     }
     const port = getPort();
     const wsUrl = `ws://127.0.0.1:${String(port)}/ws/events`;
-    const inject = `<script>window.UPWELL_BOOTSTRAP = { wsUrl: ${JSON.stringify(wsUrl)}, token: ${JSON.stringify(getToken())} };</script>\n`;
+    // Per-request nonce: required so the inline bootstrap script can run
+    // under the strict `script-src 'self'` CSP without falling back to
+    // 'unsafe-inline'. Same value goes on the <script nonce="..."> tag and
+    // in the CSP `script-src 'nonce-...'` directive — browser only runs the
+    // script when the two match.
+    const nonce = randomBytes(16).toString('base64');
+    const inject = `<script nonce="${nonce}">window.UPWELL_BOOTSTRAP = { wsUrl: ${JSON.stringify(wsUrl)}, token: ${JSON.stringify(getToken())} };</script>\n`;
     const html = bootstrapHtml.replace('</head>', `${inject}</head>`);
+    void reply.header('Content-Security-Policy', buildCspHeader(port, nonce));
     void reply.type('text/html').send(html);
   });
 

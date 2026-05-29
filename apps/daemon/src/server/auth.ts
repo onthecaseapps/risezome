@@ -26,16 +26,28 @@ export async function loadOrCreateSessionAuth(dataDirOverride?: string): Promise
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
 
   let token: string;
-  try {
-    const existing = await readFile(tokenPath, 'utf8');
-    const trimmed = existing.trim();
-    if (trimmed.length === SESSION_TOKEN_BYTES * 2) {
-      token = trimmed;
-    } else {
+  // Dev override: UPWELL_SESSION_TOKEN lets you pin the bearer to a known
+  // hex string for curl/script testing. Must be 64 hex chars (32 bytes).
+  const envToken = process.env['UPWELL_SESSION_TOKEN']?.trim();
+  if (typeof envToken === 'string' && envToken.length > 0) {
+    if (envToken.length !== SESSION_TOKEN_BYTES * 2 || !/^[0-9a-fA-F]+$/.test(envToken)) {
+      throw new SessionTokenError(
+        `UPWELL_SESSION_TOKEN must be ${String(SESSION_TOKEN_BYTES * 2)} hex chars (got ${String(envToken.length)})`,
+      );
+    }
+    token = envToken.toLowerCase();
+  } else {
+    try {
+      const existing = await readFile(tokenPath, 'utf8');
+      const trimmed = existing.trim();
+      if (trimmed.length === SESSION_TOKEN_BYTES * 2) {
+        token = trimmed;
+      } else {
+        token = await rotateSessionToken(tokenPath);
+      }
+    } catch {
       token = await rotateSessionToken(tokenPath);
     }
-  } catch {
-    token = await rotateSessionToken(tokenPath);
   }
 
   const tokenBuffer = Buffer.from(token, 'hex');
