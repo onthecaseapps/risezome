@@ -217,15 +217,18 @@ body {
   border-color: var(--accent);
 }
 
+/* U2: metadata row recedes — smaller, slightly less heavy, still
+   uppercase to preserve the "this is metadata" affordance but quieter
+   relative to the new title hierarchy. */
 .card .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .card .header .source {
@@ -255,17 +258,25 @@ body {
   border-bottom-color: var(--accent);
 }
 
+/* U2: title dominates as the entry point — heavier weight + larger size
+   than the snippet. The size bump (14 → 16) and weight bump (600 → 700)
+   together make the title clearly the strongest element in the card. */
 .card .title {
-  font-weight: 600;
-  font-size: 14px;
-  line-height: 1.35;
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1.3;
   word-break: break-word;
 }
 
+/* U2: snippet reads as content, not metadata. Use --fg (full strength)
+   so the actual text is the most readable element after the title.
+   max-width caps long prose lines for comfortable reading rhythm;
+   doesn't apply to code snippets which need horizontal scroll. */
 .card .snippet.prose {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.55;
+  color: var(--fg);
+  font-size: 13.5px;
+  line-height: 1.6;
+  max-width: 65ch;
   white-space: pre-wrap;
   word-break: break-word;
 }
