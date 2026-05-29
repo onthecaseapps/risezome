@@ -47,10 +47,60 @@ export interface RetrievalTrace {
   readonly cardCount: number;
 }
 
+// Code the HUD receives in `synthesisError`. The full set covers refusal
+// (LLM emitted the sentinel), rate-limiting, the Anthropic kind taxonomy
+// from SynthesisProviderError, and 'unknown' as a catchall.
+export type SynthesisErrorCode =
+  | 'refused'
+  | 'rate-limited'
+  | 'auth-error'
+  | 'bad-request'
+  | 'network-error'
+  | 'overloaded'
+  | 'server-error'
+  | 'request-too-large'
+  | 'unknown';
+
+export type SynthesisRetractedReason = 'source-retracted' | 'meeting-ended' | 'manual-dismiss';
+
+export interface SynthesisStart {
+  readonly synthesisId: string;
+  readonly sourceCardIds: readonly string[];
+  readonly traceId: string;
+}
+
+export interface SynthesisDelta {
+  readonly synthesisId: string;
+  readonly delta: string;
+}
+
+export interface SynthesisDone {
+  readonly synthesisId: string;
+  readonly stopReason: string;
+  readonly citations: readonly number[];
+}
+
+export interface SynthesisError {
+  readonly synthesisId: string;
+  readonly code: SynthesisErrorCode;
+  readonly message?: string;
+  readonly retryAfterMs?: number;
+}
+
+export interface SynthesisRetracted {
+  readonly synthesisId: string;
+  readonly reason: SynthesisRetractedReason;
+}
+
 export interface RetrievalPipelineEvents {
   card: [CardEvent];
   cardUpdated: [CardUpdated];
   cardRetracted: [CardRetracted];
   trace: [RetrievalTrace];
   error: [Error];
+  synthesisStart: [SynthesisStart];
+  synthesisDelta: [SynthesisDelta];
+  synthesisDone: [SynthesisDone];
+  synthesisError: [SynthesisError];
+  synthesisRetracted: [SynthesisRetracted];
 }

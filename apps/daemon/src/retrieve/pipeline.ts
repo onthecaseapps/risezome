@@ -6,11 +6,20 @@ import { hybridSearch } from '../corpus/query.js';
 import { hasEntityLikeToken } from '../corpus/text-heuristics.js';
 import type { TranscriptWindow, WindowText } from '../transcript/window.js';
 import type { MeetingSession } from '../meeting/session.js';
+import {
+  SynthesisProviderError,
+  SynthesisRateLimitError,
+  type Synthesizer,
+  type SynthesisInput,
+} from '../synthesize/contract.js';
+import { parseSynthesisOutput, REFUSAL_SENTINEL } from '../synthesize/prompt.js';
 import type {
   CardEvent,
+  CardRetracted,
   CardTrigger,
   RetrievalPipelineEvents,
   RetrievalTrace,
+  SynthesisErrorCode,
 } from './contract.js';
 
 export interface RetrievalPipelineOptions {
@@ -22,12 +31,39 @@ export interface RetrievalPipelineOptions {
   readonly minScore?: number;
   readonly topK?: number;
   readonly now?: () => number;
+  // --- Synthesis options ---
+  /**
+   * Streaming LLM synthesizer. When absent, no synthesis runs and the
+   * pipeline behaves exactly as it did before U4 — raw cards only.
+   */
+  readonly synthesizer?: Synthesizer;
+  /**
+   * Sync gate evaluated at flush time. When it returns false, no
+   * synthesis call is made. Existing usage: closure over hasConsent(db,
+   * 'anthropic'). Re-checked on every flush so revocation takes effect
+   * on the next debounced batch.
+   */
+  readonly consentCheck?: () => boolean;
+  /**
+   * Minimum RRF score on the top emitted card required to trigger
+   * synthesis. Below this threshold, the HUD shows raw cards only.
+   * Default 0.025 (≈ top-1 in at least one ranker).
+   */
+  readonly minSynthesisScore?: number;
+  /**
+   * Number of top cards passed to the synthesizer as numbered sources.
+   * Default 3.
+   */
+  readonly synthesisTopN?: number;
+  readonly synthesisMaxTokens?: number;
 }
 
 const DEFAULT_WINDOW_SECONDS = 30;
 const DEFAULT_DEBOUNCE_MS = 700;
 const DEFAULT_MIN_SCORE = 0.012; // Roughly 1 / (60+20) — anything weaker than rank-20 from a single ranker.
 const DEFAULT_TOP_K = 3;
+const DEFAULT_MIN_SYNTHESIS_SCORE = 0.025;
+const DEFAULT_SYNTHESIS_TOP_N = 3;
 
 export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
   readonly #db: DatabaseType;
@@ -38,6 +74,11 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
   readonly #minScore: number;
   readonly #topK: number;
   readonly #now: () => number;
+  readonly #synthesizer: Synthesizer | undefined;
+  readonly #consentCheck: (() => boolean) | undefined;
+  readonly #minSynthesisScore: number;
+  readonly #synthesisTopN: number;
+  readonly #synthesisMaxTokens: number | undefined;
 
   #window: TranscriptWindow | null = null;
   #onChange: ((window: WindowText) => void) | null = null;
@@ -55,6 +96,11 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     this.#minScore = options.minScore ?? DEFAULT_MIN_SCORE;
     this.#topK = options.topK ?? DEFAULT_TOP_K;
     this.#now = options.now ?? Date.now;
+    this.#synthesizer = options.synthesizer;
+    this.#consentCheck = options.consentCheck;
+    this.#minSynthesisScore = options.minSynthesisScore ?? DEFAULT_MIN_SYNTHESIS_SCORE;
+    this.#synthesisTopN = options.synthesisTopN ?? DEFAULT_SYNTHESIS_TOP_N;
+    this.#synthesisMaxTokens = options.synthesisMaxTokens;
   }
 
   attachWindow(window: TranscriptWindow): void {
@@ -93,6 +139,14 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
 
   #schedule(): void {
     if (this.#debounceTimer !== null) clearTimeout(this.#debounceTimer);
+    // Abort the in-flight synthesis (if any) before scheduling a new flush —
+    // the next utterance has superseded the previous question, so the
+    // half-streamed answer would be obsolete by the time it lands.
+    try {
+      this.#session.getActiveSynthesis()?.controller.abort();
+    } catch {
+      // already aborted
+    }
     const flushAt = this.#now();
     this.#pendingTraceContext = { windowFlushAt: flushAt };
     this.#debounceTimer = setTimeout(() => {
@@ -165,6 +219,7 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
 
     let emitted = 0;
     let rank = 0;
+    const emittedCards: CardEvent[] = [];
     for (const r of results) {
       if (this.#session.hasSurfaced(r.doc.id)) continue;
       rank += 1;
@@ -187,6 +242,7 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
       };
       this.#session.recordSurfaced(card);
       this.emit('card', card);
+      emittedCards.push(card);
       emitted += 1;
     }
 
@@ -204,8 +260,162 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     };
     this.emit('trace', traceRecord);
     this.#inflight -= 1;
+
+    // Synthesis gate — fire-and-forget after raw cards have already shipped.
+    // Gate requires: at least one newly emitted card this flush, a
+    // synthesizer configured, consent granted, and the top card's RRF
+    // score above the threshold.
+    if (
+      emittedCards.length > 0
+      && this.#synthesizer !== undefined
+      && (this.#consentCheck === undefined || this.#consentCheck())
+      && emittedCards[0]!.score >= this.#minSynthesisScore
+    ) {
+      void this.#maybeSynthesize(emittedCards, windowText.text, traceId);
+    }
+  }
+
+  // Fire-and-forget streaming synthesis. The caller never awaits this;
+  // any error throws into the iterator and is converted to a
+  // synthesisError event so the HUD can drop the synthesis card while
+  // raw cards stand alone.
+  async #maybeSynthesize(
+    emittedCards: readonly CardEvent[],
+    utterance: string,
+    traceId: string,
+  ): Promise<void> {
+    if (this.#synthesizer === undefined) return;
+    const sources = emittedCards.slice(0, this.#synthesisTopN).map((c) => ({
+      rank: c.rank,
+      title: c.title === '' ? c.docId : c.title,
+      text: c.snippet,
+    }));
+    const sourceCardIds = emittedCards.slice(0, this.#synthesisTopN).map((c) => c.cardId);
+    const synthesisId = `syn_${randomBytes(6).toString('hex')}`;
+    const controller = new AbortController();
+
+    const input: SynthesisInput = {
+      utterance,
+      sources,
+      ...(this.#synthesisMaxTokens !== undefined && { maxTokens: this.#synthesisMaxTokens }),
+    };
+
+    this.#session.recordSynthesis({
+      synthesisId,
+      sourceCardIds,
+      controller,
+      startedAt: this.#now(),
+    });
+
+    this.emit('synthesisStart', {
+      synthesisId,
+      sourceCardIds,
+      traceId,
+    });
+
+    let accumulatedText = '';
+    try {
+      for await (const chunk of this.#synthesizer.synthesize(input, controller.signal)) {
+        switch (chunk.type) {
+          case 'start':
+            // No-op; start was emitted to the HUD before the synthesizer call.
+            continue;
+          case 'textDelta':
+            accumulatedText += chunk.delta;
+            this.emit('synthesisDelta', { synthesisId, delta: chunk.delta });
+            continue;
+          case 'done': {
+            const parsed = parseSynthesisOutput(accumulatedText, sources.length);
+            if (parsed.isRefusal) {
+              this.emit('synthesisError', { synthesisId, code: 'refused' });
+              this.#session.clearSynthesis(synthesisId);
+            } else {
+              const citedCardIds = parsed.citations
+                .map((n) => sourceCardIds[n - 1])
+                .filter((id): id is string => typeof id === 'string');
+              this.#session.setSynthesisCitations(synthesisId, citedCardIds);
+              this.emit('synthesisDone', {
+                synthesisId,
+                stopReason: chunk.stopReason,
+                citations: parsed.citations,
+              });
+              // Do NOT clear — the synthesis stays in the session map so the
+              // retract cascade can find it later. Cleared on meeting end
+              // (session.clear), explicit retract, or new schedule abort.
+            }
+            return;
+          }
+        }
+      }
+      // Stream ended without `done` — treat as unknown error.
+      this.emit('synthesisError', { synthesisId, code: 'unknown', message: 'stream ended without done' });
+      this.#session.clearSynthesis(synthesisId);
+    } catch (err) {
+      this.#session.clearSynthesis(synthesisId);
+      if (isAbortError(err)) {
+        // Aborted by a new schedule — silent; the next synthesis fires on the new window.
+        return;
+      }
+      const errorEvent = mapSynthesisError(err, synthesisId);
+      this.emit('synthesisError', errorEvent);
+    }
+  }
+
+  /**
+   * Public retract entry point. Emits cardRetracted and cascades a
+   * synthesisRetracted for any synthesis that cited the retracted card.
+   * This is the canonical way to retract — emitting cardRetracted
+   * directly via this.emit would skip the cascade and leave synthesis
+   * citing a card that no longer exists in the HUD.
+   */
+  retractCard(retracted: CardRetracted): void {
+    this.emit('cardRetracted', retracted);
+    const synthesisIds = this.#session.getSynthesesCiting(retracted.cardId);
+    for (const synthesisId of synthesisIds) {
+      this.emit('synthesisRetracted', { synthesisId, reason: 'source-retracted' });
+      try {
+        this.#session.getActiveSynthesis()?.controller.abort();
+      } catch {
+        // already aborted
+      }
+      this.#session.clearSynthesis(synthesisId);
+    }
   }
 }
+
+function isAbortError(err: unknown): boolean {
+  return (
+    (err instanceof DOMException && err.name === 'AbortError')
+    || (err instanceof Error && err.name === 'AbortError')
+  );
+}
+
+function mapSynthesisError(
+  err: unknown,
+  synthesisId: string,
+): {
+  synthesisId: string;
+  code: SynthesisErrorCode;
+  message?: string;
+  retryAfterMs?: number;
+} {
+  if (err instanceof SynthesisRateLimitError) {
+    return {
+      synthesisId,
+      code: 'rate-limited',
+      message: err.message,
+      ...(err.retryAfterMs !== undefined && { retryAfterMs: err.retryAfterMs }),
+    };
+  }
+  if (err instanceof SynthesisProviderError) {
+    return { synthesisId, code: err.kind, message: err.message };
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return { synthesisId, code: 'unknown', message };
+}
+
+// Expose to tests / future callers
+export { REFUSAL_SENTINEL };
 
 export function shouldRunFtsLeg(text: string): boolean {
   return hasEntityLikeToken(text);
