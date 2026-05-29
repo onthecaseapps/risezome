@@ -424,6 +424,61 @@ body {
   border-color: var(--accent);
 }
 
+/* Cards consolidated under a synthesis card. The grid uses Tailwind-style
+   utilities via raw CSS to avoid pulling per-element classNames into the
+   sidebar code (the consolidated cards keep their original markup). */
+.synthesis-sources {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.synthesis-sources-label {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.synthesis-sources-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+/* A "consolidated" card is a normal card living inside a synthesis card's
+   grid: tighter padding, smaller text, snippet hidden to keep the grid
+   readable. Clicking the title still navigates to the source. */
+.card.consolidated {
+  padding: 10px 12px;
+  border-radius: 8px;
+  gap: 6px;
+  box-shadow: none;
+  background: var(--code-bg);
+  font-size: 12px;
+}
+
+.card.consolidated .header {
+  font-size: 9.5px;
+}
+
+.card.consolidated .title {
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.card.consolidated .snippet {
+  display: none;
+}
+
+.card.consolidated .actions {
+  display: none;
+}
+
 /* SR-only visually-hidden helper — used by #synthesis-announce so screen
    readers receive the finalized text once on synthesisDone without the
    element being visible on screen. */

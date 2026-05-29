@@ -34,6 +34,15 @@ interface SynthesisRecord {
   readonly sourceCardIds: readonly string[];
   accumulatedText: string;
   readonly renderedCitations: Set<number>;
+  /**
+   * Cards consolidated into this synthesis on synthesisDone. We track the
+   * record + the original sibling that came right after it in #streamEl, so
+   * if the synthesis is later retracted/erred we can restore each card to
+   * its original stream position instead of always sending it to the top.
+   */
+  consolidated: { record: CardRecord; nextSibling: ChildNode | null }[];
+  /** Container the consolidated raw cards live inside while consolidated. */
+  consolidatedContainer: HTMLElement | null;
 }
 
 export class Sidebar {
@@ -168,6 +177,8 @@ export class Sidebar {
       sourceCardIds: start.sourceCardIds,
       accumulatedText: '',
       renderedCitations: new Set(),
+      consolidated: [],
+      consolidatedContainer: null,
     });
   }
 
@@ -211,17 +222,87 @@ export class Sidebar {
     if (this.#announceEl !== null) {
       this.#announceEl.textContent = rec.accumulatedText;
     }
+    // Consolidate: move the raw source cards from the main stream into a
+    // grid inside the synthesis card. Restored to original positions on
+    // synthesis removal (error/retract) so the user never loses access.
+    this.#consolidateRawCards(rec);
   }
 
   removeSynthesis(synthesisId: string): void {
     const rec = this.#syntheses.get(synthesisId);
     if (rec === undefined) return;
+    // Return any consolidated cards back to the main stream before tearing
+    // the synthesis card down — the user expects the raw retrieval cards to
+    // remain visible when synthesis fails/refuses/retracts.
+    this.#deconsolidateRawCards(rec);
     rec.el.remove();
     this.#syntheses.delete(synthesisId);
   }
 
   retractSynthesis(retracted: SynthesisRetractedEvent): void {
     this.removeSynthesis(retracted.synthesisId);
+  }
+
+  // Moves the raw source cards out of #streamEl and into a grid inside the
+  // synthesis card. Pinned cards (which live in #pinnedEl) are skipped — the
+  // user already decided to keep them visible, no need to duplicate.
+  #consolidateRawCards(rec: SynthesisRecord): void {
+    const doc = this.#streamEl.ownerDocument;
+    const movable: { record: CardRecord; nextSibling: ChildNode | null }[] = [];
+    for (const cardId of rec.sourceCardIds) {
+      const cardRec = this.#cards.get(cardId);
+      if (cardRec === undefined) continue;
+      if (cardRec.pinned) continue;
+      // Only consolidate cards currently in the stream — if a card was
+      // retracted before we got here, its el is detached and we skip.
+      if (cardRec.el.parentNode !== this.#streamEl) continue;
+      movable.push({ record: cardRec, nextSibling: cardRec.el.nextSibling });
+    }
+    if (movable.length === 0) return;
+
+    const container = doc.createElement('div');
+    container.className = 'synthesis-sources';
+    const label = doc.createElement('div');
+    label.className = 'synthesis-sources-label';
+    label.textContent = `Sources (${String(movable.length)})`;
+    container.appendChild(label);
+    const grid = doc.createElement('div');
+    grid.className = 'synthesis-sources-grid';
+    container.appendChild(grid);
+
+    for (const entry of movable) {
+      entry.record.el.classList.add('consolidated');
+      grid.appendChild(entry.record.el);
+    }
+    rec.el.appendChild(container);
+    rec.consolidated = movable;
+    rec.consolidatedContainer = container;
+  }
+
+  // Restores consolidated cards to their original positions in #streamEl
+  // before the synthesis card disappears. Each card is reinserted before
+  // the sibling it was originally followed by, so the user perceives the
+  // stream state as if no consolidation had ever happened.
+  #deconsolidateRawCards(rec: SynthesisRecord): void {
+    for (const entry of rec.consolidated) {
+      entry.record.el.classList.remove('consolidated');
+      // If the original next sibling still exists in the stream, insert
+      // before it; otherwise append. nextSibling may have been removed
+      // (e.g., retracted) in the interim.
+      if (
+        entry.nextSibling !== null
+        && entry.nextSibling.parentNode === this.#streamEl
+      ) {
+        this.#streamEl.insertBefore(entry.record.el, entry.nextSibling);
+      } else {
+        this.#streamEl.appendChild(entry.record.el);
+      }
+    }
+    rec.consolidated = [];
+    if (rec.consolidatedContainer !== null) {
+      rec.consolidatedContainer.remove();
+      rec.consolidatedContainer = null;
+    }
   }
 
   #renderCitationChip(rec: SynthesisRecord, rank: number): void {

@@ -267,4 +267,77 @@ describe('Sidebar', () => {
     expect(sidebar.visibleSynthesisCount()).toBe(1);
     expect(streamEl.querySelector('[data-synthesis-id="syn_b"]')).not.toBeNull();
   });
+
+  // --- U6+UI3: consolidation ---
+
+  it('finalizeSynthesis moves source cards from the stream into a sources grid inside the synthesis card', () => {
+    sidebar.renderCard(makeCard({ cardId: 'c1', docId: 'd1', title: 'Card 1' }));
+    sidebar.renderCard(makeCard({ cardId: 'c2', docId: 'd2', title: 'Card 2' }));
+    sidebar.renderCard(makeCard({ cardId: 'c3', docId: 'd3', title: 'Card 3' }));
+    // Initially 3 raw cards in the stream.
+    expect(streamEl.querySelectorAll<HTMLElement>('.card:not(.synthesis)').length).toBe(3);
+
+    sidebar.renderSynthesisStart(makeStart({ sourceCardIds: ['c1', 'c2', 'c3'] }));
+    sidebar.appendSynthesisDelta(makeDelta('Answer [1][2][3].'));
+    sidebar.finalizeSynthesis(makeDone([1, 2, 3]));
+
+    // After consolidation: raw cards live INSIDE the synthesis card, not as
+    // direct siblings of the stream root.
+    const directRawCards = streamEl.querySelectorAll<HTMLElement>(
+      '#stream > .card:not(.synthesis)',
+    );
+    expect(directRawCards.length).toBe(0);
+
+    const synthEl = streamEl.querySelector<HTMLElement>('.card.synthesis')!;
+    const grid = synthEl.querySelector<HTMLElement>('.synthesis-sources-grid')!;
+    expect(grid.querySelectorAll('.card.consolidated').length).toBe(3);
+    const label = synthEl.querySelector<HTMLElement>('.synthesis-sources-label');
+    expect(label?.textContent).toBe('Sources (3)');
+  });
+
+  it('removeSynthesis after consolidation restores the raw cards to the stream', () => {
+    sidebar.renderCard(makeCard({ cardId: 'c1', docId: 'd1', title: 'Card 1' }));
+    sidebar.renderCard(makeCard({ cardId: 'c2', docId: 'd2', title: 'Card 2' }));
+    sidebar.renderSynthesisStart(makeStart({ sourceCardIds: ['c1', 'c2'] }));
+    sidebar.finalizeSynthesis(makeDone([1, 2]));
+    expect(streamEl.querySelectorAll('#stream > .card:not(.synthesis)').length).toBe(0);
+
+    sidebar.removeSynthesis('syn_1');
+    // Synthesis card gone; raw cards back as direct children of stream.
+    expect(streamEl.querySelector('.card.synthesis')).toBeNull();
+    const restored = streamEl.querySelectorAll<HTMLElement>('#stream > .card:not(.synthesis)');
+    expect(restored.length).toBe(2);
+    // Cards no longer carry the consolidated marker class.
+    for (const c of restored) expect(c.classList.contains('consolidated')).toBe(false);
+  });
+
+  it('pinned cards are NOT consolidated (they stay in the pinned section)', () => {
+    sidebar.renderCard(makeCard({ cardId: 'c1', docId: 'd1' }));
+    sidebar.togglePin('c1');
+    sidebar.renderCard(makeCard({ cardId: 'c2', docId: 'd2' }));
+    expect(pinnedEl.querySelectorAll('.card').length).toBe(1);
+
+    sidebar.renderSynthesisStart(makeStart({ sourceCardIds: ['c1', 'c2'] }));
+    sidebar.finalizeSynthesis(makeDone([1, 2]));
+
+    // c1 is pinned → still in #pinned, NOT moved into the synthesis grid.
+    expect(pinnedEl.querySelector('[data-card-id="c1"]')).not.toBeNull();
+    // c2 is unpinned → moved into the grid.
+    const grid = streamEl.querySelector<HTMLElement>('.synthesis-sources-grid')!;
+    expect(grid.querySelector('[data-card-id="c2"]')).not.toBeNull();
+    expect(grid.querySelectorAll('.card.consolidated').length).toBe(1);
+  });
+
+  it('synthesisError after deltas does NOT consolidate (raw cards stay in stream)', () => {
+    sidebar.renderCard(makeCard({ cardId: 'c1', docId: 'd1' }));
+    sidebar.renderSynthesisStart(makeStart({ sourceCardIds: ['c1'] }));
+    sidebar.appendSynthesisDelta(makeDelta('Partial...'));
+    // Error path: no finalize, straight to removeSynthesis (which main.ts
+    // calls on any synthesisError, including refused).
+    sidebar.removeSynthesis('syn_1');
+    // Raw card still in the stream, no consolidation footprint anywhere.
+    expect(streamEl.querySelector('#stream > [data-card-id="c1"]')).not.toBeNull();
+    expect(streamEl.querySelector('.synthesis-sources-grid')).toBeNull();
+    expect(streamEl.querySelector('.card.consolidated')).toBeNull();
+  });
 });
