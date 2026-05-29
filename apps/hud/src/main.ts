@@ -20,6 +20,19 @@ export function bootstrap(
   const streamEl = requireEl(doc, 'card-stream');
   const pinnedEl = requireEl(doc, 'pinned-section');
   const banner = requireEl(doc, 'connection-banner');
+  const statusEl = requireEl(doc, 'meeting-status');
+
+  const setMeetingMode = (mode: 'idle' | 'live'): void => {
+    if (mode === 'live') {
+      statusEl.textContent = 'LIVE';
+      statusEl.classList.remove('status-idle');
+      statusEl.classList.add('status-live');
+    } else {
+      statusEl.textContent = 'IDLE';
+      statusEl.classList.remove('status-live');
+      statusEl.classList.add('status-idle');
+    }
+  };
 
   const sidebar = new Sidebar({ streamEl, pinnedEl });
 
@@ -39,6 +52,15 @@ export function bootstrap(
           break;
         case 'gap':
           sidebar.renderGap(msg.gap);
+          break;
+        case 'meetingStarted':
+          setMeetingMode('live');
+          break;
+        case 'meetingEnded':
+          setMeetingMode('idle');
+          break;
+        case 'status':
+          setMeetingMode(msg.mode === 'idle' ? 'idle' : 'live');
           break;
         default:
           break;

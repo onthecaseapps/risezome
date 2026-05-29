@@ -1,4 +1,5 @@
 import type { CardEvent, CardRetracted, CardUpdated, GapEvent } from './types.js';
+import { detectLanguage, highlightCode, parseSnippet } from './highlight.js';
 
 export interface SidebarOptions {
   readonly streamEl: HTMLElement;
@@ -37,7 +38,9 @@ export class Sidebar {
   renderCard(card: CardEvent): void {
     if (this.#cards.has(card.cardId)) return;
     const el = this.#buildCardElement(card);
-    this.#streamEl.appendChild(el);
+    // Newest first: prepend so fresh meeting context is always at the top
+    // of the stream instead of pushing the user to scroll for it.
+    this.#streamEl.insertBefore(el, this.#streamEl.firstChild);
     this.#cards.set(card.cardId, { card, el, pinned: false });
   }
 
@@ -67,7 +70,7 @@ export class Sidebar {
   renderGap(gap: GapEvent): void {
     if (this.#gaps.has(gap.gapId)) return;
     const el = this.#buildGapElement(gap);
-    this.#streamEl.appendChild(el);
+    this.#streamEl.insertBefore(el, this.#streamEl.firstChild);
     this.#gaps.set(gap.gapId, el);
   }
 
@@ -111,16 +114,25 @@ export class Sidebar {
     sourceLabel.textContent = `${card.source} · ${card.type}`;
     const scoreLabel = doc.createElement('span');
     scoreLabel.className = 'score';
-    scoreLabel.textContent = formatScore(card.score);
+    scoreLabel.textContent = formatRank(card.rank);
+    if (card.rank === 1) scoreLabel.classList.add('top');
     header.append(sourceLabel, scoreLabel);
 
     const title = doc.createElement('div');
     title.className = 'title';
-    title.textContent = card.title === '' ? card.docId : card.title;
+    const titleText = card.title === '' ? card.docId : card.title;
+    if (typeof card.url === 'string' && card.url.length > 0) {
+      const link = doc.createElement('a');
+      link.href = card.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = titleText;
+      title.appendChild(link);
+    } else {
+      title.textContent = titleText;
+    }
 
-    const snippet = doc.createElement('div');
-    snippet.className = 'snippet';
-    snippet.textContent = truncate(card.snippet, 240);
+    const snippetEl = buildSnippet(doc, card);
 
     const actions = doc.createElement('div');
     actions.className = 'actions';
@@ -131,7 +143,7 @@ export class Sidebar {
     pinBtn.addEventListener('click', () => this.togglePin(card.cardId));
     actions.append(pinBtn);
 
-    el.append(header, title, snippet, actions);
+    el.append(header, title, snippetEl, actions);
     return el;
   }
 
@@ -150,8 +162,8 @@ export class Sidebar {
     title.textContent = gap.question;
 
     const snippet = doc.createElement('div');
-    snippet.className = 'snippet';
-    snippet.textContent = truncate(gap.contextWindow, 240);
+    snippet.className = 'snippet prose';
+    snippet.textContent = truncate(gap.contextWindow, 600);
 
     const actions = doc.createElement('div');
     actions.className = 'actions';
@@ -182,7 +194,54 @@ function formatScore(score: number): string {
   return `${Math.round(score * 100)}%`;
 }
 
+function formatRank(rank: number): string {
+  if (rank === 1) return 'Top match';
+  return 'Match';
+}
+
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max - 1).trimEnd() + '…';
+}
+
+// Code chunks arrive with a `// path:lines\n<body>` prefix. When present,
+// render the location as a separate pill and the body as a scrollable,
+// syntax-highlighted block. Otherwise fall back to plain prose so issue
+// titles, doc paragraphs, and other non-code snippets still read naturally.
+function buildSnippet(doc: Document, card: CardEvent): HTMLElement {
+  const parsed = parseSnippet(card.snippet);
+  if (parsed.location === null) {
+    const el = doc.createElement('div');
+    el.className = 'snippet prose';
+    el.textContent = truncate(card.snippet, 600);
+    return el;
+  }
+
+  const wrap = doc.createElement('div');
+  wrap.className = 'snippet code';
+
+  const loc = doc.createElement('div');
+  loc.className = 'code-location';
+  if (typeof card.url === 'string' && card.url.length > 0) {
+    const a = doc.createElement('a');
+    a.href = card.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = parsed.location;
+    loc.appendChild(a);
+  } else {
+    loc.textContent = parsed.location;
+  }
+  wrap.appendChild(loc);
+
+  const pre = doc.createElement('pre');
+  pre.className = 'code-block';
+  const codeEl = doc.createElement('code');
+  const language = detectLanguage(parsed.location);
+  codeEl.className = `language-${language}`;
+  codeEl.innerHTML = highlightCode(parsed.body, language);
+  pre.appendChild(codeEl);
+  wrap.appendChild(pre);
+
+  return wrap;
 }

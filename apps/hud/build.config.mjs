@@ -7,7 +7,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(here, 'src');
 const distDir = path.join(here, 'dist');
 
-const MAX_INITIAL_BUNDLE_BYTES = 50 * 1024;
+// Ceiling raised from 50 KB to 100 KB once Prism.js was added for syntax
+// highlighting. Prism core + the 18 grammars we ship is ~65 KB on its own;
+// keep the cap snug so we notice if we ever balloon further.
+const MAX_INITIAL_BUNDLE_BYTES = 100 * 1024;
 
 await mkdir(distDir, { recursive: true });
 

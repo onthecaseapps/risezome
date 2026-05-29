@@ -8,11 +8,13 @@ export interface CardEvent {
   readonly title: string;
   readonly snippet: string;
   readonly score: number;
+  readonly rank: number;
   readonly metadata: Record<string, unknown>;
   readonly surfacedAt: number;
   readonly triggeredBy: CardTrigger;
   readonly utteranceId?: string;
   readonly traceId: string;
+  readonly url?: string;
 }
 
 export interface CardUpdated {
@@ -41,4 +43,6 @@ export type ServerMessage =
   | { type: 'cardUpdated'; update: CardUpdated }
   | { type: 'cardRetracted'; retracted: CardRetracted }
   | { type: 'gap'; gap: GapEvent }
-  | { type: 'status'; mode: 'idle' | 'capturing' | 'processing' };
+  | { type: 'status'; mode: 'idle' | 'capturing' | 'processing' }
+  | { type: 'meetingStarted'; meetingId: string }
+  | { type: 'meetingEnded'; meetingId: string };

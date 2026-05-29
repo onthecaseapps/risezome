@@ -12,6 +12,7 @@ function makeCard(overrides: Partial<CardEvent> = {}): CardEvent {
     title: 'Auth refactor',
     snippet: 'Replace JWT middleware',
     score: 0.87,
+    rank: 1,
     metadata: {},
     surfacedAt: 1_000,
     triggeredBy: 'window',
@@ -47,14 +48,14 @@ describe('Sidebar', () => {
     document.body.innerHTML = '';
   });
 
-  it('renders 5 cards in insertion order', () => {
+  it('renders new cards above older ones (newest-first)', () => {
     for (let i = 0; i < 5; i++) {
       sidebar.renderCard(
         makeCard({ cardId: `c${String(i)}`, docId: `d${String(i)}`, title: `T${String(i)}` }),
       );
     }
     const titles = [...streamEl.querySelectorAll('.title')].map((el) => el.textContent);
-    expect(titles).toEqual(['T0', 'T1', 'T2', 'T3', 'T4']);
+    expect(titles).toEqual(['T4', 'T3', 'T2', 'T1', 'T0']);
     expect(sidebar.visibleCardCount()).toBe(5);
   });
 
