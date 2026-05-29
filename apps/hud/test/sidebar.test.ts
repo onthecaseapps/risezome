@@ -146,7 +146,14 @@ describe('Sidebar', () => {
     return { synthesisId, delta: text };
   }
   function makeDone(citations: number[], synthesisId = 'syn_1'): SynthesisDoneEvent {
-    return { synthesisId, stopReason: 'end_turn', citations };
+    return {
+      synthesisId,
+      stopReason: 'end_turn',
+      citations,
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+      ttftMs: 100,
+      latencyMs: 500,
+    };
   }
 
   it('synthesisStart prepends a synthesis card above raw cards with aria-live=off', () => {

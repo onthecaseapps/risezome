@@ -80,6 +80,9 @@ export function bootstrap(
             synthesisId: msg.synthesisId,
             stopReason: msg.stopReason,
             citations: msg.citations,
+            usage: msg.usage,
+            ttftMs: msg.ttftMs,
+            latencyMs: msg.latencyMs,
           });
           break;
         case 'synthesisError':
