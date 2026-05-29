@@ -8,7 +8,7 @@ import {
   type SynthesisInput,
   type SynthesisUsage,
 } from './contract.js';
-import { buildSystemBlocks, buildUserMessage, type SystemBlock } from './prompt.js';
+import { buildSystemPrefix, buildUserMessage, type SystemBlock } from './prompt.js';
 
 export interface AnthropicOptions {
   readonly apiKey: string;
@@ -166,7 +166,7 @@ export class AnthropicSynthesizer implements Synthesizer {
 
   async #postRequest(input: SynthesisInput, signal?: AbortSignal): Promise<Response> {
     const url = `${this.#baseUrl.replace(/\/$/, '')}/v1/messages`;
-    const systemBlocks: SystemBlock[] = buildSystemBlocks();
+    const systemBlocks: SystemBlock[] = buildSystemPrefix();
     const userContent = buildUserMessage(input.utterance, input.sources);
     const body = {
       model: this.#model,
