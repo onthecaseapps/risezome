@@ -5,8 +5,8 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc -b",
-    "typecheck": "tsc -b",
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -b tsconfig.build.json && tsc --noEmit -p tsconfig.json",
     "start": "node ./dist/index.js",
     "dev": "node --watch --import ./loader.mjs ./src/index.ts"
   },
