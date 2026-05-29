@@ -140,6 +140,37 @@ describe('WsClient', () => {
     client.stop();
   });
 
+  it('forces an immediate reconnect when document becomes visible', async () => {
+    if (typeof document === 'undefined') return; // jsdom-only
+    let factoryCalls = 0;
+    let lastWs: FakeWebSocket | null = null;
+    const client = new WsClient({
+      url: 'ws://localhost:1234/ws',
+      token: 'k',
+      onMessage: () => undefined,
+      maxBackoffMs: 10_000, // long enough that the timer would NOT fire
+      wsFactory: (url) => {
+        factoryCalls += 1;
+        const ws = new FakeWebSocket(url);
+        lastWs = ws;
+        return ws;
+      },
+    });
+    client.start();
+    expect(factoryCalls).toBe(1);
+    lastWs!.onclose?.({ code: 1006, reason: 'network' });
+    // Backoff timer is set for ~250ms but cap is 10s. Fire visibilitychange
+    // and verify the client reconnects immediately rather than waiting.
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'visible',
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(factoryCalls).toBe(2);
+    client.stop();
+  });
+
   it('stop() prevents reconnect', async () => {
     let factoryCalls = 0;
     let lastWs: FakeWebSocket | null = null;

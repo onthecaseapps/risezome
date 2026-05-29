@@ -22,7 +22,13 @@ export interface MinimalWebSocket {
   onclose: ((ev: { code: number; reason: string }) => void) | null;
 }
 
-const DEFAULT_MAX_BACKOFF_MS = 8_000;
+// Cap at 2s instead of 8s. The daemon and HUD live on the same host:
+// every WS failure is "the daemon is down or restarting," which usually
+// resolves in well under a second. An 8s ceiling meant a single dropped
+// connection could leave the HUD stuck on "Connecting…" for almost ten
+// seconds after the daemon was back up — long enough that dogfood users
+// were convinced the connection was broken.
+const DEFAULT_MAX_BACKOFF_MS = 2_000;
 
 export class WsClient {
   readonly #options: WsClientOptions;
@@ -31,6 +37,8 @@ export class WsClient {
   #attempts = 0;
   #closed = false;
   #status: WsStatus = 'disconnected';
+  #pendingReconnect: ReturnType<typeof setTimeout> | null = null;
+  #visibilityHandler: (() => void) | null = null;
 
   constructor(options: WsClientOptions) {
     this.#options = options;
@@ -40,6 +48,20 @@ export class WsClient {
         const native = new WebSocket(url);
         return native as unknown as MinimalWebSocket;
       });
+    // When the tab becomes visible again (laptop wake, tab switch), the
+    // user is actively looking at the HUD and any "wait 2s for the next
+    // backoff tick" delay is wasted time. Forcing an immediate reconnect
+    // here turns the common "I just came back to my browser and it's
+    // still saying Connecting…" symptom into an instant recovery.
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      this.#visibilityHandler = (): void => {
+        if (document.visibilityState !== 'visible') return;
+        if (this.#closed) return;
+        if (this.#status === 'open') return;
+        this.#forceReconnect();
+      };
+      document.addEventListener('visibilitychange', this.#visibilityHandler);
+    }
   }
 
   start(): void {
@@ -53,6 +75,8 @@ export class WsClient {
     ws.onopen = (): void => {
       this.#attempts = 0;
       this.#setStatus('open');
+      // eslint-disable-next-line no-console
+      console.info('[upwell.ws] open');
     };
     ws.onmessage = (ev: { data: unknown }): void => {
       if (typeof ev.data !== 'string') return;
@@ -67,9 +91,11 @@ export class WsClient {
     ws.onerror = (): void => {
       // Surfaced through onclose; no separate handling needed here.
     };
-    ws.onclose = (): void => {
+    ws.onclose = (ev: { code: number; reason: string }): void => {
       this.#ws = null;
       this.#setStatus('disconnected');
+      // eslint-disable-next-line no-console
+      console.info(`[upwell.ws] close code=${String(ev.code)} reason=${ev.reason || '(none)'} attempt=${String(this.#attempts)}`);
       if (!this.#closed) {
         this.#scheduleReconnect();
       }
@@ -78,6 +104,14 @@ export class WsClient {
 
   stop(): void {
     this.#closed = true;
+    if (this.#pendingReconnect !== null) {
+      clearTimeout(this.#pendingReconnect);
+      this.#pendingReconnect = null;
+    }
+    if (this.#visibilityHandler !== null && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.#visibilityHandler);
+      this.#visibilityHandler = null;
+    }
     if (this.#ws !== null) {
       try {
         this.#ws.close();
@@ -111,8 +145,30 @@ export class WsClient {
     this.#attempts += 1;
     const max = this.#options.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
     const backoff = Math.min(max, 250 * 2 ** (this.#attempts - 1));
-    setTimeout(() => {
+    if (this.#pendingReconnect !== null) clearTimeout(this.#pendingReconnect);
+    this.#pendingReconnect = setTimeout(() => {
+      this.#pendingReconnect = null;
       if (!this.#closed) this.start();
     }, backoff);
+  }
+
+  // Cancels the current backoff timer and reconnects immediately. Used by
+  // the visibility handler when the user returns to the tab — they should
+  // not wait for the backoff clock to expire if they're actively looking.
+  #forceReconnect(): void {
+    if (this.#pendingReconnect !== null) {
+      clearTimeout(this.#pendingReconnect);
+      this.#pendingReconnect = null;
+    }
+    if (this.#ws !== null) {
+      try {
+        this.#ws.close();
+      } catch {
+        // already closed
+      }
+      this.#ws = null;
+    }
+    this.#attempts = 0;
+    this.start();
   }
 }
