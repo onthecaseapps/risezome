@@ -191,7 +191,7 @@ Note the asymmetry: cards from the RAG branch *always* render in the HUD immedia
 
 ## Implementation Units
 
-- [ ] U1. **Skill contract + registry**
+- [x] U1. **Skill contract + registry**
 
 **Goal:** Stand up the `Skill` interface, `SkillRegistry` class, error classes, and the `toToolDefinitions()` adapter that builds Anthropic tool descriptors from registered skills.
 
@@ -224,7 +224,7 @@ Note the asymmetry: cards from the RAG branch *always* render in the HUD immedia
 
 **Verification:** All scenarios pass. The shape is consumed downstream by U4 (classifier passes tool definitions to Anthropic) and U5 (pipeline formats result).
 
-- [ ] U2. **GitHub skill set (count / list / recently_updated / by_author)**
+- [x] U2. **GitHub skill set (count / list / recently_updated / by_author)**
 
 **Goal:** Four read-only skills that query the local corpus directly. Each filters by some combination of type/state/labels/author/updated_at using FTS5 for chunk-text searches and plain SQL for doc-level fields.
 
@@ -272,7 +272,7 @@ Note the asymmetry: cards from the RAG branch *always* render in the HUD immedia
 
 **Verification:** All scenarios pass against a test corpus seeded with 10–20 fixture issues + PRs. The `index.ts` exports the four skills in a stable order so registry tests can assert position.
 
-- [ ] U3. **Heuristic gate (isToolShaped)**
+- [x] U3. **Heuristic gate (isToolShaped)**
 
 **Goal:** A single pure function that classifies an utterance as tool-shaped or RAG-shaped, fast and free.
 
@@ -301,7 +301,7 @@ Note the asymmetry: cards from the RAG branch *always* render in the HUD immedia
 
 **Verification:** All scenarios pass. Pattern list can be reviewed in isolation; adding a new pattern is a one-line append + a test.
 
-- [ ] U4. **Anthropic classifier client + prompt assembly**
+- [x] U4. **Anthropic classifier client + prompt assembly**
 
 **Goal:** A non-streaming Anthropic Messages call using `tool_use` request format. Given an utterance and a list of available skills (as tool definitions), returns either `{intent: 'rag'}` or `{intent: 'tool', skillName, args}`. Handles 429 / 5xx / abort / network errors with the same retry/backoff pattern as `AnthropicSynthesizer`.
 
@@ -345,7 +345,7 @@ Note the asymmetry: cards from the RAG branch *always* render in the HUD immedia
 
 **Verification:** All scenarios pass. Manual smoke: with a real `ANTHROPIC_API_KEY`, calling `classify({utterance: 'how many open issues are there', registry})` returns `{intent: 'tool', skillName: 'github.count', args: {type: 'issue', state: 'open'}}` within ~1 second on first call.
 
-- [ ] U5. **Pipeline integration: gate, parallel race, skill execute, synthesizer merge**
+- [x] U5. **Pipeline integration: gate, parallel race, skill execute, synthesizer merge**
 
 **Goal:** Orchestrate the router behavior inside `RetrievalPipeline.#evaluate()`: heuristic on windowText → if triggered, fire classifier + retrieval in parallel via `Promise.all` → if classifier picks a skill, execute it via the registry → format tool result as a numbered source → pass to synthesizer with the RAG cards. Every failure mode falls through to RAG-only synthesis.
 
@@ -402,7 +402,7 @@ Note the asymmetry: cards from the RAG branch *always* render in the HUD immedia
 
 **Verification:** All scenarios pass. Pipeline tests already cover the non-router paths; adding the router options leaves the no-router-configured path identical to today.
 
-- [ ] U6. **Serve.ts wiring + telemetry log lines**
+- [x] U6. **Serve.ts wiring + telemetry log lines**
 
 **Goal:** Instantiate the classifier + skill registry at daemon startup, pass to the pipeline, and emit the structured log lines that resolve open question Q7.
 
