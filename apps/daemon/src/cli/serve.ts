@@ -239,6 +239,18 @@ export async function runServe(): Promise<number> {
       );
       app.get('/ws/events', { websocket: true }, (socket) => {
         socket.send(JSON.stringify({ type: 'hello', version: '0.0.0-dev' }));
+        // State replay: a HUD that connected AFTER a meeting started missed
+        // the meetingStarted broadcast (it was fanned out to zero
+        // subscribers). Resync now so the LIVE indicator reflects reality
+        // without requiring a meeting-end/restart cycle.
+        if (meetingState.active !== null) {
+          socket.send(
+            JSON.stringify({
+              type: 'meetingStarted',
+              meetingId: meetingState.active.meetingId,
+            }),
+          );
+        }
         const conn = { send: (data: string): void => socket.send(data) };
         wsConnections.add(conn);
         socket.on('close', () => wsConnections.delete(conn));

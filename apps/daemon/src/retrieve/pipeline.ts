@@ -275,7 +275,12 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     if (this.#synthesizer === undefined) {
       // Silent — caller logged synthesis.disabled at startup; no per-flush noise.
     } else if (emittedCards.length === 0) {
-      log('info', 'synthesis.skipped', { reason: 'no-results', traceId });
+      // Distinguish "retrieval returned nothing" from "retrieval returned hits
+      // but every one was already surfaced earlier this meeting." The
+      // latter is dedup working — same docs would just re-render duplicates
+      // in the HUD and re-bill an LLM call for context the user already saw.
+      const reason = results.length === 0 ? 'no-results' : 'all-already-surfaced';
+      log('info', 'synthesis.skipped', { reason, traceId, retrievedCount: results.length });
     } else if (this.#consentCheck !== undefined && !this.#consentCheck()) {
       log('info', 'synthesis.skipped', { reason: 'no-consent', traceId });
     } else if (emittedCards[0]!.score < this.#minSynthesisScore) {
