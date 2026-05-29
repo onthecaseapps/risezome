@@ -1,6 +1,107 @@
 @import 'tailwindcss';
 
-/* Drive dark mode by a `.dark` class on <html> (matching @upwell/hud) so a
-   future theme toggle can override the OS preference. U2 layers the ported
-   HUD design tokens on top of this. */
+/* Drive dark mode by a `.dark` class on <html> (matching @upwell/hud) so the
+   no-flash script in the root layout can honor prefers-color-scheme and a
+   future toggle can override the OS preference. */
 @custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens ported from apps/hud/src/styles.css so the marketing site and
+ * the product HUD read as one product (landing-page plan, KTD2). The demo
+ * components (U5) reuse the same card/source/synthesis tokens.
+ */
+:root {
+  --bg: #f6f7f9;
+  --fg: #1a1a1c;
+  --muted: #6b6b73;
+  --border: #e1e3e8;
+  --card-bg: #ffffff;
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 6px rgba(0, 0, 0, 0.03);
+  --pinned-bg: #fff8e0;
+  --provisional-bg: #f0f0f5;
+  --accent: #3361ff;
+  --accent-fg: #ffffff;
+  /* Source-chip palette (internal convention, not brand colors) — discriminable
+     and ≥4.5:1 against the card background. Mirrors the HUD SOURCE_ACCENT map. */
+  --src-github: #1f5fbf;
+  --src-jira: #0b5fc7;
+  --src-slack: #b8463a;
+  --src-code: #6f42c1;
+  --src-default: #4a4a55;
+  --synthesis-tint: rgba(51, 97, 255, 0.04);
+  --gap-fg: #b35200;
+  --error: #b30000;
+  --code-bg: #f4f5f8;
+  --code-fg: #1a1a1c;
+  --location-bg: #eef0f3;
+  --location-fg: #4a4a55;
+}
+
+:root.dark {
+  --bg: #0f1115;
+  --fg: #e6e8eb;
+  --muted: #8a8f99;
+  --border: #262a31;
+  --card-bg: #161a20;
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);
+  --pinned-bg: #2a2614;
+  --provisional-bg: #1a1a25;
+  --accent: #6b8aff;
+  --accent-fg: #0f1115;
+  --src-github: #6b8aff;
+  --src-jira: #5cc8ff;
+  --src-slack: #ff9080;
+  --src-code: #c792ea;
+  --src-default: #a8aeb8;
+  --synthesis-tint: rgba(107, 138, 255, 0.06);
+  --gap-fg: #ffb070;
+  --error: #ff6b6b;
+  --code-bg: #0c0e12;
+  --code-fg: #e6e8eb;
+  --location-bg: #1d2128;
+  --location-fg: #a8aeb8;
+}
+
+/*
+ * Map the tokens into Tailwind's theme so utilities (bg-bg, text-fg, bg-accent,
+ * border-border, text-src-github, …) resolve to the CSS vars and switch with
+ * the .dark class. @theme inline keeps the var() reference live rather than
+ * snapshotting the value.
+ */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-card: var(--card-bg);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-src-github: var(--src-github);
+  --color-src-jira: var(--src-jira);
+  --color-src-slack: var(--src-slack);
+  --color-src-code: var(--src-code);
+  --color-src-default: var(--src-default);
+  --color-gap: var(--gap-fg);
+  --color-error: var(--error);
+
+  --font-sans:
+    var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
