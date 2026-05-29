@@ -23,6 +23,17 @@
         </button>
       </header>
       <section id="pinned-section" aria-label="Pinned cards"></section>
+      <!-- Pulsing badge that appears when new cards arrive while the user
+           is hovering the stream (likely reading). Click or mouse-leave
+           dismisses it and scrolls to the new content. -->
+      <button
+        id="new-content-badge"
+        type="button"
+        class="hidden sticky top-2 self-center z-10 px-3 py-1 rounded-full bg-[var(--accent)] text-white text-xs font-semibold shadow-md animate-pulse cursor-pointer"
+        aria-live="polite"
+      >
+        <span id="new-content-count">0</span> new ↑
+      </button>
       <section id="card-stream" aria-label="Card stream" aria-live="polite"></section>
       <!--
         Separate SR-only live region for synthesis. The streaming synthesis

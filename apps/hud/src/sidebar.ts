@@ -49,6 +49,8 @@ export class Sidebar {
   readonly #streamEl: HTMLElement;
   readonly #pinnedEl: HTMLElement;
   readonly #announceEl: HTMLElement | null;
+  readonly #badgeEl: HTMLElement | null;
+  readonly #badgeCountEl: HTMLElement | null;
   readonly #onPin: (cardId: string) => void;
   readonly #onUnpin: (cardId: string) => void;
   readonly #onLogGap: (gapId: string) => void;
@@ -56,16 +58,69 @@ export class Sidebar {
   readonly #cards = new Map<string, CardRecord>();
   readonly #gaps = new Map<string, HTMLElement>();
   readonly #syntheses = new Map<string, SynthesisRecord>();
+  /**
+   * UI4 hover-safe scroll: when the mouse is over the stream the user is
+   * likely reading — we suppress the auto-scroll-to-top and stash a counter
+   * of "new content since hover started," surfaced as a pulsing badge.
+   * On mouse-leave or badge click we scroll to top and reset.
+   */
+  #streamHovered = false;
+  #pendingNewCount = 0;
 
   constructor(options: SidebarOptions) {
     this.#streamEl = options.streamEl;
     this.#pinnedEl = options.pinnedEl;
-    this.#announceEl =
-      this.#streamEl.ownerDocument.getElementById('synthesis-announce');
+    const doc = this.#streamEl.ownerDocument;
+    this.#announceEl = doc.getElementById('synthesis-announce');
+    this.#badgeEl = doc.getElementById('new-content-badge');
+    this.#badgeCountEl = doc.getElementById('new-content-count');
     this.#onPin = options.onPin ?? ((): void => undefined);
     this.#onUnpin = options.onUnpin ?? ((): void => undefined);
     this.#onLogGap = options.onLogGap ?? ((): void => undefined);
     this.#onDismissGap = options.onDismissGap ?? ((): void => undefined);
+    this.#wireScrollSafety();
+  }
+
+  #wireScrollSafety(): void {
+    this.#streamEl.addEventListener('mouseenter', () => {
+      this.#streamHovered = true;
+    });
+    this.#streamEl.addEventListener('mouseleave', () => {
+      this.#streamHovered = false;
+      if (this.#pendingNewCount > 0) this.#flushPendingNew();
+    });
+    this.#badgeEl?.addEventListener('click', () => this.#flushPendingNew());
+  }
+
+  /** Called by every "new content lands at the top of the stream" code path. */
+  #onNewContent(): void {
+    if (this.#streamHovered) {
+      this.#pendingNewCount += 1;
+      if (this.#badgeCountEl !== null) {
+        this.#badgeCountEl.textContent = String(this.#pendingNewCount);
+      }
+      this.#badgeEl?.classList.remove('hidden');
+    } else {
+      this.#scrollStreamToTop();
+    }
+  }
+
+  #flushPendingNew(): void {
+    this.#pendingNewCount = 0;
+    if (this.#badgeCountEl !== null) this.#badgeCountEl.textContent = '0';
+    this.#badgeEl?.classList.add('hidden');
+    this.#scrollStreamToTop();
+  }
+
+  #scrollStreamToTop(): void {
+    // happy-dom doesn't implement scrollIntoView smoothness; both happy-dom
+    // and real browsers honor the call. Wrapped in try/catch for the
+    // case where the element is detached.
+    try {
+      this.#streamEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch {
+      // ignore
+    }
   }
 
   renderCard(card: CardEvent): void {
@@ -75,6 +130,7 @@ export class Sidebar {
     // of the stream instead of pushing the user to scroll for it.
     this.#streamEl.insertBefore(el, this.#streamEl.firstChild);
     this.#cards.set(card.cardId, { card, el, pinned: false });
+    this.#onNewContent();
   }
 
   updateCard(update: CardUpdated): void {
@@ -105,6 +161,7 @@ export class Sidebar {
     const el = this.#buildGapElement(gap);
     this.#streamEl.insertBefore(el, this.#streamEl.firstChild);
     this.#gaps.set(gap.gapId, el);
+    this.#onNewContent();
   }
 
   togglePin(cardId: string): void {
@@ -180,6 +237,7 @@ export class Sidebar {
       consolidated: [],
       consolidatedContainer: null,
     });
+    this.#onNewContent();
   }
 
   appendSynthesisDelta(delta: SynthesisDeltaEvent): void {

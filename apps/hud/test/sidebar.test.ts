@@ -45,7 +45,10 @@ describe('Sidebar', () => {
 
   beforeEach(() => {
     document.body.innerHTML =
-      '<div id="stream"></div><div id="pinned"></div><div id="synthesis-announce" aria-live="polite"></div>';
+      '<button id="new-content-badge" class="hidden"><span id="new-content-count">0</span></button>' +
+      '<div id="stream"></div>' +
+      '<div id="pinned"></div>' +
+      '<div id="synthesis-announce" aria-live="polite"></div>';
     streamEl = document.getElementById('stream')!;
     pinnedEl = document.getElementById('pinned')!;
     sidebar = new Sidebar({ streamEl, pinnedEl });
@@ -326,6 +329,71 @@ describe('Sidebar', () => {
     const grid = streamEl.querySelector<HTMLElement>('.synthesis-sources-grid')!;
     expect(grid.querySelector('[data-card-id="c2"]')).not.toBeNull();
     expect(grid.querySelectorAll('.card.consolidated').length).toBe(1);
+  });
+
+  // --- UI4: hover-safe scroll + pulsing new-content badge ---
+
+  function fireMouseEvent(el: HTMLElement, type: 'mouseenter' | 'mouseleave'): void {
+    el.dispatchEvent(new Event(type));
+  }
+
+  it('scrolls the stream to top when a new card arrives and mouse is NOT over the stream', () => {
+    const scrollMock = vi.fn();
+    streamEl.scrollIntoView = scrollMock as unknown as Element['scrollIntoView'];
+    sidebar.renderCard(makeCard());
+    expect(scrollMock).toHaveBeenCalled();
+    const badge = document.getElementById('new-content-badge')!;
+    expect(badge.classList.contains('hidden')).toBe(true);
+  });
+
+  it('does NOT scroll while hovering — shows pulsing badge with new count', () => {
+    fireMouseEvent(streamEl, 'mouseenter');
+    const scrollMock = vi.fn();
+    streamEl.scrollIntoView = scrollMock as unknown as Element['scrollIntoView'];
+
+    sidebar.renderCard(makeCard({ cardId: 'c1' }));
+    sidebar.renderCard(makeCard({ cardId: 'c2' }));
+
+    expect(scrollMock).not.toHaveBeenCalled();
+    const badge = document.getElementById('new-content-badge')!;
+    expect(badge.classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('new-content-count')!.textContent).toBe('2');
+  });
+
+  it('mouseleave with pending new content scrolls to top and hides the badge', () => {
+    fireMouseEvent(streamEl, 'mouseenter');
+    sidebar.renderCard(makeCard({ cardId: 'c1' }));
+    sidebar.renderCard(makeCard({ cardId: 'c2' }));
+    const badge = document.getElementById('new-content-badge')!;
+    expect(badge.classList.contains('hidden')).toBe(false);
+
+    const scrollMock = vi.fn();
+    streamEl.scrollIntoView = scrollMock as unknown as Element['scrollIntoView'];
+    fireMouseEvent(streamEl, 'mouseleave');
+
+    expect(scrollMock).toHaveBeenCalled();
+    expect(badge.classList.contains('hidden')).toBe(true);
+    expect(document.getElementById('new-content-count')!.textContent).toBe('0');
+  });
+
+  it('badge click flushes pending state and scrolls to top', () => {
+    fireMouseEvent(streamEl, 'mouseenter');
+    sidebar.renderCard(makeCard());
+    const scrollMock = vi.fn();
+    streamEl.scrollIntoView = scrollMock as unknown as Element['scrollIntoView'];
+    const badge = document.getElementById('new-content-badge') as HTMLButtonElement;
+    badge.click();
+
+    expect(scrollMock).toHaveBeenCalled();
+    expect(badge.classList.contains('hidden')).toBe(true);
+    expect(document.getElementById('new-content-count')!.textContent).toBe('0');
+  });
+
+  it('synthesis card render counts toward the pending new-content total too', () => {
+    fireMouseEvent(streamEl, 'mouseenter');
+    sidebar.renderCard(makeCard({ cardId: 'c1' }));
+    sidebar.renderSynthesisStart(makeStart({ sourceCardIds: ['c1'] }));
+    expect(document.getElementById('new-content-count')!.textContent).toBe('2');
   });
 
   it('synthesisError after deltas does NOT consolidate (raw cards stay in stream)', () => {
