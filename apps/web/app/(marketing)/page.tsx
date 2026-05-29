@@ -1,10 +1,14 @@
+import { Hero } from '../components/hero';
+import { ValueSections } from '../components/value-sections';
+import { WaitlistForm } from '../components/waitlist-form';
 import { MeetingDemo } from '../components/demo/meeting-demo';
 
 export default function Home(): React.ReactElement {
   return (
     <>
-      {/* Hero (U3) and value sections (U4) compose here. */}
-      <section id="demo" className="mx-auto max-w-3xl px-5 py-20 sm:px-8">
+      <Hero />
+
+      <section id="demo" className="mx-auto max-w-3xl px-5 py-16 sm:px-8">
         <div className="mb-8 text-center">
           <h2 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
             Watch it work
@@ -18,7 +22,10 @@ export default function Home(): React.ReactElement {
           <MeetingDemo />
         </div>
       </section>
-      {/* Waitlist (U7) composes here. */}
+
+      <ValueSections />
+
+      <WaitlistForm />
     </>
   );
 }
