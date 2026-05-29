@@ -26,7 +26,7 @@ import {
   RelevanceProviderError,
 } from '../relevance/contract.js';
 import { type SkillRegistry } from '../skills/registry.js';
-import { type Skill, formatAsSource } from '../skills/contract.js';
+import { type Skill, formatAsSource, SkillExecutionError } from '../skills/contract.js';
 import type { SynthesisSource } from '../synthesize/contract.js';
 import type {
   CardEvent,
@@ -551,10 +551,17 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
                 toolSource = formatAsSource(skillResult, result.skillName, result.args);
               }
             } catch (err) {
+              // Live skills throw SkillExecutionError with a typed
+              // executionCode ('rate-limit' / 'auth-error' / 'not-found' /
+              // 'unknown'). Corpus skills throw plain Errors (or
+              // SkillExecutionError without the executionCode option) and
+              // inherit 'execution-error'.
+              const code =
+                err instanceof SkillExecutionError ? err.executionCode : 'execution-error';
               this.emit('skillFailed', {
                 traceId,
                 name: result.skillName,
-                code: 'execution-error',
+                code,
                 message: (err as Error).message,
               });
             }

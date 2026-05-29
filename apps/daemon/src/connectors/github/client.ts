@@ -65,6 +65,8 @@ export class GithubClient {
       const errorBody = await safeReadText(res);
       throw new ConnectorAuthError(
         `GitHub auth failed (${String(res.status)}): ${redactString(errorBody, [token])}`,
+        [],
+        { status: res.status },
       );
     }
 
@@ -80,6 +82,8 @@ export class GithubClient {
       const body = await safeReadText(res);
       throw new ConnectorAuthError(
         `GitHub request failed (${String(res.status)}): ${redactString(body, [token])}`,
+        [],
+        { status: res.status },
       );
     }
 

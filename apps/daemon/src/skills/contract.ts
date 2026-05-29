@@ -70,13 +70,35 @@ export class SkillUnknownError extends UpwellError {
   }
 }
 
+/**
+ * Telemetry-grade execution codes. Live skills set these to surface a
+ * typed failure reason in the pipeline's `skillFailed` event (and the
+ * downstream serve.ts log line). Corpus skills can omit the code and
+ * inherit the `'execution-error'` default — preserves existing telemetry.
+ */
+export type SkillExecutionCode =
+  | 'execution-error'
+  | 'rate-limit'
+  | 'auth-error'
+  | 'not-found'
+  | 'unknown';
+
 // Skill handler threw mid-execution. Distinct from SkillUnknownError so the
-// pipeline can log them with different `code` values for telemetry triage.
+// pipeline can log them with different telemetry codes. The shared
+// UpwellError.code carries the error-class discriminator
+// ('skill-execution'); executionCode carries the telemetry signal that
+// flows into the pipeline's skillFailed event.
 export class SkillExecutionError extends UpwellError {
   readonly skillName: string;
-  constructor(skillName: string, message: string, options?: ErrorOptions) {
+  readonly executionCode: SkillExecutionCode;
+  constructor(
+    skillName: string,
+    message: string,
+    options?: ErrorOptions & { executionCode?: SkillExecutionCode },
+  ) {
     super('skill-execution', message, options);
     this.skillName = skillName;
+    this.executionCode = options?.executionCode ?? 'execution-error';
   }
 }
 

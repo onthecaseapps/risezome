@@ -109,7 +109,14 @@ export interface SynthesisRetracted {
 
 export type ClassifierIntent = 'rag' | 'tool';
 export type ClassifierSkippedReason = 'heuristic-no-match' | 'no-classifier' | 'no-consent';
-export type SkillFailureCode = 'unknown-skill' | 'execution-error' | 'aborted';
+export type SkillFailureCode =
+  | 'unknown-skill'
+  | 'execution-error'
+  | 'aborted'
+  | 'rate-limit'
+  | 'auth-error'
+  | 'not-found'
+  | 'unknown';
 export type SkillResultKind = 'count' | 'list' | 'detail';
 
 export interface ClassifierStart {

@@ -75,6 +75,46 @@ describe('GithubClient', () => {
     await expect(client.get(TEST_AUTH, '/x')).rejects.toBeInstanceOf(ConnectorAuthError);
   });
 
+  it('populates ConnectorAuthError.status with the HTTP status on 401', async () => {
+    const client = new GithubClient({
+      fetchImpl: () =>
+        Promise.resolve(new Response('{}', { status: 401, headers: { 'X-RateLimit-Remaining': '4999' } })),
+    });
+    try {
+      await client.get(TEST_AUTH, '/x');
+      expect.fail('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConnectorAuthError);
+      expect((err as ConnectorAuthError).status).toBe(401);
+    }
+  });
+
+  it('populates ConnectorAuthError.status with the HTTP status on 403', async () => {
+    const client = new GithubClient({
+      fetchImpl: () =>
+        Promise.resolve(new Response('{}', { status: 403, headers: { 'X-RateLimit-Remaining': '4999' } })),
+    });
+    try {
+      await client.get(TEST_AUTH, '/x');
+      expect.fail('expected throw');
+    } catch (err) {
+      expect((err as ConnectorAuthError).status).toBe(403);
+    }
+  });
+
+  it('populates ConnectorAuthError.status with 404 on a not-found response', async () => {
+    const client = new GithubClient({
+      fetchImpl: () => Promise.resolve(new Response('not found', { status: 404 })),
+    });
+    try {
+      await client.get(TEST_AUTH, '/users/ghost');
+      expect.fail('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConnectorAuthError);
+      expect((err as ConnectorAuthError).status).toBe(404);
+    }
+  });
+
   it('logs are redacted: a request log entry does not contain the PAT', async () => {
     const logs: { msg: string; meta?: Record<string, unknown> }[] = [];
     const client = new GithubClient({

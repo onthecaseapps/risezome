@@ -1077,6 +1077,7 @@ describe('RetrievalPipeline — synthesis abort + retract cascade', () => {
 
 import { SkillRegistry } from '../../src/skills/registry.js';
 import type { Skill, SkillResult } from '../../src/skills/contract.js';
+import { SkillExecutionError } from '../../src/skills/contract.js';
 import type {
   Classifier,
   ClassifierResult,
@@ -1501,6 +1502,34 @@ describe('RetrievalPipeline — router outcomes', () => {
     expect(h.routerEvents.skillFailed[0]!.code).toBe('execution-error');
     expect(h.routerEvents.skillFailed[0]!.message).toContain('SQL boom');
     expect(synthCalls[0]!.sources[0]!.title).not.toContain('Tool:');
+  });
+
+  it('Skill throws SkillExecutionError with typed executionCode → skillFailed carries that code (not execution-error default)', async () => {
+    const synth = fakeSynthesizer(() => yieldChunks(makeChunks('s1', ['ok.'])));
+    const throwingSkill: Skill = {
+      ...COUNT_SKILL,
+      handler: async () => {
+        throw new SkillExecutionError(COUNT_SKILL.name, 'GitHub returned 429', {
+          executionCode: 'rate-limit',
+        });
+      },
+    };
+    const fake = fakeClassifier(async () => ({
+      intent: 'tool',
+      skillName: throwingSkill.name,
+      args: {},
+    }));
+    h = await setupWithRouter({
+      classifier: fake,
+      registry: makeRegistryWith([throwingSkill]),
+      synthesizer: synth,
+      consentCheck: () => true,
+    });
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    await pushAndFlush(h.window, 'how many open issues are there');
+
+    expect(h.routerEvents.skillFailed[0]!.code).toBe('rate-limit');
+    expect(h.routerEvents.skillFailed[0]!.message).toContain('429');
   });
 });
 
