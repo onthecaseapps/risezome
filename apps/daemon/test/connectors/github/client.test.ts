@@ -12,9 +12,9 @@ describe('GithubClient', () => {
   it('sets Authorization, Accept, User-Agent, and API version headers', async () => {
     let captured: Headers | undefined;
     const client = new GithubClient({
-      fetchImpl: async (input, init) => {
+      fetchImpl: (_input, init) => {
         captured = new Headers(init?.headers);
-        return new Response('{}', { status: 200 });
+        return Promise.resolve(new Response('{}', { status: 200 }));
       },
     });
     await client.get(TEST_AUTH, '/user');
