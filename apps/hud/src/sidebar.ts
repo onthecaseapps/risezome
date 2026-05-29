@@ -354,9 +354,27 @@ export class Sidebar {
         rec.renderedCitations.delete(n);
       }
     }
-    // Announce the final text once.
+    // Strip invalid [N] tokens from the visible text. The synthesizer's
+    // parser already drops out-of-range citations from the citations array,
+    // but the original token stays in the streamed text and reads as junk
+    // (e.g. "There are 15 open issues [0]."). Walk the body and remove any
+    // [N] not in the final citations set, then tidy up the gaps.
+    const validSet = new Set<number>(done.citations);
+    const cleaned = rec.accumulatedText
+      .replace(/\s*\[(\d+)\]/g, (m, raw: string) => {
+        const n = Number(raw);
+        return Number.isInteger(n) && validSet.has(n) ? m : '';
+      })
+      .replace(/\s+([.,;:!?])/g, '$1')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (cleaned !== rec.accumulatedText) {
+      rec.bodyEl.textContent = cleaned;
+    }
+    // Announce the final text once. Use the cleaned form so screen readers
+    // also benefit.
     if (this.#announceEl !== null) {
-      this.#announceEl.textContent = rec.accumulatedText;
+      this.#announceEl.textContent = cleaned;
     }
     // Consolidate: move the raw source cards from the main stream into a
     // grid inside the synthesis card. Restored to original positions on

@@ -224,7 +224,14 @@ export async function runServe(): Promise<number> {
       cardBus.emit('synthesisDone', e);
     });
     pipeline.on('synthesisError', (e) => {
-      log('warn', `synthesis.error ${e.synthesisId} code=${e.code}`, e.message !== undefined ? { message: e.message } : undefined);
+      // Aborts are normal lifecycle (a newer flush superseded the prior
+      // synthesis). Log at info, not warn. Other codes stay at warn.
+      const level = e.code === 'aborted' ? 'info' : 'warn';
+      log(
+        level,
+        `synthesis.error ${e.synthesisId} code=${e.code}`,
+        e.message !== undefined ? { message: e.message } : undefined,
+      );
       cardBus.emit('synthesisError', e);
     });
     pipeline.on('synthesisRetracted', (e) => {

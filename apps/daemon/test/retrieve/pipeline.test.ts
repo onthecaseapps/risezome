@@ -875,9 +875,13 @@ describe('RetrievalPipeline — synthesis abort + retract cascade', () => {
     await new Promise((r) => setTimeout(r, 30));
 
     expect(inFlightAborted).toBe(true);
-    // First synthesis: NO done, NO error (abort is silent).
-    expect(h.events.done.filter((d) => d.synthesisId === h.events.start[0]!.synthesisId)).toHaveLength(0);
-    expect(h.events.error.filter((e) => e.synthesisId === h.events.start[0]!.synthesisId)).toHaveLength(0);
+    // First synthesis: NO done. Aborts emit synthesisError {code: 'aborted'}
+    // so the HUD's existing removal path tears down the orphan card.
+    const firstId = h.events.start[0]!.synthesisId;
+    expect(h.events.done.filter((d) => d.synthesisId === firstId)).toHaveLength(0);
+    const abortErrors = h.events.error.filter((e) => e.synthesisId === firstId);
+    expect(abortErrors).toHaveLength(1);
+    expect(abortErrors[0]!.code).toBe('aborted');
   });
 
   it('cascades synthesisRetracted when a cited card is retracted', async () => {

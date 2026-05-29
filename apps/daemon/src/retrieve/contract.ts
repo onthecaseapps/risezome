@@ -49,10 +49,13 @@ export interface RetrievalTrace {
 
 // Code the HUD receives in `synthesisError`. The full set covers refusal
 // (LLM emitted the sentinel), rate-limiting, the Anthropic kind taxonomy
-// from SynthesisProviderError, and 'unknown' as a catchall.
+// from SynthesisProviderError, 'aborted' (superseded by a new flush), and
+// 'unknown' as a catchall. The HUD treats every code the same way: drop
+// the synthesis card.
 export type SynthesisErrorCode =
   | 'refused'
   | 'rate-limited'
+  | 'aborted'
   | 'auth-error'
   | 'bad-request'
   | 'network-error'

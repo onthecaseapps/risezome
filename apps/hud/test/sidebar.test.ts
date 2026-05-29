@@ -208,14 +208,29 @@ describe('Sidebar', () => {
     sidebar.appendSynthesisDelta(makeDelta('A [1] B [2] C [3].'));
     expect(streamEl.querySelectorAll('.citation-chip').length).toBe(3);
 
-    // Final says citations are [2] only. chips 1 and 3 should be removed.
+    // Final says citations are [2] only. Chips 1 and 3 should be removed
+    // AND the [1] / [3] tokens stripped from the visible text. Only [2]
+    // survives — the synthesizer's invariant is "the citations array is
+    // the source of truth for which references are valid; anything else
+    // is noise that confuses the reader."
     sidebar.finalizeSynthesis(makeDone([2]));
     expect(streamEl.querySelector('.synthesis-cursor')).toBeNull();
     const chips = streamEl.querySelectorAll<HTMLElement>('.citation-chip');
     expect([...chips].map((c) => c.textContent)).toEqual(['[2]']);
 
     const announce = document.getElementById('synthesis-announce');
-    expect(announce?.textContent).toBe('A [1] B [2] C [3].');
+    expect(announce?.textContent).toBe('A B [2] C.');
+    const bodyEl = streamEl.querySelector<HTMLElement>('.synthesis-body');
+    expect(bodyEl?.textContent).toBe('A B [2] C.');
+  });
+
+  it('finalizeSynthesis strips invalid [0] tokens the synthesizer may emit', () => {
+    sidebar.renderCard(makeCard({ cardId: 'c1' }));
+    sidebar.renderSynthesisStart(makeStart({ sourceCardIds: ['c1'] }));
+    sidebar.appendSynthesisDelta(makeDelta('There are 15 open issues [0].'));
+    sidebar.finalizeSynthesis(makeDone([]));
+    const bodyEl = streamEl.querySelector<HTMLElement>('.synthesis-body');
+    expect(bodyEl?.textContent).toBe('There are 15 open issues.');
   });
 
   it('citation chip click scrolls the matching raw card into view', () => {

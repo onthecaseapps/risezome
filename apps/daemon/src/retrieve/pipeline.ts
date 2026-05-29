@@ -544,7 +544,13 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     } catch (err) {
       this.#session.clearSynthesis(synthesisId);
       if (isAbortError(err)) {
-        // Aborted by a new schedule — silent; the next synthesis fires on the new window.
+        // Aborted by a new schedule. We emit synthesisError code=aborted so
+        // the HUD's existing removal path tears down the orphan synthesis
+        // card; without this the card stayed open with a blinking cursor
+        // forever because the HUD never got a removal signal.
+        // The pipeline #schedule already logged synthesis.aborted at info,
+        // so this emit is purely for HUD lifecycle, not telemetry.
+        this.emit('synthesisError', { synthesisId, code: 'aborted' });
         return;
       }
       const errorEvent = mapSynthesisError(err, synthesisId);
