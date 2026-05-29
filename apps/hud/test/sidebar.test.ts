@@ -525,4 +525,57 @@ describe('Sidebar', () => {
       expect(newest!.classList.contains('is-entering')).toBe(true);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // U3: Source/type chips
+  // -------------------------------------------------------------------------
+
+  describe('source/type chips (U3)', () => {
+    it('github + issue renders chip-source-github and chip-type-issue', () => {
+      sidebar.renderCard(makeCard({ source: 'github', type: 'issue' }));
+      const sourceChip = streamEl.querySelector('.chip-source');
+      const typeChip = streamEl.querySelector('.chip-type');
+      expect(sourceChip?.classList.contains('chip-source-github')).toBe(true);
+      expect(sourceChip?.textContent).toBe('github');
+      expect(typeChip?.classList.contains('chip-type-issue')).toBe(true);
+      expect((typeChip as HTMLElement | null)?.dataset['glyph']).toBe('circleDot');
+    });
+
+    it('jira + pull-request renders chip-source-jira and codePullRequest glyph', () => {
+      sidebar.renderCard(makeCard({ cardId: 'c2', source: 'jira', type: 'pull-request' }));
+      const sourceChip = streamEl.querySelector('.chip-source');
+      const typeChip = streamEl.querySelector('.chip-type');
+      expect(sourceChip?.classList.contains('chip-source-jira')).toBe(true);
+      expect(typeChip?.classList.contains('chip-type-pull-request')).toBe(true);
+      expect((typeChip as HTMLElement | null)?.dataset['glyph']).toBe('codePullRequest');
+    });
+
+    it('type chip carries aria-label on the glyph wrapper for screen readers', () => {
+      sidebar.renderCard(makeCard({ source: 'github', type: 'pull-request' }));
+      const glyphWrapper = streamEl.querySelector('.chip-type .icon');
+      expect(glyphWrapper?.getAttribute('role')).toBe('img');
+      expect(glyphWrapper?.getAttribute('aria-label')).toBe('Pull request');
+    });
+
+    it('unknown source falls back to chip-source-default', () => {
+      sidebar.renderCard(makeCard({ source: 'confluence', type: 'doc' }));
+      const sourceChip = streamEl.querySelector('.chip-source');
+      expect(sourceChip?.classList.contains('chip-source-default')).toBe(true);
+    });
+
+    it('unknown type renders empty chip-type-unknown (hidden via CSS)', () => {
+      sidebar.renderCard(makeCard({ source: 'github', type: 'wiki-page' }));
+      const typeChip = streamEl.querySelector<HTMLElement>('.chip-type');
+      expect(typeChip?.classList.contains('chip-type-unknown')).toBe(true);
+      expect(typeChip?.dataset['glyph']).toBeUndefined();
+    });
+
+    it('code type uses the code glyph and shows the source-side accent', () => {
+      sidebar.renderCard(makeCard({ source: 'github', type: 'code' }));
+      const sourceChip = streamEl.querySelector('.chip-source');
+      const typeChip = streamEl.querySelector('.chip-type');
+      expect(sourceChip?.classList.contains('chip-source-github')).toBe(true);
+      expect((typeChip as HTMLElement | null)?.dataset['glyph']).toBe('code');
+    });
+  });
 });

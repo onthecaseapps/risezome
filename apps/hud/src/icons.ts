@@ -13,6 +13,13 @@ import { faThumbtack } from '@fortawesome/free-solid-svg-icons/faThumbtack';
 import { faBookmark } from '@fortawesome/free-solid-svg-icons/faBookmark';
 import { faXmark } from '@fortawesome/free-solid-svg-icons/faXmark';
 import { faArrowUpRightFromSquare } from '@fortawesome/free-solid-svg-icons/faArrowUpRightFromSquare';
+// Type glyphs for U3 source/type chips. Each card surfaces a chip near
+// the title with both a source-color accent and a type glyph; these are
+// the type half.
+import { faCircleDot } from '@fortawesome/free-solid-svg-icons/faCircleDot';
+import { faCodePullRequest } from '@fortawesome/free-solid-svg-icons/faCodePullRequest';
+import { faCode } from '@fortawesome/free-solid-svg-icons/faCode';
+import { faFileLines } from '@fortawesome/free-solid-svg-icons/faFileLines';
 
 export type IconDef = typeof faSun;
 
@@ -25,9 +32,23 @@ const Icons: Readonly<Record<string, IconDef>> = {
   bookmark: faBookmark,
   xmark: faXmark,
   externalLink: faArrowUpRightFromSquare,
+  circleDot: faCircleDot,
+  codePullRequest: faCodePullRequest,
+  code: faCode,
+  fileLines: faFileLines,
 };
 
-export type IconName = 'sun' | 'moon' | 'thumbtack' | 'bookmark' | 'xmark' | 'externalLink';
+export type IconName =
+  | 'sun'
+  | 'moon'
+  | 'thumbtack'
+  | 'bookmark'
+  | 'xmark'
+  | 'externalLink'
+  | 'circleDot'
+  | 'codePullRequest'
+  | 'code'
+  | 'fileLines';
 
 export function getIconDef(name: IconName): IconDef {
   return Icons[name]!;

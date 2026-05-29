@@ -24,6 +24,16 @@
   --pinned-bg: #fff8e0;
   --provisional-bg: #f0f0f5;
   --accent: #3361ff;
+  /* U3 source-chip palette. INTERNAL CONVENTION (not brand colors) —
+     chosen for discriminability and 4.5:1 contrast against the card
+     background, not brand fidelity. See sidebar.ts SOURCE_ACCENT
+     for the rationale. Light-mode values use darker hues so the chip
+     text reads at small sizes. */
+  --src-github: #1f5fbf;
+  --src-jira: #0b5fc7;
+  --src-slack: #b8463a;
+  --src-code: #6f42c1;
+  --src-default: #4a4a55;
   --gap-fg: #b35200;
   --error: #b30000;
   --code-bg: #f4f5f8;
@@ -63,6 +73,13 @@
   --pinned-bg: #2a2614;
   --provisional-bg: #1a1a25;
   --accent: #6b8aff;
+  /* U3 source-chip palette (dark). Brighter hues so chip text reads
+     against the dark card surface at small sizes. */
+  --src-github: #6b8aff;
+  --src-jira: #5cc8ff;
+  --src-slack: #ff9080;
+  --src-code: #c792ea;
+  --src-default: #a8aeb8;
   --gap-fg: #ffb070;
   --error: #ff6b6b;
   --code-bg: #0c0e12;
@@ -233,7 +250,42 @@ body {
 
 .card .header .source {
   display: inline-flex;
-  gap: 8px;
+  gap: 6px;
+  align-items: center;
+}
+
+/* U3: source/type chips. The source chip carries the discriminator color
+   on its TEXT (the load-bearing signal at 4.5:1 contrast). The type chip
+   is a glyph-only pill with an aria-label for screen reader users. */
+.chip-source {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 1px solid currentColor;
+  background: transparent;
+}
+
+.chip-source-github { color: var(--src-github); }
+.chip-source-jira { color: var(--src-jira); }
+.chip-source-slack { color: var(--src-slack); }
+.chip-source-code { color: var(--src-code); }
+.chip-source-default { color: var(--src-default); }
+
+.chip-type {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chip-type-unknown {
+  display: none;
 }
 
 .card .header .score {

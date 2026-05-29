@@ -492,7 +492,7 @@ export class Sidebar {
     header.className = 'header';
     const sourceLabel = doc.createElement('span');
     sourceLabel.className = 'source';
-    sourceLabel.textContent = `${card.source} · ${card.type}`;
+    sourceLabel.append(buildSourceChip(doc, card.source), buildTypeChip(doc, card.type));
     const scoreLabel = doc.createElement('span');
     scoreLabel.className = 'score';
     scoreLabel.textContent = formatRank(card.rank);
@@ -659,6 +659,59 @@ function buildSnippet(doc: Document, card: CardEvent): HTMLElement {
   wrap.appendChild(pre);
 
   return wrap;
+}
+
+// U3: Source/type chips. Two small pills near the card title that signal
+// where a card came from and what kind of artifact it is.
+//
+// The color palette below is **internal-convention discriminability**,
+// NOT brand colors. Brand-mimicking colors actively confuse users —
+// GitHub isn't purple, Slack isn't green, Jira's blue is darker than
+// Tailwind's. The glyph carries the brand signal; the color just
+// distinguishes sources visually at a glance. Future contributors:
+// please don't "fix" these to brand without re-reading the brainstorm
+// in docs/brainstorms/hud-visual-polish-requirements.md.
+const SOURCE_ACCENT: Readonly<Record<string, string>> = {
+  github: 'github',
+  jira: 'jira',
+  slack: 'slack',
+  code: 'code',
+};
+
+interface TypeGlyph {
+  readonly icon: IconName;
+  readonly label: string;
+}
+
+const TYPE_GLYPH: Readonly<Record<string, TypeGlyph>> = {
+  'issue': { icon: 'circleDot', label: 'Issue' },
+  'pull-request': { icon: 'codePullRequest', label: 'Pull request' },
+  'code': { icon: 'code', label: 'Code' },
+  'doc': { icon: 'fileLines', label: 'Doc' },
+};
+
+function buildSourceChip(doc: Document, source: string): HTMLElement {
+  const chip = doc.createElement('span');
+  const accent = SOURCE_ACCENT[source] ?? 'default';
+  chip.className = `chip-source chip-source-${accent}`;
+  chip.textContent = source;
+  return chip;
+}
+
+function buildTypeChip(doc: Document, type: string): HTMLElement {
+  const glyph = TYPE_GLYPH[type];
+  if (glyph === undefined) {
+    // Unknown type: fall back to the source label only (no chip rendered).
+    // Empty span keeps the .source flex layout consistent.
+    const empty = doc.createElement('span');
+    empty.className = 'chip-type chip-type-unknown';
+    return empty;
+  }
+  const chip = doc.createElement('span');
+  chip.className = `chip-type chip-type-${type}`;
+  chip.dataset['glyph'] = glyph.icon;
+  chip.appendChild(renderIcon(doc, glyph.icon, { ariaLabel: glyph.label, size: '0.85em' }));
+  return chip;
 }
 
 // Adds the `is-entering` class to a freshly-inserted element and cleans it up
