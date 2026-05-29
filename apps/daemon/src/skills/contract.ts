@@ -50,7 +50,7 @@ export interface SkillContext {
 export interface Skill {
   /** Connector source the skill belongs to (e.g., 'github'). */
   readonly source: string;
-  /** Fully qualified name passed to the classifier as the tool identifier (e.g., 'github.count'). */
+  /** Fully qualified name passed to the classifier as the tool identifier (e.g., 'github_count'). */
   readonly name: string;
   /** Plain-English description shown to the classifier. Should be concise (1-2 sentences). */
   readonly description: string;

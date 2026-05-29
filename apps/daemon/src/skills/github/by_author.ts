@@ -10,7 +10,7 @@ const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 25;
 
 /**
- * github.by_author — list docs by a specific GitHub login. Combines the
+ * github_by_author — list docs by a specific GitHub login. Combines the
  * docs.authors JSON-array LIKE match with the optional state/labels filters
  * (which need FTS5). The classifier picks this for "what's jamie working
  * on", "list all PRs by jamie", "who has open bugs assigned".
@@ -21,7 +21,7 @@ const MAX_LIMIT = 25;
  */
 export const byAuthorSkill: Skill = {
   source: 'github',
-  name: 'github.by_author',
+  name: 'github_by_author',
   description:
     'List GitHub docs authored by or assigned to a specific login. Use for "what is jamie working on", "list all PRs by jamie", "open bugs by alice". Combines with optional state/labels/type filters.',
   inputSchema: {

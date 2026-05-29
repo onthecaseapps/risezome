@@ -48,32 +48,32 @@ Below are 10 examples showing exactly the input and the choice. Match the same l
 
 EXAMPLE 1
 Utterance: "how many open issues are there"
-Choice: tool call github.count with {type:"issue",state:"open"}.
+Choice: tool call github_count with {type:"issue",state:"open"}.
 Reasoning: classic counting question, plus an explicit state.
 
 EXAMPLE 2
 Utterance: "how many bugs do we have open right now"
-Choice: tool call github.count with {state:"open",labels:["bug"]}.
+Choice: tool call github_count with {state:"open",labels:["bug"]}.
 Reasoning: counting with state and label filter. Note no type filter — "bugs" is the label, not the doc type.
 
 EXAMPLE 3
 Utterance: "list all open prs by jamie"
-Choice: tool call github.list with {type:"pull-request",state:"open",author:"jamie"}.
+Choice: tool call github_list with {type:"pull-request",state:"open",author:"jamie"}.
 Reasoning: listing with three filters. author goes through the docs.authors match.
 
 EXAMPLE 4
 Utterance: "show me everything jamie is working on"
-Choice: tool call github.by_author with {login:"jamie"}.
+Choice: tool call github_by_author with {login:"jamie"}.
 Reasoning: by_author is the right surface; no state or type filter because the utterance is broad.
 
 EXAMPLE 5
 Utterance: "what got updated this week"
-Choice: tool call github.recently_updated with {days:7}.
+Choice: tool call github_recently_updated with {days:7}.
 Reasoning: temporal query, "this week" maps to 7 days.
 
 EXAMPLE 6
 Utterance: "any new prs in the last three days"
-Choice: tool call github.recently_updated with {days:3,type:"pull-request"}.
+Choice: tool call github_recently_updated with {days:3,type:"pull-request"}.
 Reasoning: temporal with explicit days and type filter.
 
 EXAMPLE 7
@@ -88,14 +88,14 @@ Reasoning: open-ended explanation request, perfect for RAG.
 
 EXAMPLE 9
 Utterance: "who owns the auth refactor"
-Choice: tool call github.by_author with {login:"auth"}.
+Choice: tool call github_by_author with {login:"auth"}.
 Reasoning: WAIT — this is tricky. The utterance asks who, but "auth" is not a login. Better to respond with text and let RAG handle it (the corpus likely has issues/PRs mentioning "auth refactor" with authors named). Choose RAG (text response).
 
 Actually, re-reading: the by_author tool requires a login. The utterance does not give one. Therefore: respond with text. No tool call. RAG will surface the relevant issue or PR and the synthesizer can mention the authors from doc metadata.
 
 EXAMPLE 10
 Utterance: "are there any phase-2 issues open"
-Choice: tool call github.count with {state:"open",labels:["phase-2"]}.
+Choice: tool call github_count with {state:"open",labels:["phase-2"]}.
 Reasoning: counting with explicit label filter. "phase-2" is the label as it would appear in GitHub.
 
 Apply the same reasoning to every utterance.`;
@@ -125,35 +125,35 @@ const ADDITIONAL_EXAMPLES = `
 ADDITIONAL UTTERANCE PATTERNS — classify these the same way without writing them out:
 
 Counting:
-- "count of open prs" → github.count {type:"pull-request",state:"open"}
-- "what's the total number of bugs" → github.count {labels:["bug"]}
-- "give me the count of issues by alice" → github.count {type:"issue",author:"alice"}
-- "tally up the open feature requests" → github.count {state:"open",labels:["feature"]}
-- "how many merged prs since monday" → github.recently_updated {days:7,type:"pull-request"} (no merged state filter v1 — bonus filter ignored)
+- "count of open prs" → github_count {type:"pull-request",state:"open"}
+- "what's the total number of bugs" → github_count {labels:["bug"]}
+- "give me the count of issues by alice" → github_count {type:"issue",author:"alice"}
+- "tally up the open feature requests" → github_count {state:"open",labels:["feature"]}
+- "how many merged prs since monday" → github_recently_updated {days:7,type:"pull-request"} (no merged state filter v1 — bonus filter ignored)
 - "how many docs touch the synthesizer" → respond text (RAG; no tool for free-text search beyond title)
 
 Listing:
-- "show me all the open bugs" → github.list {state:"open",labels:["bug"]}
-- "list every PR that's still open" → github.list {type:"pull-request",state:"open"}
-- "what are the closed bugs" → github.list {state:"closed",labels:["bug"]}
-- "find all phase-2 issues" → github.list {labels:["phase-2"]}
-- "everything tagged enhancement" → github.list {labels:["enhancement"]}
-- "list the most recent prs" → github.list {type:"pull-request",limit:10}
-- "give me the top 5 open issues" → github.list {state:"open",limit:5}
+- "show me all the open bugs" → github_list {state:"open",labels:["bug"]}
+- "list every PR that's still open" → github_list {type:"pull-request",state:"open"}
+- "what are the closed bugs" → github_list {state:"closed",labels:["bug"]}
+- "find all phase-2 issues" → github_list {labels:["phase-2"]}
+- "everything tagged enhancement" → github_list {labels:["enhancement"]}
+- "list the most recent prs" → github_list {type:"pull-request",limit:10}
+- "give me the top 5 open issues" → github_list {state:"open",limit:5}
 
 Author / assignee:
-- "what is jamie working on" → github.by_author {login:"jamie"}
+- "what is jamie working on" → github_by_author {login:"jamie"}
 - "who's behind the dark mode work" → respond text (no login in utterance)
-- "list all issues assigned to alice" → github.by_author {login:"alice",type:"issue"}
-- "open bugs by bob" → github.by_author {login:"bob",state:"open",labels:["bug"]}
-- "find issues nathan opened" → github.by_author {login:"nathan",type:"issue"}
+- "list all issues assigned to alice" → github_by_author {login:"alice",type:"issue"}
+- "open bugs by bob" → github_by_author {login:"bob",state:"open",labels:["bug"]}
+- "find issues nathan opened" → github_by_author {login:"nathan",type:"issue"}
 
 Temporal:
-- "what changed in the last 24 hours" → github.recently_updated {days:1}
-- "any updates in the last week" → github.recently_updated {days:7}
-- "what's new since friday" → github.recently_updated {days:7}
-- "recent activity" → github.recently_updated {days:7}
-- "what was touched today" → github.recently_updated {days:1}
+- "what changed in the last 24 hours" → github_recently_updated {days:1}
+- "any updates in the last week" → github_recently_updated {days:7}
+- "what's new since friday" → github_recently_updated {days:7}
+- "recent activity" → github_recently_updated {days:7}
+- "what was touched today" → github_recently_updated {days:1}
 
 Mixed / refusal:
 - "explain how prompt caching works" → respond text
@@ -182,8 +182,8 @@ Reasoning: tricky one. The tool surface has labels but no free-text body search.
 
 EXAMPLE 13
 Utterance: "give me a count of issues created this week"
-Choice: tool call github.recently_updated with {days:7,type:"issue"}.
-Reasoning: temporal counting; recently_updated returns the list whose length the user can read. Note we do NOT use github.count because count has no temporal filter in v1.
+Choice: tool call github_recently_updated with {days:7,type:"issue"}.
+Reasoning: temporal counting; recently_updated returns the list whose length the user can read. Note we do NOT use github_count because count has no temporal filter in v1.
 
 EXAMPLE 14
 Utterance: "who's been most active recently"
@@ -192,13 +192,13 @@ Reasoning: aggregation across authors is not a v1 skill. Defer to RAG (which can
 
 EXAMPLE 15
 Utterance: "open issues labeled phase-2 by jamie"
-Choice: tool call github.by_author with {login:"jamie",state:"open",labels:["phase-2"]}.
+Choice: tool call github_by_author with {login:"jamie",state:"open",labels:["phase-2"]}.
 Reasoning: by_author handles the author + state + labels combination cleanly.
 
 EXAMPLE 16
 Utterance: "how many docs are there total"
-Choice: tool call github.count with {}.
-Reasoning: count with no filters returns the total. Note an empty args object is valid — github.count's input schema has no required fields.
+Choice: tool call github_count with {}.
+Reasoning: count with no filters returns the total. Note an empty args object is valid — github_count's input schema has no required fields.
 
 EXAMPLE 17
 Utterance: "list everything"
@@ -207,7 +207,7 @@ Reasoning: too unbounded for the list skill (limit max 25). User likely means "w
 
 EXAMPLE 18
 Utterance: "what's broken right now"
-Choice: tool call github.list with {state:"open",labels:["bug"]}.
+Choice: tool call github_list with {state:"open",labels:["bug"]}.
 Reasoning: "broken" maps to label "bug" with state "open" cleanly.
 
 EXAMPLE 19
@@ -222,7 +222,7 @@ Reasoning: status of one specific PR, not aggregation. RAG over the PR descripti
 
 EXAMPLE 21
 Utterance: "give me three open issues from the last week"
-Choice: tool call github.recently_updated with {days:7,type:"issue",limit:3}.
+Choice: tool call github_recently_updated with {days:7,type:"issue",limit:3}.
 Reasoning: temporal with explicit limit. recently_updated returns the most-recent matches first.
 
 EXAMPLE 22
@@ -237,17 +237,17 @@ Reasoning: content-touching-X is a free-text body match — RAG's domain.
 
 EXAMPLE 24
 Utterance: "what got merged last week"
-Choice: tool call github.recently_updated with {days:7,type:"pull-request"}.
+Choice: tool call github_recently_updated with {days:7,type:"pull-request"}.
 Reasoning: closest fit to "merged" is "recently updated PRs"; v1 doesn't distinguish merged from closed. The synthesizer can clarify in its answer.
 
 EXAMPLE 25
 Utterance: "open bugs nathan still owns"
-Choice: tool call github.by_author with {login:"nathan",state:"open",labels:["bug"]}.
+Choice: tool call github_by_author with {login:"nathan",state:"open",labels:["bug"]}.
 Reasoning: by_author combines all three filters in one query.
 
 EXAMPLE 26
 Utterance: "how many issues did we ship this week"
-Choice: tool call github.recently_updated with {days:7,type:"issue"}.
+Choice: tool call github_recently_updated with {days:7,type:"issue"}.
 Reasoning: temporal "this week" + counting via list length. v1 count skill doesn't take time.
 
 EXAMPLE 27
@@ -257,17 +257,17 @@ Reasoning: how-to over code. RAG is correct.
 
 EXAMPLE 28
 Utterance: "what's still in flight"
-Choice: tool call github.list with {state:"open"}.
+Choice: tool call github_list with {state:"open"}.
 Reasoning: "in flight" maps to state "open" loosely; list returns the open set. The synthesizer can frame it as "open work."
 
 EXAMPLE 29
 Utterance: "find me the recent prs"
-Choice: tool call github.recently_updated with {days:7,type:"pull-request"}.
+Choice: tool call github_recently_updated with {days:7,type:"pull-request"}.
 Reasoning: temporal default 7 days; recently_updated is the right skill.
 
 EXAMPLE 30
 Utterance: "what are the latest issues"
-Choice: tool call github.recently_updated with {type:"issue"}.
+Choice: tool call github_recently_updated with {type:"issue"}.
 Reasoning: "latest" → recent, default days fine.
 
 FINAL REMINDERS:
@@ -275,14 +275,14 @@ FINAL REMINDERS:
 1. Pick exactly one tool when the utterance fits a tool pattern. Never multi-tool. Never chain. Never invent names.
 2. When the utterance is a how-to, definition, explanation, comparison, or open-ended discussion, respond with text. RAG will handle it.
 3. When the utterance is ambiguous and could go either way, prefer text (RAG) — the user gets raw cards regardless.
-4. Be conservative with arguments. Only pass filters the utterance explicitly states. Empty args ({}) is a valid input for github.count.
+4. Be conservative with arguments. Only pass filters the utterance explicitly states. Empty args ({}) is a valid input for github_count.
 5. Your text response (when not calling a tool) is discarded. Brief is fine. The choice is what matters.
 
 Match the utterance shape against these examples and pick the path with the closest pattern.
 
 EXAMPLE 31
 Utterance: "any closed bugs from this week"
-Choice: tool call github.recently_updated with {days:7,type:"issue"}.
+Choice: tool call github_recently_updated with {days:7,type:"issue"}.
 Reasoning: closest fit; v1 recently_updated doesn't combine with labels or state filters. The synthesizer can filter further mentally.
 
 EXAMPLE 32
@@ -292,12 +292,12 @@ Reasoning: "touch retrieval" is content matching, RAG's lane.
 
 EXAMPLE 33
 Utterance: "find every PR by nathan in the last month"
-Choice: tool call github.by_author with {login:"nathan",type:"pull-request"}.
+Choice: tool call github_by_author with {login:"nathan",type:"pull-request"}.
 Reasoning: by_author is the right surface; v1 doesn't combine author with a temporal window cleanly, so we drop the time constraint.
 
 EXAMPLE 34
 Utterance: "list the open issues sorted by recency"
-Choice: tool call github.list with {state:"open"}.
+Choice: tool call github_list with {state:"open"}.
 Reasoning: list already orders by updated_at DESC, so "sorted by recency" is the default. No special arg.
 
 EXAMPLE 35
@@ -312,17 +312,17 @@ Reasoning: blocker identification requires reading body text; tools only filter 
 
 EXAMPLE 37
 Utterance: "give me a quick count of feature requests"
-Choice: tool call github.count with {labels:["feature"]}.
+Choice: tool call github_count with {labels:["feature"]}.
 Reasoning: counting with a label filter. "Feature requests" maps to the label "feature" by convention.
 
 EXAMPLE 38
 Utterance: "how many PRs are awaiting review"
-Choice: tool call github.count with {type:"pull-request",state:"open"}.
+Choice: tool call github_count with {type:"pull-request",state:"open"}.
 Reasoning: v1 doesn't have a "review" state — best approximation is open PRs. The synthesizer can clarify in its answer.
 
 EXAMPLE 39
 Utterance: "list the most recent issues, just the top 5"
-Choice: tool call github.recently_updated with {type:"issue",limit:5}.
+Choice: tool call github_recently_updated with {type:"issue",limit:5}.
 Reasoning: "most recent" → recently_updated; explicit limit honored.
 
 EXAMPLE 40
@@ -332,12 +332,12 @@ Reasoning: definition / discussion of a specific plan unit. RAG over the plan do
 
 EXAMPLE 41
 Utterance: "any progress on the synthesizer card lately"
-Choice: tool call github.recently_updated with {days:7}.
+Choice: tool call github_recently_updated with {days:7}.
 Reasoning: temporal "lately" → 7 days; no type filter because the user wants all activity.
 
 EXAMPLE 42
 Utterance: "list all docs jamie has touched in the last month"
-Choice: tool call github.by_author with {login:"jamie"}.
+Choice: tool call github_by_author with {login:"jamie"}.
 Reasoning: by_author surfaces every doc; v1 has no temporal arg on by_author, so we drop the time constraint and rely on the default 10-result limit being recent.
 
 EXAMPLE 43
@@ -347,17 +347,17 @@ Reasoning: "anyone" doesn't give a login; defer to RAG.
 
 EXAMPLE 44
 Utterance: "how many issues did we close this week"
-Choice: tool call github.recently_updated with {days:7,type:"issue"}.
+Choice: tool call github_recently_updated with {days:7,type:"issue"}.
 Reasoning: closest temporal counting via the list-length-as-count pattern.
 
 EXAMPLE 45
 Utterance: "what's the count for open prs"
-Choice: tool call github.count with {type:"pull-request",state:"open"}.
+Choice: tool call github_count with {type:"pull-request",state:"open"}.
 Reasoning: explicit count + state.
 
 EXAMPLE 46
 Utterance: "show me all the open ones"
-Choice: tool call github.list with {state:"open"}.
+Choice: tool call github_list with {state:"open"}.
 Reasoning: list with just a state filter; ambiguous "ones" defaults to all docs (no type).
 
 EXAMPLE 47
@@ -367,12 +367,12 @@ Reasoning: recommendation / planning question. v1 tools don't prioritize. RAG ov
 
 EXAMPLE 48
 Utterance: "list the prs"
-Choice: tool call github.list with {type:"pull-request"}.
+Choice: tool call github_list with {type:"pull-request"}.
 Reasoning: list with just a type filter.
 
 EXAMPLE 49
 Utterance: "any updates from jamie recently"
-Choice: tool call github.by_author with {login:"jamie"}.
+Choice: tool call github_by_author with {login:"jamie"}.
 Reasoning: by_author surfaces jamie's docs ordered by updated_at; "recently" is implicit in the ordering.
 
 EXAMPLE 50

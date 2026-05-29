@@ -115,7 +115,7 @@ describe('filter helpers', () => {
   });
 });
 
-describe('github.count', () => {
+describe('github_count', () => {
   it('counts open issues', async () => {
     const r = await countSkill.handler({ type: 'issue', state: 'open' }, { db });
     expect(r.kind).toBe('count');
@@ -156,7 +156,7 @@ describe('github.count', () => {
   });
 });
 
-describe('github.list', () => {
+describe('github_list', () => {
   it('lists open issues with title + url, newest first', async () => {
     const r = await listSkill.handler({ type: 'issue', state: 'open', limit: 5 }, { db });
     expect(r.kind).toBe('list');
@@ -184,7 +184,7 @@ describe('github.list', () => {
   });
 });
 
-describe('github.recently_updated', () => {
+describe('github_recently_updated', () => {
   it('defaults to 7 days', async () => {
     const r = await recentlyUpdatedSkill.handler(
       {},
@@ -226,7 +226,7 @@ describe('github.recently_updated', () => {
   });
 });
 
-describe('github.by_author', () => {
+describe('github_by_author', () => {
   it('lists all docs by jamie', async () => {
     const r = await byAuthorSkill.handler({ login: 'jamie' }, { db });
     // jamie authors: issues 3 (co-author), 5, 6, 7, 9, plus PRs 10, 11 = 7
@@ -261,10 +261,10 @@ describe('github.by_author', () => {
 describe('github skills registry export', () => {
   it('exports 4 skills in stable order', () => {
     expect(allGithubSkills.map((s) => s.name)).toEqual([
-      'github.count',
-      'github.list',
-      'github.recently_updated',
-      'github.by_author',
+      'github_count',
+      'github_list',
+      'github_recently_updated',
+      'github_by_author',
     ]);
   });
 });

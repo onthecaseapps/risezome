@@ -1013,7 +1013,7 @@ function makeRegistryWith(skills: Skill[]): SkillRegistry {
 
 const COUNT_SKILL: Skill = {
   source: 'github',
-  name: 'github.count',
+  name: 'github_count',
   description: 'count things',
   inputSchema: { type: 'object', properties: {} },
   handler: async (args): Promise<SkillResult> => ({
@@ -1203,7 +1203,7 @@ describe('RetrievalPipeline — router outcomes', () => {
     });
     const fake = fakeClassifier(async () => ({
       intent: 'tool',
-      skillName: 'github.count',
+      skillName: 'github_count',
       args: { state: 'open' },
     }));
     h = await setupWithRouter({
@@ -1218,7 +1218,7 @@ describe('RetrievalPipeline — router outcomes', () => {
     expect(h.routerEvents.classifierStart).toHaveLength(1);
     expect(h.routerEvents.classifierDone).toHaveLength(1);
     expect(h.routerEvents.classifierDone[0]!.intent).toBe('tool');
-    expect(h.routerEvents.classifierDone[0]!.skillName).toBe('github.count');
+    expect(h.routerEvents.classifierDone[0]!.skillName).toBe('github_count');
     expect(h.routerEvents.skillStart).toHaveLength(1);
     expect(h.routerEvents.skillDone).toHaveLength(1);
     expect(h.routerEvents.skillDone[0]!.resultShape).toBe('count');
@@ -1226,7 +1226,7 @@ describe('RetrievalPipeline — router outcomes', () => {
     // Synthesizer received [toolSource, ...cardSources] with toolSource first
     expect(synthCalls).toHaveLength(1);
     expect(synthCalls[0]!.sources.length).toBeGreaterThanOrEqual(2);
-    expect(synthCalls[0]!.sources[0]!.title).toContain('Tool: github.count');
+    expect(synthCalls[0]!.sources[0]!.title).toContain('Tool: github_count');
     expect(synthCalls[0]!.sources[0]!.text).toContain('7 matching docs');
   });
 
@@ -1283,7 +1283,7 @@ describe('RetrievalPipeline — router outcomes', () => {
     });
     const fake = fakeClassifier(async () => ({
       intent: 'tool',
-      skillName: 'github.bogus',
+      skillName: 'github_bogus',
       args: {},
     }));
     h = await setupWithRouter({
@@ -1313,7 +1313,7 @@ describe('RetrievalPipeline — router outcomes', () => {
     });
     const fake = fakeClassifier(async () => ({
       intent: 'tool',
-      skillName: 'github.count',
+      skillName: 'github_count',
       args: { state: 'open' },
     }));
     h = await setupWithRouter({
@@ -1345,7 +1345,7 @@ describe('RetrievalPipeline — router outcomes', () => {
     expect(h.routerEvents.skillDone).toHaveLength(1);
     expect(synthCalls).toHaveLength(1);
     expect(synthCalls[0]!.sources).toHaveLength(1);
-    expect(synthCalls[0]!.sources[0]!.title).toContain('Tool: github.count');
+    expect(synthCalls[0]!.sources[0]!.title).toContain('Tool: github_count');
   });
 
   it('Skill throws: emits skillFailed{execution-error}, RAG fallback', async () => {

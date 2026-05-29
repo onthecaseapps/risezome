@@ -1,5 +1,5 @@
-// Filter helpers shared across the github.count / github.list / github.recently_updated
-// / github.by_author skills. Two builders:
+// Filter helpers shared across the github_count / github_list / github_recently_updated
+// / github_by_author skills. Two builders:
 //
 // - buildDocFilter constructs a WHERE clause + params for the `docs` table
 //   (type, author, updated_at — fields physically present as columns).

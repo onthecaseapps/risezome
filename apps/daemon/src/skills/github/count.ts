@@ -2,7 +2,7 @@ import type { Skill, SkillContext, SkillResult } from '../contract.js';
 import { buildChunkMatch, buildDocFilter, type GithubFilter } from './filter.js';
 
 /**
- * github.count — return the count of docs matching a filter. The filter can
+ * github_count — return the count of docs matching a filter. The filter can
  * combine type (issue / pull-request), state (open / closed), labels, and
  * author. State + labels are matched via the FTS5 phrase form against the
  * chunk text (`"Status open"`, `"Labels bug"`); type and author hit the
@@ -13,7 +13,7 @@ import { buildChunkMatch, buildDocFilter, type GithubFilter } from './filter.js'
  */
 export const countSkill: Skill = {
   source: 'github',
-  name: 'github.count',
+  name: 'github_count',
   description:
     'Count GitHub docs matching a filter. Use for questions like "how many open issues are there" or "count PRs by jamie". Returns a number plus the matching doc identifiers when small.',
   inputSchema: {

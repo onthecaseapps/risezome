@@ -7,7 +7,7 @@ const MAX_LIMIT = 25;
 const DAY_MS = 86_400_000;
 
 /**
- * github.recently_updated — return docs updated in the last N days. Pure
+ * github_recently_updated — return docs updated in the last N days. Pure
  * docs-table query (no chunk-text scan); ORDER BY updated_at DESC plus
  * LIMIT keeps the result small for the synthesizer prompt.
  *
@@ -16,7 +16,7 @@ const DAY_MS = 86_400_000;
  */
 export const recentlyUpdatedSkill: Skill = {
   source: 'github',
-  name: 'github.recently_updated',
+  name: 'github_recently_updated',
   description:
     'List GitHub docs updated within the last N days, newest first. Use for "what was updated this week", "recent changes", "what is new". Default 7 days, max 25 results.',
   inputSchema: {

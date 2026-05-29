@@ -10,8 +10,8 @@ const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 25;
 
 /**
- * github.list — return up to `limit` docs matching a filter. Same filter
- * semantics as github.count plus a configurable limit (capped at 25 so a
+ * github_list — return up to `limit` docs matching a filter. Same filter
+ * semantics as github_count plus a configurable limit (capped at 25 so a
  * runaway classifier args doesn't surface a thousand rows into the
  * synthesizer's prompt).
  *
@@ -20,7 +20,7 @@ const MAX_LIMIT = 25;
  */
 export const listSkill: Skill = {
   source: 'github',
-  name: 'github.list',
+  name: 'github_list',
   description:
     'List GitHub docs matching a filter, up to a limit (default 10, max 25). Use for "list all open issues", "show all PRs by jamie", etc. Returns a summary and a list of matching docs.',
   inputSchema: {

@@ -26,10 +26,10 @@ function makeSkill(name: string): Skill {
 
 function makeRegistry(): SkillRegistry {
   const r = new SkillRegistry();
-  r.register(makeSkill('github.count'));
-  r.register(makeSkill('github.list'));
-  r.register(makeSkill('github.recently_updated'));
-  r.register(makeSkill('github.by_author'));
+  r.register(makeSkill('github_count'));
+  r.register(makeSkill('github_list'));
+  r.register(makeSkill('github_recently_updated'));
+  r.register(makeSkill('github_by_author'));
   return r;
 }
 
@@ -79,7 +79,7 @@ function textResponse(text: string): Response {
 describe('AnthropicClassifier.classify', () => {
   it('returns intent=tool for a tool_use response with name and input', async () => {
     const { fetchImpl } = captureCalls([
-      () => toolUseResponse('github.count', { state: 'open', type: 'issue' }),
+      () => toolUseResponse('github_count', { state: 'open', type: 'issue' }),
     ]);
     const c = new AnthropicClassifier({ apiKey: 'sk-test', fetchImpl });
     const result = await c.classify({
@@ -88,7 +88,7 @@ describe('AnthropicClassifier.classify', () => {
     });
     expect(result).toEqual<ClassifierResult>({
       intent: 'tool',
-      skillName: 'github.count',
+      skillName: 'github_count',
       args: { state: 'open', type: 'issue' },
     });
   });
@@ -112,7 +112,7 @@ describe('AnthropicClassifier.classify', () => {
             model: 'claude-haiku-4-5',
             content: [
               { type: 'text', text: 'Sure, let me count the open issues for you.' },
-              { type: 'tool_use', id: 'toolu_1', name: 'github.count', input: { state: 'open' } },
+              { type: 'tool_use', id: 'toolu_1', name: 'github_count', input: { state: 'open' } },
             ],
             stop_reason: 'tool_use',
             usage: { input_tokens: 10, output_tokens: 20 },
@@ -127,7 +127,7 @@ describe('AnthropicClassifier.classify', () => {
     });
     expect(result).toEqual({
       intent: 'tool',
-      skillName: 'github.count',
+      skillName: 'github_count',
       args: { state: 'open' },
     });
   });
@@ -138,7 +138,7 @@ describe('AnthropicClassifier.classify', () => {
         new Response(
           JSON.stringify({
             id: 'msg_test',
-            content: [{ type: 'tool_use', id: 'toolu_1', name: 'github.count' }],
+            content: [{ type: 'tool_use', id: 'toolu_1', name: 'github_count' }],
             stop_reason: 'tool_use',
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
@@ -149,7 +149,7 @@ describe('AnthropicClassifier.classify', () => {
       utterance: 'how many docs total',
       registry: makeRegistry(),
     });
-    expect(result).toEqual({ intent: 'tool', skillName: 'github.count', args: {} });
+    expect(result).toEqual({ intent: 'tool', skillName: 'github_count', args: {} });
   });
 
   it('returns intent=rag when the response has no content array', async () => {
@@ -175,7 +175,7 @@ describe('AnthropicClassifier.classify', () => {
       },
       () => {
         attempts += 1;
-        return toolUseResponse('github.count', {});
+        return toolUseResponse('github_count', {});
       },
     ]);
     vi.useFakeTimers();
@@ -192,7 +192,7 @@ describe('AnthropicClassifier.classify', () => {
     expect(attempts).toBe(2);
     expect(retryWait).toHaveLength(1);
     expect(retryWait[0]!.waitMs).toBeGreaterThanOrEqual(2000);
-    expect(result).toEqual({ intent: 'tool', skillName: 'github.count', args: {} });
+    expect(result).toEqual({ intent: 'tool', skillName: 'github_count', args: {} });
   });
 
   it('throws ClassifierProviderError(kind: rate-limit, retryAfterMs) after retries exhausted', async () => {
@@ -250,7 +250,7 @@ describe('AnthropicClassifier.classify', () => {
         if (req.signal.aborted) {
           return Promise.reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
         }
-        return toolUseResponse('github.count', {});
+        return toolUseResponse('github_count', {});
       },
     ]);
     const c = new AnthropicClassifier({ apiKey: 'sk-test', fetchImpl });
@@ -275,7 +275,7 @@ describe('AnthropicClassifier.classify', () => {
 
   it('builds a request body with tools, tool_choice, cached system, and correct headers', async () => {
     const { calls, fetchImpl } = captureCalls([
-      () => toolUseResponse('github.count', { state: 'open' }),
+      () => toolUseResponse('github_count', { state: 'open' }),
     ]);
     const c = new AnthropicClassifier({ apiKey: 'sk-test', fetchImpl });
     await c.classify({
@@ -293,10 +293,10 @@ describe('AnthropicClassifier.classify', () => {
     expect(body['tool_choice']).toEqual({ type: 'auto' });
     const tools = body['tools'] as Array<{ name: string }>;
     expect(tools.map((t) => t.name)).toEqual([
-      'github.count',
-      'github.list',
-      'github.recently_updated',
-      'github.by_author',
+      'github_count',
+      'github_list',
+      'github_recently_updated',
+      'github_by_author',
     ]);
     const system = body['system'] as Array<{ type: string; cache_control?: unknown }>;
     expect(system).toHaveLength(1);

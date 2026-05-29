@@ -21,10 +21,10 @@ describe('buildClassifierSystem', () => {
   it('includes at least one positive example per v1 GitHub skill', () => {
     const text = buildClassifierSystem()[0]!.text;
     for (const name of [
-      'github.count',
-      'github.list',
-      'github.recently_updated',
-      'github.by_author',
+      'github_count',
+      'github_list',
+      'github_recently_updated',
+      'github_by_author',
     ]) {
       expect(text).toContain(name);
     }
