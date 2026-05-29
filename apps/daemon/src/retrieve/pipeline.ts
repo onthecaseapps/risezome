@@ -412,13 +412,24 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     }
 
     // Synthesis gate — fire-and-forget after raw cards have already shipped.
-    // Gate requires: at least one newly emitted card this flush, a
-    // synthesizer configured, consent granted, and the top card's RRF
-    // score above the threshold. Log every skip with the reason so the
-    // calibration question ("are we gating too aggressively?") is
-    // answerable from the daemon log.
+    // Two paths trigger synthesis:
+    //   (a) RAG-shaped: ≥1 newly emitted card, top card's RRF score above
+    //       the threshold. The default path that's existed since U4.
+    //   (b) Tool-augmented: a tool source exists, regardless of whether
+    //       retrieval returned anything. The tool result itself is a
+    //       valid answer; synthesis frames it for the user. Without this
+    //       branch, a question whose retrieval dedup-skipped every card
+    //       would lose its tool answer to the gate.
+    // In both paths, consent must be granted.
     if (this.#synthesizer === undefined) {
       // Silent — caller logged synthesis.disabled at startup; no per-flush noise.
+    } else if (this.#consentCheck !== undefined && !this.#consentCheck()) {
+      log('info', 'synthesis.skipped', { reason: 'no-consent', traceId });
+    } else if (toolSource !== null) {
+      // Tool answered. Synthesize with the tool source plus whatever cards
+      // exist (may be zero). The synthesizer's prompt cites tool result
+      // as [1] and any cards as [2..N].
+      void this.#maybeSynthesize(emittedCards, windowText.text, traceId, toolSource);
     } else if (emittedCards.length === 0) {
       // Distinguish "retrieval returned nothing" from "retrieval returned hits
       // but every one was already surfaced earlier this meeting." The
@@ -426,8 +437,6 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
       // in the HUD and re-bill an LLM call for context the user already saw.
       const reason = results.length === 0 ? 'no-results' : 'all-already-surfaced';
       log('info', 'synthesis.skipped', { reason, traceId, retrievedCount: results.length });
-    } else if (this.#consentCheck !== undefined && !this.#consentCheck()) {
-      log('info', 'synthesis.skipped', { reason: 'no-consent', traceId });
     } else if (emittedCards[0]!.score < this.#minSynthesisScore) {
       log('info', 'synthesis.skipped', {
         reason: 'below-threshold',

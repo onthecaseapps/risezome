@@ -1301,6 +1301,53 @@ describe('RetrievalPipeline — router outcomes', () => {
     expect(synthCalls[0]!.sources[0]!.title).not.toContain('Tool:');
   });
 
+  it('Tool result + zero cards: synthesis still fires with tool source alone', async () => {
+    // Scenario: heuristic + classifier picks a tool that returns an answer,
+    // but retrieval returns no NEW cards (e.g., all results already surfaced
+    // earlier this meeting). The tool answer is still valid; synthesis must
+    // run with just [toolSource], not skip with reason "all-already-surfaced".
+    const synthCalls: SynthesisInput[] = [];
+    const synth = fakeSynthesizer((input) => {
+      synthCalls.push(input);
+      return yieldChunks(makeChunks('s1', ['answer.']));
+    });
+    const fake = fakeClassifier(async () => ({
+      intent: 'tool',
+      skillName: 'github.count',
+      args: { state: 'open' },
+    }));
+    h = await setupWithRouter({
+      classifier: fake,
+      registry: makeRegistryWith([COUNT_SKILL]),
+      synthesizer: synth,
+      consentCheck: () => true,
+    });
+    // Index a doc; pre-mark it as already-surfaced so the retrieval loop
+    // dedups it away. emittedCards will be empty.
+    indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
+    h.session.recordSurfaced({
+      cardId: 'pre',
+      docId: 'gh:a#pr:1',
+      source: 'github',
+      type: 'pull-request',
+      title: 't',
+      snippet: '',
+      score: 0.5,
+      rank: 1,
+      metadata: {},
+      surfacedAt: 0,
+      triggeredBy: 'window',
+      traceId: 'pre',
+    });
+    await pushAndFlush(h.window, 'how many open issues are there');
+
+    // The tool ran AND the synthesizer was called with the tool source alone.
+    expect(h.routerEvents.skillDone).toHaveLength(1);
+    expect(synthCalls).toHaveLength(1);
+    expect(synthCalls[0]!.sources).toHaveLength(1);
+    expect(synthCalls[0]!.sources[0]!.title).toContain('Tool: github.count');
+  });
+
   it('Skill throws: emits skillFailed{execution-error}, RAG fallback', async () => {
     const synthCalls: SynthesisInput[] = [];
     const synth = fakeSynthesizer((input) => {
