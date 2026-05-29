@@ -16,7 +16,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "daemon": "pnpm --filter @upwell/daemon dev"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

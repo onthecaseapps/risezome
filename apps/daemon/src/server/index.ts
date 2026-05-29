@@ -24,6 +24,7 @@ export interface DaemonServerOptions {
   readonly port: number;
   readonly dataDirOverride?: string;
   readonly statusReporter?: StatusReporter;
+  readonly setupRoutes?: (app: FastifyInstance) => void | Promise<void>;
 }
 
 export interface DaemonServer {
@@ -124,6 +125,10 @@ export async function buildDaemonServer(options: DaemonServerOptions): Promise<D
   registerHealthRoute(app, { version: options.version });
   registerStatusRoute(app, options.statusReporter ?? makeIdleStatusReporter());
   registerOAuthCallbackRoute(app);
+
+  if (options.setupRoutes !== undefined) {
+    await options.setupRoutes(app);
+  }
 
   const boundAddress = await app.listen({ host, port: options.port });
   const portMatch = /:(\d+)$/.exec(boundAddress);
