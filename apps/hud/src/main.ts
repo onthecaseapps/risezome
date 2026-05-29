@@ -18,6 +18,7 @@ export function bootstrap(
   config: BootstrapConfig,
 ): { sidebar: Sidebar; ws: WsClient } {
   applyInitialTheme(doc);
+  wireThemeToggle(doc);
   const streamEl = requireEl(doc, 'card-stream');
   const pinnedEl = requireEl(doc, 'pinned-section');
   const banner = requireEl(doc, 'connection-banner');
@@ -144,6 +145,29 @@ function applyInitialTheme(doc: Document): void {
     mode = prefersDark ? 'dark' : 'light';
   }
   doc.documentElement.classList.toggle('dark', mode === 'dark');
+  updateThemeIcon(doc, mode);
+}
+
+// Wires the header toggle button so each click flips the .dark class on
+// <html> and persists the choice under upwell:theme. Subsequent loads
+// honor the persisted value over the OS preference (handled in
+// applyInitialTheme).
+function wireThemeToggle(doc: Document): void {
+  const btn = doc.getElementById('theme-toggle');
+  if (btn === null) return;
+  btn.addEventListener('click', () => {
+    const isDark = doc.documentElement.classList.toggle('dark');
+    const next: 'light' | 'dark' = isDark ? 'dark' : 'light';
+    doc.defaultView?.localStorage?.setItem(THEME_STORAGE_KEY, next);
+    updateThemeIcon(doc, next);
+  });
+}
+
+function updateThemeIcon(doc: Document, mode: 'light' | 'dark'): void {
+  const icon = doc.querySelector<HTMLElement>('#theme-toggle .theme-toggle-icon');
+  if (icon === null) return;
+  // ☀ for light (clicking will switch to dark); ☾ for dark (clicking → light).
+  icon.textContent = mode === 'dark' ? '☾' : '☀';
 }
 
 if (typeof window !== 'undefined' && window.UPWELL_BOOTSTRAP !== undefined) {
