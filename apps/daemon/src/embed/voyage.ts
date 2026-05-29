@@ -18,7 +18,16 @@ export interface VoyageOptions {
   readonly fetchImpl?: typeof fetch;
   readonly cache?: EmbedCache;
   readonly maxRetries?: number;
+  readonly batchDelayMs?: number;
   readonly onUsage?: (usage: VoyageUsage) => void;
+  readonly onRetryWait?: (info: VoyageRetryWait) => void;
+}
+
+export interface VoyageRetryWait {
+  readonly attempt: number;
+  readonly maxRetries: number;
+  readonly waitMs: number;
+  readonly reason: string;
 }
 
 export interface VoyageUsage {
@@ -32,7 +41,7 @@ export const DEFAULT_VOYAGE_BASE = 'https://api.voyageai.com/v1';
 export const DEFAULT_VOYAGE_TEXT_MODEL = 'voyage-3-large';
 export const DEFAULT_VOYAGE_CODE_MODEL = 'voyage-code-3';
 export const DEFAULT_VOYAGE_DIMENSION = 1024;
-const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_MAX_RETRIES = 6;
 
 interface VoyageBatchResponse {
   readonly data: readonly { readonly index: number; readonly embedding: readonly number[] }[];
@@ -46,6 +55,7 @@ export class VoyageEmbedder implements Embedder {
   readonly dimension: number;
   readonly #textModel: string;
   readonly #codeModel: string;
+  #lastCallEndTime: number | null = null;
 
   constructor(options: VoyageOptions) {
     this.#options = options;
@@ -116,24 +126,50 @@ export class VoyageEmbedder implements Embedder {
 
   async #callVoyage(texts: string[], model: string): Promise<VoyageBatchResponse> {
     const maxRetries = this.#options.maxRetries ?? DEFAULT_MAX_RETRIES;
+    const batchDelayMs = this.#options.batchDelayMs ?? 0;
+
+    // Enforce a minimum interval between any two Voyage API calls, no matter
+    // which embed() invocation they come from. This is what stays under
+    // per-account 3 RPM / 10k TPM during bulk indexing where the CLI loops
+    // make many separate embed() calls.
+    if (batchDelayMs > 0 && this.#lastCallEndTime !== null) {
+      const elapsed = Date.now() - this.#lastCallEndTime;
+      const remaining = batchDelayMs - elapsed;
+      if (remaining > 0) await sleep(remaining);
+    }
+
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        return await this.#makeRequest(texts, model);
+        const result = await this.#makeRequest(texts, model);
+        this.#lastCallEndTime = Date.now();
+        return result;
       } catch (err) {
         lastErr = err;
         if (err instanceof EmbeddingRateLimitError) {
           if (attempt < maxRetries - 1) {
-            await sleep(backoffMs(attempt, err.retryAfterMs));
+            const waitMs = backoffMs(attempt, err.retryAfterMs);
+            this.#options.onRetryWait?.({
+              attempt: attempt + 1,
+              maxRetries,
+              waitMs,
+              reason: err.message,
+            });
+            await sleep(waitMs);
             continue;
           }
         }
         if (err instanceof EmbeddingProviderError) {
+          this.#lastCallEndTime = Date.now();
           throw err;
         }
-        if (attempt >= maxRetries - 1) throw err;
+        if (attempt >= maxRetries - 1) {
+          this.#lastCallEndTime = Date.now();
+          throw err;
+        }
       }
     }
+    this.#lastCallEndTime = Date.now();
     if (lastErr instanceof Error) throw lastErr;
     throw new EmbeddingProviderError('Unknown Voyage error');
   }
@@ -155,10 +191,12 @@ export class VoyageEmbedder implements Embedder {
       }),
     });
     if (res.status === 429) {
-      const retryAfter = Number(res.headers.get('retry-after') ?? '0');
+      const retryAfterHeader = res.headers.get('retry-after');
+      const parsed = retryAfterHeader === null ? NaN : Number(retryAfterHeader);
+      const retryAfterMs = Number.isFinite(parsed) ? parsed * 1000 : undefined;
       throw new EmbeddingRateLimitError(
-        `Voyage returned 429 on model ${model}`,
-        Number.isFinite(retryAfter) ? retryAfter * 1000 : undefined,
+        `Voyage returned 429 on model ${model} (Retry-After: ${retryAfterHeader ?? 'absent'})`,
+        retryAfterMs,
       );
     }
     if (res.status >= 500) {
@@ -178,8 +216,17 @@ function sleep(ms: number): Promise<void> {
 }
 
 function backoffMs(attempt: number, retryAfterMs?: number): number {
-  if (typeof retryAfterMs === 'number' && retryAfterMs > 0) return retryAfterMs;
-  return Math.min(2000, 200 * 2 ** attempt);
+  // If the server told us how long to wait (including 0 = retry immediately),
+  // honour it with a small jitter so concurrent retrying clients don't sync.
+  if (typeof retryAfterMs === 'number') {
+    return retryAfterMs + Math.floor(Math.random() * 500);
+  }
+  // No Retry-After header: Voyage's free tier is per-minute, so a 2-second
+  // cap was meaningless against a per-minute quota. Use 30s base on the first
+  // retry with exponential growth up to ~60s plus jitter.
+  const base = 30_000;
+  const expo = Math.min(60_000, base * 2 ** Math.max(0, attempt - 1));
+  return expo + Math.floor(Math.random() * 1500);
 }
 
 async function safeReadText(res: Response): Promise<string> {

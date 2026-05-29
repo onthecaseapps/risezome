@@ -34,10 +34,26 @@ interface ChunkSearchHit {
 }
 
 export function insertDoc(db: DatabaseType, doc: CanonicalDoc): void {
+  // ON CONFLICT DO UPDATE (UPSERT), not INSERT OR REPLACE. REPLACE is a
+  // DELETE+INSERT under the hood, which triggers the ON DELETE CASCADE on
+  // doc_chunks and silently wipes every chunk for the doc — orphaning the
+  // corresponding vec_doc_chunks rows (vec is a virtual table without FK).
+  // UPSERT updates the doc in place; chunks survive.
   db.prepare(
-    `INSERT OR REPLACE INTO docs
+    `INSERT INTO docs
        (id, source, type, title, body_summary, entities, authors, updated_at, url, acl, provenance)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       source = excluded.source,
+       type = excluded.type,
+       title = excluded.title,
+       body_summary = excluded.body_summary,
+       entities = excluded.entities,
+       authors = excluded.authors,
+       updated_at = excluded.updated_at,
+       url = excluded.url,
+       acl = excluded.acl,
+       provenance = excluded.provenance`,
   ).run(
     doc.id,
     doc.source,
@@ -51,6 +67,13 @@ export function insertDoc(db: DatabaseType, doc: CanonicalDoc): void {
     JSON.stringify(doc.acl ?? {}),
     doc.provenance ?? 'untrusted',
   );
+}
+
+export function hasChunkEmbedding(db: DatabaseType, chunkId: string): boolean {
+  const row = db
+    .prepare('SELECT 1 AS present FROM vec_doc_chunks WHERE chunk_id = ? LIMIT 1')
+    .get(chunkId) as { present?: number } | undefined;
+  return row !== undefined && row.present === 1;
 }
 
 export function insertChunk(
@@ -68,8 +91,13 @@ export function insertChunk(
 
   const tx = db.transaction(() => {
     db.prepare(
-      `INSERT OR REPLACE INTO doc_chunks (chunk_id, doc_id, domain, text, position)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO doc_chunks (chunk_id, doc_id, domain, text, position)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(chunk_id) DO UPDATE SET
+         doc_id = excluded.doc_id,
+         domain = excluded.domain,
+         text = excluded.text,
+         position = excluded.position`,
     ).run(chunk.chunkId, chunk.docId, chunk.domain, chunk.text, chunk.position ?? 0);
 
     const titleRow = db.prepare('SELECT title FROM docs WHERE id = ?').get(chunk.docId) as
