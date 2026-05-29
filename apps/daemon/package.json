@@ -13,9 +13,12 @@
   "dependencies": {
     "@fastify/websocket": "^11.0.1",
     "@upwell/shared-types": "workspace:*",
-    "fastify": "^5.2.1"
+    "better-sqlite3": "^11.8.1",
+    "fastify": "^5.2.1",
+    "sqlite-vec": "^0.1.6"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
     "@types/ws": "^8.5.13",
     "typescript": "^5.7.3",
     "ws": "^8.18.0"

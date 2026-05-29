@@ -215,7 +215,11 @@ describe('Daemon server', () => {
       const result = await new Promise<{ closed: boolean; code?: number }>((resolve) => {
         ws.once('open', () => resolve({ closed: false }));
         ws.once('unexpected-response', (_req, res) => {
-          resolve({ closed: true, code: res.statusCode });
+          resolve(
+            res.statusCode !== undefined
+              ? { closed: true, code: res.statusCode }
+              : { closed: true },
+          );
         });
         ws.once('error', () => resolve({ closed: true }));
       });
