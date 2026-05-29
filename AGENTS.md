@@ -36,6 +36,17 @@ upwell/
   - `pnpm format` / `pnpm format:check` — Prettier.
   - `pnpm test` — Vitest run.
   - `pnpm build` — TS project-references build.
+  - `pnpm daemon <serve|index|consent> [...]` — run the daemon CLI via tsx.
+
+## Secrets and env files
+
+The daemon CLI loads env vars from `.env` files in this order (later sources do not overwrite earlier ones, and **shell-exported vars always win**):
+
+1. `$UPWELL_ENV_FILE` if set (explicit override).
+2. `<data dir>/.env` (e.g. `~/.local/share/upwell/.env` on Linux).
+3. `./.env` (current working directory).
+
+Copy `.env.example` to `.env` and fill in your keys. `.env`, `.env.local`, and `.env.*.local` are already in `.gitignore`. The plan's documented end state for secrets is the OS keychain (U22); the `.env` file path is the dev shortcut and is fine for solo dev on a personal machine.
 
 ## TypeScript conventions
 

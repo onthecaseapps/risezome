@@ -1,3 +1,7 @@
+import { loadEnvFiles } from './cli/load-env.js';
+
+const envResult = loadEnvFiles();
+
 import { runServe } from './cli/serve.js';
 import { runIndexRepo } from './cli/index-repo.js';
 import { runConsentCommand } from './cli/consent.js';
@@ -22,6 +26,9 @@ function usage(): void {
 }
 
 async function main(): Promise<void> {
+  for (const path of envResult.loaded) {
+    log('info', `loaded env from ${path}`);
+  }
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === undefined || cmd === '-h' || cmd === '--help') {
     usage();
