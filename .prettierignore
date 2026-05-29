@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+coverage
+*.min.js
+pnpm-lock.yaml
+sidecars/linux/target
+sidecars/mac/.build
+docs/brainstorms/**
+docs/plans/**

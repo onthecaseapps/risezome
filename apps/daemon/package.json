@@ -1,0 +1,19 @@
+{
+  "name": "@upwell/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "start": "node ./dist/index.js",
+    "dev": "node --watch --import ./loader.mjs ./src/index.ts"
+  },
+  "dependencies": {
+    "@upwell/shared-types": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
