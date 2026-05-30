@@ -34,3 +34,7 @@ sidecars/win/Debug/
 
 tmp/
 .tmp/
+
+# Supabase CLI local state (link metadata, cached versions)
+supabase/.temp/
+supabase/.branches/
