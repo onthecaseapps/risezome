@@ -101,6 +101,36 @@
   animation: upwell-card-enter 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* Exit/consolidation: when the answer finalizes, the raw cards collapse and
+   fade upward — folding into the synthesis card's Sources grid above them.
+   The grid-row collapse pulls the surrounding layout closed smoothly. */
+.upwell-hud .card-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+
+.upwell-hud .card-collapse.is-exiting > .card-collapse-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.upwell-hud .card-collapse.is-exiting {
+  animation: upwell-card-collapse 420ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+@keyframes upwell-card-collapse {
+  from {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
 .upwell-hud .card .header {
   display: flex;
   justify-content: space-between;
@@ -319,6 +349,18 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  animation: upwell-sources-in 380ms ease both;
+}
+
+@keyframes upwell-sources-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .upwell-hud .synthesis-sources-label {
@@ -401,7 +443,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .upwell-hud .card.is-entering,
-  .upwell-hud .synthesis-reveal.is-entering {
+  .upwell-hud .synthesis-reveal.is-entering,
+  .upwell-hud .card-collapse.is-exiting,
+  .upwell-hud .synthesis-sources {
     animation: none;
   }
   .upwell-hud .synthesis-cursor,
