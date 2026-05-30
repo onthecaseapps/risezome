@@ -18,7 +18,7 @@ export function SiteFooter(): React.ReactElement {
           >
             Contact
           </a>
-          <span>© {new Date().getFullYear()} Upwell</span>
+          <span>© {new Date().getFullYear()} Risezome</span>
         </div>
       </div>
     </footer>

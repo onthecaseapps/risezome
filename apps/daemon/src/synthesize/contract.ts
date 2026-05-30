@@ -1,4 +1,4 @@
-import { UpwellError } from '@upwell/shared-types';
+import { RisezomeError } from '@risezome/shared-types';
 
 export interface SynthesisSource {
   readonly rank: number;
@@ -43,7 +43,7 @@ export interface Synthesizer {
 }
 
 // Discriminates the variety of provider failures the pipeline may want
-// to surface differently in logs / telemetry. The base UpwellError code
+// to surface differently in logs / telemetry. The base RisezomeError code
 // stays 'synthesis-provider' so retry-decision logic can match the
 // class; `kind` carries the diagnostic dimension.
 export type SynthesisProviderErrorKind =
@@ -55,7 +55,7 @@ export type SynthesisProviderErrorKind =
   | 'request-too-large'
   | 'unknown';
 
-export class SynthesisProviderError extends UpwellError {
+export class SynthesisProviderError extends RisezomeError {
   readonly kind: SynthesisProviderErrorKind;
   constructor(kind: SynthesisProviderErrorKind, message: string, options?: ErrorOptions) {
     super('synthesis-provider', message, options);
@@ -63,7 +63,7 @@ export class SynthesisProviderError extends UpwellError {
   }
 }
 
-export class SynthesisRateLimitError extends UpwellError {
+export class SynthesisRateLimitError extends RisezomeError {
   readonly retryAfterMs: number | undefined;
   constructor(message: string, retryAfterMs?: number, options?: ErrorOptions) {
     super('synthesis-rate-limit', message, options);

@@ -6,13 +6,13 @@ export function getDataDir(override?: string): string {
   const home = homedir();
   switch (platform()) {
     case 'darwin':
-      return join(home, 'Library', 'Application Support', 'Upwell');
+      return join(home, 'Library', 'Application Support', 'Risezome');
     case 'win32': {
       const localAppData = process.env.LOCALAPPDATA;
       if (typeof localAppData === 'string' && localAppData.length > 0) {
-        return join(localAppData, 'Upwell');
+        return join(localAppData, 'Risezome');
       }
-      return join(home, 'AppData', 'Local', 'Upwell');
+      return join(home, 'AppData', 'Local', 'Risezome');
     }
     default: {
       const xdg = process.env.XDG_DATA_HOME;

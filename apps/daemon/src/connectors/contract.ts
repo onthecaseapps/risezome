@@ -1,7 +1,7 @@
-import { UpwellError } from '@upwell/shared-types';
+import { RisezomeError } from '@risezome/shared-types';
 import type { CanonicalChunk, CanonicalDoc } from '../corpus/types.js';
 
-export class ConnectorError extends UpwellError {}
+export class ConnectorError extends RisezomeError {}
 
 export class ConnectorAuthError extends ConnectorError {
   readonly requiredScopes: readonly string[];

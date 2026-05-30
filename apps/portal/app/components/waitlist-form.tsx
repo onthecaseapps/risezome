@@ -43,7 +43,7 @@ export function WaitlistForm(): React.ReactElement {
           Request early access
         </h2>
         <p className="mx-auto mt-3 max-w-md text-muted">
-          Upwell is in early development on Linux, with macOS and Windows to follow. Leave your
+          Risezome is in early development on Linux, with macOS and Windows to follow. Leave your
           email and we&apos;ll reach out as spots open up.
         </p>
 

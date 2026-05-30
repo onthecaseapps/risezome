@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AUDIO_FRAME_SAMPLE_COUNT, type StreamRole } from '@upwell/shared-types';
+import { AUDIO_FRAME_SAMPLE_COUNT, type StreamRole } from '@risezome/shared-types';
 import {
   ControlLineSplitter,
   FrameDecoder,

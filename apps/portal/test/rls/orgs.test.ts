@@ -4,7 +4,7 @@
  * Runs against a local Supabase stack started via `supabase start` (Docker
  * required). Skipped automatically when the stack isn't reachable so this
  * doesn't break CI on environments without Docker — set
- * `UPWELL_RUN_RLS_TESTS=1` to force the suite to error instead of skip when
+ * `RISEZOME_RUN_RLS_TESTS=1` to force the suite to error instead of skip when
  * the stack is missing.
  *
  * Pattern: create two distinct auth.users via the admin API, create two
@@ -19,7 +19,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 const SUPABASE_URL = process.env['SUPABASE_URL'] ?? 'http://127.0.0.1:54321';
 const SUPABASE_ANON_KEY = process.env['SUPABASE_ANON_KEY'] ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
-const FORCE = process.env['UPWELL_RUN_RLS_TESTS'] === '1';
+const FORCE = process.env['RISEZOME_RUN_RLS_TESTS'] === '1';
 
 interface TestUser {
   readonly id: string;
@@ -44,7 +44,7 @@ const stackReachable = await isStackReachable();
 if (!stackReachable && !FORCE) {
   describe.skip('orgs RLS (Supabase stack not reachable)', () => {
     it('skipped', () => {
-      // Skipped because supabase start is not running. Set UPWELL_RUN_RLS_TESTS=1
+      // Skipped because supabase start is not running. Set RISEZOME_RUN_RLS_TESTS=1
       // to require these tests in CI environments where Docker is available.
     });
   });

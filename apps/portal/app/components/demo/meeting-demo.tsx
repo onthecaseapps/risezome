@@ -129,7 +129,7 @@ export function MeetingDemo(): React.ReactElement {
   // (the per-frame re-render keeps the class unchanged) and replay only when an
   // element unmounts/remounts across a loop reset.
   return (
-    <div className="upwell-hud" ref={containerRef} aria-label="Simulated Upwell meeting">
+    <div className="upwell-hud" ref={containerRef} aria-label="Simulated Risezome meeting">
       <DemoHeader meetingLabel={MEETING_LABEL} />
       <Transcript lines={state.transcript} activeLineTyping={typingTranscript} />
       <div className="card-stream">

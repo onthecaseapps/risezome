@@ -44,7 +44,7 @@ importers:
       '@fastify/websocket':
         specifier: ^11.0.1
         version: 11.2.0
-      '@upwell/shared-types':
+      '@risezome/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
       better-sqlite3:

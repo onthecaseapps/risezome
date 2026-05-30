@@ -73,12 +73,12 @@ interface CardBusEvents {
 }
 
 export async function runServe(): Promise<number> {
-  const port = envInt('UPWELL_PORT', 0);
+  const port = envInt('RISEZOME_PORT', 0);
   const sidecarPath = resolve(
-    optionalEnv('UPWELL_SIDECAR_PATH') ??
+    optionalEnv('RISEZOME_SIDECAR_PATH') ??
       join(process.cwd(), 'sidecars', 'linux', 'build', 'upwell-sidecar-linux'),
   );
-  const sidecarSha = optionalEnv('UPWELL_SIDECAR_SHA');
+  const sidecarSha = optionalEnv('RISEZOME_SIDECAR_SHA');
   const dgKey = requireEnv('DEEPGRAM_API_KEY');
   const voyageKey = requireEnv('VOYAGE_API_KEY');
   // These MUST mirror what `pnpm daemon index` used or the query embedding
@@ -93,11 +93,11 @@ export async function runServe(): Promise<number> {
   // consent SQLite table.
   const anthropicKey = optionalEnv('ANTHROPIC_API_KEY');
   const anthropicModel = optionalEnv('ANTHROPIC_MODEL') ?? DEFAULT_ANTHROPIC_MODEL;
-  const synthesisMinScore = envFloat('UPWELL_SYNTHESIS_MIN_SCORE', 0.025);
-  const synthesisTopN = envInt('UPWELL_SYNTHESIS_TOP_N', 3);
-  const synthesisMaxTokens = envInt('UPWELL_SYNTHESIS_MAX_TOKENS', 150);
-  const relevanceSkipThreshold = envFloat('UPWELL_RELEVANCE_SKIP_THRESHOLD', 0.7);
-  const relevanceTimeoutMs = envInt('UPWELL_RELEVANCE_TIMEOUT_MS', 3000);
+  const synthesisMinScore = envFloat('RISEZOME_SYNTHESIS_MIN_SCORE', 0.025);
+  const synthesisTopN = envInt('RISEZOME_SYNTHESIS_TOP_N', 3);
+  const synthesisMaxTokens = envInt('RISEZOME_SYNTHESIS_MAX_TOKENS', 150);
+  const relevanceSkipThreshold = envFloat('RISEZOME_RELEVANCE_SKIP_THRESHOLD', 0.7);
+  const relevanceTimeoutMs = envInt('RISEZOME_RELEVANCE_TIMEOUT_MS', 3000);
 
   const db = await openCorpusDb();
   await migrate(db);
@@ -115,7 +115,7 @@ export async function runServe(): Promise<number> {
   } catch {
     log(
       'warn',
-      `HUD bundle not found at ${HUD_DIST}. Run 'pnpm --filter @upwell/hud-next build' first.`,
+      `HUD bundle not found at ${HUD_DIST}. Run 'pnpm --filter @risezome/hud-next build' first.`,
     );
   }
 
@@ -144,7 +144,7 @@ export async function runServe(): Promise<number> {
     store.ensureMeeting(meetingId, null, Date.now());
 
     if (sidecarSha === undefined) {
-      throw new Error('UPWELL_SIDECAR_SHA must be set in dev mode (or use a vendored manifest).');
+      throw new Error('RISEZOME_SIDECAR_SHA must be set in dev mode (or use a vendored manifest).');
     }
     const runner = new SidecarRunner({
       sidecarPath,
@@ -341,7 +341,7 @@ export async function runServe(): Promise<number> {
 
     // Relevance telemetry — log only. relevance.classified fires on every
     // LLM call regardless of decision, giving a greppable distribution of
-    // confidence values that makes the UPWELL_RELEVANCE_SKIP_THRESHOLD env
+    // confidence values that makes the RISEZOME_RELEVANCE_SKIP_THRESHOLD env
     // var tunable from real meeting data. relevance.skipped fires only on
     // actual skip decisions (heuristic short-circuit, LLM above threshold,
     // or cached prior skip).
@@ -460,7 +460,7 @@ export async function runServe(): Promise<number> {
   cardBus.on('synthesisRetracted', (e) => broadcast({ type: 'synthesisRetracted', ...e }));
 
   const url = `http://${server.boundHost}:${String(server.boundPort)}/`;
-  log('info', `Upwell listening at ${url}`);
+  log('info', `Risezome listening at ${url}`);
   log('info', `Bootstrap URL (open in browser): ${url}?token=${server.sessionAuth.token}`);
 
   // Keep the process alive until SIGINT/SIGTERM.
@@ -530,7 +530,7 @@ function wireHudRoutesOnApp(
     if (bootstrapHtml === null) {
       void reply
         .type('text/plain')
-        .send('HUD not built. Run `pnpm --filter @upwell/hud-next build`.');
+        .send('HUD not built. Run `pnpm --filter @risezome/hud-next build`.');
       return;
     }
     const port = getPort();
@@ -539,7 +539,7 @@ function wireHudRoutesOnApp(
     // The Next.js hydration scripts are authorized via the hash allow-list
     // computed at startup. Both mechanisms coexist in script-src.
     const nonce = randomBytes(16).toString('base64');
-    const inject = `<script nonce="${nonce}">window.UPWELL_BOOTSTRAP = { wsUrl: ${JSON.stringify(wsUrl)}, token: ${JSON.stringify(getToken())} };</script>\n`;
+    const inject = `<script nonce="${nonce}">window.RISEZOME_BOOTSTRAP = { wsUrl: ${JSON.stringify(wsUrl)}, token: ${JSON.stringify(getToken())} };</script>\n`;
     const html = bootstrapHtml.replace('</head>', `${inject}</head>`);
     void reply.header('Content-Security-Policy', buildCspHeader(port, nonce, inlineScriptHashes));
     void reply.type('text/html').send(html);

@@ -46,7 +46,7 @@ const BEATS: readonly Beat[] = [
   },
   {
     title: 'Closes the doc gap',
-    body: "When nothing answers a question, Upwell captures it with its context and turns it into a doc or ticket, so the same gap stops resurfacing next week.",
+    body: "When nothing answers a question, Risezome captures it with its context and turns it into a doc or ticket, so the same gap stops resurfacing next week.",
     icon: <LoopIcon />,
   },
 ];
@@ -55,7 +55,7 @@ const STEPS: readonly { readonly n: string; readonly title: string; readonly bod
   {
     n: '01',
     title: 'Start it before your call',
-    body: 'Upwell runs alongside the meeting and follows the conversation. No meeting link to share, nothing for other attendees to set up.',
+    body: 'Risezome runs alongside the meeting and follows the conversation. No meeting link to share, nothing for other attendees to set up.',
   },
   {
     n: '02',

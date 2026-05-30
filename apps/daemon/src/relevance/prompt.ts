@@ -18,7 +18,7 @@ export interface SystemBlock {
   readonly cache_control?: { readonly type: 'ephemeral' };
 }
 
-const SYSTEM_INSTRUCTIONS = `You are the relevance classifier for Upwell, a real-time meeting-context copilot. Before Upwell runs its full retrieval pipeline on a transcribed utterance, you decide whether the utterance is worth surfacing context for at all.
+const SYSTEM_INSTRUCTIONS = `You are the relevance classifier for Risezome, a real-time meeting-context copilot. Before Risezome runs its full retrieval pipeline on a transcribed utterance, you decide whether the utterance is worth surfacing context for at all.
 
 Your job is binary: choose SURFACE or SKIP. Then return your decision through the should_surface tool. There is no other output.
 

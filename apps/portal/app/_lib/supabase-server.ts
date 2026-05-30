@@ -36,7 +36,7 @@ export async function createServerClient(): Promise<SupabaseClient> {
 /**
  * Service-role Supabase client. BYPASSES RLS. Reserved for trusted server
  * contexts: Inngest functions, webhook handlers, and the bot worker. Every
- * use must explicitly filter by `org_id`; once `@upwell/db-client` lands
+ * use must explicitly filter by `org_id`; once `@risezome/db-client` lands
  * (U14), prefer the typed wrapper over this raw client for org-scoped reads.
  */
 export function createServiceRoleClient(): SupabaseClient {

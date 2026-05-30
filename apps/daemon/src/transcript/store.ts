@@ -1,8 +1,8 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import type { Utterance } from '../transcribe/contract.js';
-import { UpwellError } from '@upwell/shared-types';
+import { RisezomeError } from '@risezome/shared-types';
 
-export class TranscriptStoreError extends UpwellError {
+export class TranscriptStoreError extends RisezomeError {
   constructor(message: string, options?: ErrorOptions) {
     super('transcript-store', message, options);
   }

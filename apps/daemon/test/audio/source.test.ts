@@ -5,7 +5,7 @@ import {
   NotImplementedError,
   type AudioFrame,
   type StreamRole,
-} from '@upwell/shared-types';
+} from '@risezome/shared-types';
 import { AudioSourceBase } from '../../src/audio/source.js';
 import { RecallBotSource } from '../../src/audio/sources/recall.stub.js';
 import { ZoomRTMSSource } from '../../src/audio/sources/zoom-rtms.stub.js';

@@ -1,4 +1,4 @@
-import { UpwellError } from '@upwell/shared-types';
+import { RisezomeError } from '@risezome/shared-types';
 import type { SynthesisSource } from '../synthesize/contract.js';
 
 // JsonSchema subset we actually use for skill input_schema. Kept minimal so
@@ -62,7 +62,7 @@ export interface Skill {
 
 // Classifier picked a tool the registry doesn't have. Caller's responsibility
 // to fall back to RAG; the pipeline maps this to a `skillFailed` event.
-export class SkillUnknownError extends UpwellError {
+export class SkillUnknownError extends RisezomeError {
   readonly skillName: string;
   constructor(skillName: string, options?: ErrorOptions) {
     super('skill-unknown', `Skill not registered: '${skillName}'`, options);
@@ -85,10 +85,10 @@ export type SkillExecutionCode =
 
 // Skill handler threw mid-execution. Distinct from SkillUnknownError so the
 // pipeline can log them with different telemetry codes. The shared
-// UpwellError.code carries the error-class discriminator
+// RisezomeError.code carries the error-class discriminator
 // ('skill-execution'); executionCode carries the telemetry signal that
 // flows into the pipeline's skillFailed event.
-export class SkillExecutionError extends UpwellError {
+export class SkillExecutionError extends RisezomeError {
   readonly skillName: string;
   readonly executionCode: SkillExecutionCode;
   constructor(

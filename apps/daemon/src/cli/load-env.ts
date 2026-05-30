@@ -10,7 +10,7 @@ export interface LoadedEnv {
 
 /**
  * Load env vars from .env files into process.env. Search order:
- *   1. $UPWELL_ENV_FILE (explicit override)
+ *   1. $RISEZOME_ENV_FILE (explicit override)
  *   2. <data dir>/.env       (persistent home, e.g. ~/.local/share/upwell/.env)
  *   3. ./.env                (current working directory)
  *   4. <workspace root>/.env (walks up from cwd looking for pnpm-workspace.yaml or .git)
@@ -19,7 +19,7 @@ export interface LoadedEnv {
  * always win over file values. Each file is loaded once; later files do
  * not clobber earlier files' values either.
  *
- * The workspace-root walk-up is what lets `pnpm --filter @upwell/daemon dev`
+ * The workspace-root walk-up is what lets `pnpm --filter @risezome/daemon dev`
  * find the repo-root .env even though pnpm changes the cwd into apps/daemon/
  * before invoking the script.
  */
@@ -47,7 +47,7 @@ export function loadEnvFiles(): LoadedEnv {
 
 function candidatePaths(): string[] {
   const out: string[] = [];
-  const explicit = process.env.UPWELL_ENV_FILE;
+  const explicit = process.env.RISEZOME_ENV_FILE;
   if (explicit !== undefined && explicit.length > 0) out.push(explicit);
   out.push(join(getDataDir(), '.env'));
   out.push(join(process.cwd(), '.env'));

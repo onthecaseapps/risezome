@@ -1,5 +1,5 @@
 import type { EventEmitter } from 'node:events';
-import { UpwellError } from '@upwell/shared-types';
+import { RisezomeError } from '@risezome/shared-types';
 
 export interface Utterance {
   readonly utteranceId: string;
@@ -40,13 +40,13 @@ export interface TranscriptionEngine extends EventEmitter<TranscriptionEngineEve
   stop(): Promise<void>;
 }
 
-export class TranscriptionAuthError extends UpwellError {
+export class TranscriptionAuthError extends RisezomeError {
   constructor(message: string, options?: ErrorOptions) {
     super('transcription-auth', message, options);
   }
 }
 
-export class TranscriptionConnectionError extends UpwellError {
+export class TranscriptionConnectionError extends RisezomeError {
   constructor(message: string, options?: ErrorOptions) {
     super('transcription-connection', message, options);
   }

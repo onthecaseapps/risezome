@@ -2,13 +2,13 @@ import { chmod, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import Database, { type Database as DatabaseType } from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
-import { UpwellError } from '@upwell/shared-types';
+import { RisezomeError } from '@risezome/shared-types';
 import { getDataDir } from '../util/data-dir.js';
 
 export const DEFAULT_DB_FILENAME = 'upwell.db';
 export const DEFAULT_EMBEDDING_DIM = 1024;
 
-export class CorpusError extends UpwellError {
+export class CorpusError extends RisezomeError {
   constructor(code: string, message: string, options?: ErrorOptions) {
     super(code, message, options);
   }

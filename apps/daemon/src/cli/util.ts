@@ -25,7 +25,7 @@ export function envInt(name: string, fallback: number): number {
 }
 
 // envFloat mirrors envInt for non-integer thresholds (e.g.,
-// UPWELL_SYNTHESIS_MIN_SCORE=0.025). Critical detail: a bare
+// RISEZOME_SYNTHESIS_MIN_SCORE=0.025). Critical detail: a bare
 // Number('0,025') (European decimal) returns NaN; without
 // Number.isFinite gate that would silently disable a gate based on
 // `value >= NaN` always being false. The fallback warns and keeps the

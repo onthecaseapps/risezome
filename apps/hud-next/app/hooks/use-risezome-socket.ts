@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import { WsClient, type WsFactory, type WsStatus } from '../lib/ws-client';
 import type { ServerMessage } from '../types';
 
-export interface UseUpwellSocketOptions {
+export interface UseRisezomeSocketOptions {
   readonly url: string;
   readonly token: string;
   readonly onMessage: (msg: ServerMessage) => void;
@@ -23,7 +23,7 @@ export interface UseUpwellSocketOptions {
  * Callbacks are passed through ref boxes so callers don't have to memoize
  * onMessage/onStatus to keep the connection stable.
  */
-export function useUpwellSocket(options: UseUpwellSocketOptions): void {
+export function useRisezomeSocket(options: UseRisezomeSocketOptions): void {
   const cbRef = useRef(options);
   cbRef.current = options;
 

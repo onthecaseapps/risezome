@@ -1,5 +1,5 @@
 {
-  "name": "@upwell/daemon",
+  "name": "@risezome/daemon",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,12 +11,12 @@
     "dev": "tsx ./src/index.ts"
   },
   "bin": {
-    "upwell": "./dist/index.js"
+    "risezome": "./dist/index.js"
   },
   "dependencies": {
     "@fastify/static": "^8",
     "@fastify/websocket": "^11.0.1",
-    "@upwell/shared-types": "workspace:*",
+    "@risezome/shared-types": "workspace:*",
     "better-sqlite3": "^11.8.1",
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",

@@ -1,4 +1,4 @@
-import { NotImplementedError } from '@upwell/shared-types';
+import { NotImplementedError } from '@risezome/shared-types';
 import { AudioSourceBase } from '../source.js';
 
 export class RecallBotSource extends AudioSourceBase {

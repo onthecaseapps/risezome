@@ -84,7 +84,7 @@ If the daemon falls behind processing frames (e.g., the transcription engine is 
 
 ## Error model
 
-Typed errors with stable codes (`code` field on every `UpwellError` subclass):
+Typed errors with stable codes (`code` field on every `RisezomeError` subclass):
 
 - `sidecar-launch` — process couldn't be spawned (binary missing, not executable).
 - `sidecar-integrity` — SHA-256 mismatch against the embedded manifest.

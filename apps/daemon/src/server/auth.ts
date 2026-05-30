@@ -1,10 +1,10 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { UpwellError } from '@upwell/shared-types';
+import { RisezomeError } from '@risezome/shared-types';
 import { getDataDir } from '../util/data-dir.js';
 
-export class SessionTokenError extends UpwellError {
+export class SessionTokenError extends RisezomeError {
   constructor(message: string, options?: ErrorOptions) {
     super('session-token', message, options);
   }
@@ -26,13 +26,13 @@ export async function loadOrCreateSessionAuth(dataDirOverride?: string): Promise
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
 
   let token: string;
-  // Dev override: UPWELL_SESSION_TOKEN lets you pin the bearer to a known
+  // Dev override: RISEZOME_SESSION_TOKEN lets you pin the bearer to a known
   // hex string for curl/script testing. Must be 64 hex chars (32 bytes).
-  const envToken = process.env['UPWELL_SESSION_TOKEN']?.trim();
+  const envToken = process.env['RISEZOME_SESSION_TOKEN']?.trim();
   if (typeof envToken === 'string' && envToken.length > 0) {
     if (envToken.length !== SESSION_TOKEN_BYTES * 2 || !/^[0-9a-fA-F]+$/.test(envToken)) {
       throw new SessionTokenError(
-        `UPWELL_SESSION_TOKEN must be ${String(SESSION_TOKEN_BYTES * 2)} hex chars (got ${String(envToken.length)})`,
+        `RISEZOME_SESSION_TOKEN must be ${String(SESSION_TOKEN_BYTES * 2)} hex chars (got ${String(envToken.length)})`,
       );
     }
     token = envToken.toLowerCase();

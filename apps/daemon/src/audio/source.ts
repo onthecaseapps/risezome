@@ -5,7 +5,7 @@ import {
   type AudioSourceStatus,
   type ControlMsg,
   type AudioFrame,
-} from '@upwell/shared-types';
+} from '@risezome/shared-types';
 
 export interface AudioSource extends EventEmitter<AudioSourceEvents> {
   start(): Promise<void>;

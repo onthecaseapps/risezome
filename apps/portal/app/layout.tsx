@@ -9,9 +9,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'Upwell: answers before you ask',
+  title: 'Risezome: answers before you ask',
   description:
-    'Upwell is a meeting copilot that surfaces relevant context (pull requests, tickets, and docs) the moment it matters. No querying, no searching, no asking.',
+    'Risezome is a meeting copilot that surfaces relevant context (pull requests, tickets, and docs) the moment it matters. No querying, no searching, no asking.',
 };
 
 // No-flash theme init: apply the .dark class before paint based on the OS

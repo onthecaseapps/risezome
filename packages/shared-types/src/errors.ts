@@ -1,4 +1,4 @@
-export class UpwellError extends Error {
+export class RisezomeError extends Error {
   readonly code: string;
 
   constructor(code: string, message: string, options?: ErrorOptions) {
@@ -8,13 +8,13 @@ export class UpwellError extends Error {
   }
 }
 
-export class IllegalStateError extends UpwellError {
+export class IllegalStateError extends RisezomeError {
   constructor(message: string, options?: ErrorOptions) {
     super('illegal-state', message, options);
   }
 }
 
-export class NotImplementedError extends UpwellError {
+export class NotImplementedError extends RisezomeError {
   constructor(message: string, options?: ErrorOptions) {
     super('not-implemented', message, options);
   }

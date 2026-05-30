@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { StrictMode } from 'react';
 import { render } from '@testing-library/react';
-import { useUpwellSocket } from '../app/hooks/use-upwell-socket';
+import { useRisezomeSocket } from '../app/hooks/use-risezome-socket';
 import type { MinimalWebSocket, WsStatus } from '../app/lib/ws-client';
 import type { ServerMessage } from '../app/types';
 
@@ -35,7 +35,7 @@ function HookHarness({
   onMessage: (m: ServerMessage) => void;
   onStatus?: (s: WsStatus) => void;
 }): null {
-  useUpwellSocket({
+  useRisezomeSocket({
     url: 'ws://localhost:1234/ws',
     token: 'tok',
     onMessage,
@@ -45,7 +45,7 @@ function HookHarness({
   return null;
 }
 
-describe('useUpwellSocket', () => {
+describe('useRisezomeSocket', () => {
   it('opens a connection on mount and closes on unmount', () => {
     const sockets: FakeWebSocket[] = [];
     const { unmount } = render(

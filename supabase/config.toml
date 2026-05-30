@@ -32,7 +32,7 @@ enabled = false
 [auth]
 enabled = true
 site_url = "http://localhost:3000"
-additional_redirect_urls = ["https://upwell.com"]
+additional_redirect_urls = ["https://risezome.app"]
 jwt_expiry = 3600
 enable_signup = true
 enable_refresh_token_rotation = true

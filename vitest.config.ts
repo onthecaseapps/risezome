@@ -12,7 +12,7 @@ export default defineConfig({
       '**/dist/**',
       '**/build/**',
       '**/apps/hud-next/**',
-      '**/apps/web/**',
+      '**/apps/portal/**',
     ],
     coverage: {
       provider: 'v8',

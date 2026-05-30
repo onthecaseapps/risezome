@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { envFloat } from '../../src/cli/util.js';
 
-const TEST_KEY = 'UPWELL_TEST_ENV_FLOAT';
+const TEST_KEY = 'RISEZOME_TEST_ENV_FLOAT';
 
 describe('envFloat', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;

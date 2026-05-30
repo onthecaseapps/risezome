@@ -1,4 +1,4 @@
-import { UpwellError } from '@upwell/shared-types';
+import { RisezomeError } from '@risezome/shared-types';
 
 /**
  * Discriminated result from the relevance classifier. `surface` carries no
@@ -6,7 +6,7 @@ import { UpwellError } from '@upwell/shared-types';
  * model is uncertain (or when the call fails), so it's always implicitly
  * full confidence in the sense that no threshold gate applies. `skip`
  * carries the model's self-reported confidence which the pipeline checks
- * against UPWELL_RELEVANCE_SKIP_THRESHOLD before honoring.
+ * against RISEZOME_RELEVANCE_SKIP_THRESHOLD before honoring.
  */
 export type RelevanceResult =
   | { readonly decision: 'surface' }
@@ -35,7 +35,7 @@ export type RelevanceProviderErrorKind =
   | 'timeout'
   | 'unknown';
 
-export class RelevanceProviderError extends UpwellError {
+export class RelevanceProviderError extends RisezomeError {
   readonly kind: RelevanceProviderErrorKind;
   readonly retryAfterMs: number | undefined;
   constructor(

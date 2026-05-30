@@ -1,30 +1,30 @@
-import { UpwellError } from '@upwell/shared-types';
+import { RisezomeError } from '@risezome/shared-types';
 
-export class SidecarLaunchError extends UpwellError {
+export class SidecarLaunchError extends RisezomeError {
   constructor(message: string, options?: ErrorOptions) {
     super('sidecar-launch', message, options);
   }
 }
 
-export class SidecarIntegrityError extends UpwellError {
+export class SidecarIntegrityError extends RisezomeError {
   constructor(message: string, options?: ErrorOptions) {
     super('sidecar-integrity', message, options);
   }
 }
 
-export class SidecarHandshakeError extends UpwellError {
+export class SidecarHandshakeError extends RisezomeError {
   constructor(message: string, options?: ErrorOptions) {
     super('sidecar-handshake', message, options);
   }
 }
 
-export class SidecarProtocolError extends UpwellError {
+export class SidecarProtocolError extends RisezomeError {
   constructor(message: string, options?: ErrorOptions) {
     super('sidecar-protocol', message, options);
   }
 }
 
-export class SidecarExitError extends UpwellError {
+export class SidecarExitError extends RisezomeError {
   readonly exitCode: number | null;
   readonly stderrTail: string;
 
@@ -35,7 +35,7 @@ export class SidecarExitError extends UpwellError {
   }
 }
 
-export class PermissionError extends UpwellError {
+export class PermissionError extends RisezomeError {
   readonly reason: string;
 
   constructor(reason: string, options?: ErrorOptions) {

@@ -1,4 +1,4 @@
-import { NotImplementedError } from '@upwell/shared-types';
+import { NotImplementedError } from '@risezome/shared-types';
 import type { EmbedRequest, EmbedResult, Embedder } from './contract.js';
 import { DEFAULT_VOYAGE_DIMENSION } from './voyage.js';
 

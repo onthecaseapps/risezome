@@ -4,7 +4,7 @@ Conventions and guardrails for agents and humans working in this repo.
 
 ## What this is
 
-Upwell is a desktop meeting-context copilot. A Node/TypeScript background daemon captures local meeting audio (via per-OS native sidecars), transcribes it in real time, indexes connected sources (GitHub + Jira in v1), continuously surfaces relevant context as cards in a browser-based HUD, and captures unanswered questions to feed back into documentation improvement.
+Risezome is a desktop meeting-context copilot. A Node/TypeScript background daemon captures local meeting audio (via per-OS native sidecars), transcribes it in real time, indexes connected sources (GitHub + Jira in v1), continuously surfaces relevant context as cards in a browser-based HUD, and captures unanswered questions to feed back into documentation improvement.
 
 The authoritative scope, design decisions, and implementation units live in `docs/plans/2026-05-28-001-feat-meeting-context-copilot-plan.md`. The product framing lives in `docs/brainstorms/meeting-context-copilot-requirements.md`.
 
@@ -42,7 +42,7 @@ upwell/
 
 The daemon CLI loads env vars from `.env` files in this order (later sources do not overwrite earlier ones, and **shell-exported vars always win**):
 
-1. `$UPWELL_ENV_FILE` if set (explicit override).
+1. `$RISEZOME_ENV_FILE` if set (explicit override).
 2. `<data dir>/.env` (e.g. `~/.local/share/upwell/.env` on Linux).
 3. `./.env` (current working directory).
 

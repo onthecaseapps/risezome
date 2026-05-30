@@ -3,17 +3,17 @@ date: 2026-05-30
 topic: upwell-portal-and-cloud-shape
 ---
 
-# Upwell Portal & Cloud-First Product Shape
+# Risezome Portal & Cloud-First Product Shape
 
-This brainstorm reshapes Upwell from a desktop-installed copilot into a hosted SaaS product. The desktop daemon stops being the end-user surface; its engine code (transcription consumer, retrieval, synthesis) moves into a backend worker. The user experience becomes: sign in with Google, install an Upwell GitHub App on the org's repos, opt in per-meeting from the portal, glance at a second-monitor portal tab during the call.
+This brainstorm reshapes Risezome from a desktop-installed copilot into a hosted SaaS product. The desktop daemon stops being the end-user surface; its engine code (transcription consumer, retrieval, synthesis) moves into a backend worker. The user experience becomes: sign in with Google, install an Risezome GitHub App on the org's repos, opt in per-meeting from the portal, glance at a second-monitor portal tab during the call.
 
 ## Problem Frame
 
-Today Upwell ships as a local daemon a developer installs, configures via `.env`, and runs alongside their browser. That model has friction at every step: install a daemon binary, get sidecar entitlements right per OS, manage half a dozen API keys, manually start audio capture before each meeting. Most candidate users won't get past the first step. We've validated the live in-meeting card experience itself with the HUD work in `apps/hud-next/` — the engine works. The block is the surface.
+Today Risezome ships as a local daemon a developer installs, configures via `.env`, and runs alongside their browser. That model has friction at every step: install a daemon binary, get sidecar entitlements right per OS, manage half a dozen API keys, manually start audio capture before each meeting. Most candidate users won't get past the first step. We've validated the live in-meeting card experience itself with the HUD work in `apps/hud-next/` — the engine works. The block is the surface.
 
-Bot-based meeting recorders (Recall.ai, Read.ai, Granola, Fireflies, tl;dv) have solved the install-friction problem: they sign up, connect calendar, the bot joins on their behalf. Upwell's differentiator — proactive multi-source RAG grounding during the meeting, not post-meeting summary — is independent of how audio gets captured. Today the audio comes from a local sidecar; nothing about the retrieval/synthesis pipeline cares that.
+Bot-based meeting recorders (Recall.ai, Read.ai, Granola, Fireflies, tl;dv) have solved the install-friction problem: they sign up, connect calendar, the bot joins on their behalf. Risezome's differentiator — proactive multi-source RAG grounding during the meeting, not post-meeting summary — is independent of how audio gets captured. Today the audio comes from a local sidecar; nothing about the retrieval/synthesis pipeline cares that.
 
-Reshape: move audio capture to a Recall.ai bot, run the existing daemon's engine code as a backend worker, surface everything through a hosted portal at upwell.com. Keep the product's actual point (live grounding cards) intact; remove every friction point that isn't the actual product.
+Reshape: move audio capture to a Recall.ai bot, run the existing daemon's engine code as a backend worker, surface everything through a hosted portal at risezome.app. Keep the product's actual point (live grounding cards) intact; remove every friction point that isn't the actual product.
 
 This brainstorm establishes product shape — primary actors, core surfaces, tenancy model, retention posture, consent model. It does not specify implementation; that's planning's job.
 
@@ -22,7 +22,7 @@ This brainstorm establishes product shape — primary actors, core surfaces, ten
 ## System Shape (visual aid)
 
 ```
-                              upwell.com
+                              risezome.app
    Google Calendar              (Vercel: portal +
    (per-user OAuth)             marketing site)
         |                            |
@@ -69,7 +69,7 @@ Two things are deliberately out of this diagram for MVP: per-user local capture 
 ## Actors
 
 - **A1. Beta tester (org member, signed in).** Signs in with Google. Toggles per-meeting opt-in for their upcoming calls in the portal. Glances at the portal tab during meetings. Reviews pinned cards and gap log after.
-- **A2. Org admin (also an org member, with elevated role).** Installs the Upwell GitHub App on their org's repos. Manages org-level settings: members, sources, retention. Has the same in-meeting experience as A1 — being an admin doesn't change the live UX.
+- **A2. Org admin (also an org member, with elevated role).** Installs the Risezome GitHub App on their org's repos. Manages org-level settings: members, sources, retention. Has the same in-meeting experience as A1 — being an admin doesn't change the live UX.
 - **A3. Solo user.** A1 without a team. Their org is themselves; they install the GitHub App on their own repos. The shape is the same; the data is single-tenant from their perspective.
 
 The original local-daemon developer audience is **explicitly deferred** to a later wave; their needs (privacy via local audio, custom corpus sources, offline-capable) are real but cost the product the lowest-friction path we're committing to here.
@@ -80,23 +80,23 @@ The original local-daemon developer audience is **explicitly deferred** to a lat
 
 ### F1. First-time onboarding
 
-1. New user lands on `upwell.com`, clicks "Sign in with Google."
+1. New user lands on `risezome.app`, clicks "Sign in with Google."
 2. Google OAuth grants identity + read-only calendar scope.
 3. Portal prompts: "What's the name of your team?" → creates an org, makes the user the first admin member.
-4. Portal prompts: "Install the Upwell GitHub App on your org's repos." User clicks → goes to GitHub → picks repos → returns to portal with installation confirmed.
+4. Portal prompts: "Install the Risezome GitHub App on your org's repos." User clicks → goes to GitHub → picks repos → returns to portal with installation confirmed.
 5. Indexer begins indexing those repos in the background. Portal shows per-source progress.
-6. Portal lands on the "Upcoming meetings" view, empty-state explaining: "Toggle the bot on any meeting below to have Upwell join."
+6. Portal lands on the "Upcoming meetings" view, empty-state explaining: "Toggle the bot on any meeting below to have Risezome join."
 
 ### F2. Opt-in per meeting
 
 1. A1 opens the portal. The home view shows their next 7 days of calendar events.
-2. For each event, a clear toggle: "Send Upwell bot." Off by default.
+2. For each event, a clear toggle: "Send Risezome bot." Off by default.
 3. A1 flips the toggle on for a meeting later today. Portal records the opt-in against the calendar event ID + meeting URL.
 4. (Implicit) When the meeting is rescheduled, the opt-in carries forward with the event ID.
 
 ### F3. Live in-meeting experience
 
-1. The meeting starts. A1 is in Zoom; Upwell's bot joins, announces itself ("Upwell is taking notes for [user]"), and begins streaming audio out.
+1. The meeting starts. A1 is in Zoom; Risezome's bot joins, announces itself ("Risezome is taking notes for [user]"), and begins streaming audio out.
 2. The bot worker spins up, ingests audio → transcription (Deepgram) → retrieval pipeline → synthesis card stream.
 3. A1 opens (or already had open) the portal tab for this meeting on a second monitor. The view shows the live HUD (the U1-U5 work from `apps/hud-next/`) inside the portal layout.
 4. Cards stream in as topics come up; A1 glances at them.
@@ -140,8 +140,8 @@ The original local-daemon developer audience is **explicitly deferred** to a lat
 ### Bot opt-in & consent
 
 - **R8.** Default policy: bots **do not** auto-join any meeting. Joining is per-event opt-in by a member of the org.
-- **R9.** Each calendar event has a "Send Upwell bot" toggle in the portal. The toggle persists per event; if the event is rescheduled, the opt-in carries forward.
-- **R10.** When the bot joins, it announces itself in-meeting via both an in-meeting chat message and an audio announcement ("Upwell is taking notes for [user]"). Consent is recorded inside the meeting itself.
+- **R9.** Each calendar event has a "Send Risezome bot" toggle in the portal. The toggle persists per event; if the event is rescheduled, the opt-in carries forward.
+- **R10.** When the bot joins, it announces itself in-meeting via both an in-meeting chat message and an audio announcement ("Risezome is taking notes for [user]"). Consent is recorded inside the meeting itself.
 - **R11.** The bot is sent to the conference URL from R7 via Recall.ai. If the URL is missing or invalid at start time, the opt-in is failed loudly in the portal (banner / email).
 - **R11a.** MVP conference platform support: **Zoom and Google Meet only**. Both fully support chat + audio bot announce per R10 and have the most stable bot-join behavior per Recall.ai's platform reports. Microsoft Teams, Webex, and GoTo Meeting are explicitly deferred — see Scope Boundaries for rationale.
 - **R11b.** Bot configuration on every Create Bot call **must explicitly set `retention=null`** (ephemeral / Zero Data Retention mode) and use `prioritize_low_latency` transcription mode. Defaults persist recordings indefinitely; the platform-side default changed in June 2025 from "7-day expiry" to "retain forever." Enforce in code, not in dashboard config. Logged at WARN if a bot is created without `retention=null` set.
@@ -185,13 +185,13 @@ The original local-daemon developer audience is **explicitly deferred** to a lat
 
 ## Acceptance Examples
 
-- **AE1. Covers R1-R3, R12.** Nathan opens upwell.com, signs in with Google (`nathan@example.com`). Portal creates an org named "Example Inc.", makes Nathan the admin. He clicks "Install GitHub App," selects 3 repos from his GitHub org, returns to the portal. The Sources view shows those 3 repos with "indexing" status. Another member of the same org (added via invite) signs in and sees the same 3 sources without any setup.
+- **AE1. Covers R1-R3, R12.** Nathan opens risezome.app, signs in with Google (`nathan@example.com`). Portal creates an org named "Example Inc.", makes Nathan the admin. He clicks "Install GitHub App," selects 3 repos from his GitHub org, returns to the portal. The Sources view shows those 3 repos with "indexing" status. Another member of the same org (added via invite) signs in and sees the same 3 sources without any setup.
 
-- **AE2. Covers R7-R11, R11a, R11b, R19.** Nathan has a Google Meet in his calendar for 2pm: "Sprint Planning, meet.google.com/abc-defg-hij". In the portal at 1:30pm he sees the event and flips "Send Upwell bot" on. At 2:00pm Recall.ai joins the Meet (Create Bot called with `retention=null` and `prioritize_low_latency`), posts a chat message ("Upwell is taking notes for Nathan") and speaks the same announcement. At 2:05pm Nathan opens the meeting's portal page; cards relevant to the conversation are streaming in. The meeting at 3pm ("Personal", no Meet link) shows a disabled toggle with hint "no conference link." The 4pm meeting is in Microsoft Teams; its toggle is also disabled with hint "Teams support coming soon" (R11a).
+- **AE2. Covers R7-R11, R11a, R11b, R19.** Nathan has a Google Meet in his calendar for 2pm: "Sprint Planning, meet.google.com/abc-defg-hij". In the portal at 1:30pm he sees the event and flips "Send Risezome bot" on. At 2:00pm Recall.ai joins the Meet (Create Bot called with `retention=null` and `prioritize_low_latency`), posts a chat message ("Risezome is taking notes for Nathan") and speaks the same announcement. At 2:05pm Nathan opens the meeting's portal page; cards relevant to the conversation are streaming in. The meeting at 3pm ("Personal", no Meet link) shows a disabled toggle with hint "no conference link." The 4pm meeting is in Microsoft Teams; its toggle is also disabled with hint "Teams support coming soon" (R11a).
 
 - **AE3. Covers R16-R18, R20.** During Nathan's 2pm meeting, his portal tab on the second monitor shows cards arriving within ~3 seconds of relevant utterances. He pins one. At 2:55pm the meeting ends; the portal page transitions to "Completed" and shows the pinned card at top, the full stream below, and a 1-paragraph synthesis. Two days later he reopens the meeting and the same content is intact.
 
-- **AE4. Covers R12, R15.** Alice (different org member, same Upwell org as Nathan) has her own 2pm meeting on a different topic. Her bot's retrieval pulls from the same indexed repos as Nathan's. Her meeting data (transcript, cards) is scoped to her meeting; Nathan cannot see it.
+- **AE4. Covers R12, R15.** Alice (different org member, same Risezome org as Nathan) has her own 2pm meeting on a different topic. Her bot's retrieval pulls from the same indexed repos as Nathan's. Her meeting data (transcript, cards) is scoped to her meeting; Nathan cannot see it.
 
 - **AE5. Covers R19, R21.** Nathan opens an old meeting, clicks "Delete." Transcript, cards, gap log are removed from the database. The raw audio of that meeting was never persisted; there is nothing to also delete server-side.
 
@@ -221,13 +221,13 @@ The original local-daemon developer audience is **explicitly deferred** to a lat
 - Gap-to-Jira / Gap-to-Confluence drafting (R24 leaves this off MVP but the gap data must be captured for it).
 - User-configurable retention windows. Retention is "kept indefinitely or deleted explicitly" at MVP.
 - Recording storage. Audio is discarded after transcription with no option to retain at MVP.
-- **Self-hosted / open-source bot transport** (Attendee.dev or similar). At Upwell's scale today, Recall.ai's ~$0.65/hr PAYG with no minimum is the path of least resistance. If usage growth makes Recall.ai costs a real budget item, Attendee.dev becomes interesting — it covers Zoom/Meet/Teams via Zoom RTMS (more stable than DOM scraping), delivers raw audio (no Recall transcript wrapper), and has no per-minute fee. The price is real DevOps burden. Worth keeping on the radar as a 12-month-out cost lever, not an MVP path.
+- **Self-hosted / open-source bot transport** (Attendee.dev or similar). At Risezome's scale today, Recall.ai's ~$0.65/hr PAYG with no minimum is the path of least resistance. If usage growth makes Recall.ai costs a real budget item, Attendee.dev becomes interesting — it covers Zoom/Meet/Teams via Zoom RTMS (more stable than DOM scraping), delivers raw audio (no Recall transcript wrapper), and has no per-minute fee. The price is real DevOps burden. Worth keeping on the radar as a 12-month-out cost lever, not an MVP path.
 
 ### Outside this product's identity
 
-- Becoming a generic transcription/recording service (Otter, tl;dv). Upwell's point is proactive multi-source grounding during the meeting; the transcript is means, not product.
+- Becoming a generic transcription/recording service (Otter, tl;dv). Risezome's point is proactive multi-source grounding during the meeting; the transcript is means, not product.
 - Post-meeting AI summary as the primary value. Other tools already do this well; we'd be undifferentiated.
-- Sales-only or CRM-tied positioning (Gong, Chorus). Upwell's wedge is engineering/product/ops meetings whose grounding lives in repos and tickets, not CRMs.
+- Sales-only or CRM-tied positioning (Gong, Chorus). Risezome's wedge is engineering/product/ops meetings whose grounding lives in repos and tickets, not CRMs.
 - A meeting scheduling tool. We consume calendars; we don't write to them.
 
 ---
@@ -252,7 +252,7 @@ The original local-daemon developer audience is **explicitly deferred** to a lat
 - **OQ1. Stack: RESOLVED — Supabase full stack.** Spike completed at brainstorm time. Supabase Auth (Google OAuth) + Supabase Postgres + pgvector + Supabase Realtime Broadcast + RLS for tenancy. One platform, one schema, no glue between auth/data/realtime. Cost at beta scale is $0 (free tier) → $25/mo (Pro) once we cross the free-tier inactivity-pause boundary. Realtime Broadcast is fire-and-forget — the portal client must be designed to recover via DB-state fetch on reconnect; not a problem given the events are also written to Postgres as a side effect of being processed. **Better Auth + Neon + Ably is the documented fallback** if Supabase reliability fails us in production or if we hit the ~1000 MAU point where Clerk's free 50K MAU becomes meaningfully cheaper (we'd switch auth to either Clerk or Better Auth and keep Supabase as just-the-DB at that point). **Auth.js v5 is off the table** — it entered maintenance mode September 2025; Better Auth is its successor for projects considering that family. Decision logged at planning kickoff, but no further research needed.
 - **OQ2. Bot worker shape: one process per meeting, or a worker pool sharing meetings?** Recall.ai emits a stream per bot; the engine can be horizontally scaled either way. The shape affects cost (process overhead vs. context-switch overhead) and the failure model (a crash kills one meeting vs. many). Planning-time decision driven by Recall.ai's webhook/WS contract and the engine's per-meeting memory footprint.
 - **OQ3. What does the Live Meeting view actually look like during opt-in but before the meeting starts?** Pre-meeting context-prep (background fetch of likely-relevant context based on meeting title/attendees/description) is a strong differentiator and adjacent to the core. Decide: is pre-meeting prep in MVP (R24 is silent on this), or post-MVP polish?
-- **OQ4. How does the user pre-configure their Recall.ai account on Upwell's side?** A platform-level Recall.ai account has its own dashboard (BYO Deepgram key configured there). For MVP this is a one-time platform setup, not user-facing. Confirm at planning kickoff that no per-user Recall.ai keying is required (it shouldn't be, but worth verifying so we don't accidentally surface that complexity to users).
+- **OQ4. How does the user pre-configure their Recall.ai account on Risezome's side?** A platform-level Recall.ai account has its own dashboard (BYO Deepgram key configured there). For MVP this is a one-time platform setup, not user-facing. Confirm at planning kickoff that no per-user Recall.ai keying is required (it shouldn't be, but worth verifying so we don't accidentally surface that complexity to users).
 
 ### Deferred to implementation
 

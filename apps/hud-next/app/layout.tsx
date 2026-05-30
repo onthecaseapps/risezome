@@ -3,7 +3,7 @@ import type { ReactElement, ReactNode } from 'react';
 import { THEME_INIT_SCRIPT } from './lib/theme';
 
 export const metadata = {
-  title: 'Upwell',
+  title: 'Risezome',
 };
 
 // `suppressHydrationWarning` on <html> is required because the theme inline

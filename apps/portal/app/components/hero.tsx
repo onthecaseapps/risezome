@@ -17,7 +17,7 @@ export function Hero(): React.ReactElement {
         </h1>
 
         <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg text-muted sm:text-xl">
-          Upwell listens to your meeting and surfaces the pull requests, tickets, and docs that
+          Risezome listens to your meeting and surfaces the pull requests, tickets, and docs that
           matter, right when they matter. No querying. No searching. No asking.
         </p>
 

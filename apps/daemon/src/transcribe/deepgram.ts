@@ -80,7 +80,7 @@ export class DeepgramTranscriptionEngine
   #currentRevision = 0;
   #lastSpeaker: string | null = null;
   // Wall-clock epoch ms captured when the Deepgram WS opens. Deepgram emits
-  // `start`/`duration` in seconds-since-stream-start, but the rest of Upwell
+  // `start`/`duration` in seconds-since-stream-start, but the rest of Risezome
   // (TranscriptWindow filters, the persisted store, retrieval cutoffs) treats
   // utterance times as wall-clock ms. Adding this offset at the engine
   // boundary makes startMs/endMs comparable to Date.now() everywhere.

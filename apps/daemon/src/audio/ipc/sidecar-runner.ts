@@ -4,7 +4,7 @@ import { stat } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { EventEmitter } from 'node:events';
-import { type AudioFrame, type ControlMsg } from '@upwell/shared-types';
+import { type AudioFrame, type ControlMsg } from '@risezome/shared-types';
 import {
   ControlLineSplitter,
   FrameDecoder,

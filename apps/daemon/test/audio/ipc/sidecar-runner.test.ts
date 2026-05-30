@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type AudioFrame, type ControlMsg, AUDIO_FRAME_SAMPLE_COUNT } from '@upwell/shared-types';
+import { type AudioFrame, type ControlMsg, AUDIO_FRAME_SAMPLE_COUNT } from '@risezome/shared-types';
 import { SidecarRunner } from '../../../src/audio/ipc/sidecar-runner.js';
 import {
   PermissionError,

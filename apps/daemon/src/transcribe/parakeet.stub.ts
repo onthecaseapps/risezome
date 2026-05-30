@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { NotImplementedError } from '@upwell/shared-types';
+import { NotImplementedError } from '@risezome/shared-types';
 import type { TranscriptionEngine, TranscriptionEngineEvents } from './contract.js';
 
 export class ParakeetTranscriptionEngine

@@ -1,4 +1,4 @@
-import { type AudioFrame, type ControlMsg, type StreamRole } from '@upwell/shared-types';
+import { type AudioFrame, type ControlMsg, type StreamRole } from '@risezome/shared-types';
 import { SidecarProtocolError } from './errors.js';
 
 export const ROLE_LOCAL_SYSTEM = 0x00;

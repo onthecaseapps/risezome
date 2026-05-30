@@ -14,7 +14,7 @@ export default function Home(): React.ReactElement {
             Watch it work
           </h2>
           <p className="mx-auto mt-3 max-w-xl text-muted">
-            A standup, playing out live. Someone asks a question, and Upwell surfaces the pull
+            A standup, playing out live. Someone asks a question, and Risezome surfaces the pull
             request, the ticket, and the doc, then answers with citations. No one typed a search.
           </p>
         </div>

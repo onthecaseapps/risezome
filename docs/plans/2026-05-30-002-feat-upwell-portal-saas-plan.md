@@ -1,16 +1,16 @@
 ---
-title: feat - Upwell portal & bot worker SaaS shape
+title: feat - Risezome portal & bot worker SaaS shape
 type: feat
 status: active
 date: 2026-05-30
 origin: docs/brainstorms/2026-05-30-upwell-portal-and-cloud-shape-requirements.md
 ---
 
-# feat: Upwell portal & bot worker SaaS shape
+# feat: Risezome portal & bot worker SaaS shape
 
 ## Overview
 
-Move Upwell from "desktop daemon you install" to "hosted SaaS you sign into." The desktop daemon's engine code (transcribe consumer → retrieval → synthesis) becomes a server-side worker that ingests audio from a Recall.ai bot; a new Next.js portal at `apps/portal/` exposes auth, org management, source connection, calendar-driven opt-in, live in-meeting cards, and post-meeting review. Beta scope is 50 friendly testers across ~5 orgs, Zoom + Google Meet only, Recall.ai bot transport, Supabase as the everything-platform (auth + Postgres + pgvector + Realtime Broadcast + RLS), GitHub App org-level source installation.
+Move Risezome from "desktop daemon you install" to "hosted SaaS you sign into." The desktop daemon's engine code (transcribe consumer → retrieval → synthesis) becomes a server-side worker that ingests audio from a Recall.ai bot; a new Next.js portal at `apps/portal/` exposes auth, org management, source connection, calendar-driven opt-in, live in-meeting cards, and post-meeting review. Beta scope is 50 friendly testers across ~5 orgs, Zoom + Google Meet only, Recall.ai bot transport, Supabase as the everything-platform (auth + Postgres + pgvector + Realtime Broadcast + RLS), GitHub App org-level source installation.
 
 The HUD work in `apps/hud-next/` (just shipped) is the live meeting surface, embedded inside the portal as a Realtime-subscribing component. The daemon code is preserved in the repo as the engine; `apps/bot-worker/` reuses its pipeline classes against new state-storage adapters. The local-capture sidecar path is preserved but is not a user-facing component in this plan.
 
@@ -20,7 +20,7 @@ The HUD work in `apps/hud-next/` (just shipped) is the live meeting surface, emb
 
 The original `meeting-context-copilot-requirements.md` framing — "developer-installed desktop daemon with browser HUD" — has a friction wall at every onboarding step: install a binary, set sidecar entitlements per OS, manage six API keys, manually start audio capture before each meeting. The engine itself works (we shipped the HUD U1-U5 + relevance classifier + synthesis cards), but the surface blocks every non-developer user.
 
-The brainstorm `docs/brainstorms/2026-05-30-upwell-portal-and-cloud-shape-requirements.md` reshapes Upwell as a hosted product: bot captures audio (no install), platform owns provider keys (no user key vault), portal opts in per meeting (no consent surprise), sources connect via GitHub App OAuth (no token paste). Engine code is preserved. Local-daemon path is deferred to a privacy/enterprise tier later.
+The brainstorm `docs/brainstorms/2026-05-30-upwell-portal-and-cloud-shape-requirements.md` reshapes Risezome as a hosted product: bot captures audio (no install), platform owns provider keys (no user key vault), portal opts in per meeting (no consent surprise), sources connect via GitHub App OAuth (no token paste). Engine code is preserved. Local-daemon path is deferred to a privacy/enterprise tier later.
 
 This plan executes that reshape end-to-end. Each implementation unit lands an atomic slice; phases group units that ship together but can be reviewed independently.
 
@@ -97,7 +97,7 @@ Carried verbatim from origin:
 
 ### Deferred to Follow-Up Work
 
-- ~~Landing-page merge.~~ **REMOVED** — per document review (Finding 16), this is in scope. See U0 (added below) — landing-page branch is merged into `apps/portal/app/(marketing)/` BEFORE U1 so `upwell.com/` is a polished landing page from day one with `/sign-in` and `/onboarding` etc. living inside the same Next.js app.
+- ~~Landing-page merge.~~ **REMOVED** — per document review (Finding 16), this is in scope. See U0 (added below) — landing-page branch is merged into `apps/portal/app/(marketing)/` BEFORE U1 so `risezome.app/` is a polished landing page from day one with `/sign-in` and `/onboarding` etc. living inside the same Next.js app.
 - **`docs/solutions/` seeding.** No institutional learnings store exists; capture the load-bearing decisions from this plan (RLS shape, transcript adapter, ZDR enforcement, bot-worker process model) into `docs/solutions/` after the relevant units land.
 
 ---
@@ -145,7 +145,7 @@ Consolidated from the framework-docs research, with direct doc links carried int
 ## Key Technical Decisions
 
 - **Stack: Supabase full stack.** OQ1 from origin resolved at brainstorm time. Auth + Postgres + pgvector + Realtime Broadcast + RLS on one platform. Better Auth + Neon + Ably documented as fallback path if Supabase reliability or pricing breaks down.
-- **Bot worker: one process per active meeting, runs on the operator's laptop during early beta (OQ2).** Recall.ai delivers a per-bot WebSocket; the engine's `MeetingSession` + `TranscriptWindow` are in-memory and assume single-process. Process-per-meeting gives natural horizontal scaling and failure isolation. At early beta (5-10 testers), the bot-worker runs as a Node process on Nathan's laptop, exposed to Recall.ai via a Cloudflare Tunnel at a stable hostname (e.g. `bot-worker.upwell.com`). Zero hosting cost; constraint is that the laptop must be online during beta meeting times. The migration path to managed hosting (Fly.io or Railway) is documented in the Operational Notes — triggers are (a) any tester needs reliable 24/7 availability, (b) consistent peak > 3 concurrent meetings, or (c) beta expansion past ~10 testers.
+- **Bot worker: one process per active meeting, runs on the operator's laptop during early beta (OQ2).** Recall.ai delivers a per-bot WebSocket; the engine's `MeetingSession` + `TranscriptWindow` are in-memory and assume single-process. Process-per-meeting gives natural horizontal scaling and failure isolation. At early beta (5-10 testers), the bot-worker runs as a Node process on Nathan's laptop, exposed to Recall.ai via a Cloudflare Tunnel at a stable hostname (e.g. `bot-worker.risezome.app`). Zero hosting cost; constraint is that the laptop must be online during beta meeting times. The migration path to managed hosting (Fly.io or Railway) is documented in the Operational Notes — triggers are (a) any tester needs reliable 24/7 availability, (b) consistent peak > 3 concurrent meetings, or (c) beta expansion past ~10 testers.
 - **Indexer worker: queue-driven background jobs.** Inngest is the recommended queue platform — first-class Vercel integration, durable jobs, easy retries, good observability. Falls back to plain Vercel cron if Inngest's pricing or shape doesn't fit. Per-source indexing job runs the GitHub App installation token → fetch repo content → chunk → embed → write to Postgres.
 - **Portal hosting: Vercel.** Next.js 16 App Router, server components for auth-gated pages, route handlers for API endpoints (webhook receivers, sources management actions).
 - **No per-user provider keys.** Recall.ai, Deepgram, Anthropic, Voyage keys live in platform-owned env vars. OQ4 resolved at brainstorm time. The Recall.ai BYO-Deepgram setting uses the platform's Deepgram key, sent per-bot in the Create Bot call — there is no per-user Recall.ai key.
@@ -177,7 +177,7 @@ Consolidated from the framework-docs research, with direct doc links carried int
 - **DQ3 — Calendar push channel renewal cadence:** Channels expire in ≤7 days. Renew via cron job daily, 24h before earliest expiry. Implementation-time choice: `at expiry - 1 day` vs `every N hours`. Cron platform = Inngest scheduled functions.
 - **DQ4 — Inngest vs Vercel cron vs Trigger.dev:** Default Inngest unless concrete cost or feature gap surfaces during U4 implementation.
 - **DQ5 — `packages/engine/` extraction granularity:** How aggressively to extract daemon code. MVP: extract only the pieces bot-worker actually imports (`retrieve/pipeline.ts`, `synthesize/`, `embed/`, `skills/registry.ts` + relevant skills, `transcribe/contract.ts`, `transcript/window.ts`, `meeting/session.ts`). Leave the rest in daemon. Re-architect later if duplication grows.
-- **DQ6 — Audio announce MP3 content:** Brand voice TTS or generic "Upwell is taking notes" recording. Implementation-time choice; cheap to swap.
+- **DQ6 — Audio announce MP3 content:** Brand voice TTS or generic "Risezome is taking notes" recording. Implementation-time choice; cheap to swap.
 
 ---
 
@@ -324,7 +324,7 @@ This is a scope declaration. The implementer may adjust if implementation reveal
 ```mermaid
 flowchart LR
   subgraph Browser
-    portal[Portal<br/>upwell.com<br/>Vercel]
+    portal[Portal<br/>risezome.app<br/>Vercel]
   end
 
   subgraph Supabase
@@ -385,7 +385,7 @@ Data plane: corpus + meeting artifacts in Postgres with RLS, live events on Real
 
 - [ ] U0. **Merge landing-page branch into `apps/portal/`**
 
-**Goal:** The marketing landing page (currently on a separate branch) becomes the `(marketing)` route group of the new `apps/portal/` Next.js app. `upwell.com/` shows the polished landing; sign-in + onboarding + authed routes hang off the same project. This is a pre-portal-scaffolding step so U1's "Portal scaffold" merges with an existing project rather than creating one alongside an unmerged branch.
+**Goal:** The marketing landing page (currently on a separate branch) becomes the `(marketing)` route group of the new `apps/portal/` Next.js app. `risezome.app/` shows the polished landing; sign-in + onboarding + authed routes hang off the same project. This is a pre-portal-scaffolding step so U1's "Portal scaffold" merges with an existing project rather than creating one alongside an unmerged branch.
 
 **Requirements:** Indirect — supports R24 (portal surface) by establishing the project shell + first-impression surface.
 
@@ -405,10 +405,10 @@ Data plane: corpus + meeting artifacts in Postgres with RLS, live events on Real
 **Test scenarios:**
 - *Visual:* the landing-page DOM matches the standalone branch's output for the home route (manual compare or screenshot diff).
 - *Build:* `pnpm --filter @upwell/portal build` produces a clean Next.js build with both `(marketing)` and (eventually) `(authed)` route groups.
-- *Routing:* `upwell.com/` returns the landing page; `upwell.com/sign-in` 404s until U2 adds it (acceptable interim state).
+- *Routing:* `risezome.app/` returns the landing page; `risezome.app/sign-in` 404s until U2 adds it (acceptable interim state).
 
 **Verification:**
-- The portal-deployed `upwell.com/` is visually identical to the landing-page branch's `upwell.com/`.
+- The portal-deployed `risezome.app/` is visually identical to the landing-page branch's `risezome.app/`.
 - No regressions in the landing page's existing tests (if any).
 
 ---
@@ -547,7 +547,7 @@ Data plane: corpus + meeting artifacts in Postgres with RLS, live events on Real
 
 - [ ] U4a. **GitHub App registration (one-time operator setup)**
 
-**Goal:** Register the Upwell GitHub App via the manifest flow as a one-time Upwell-operator action. Persist platform-owned secrets (`app_id`, `pem`, `webhook_secret`, `client_id`, `client_secret`) to platform env. This unit has NO end-user UI — it is a documented runbook for Nathan.
+**Goal:** Register the Risezome GitHub App via the manifest flow as a one-time Risezome-operator action. Persist platform-owned secrets (`app_id`, `pem`, `webhook_secret`, `client_id`, `client_secret`) to platform env. This unit has NO end-user UI — it is a documented runbook for Nathan.
 
 **Requirements:** R12 (App existence is a prerequisite of per-tester install in U4b).
 
@@ -558,20 +558,20 @@ Data plane: corpus + meeting artifacts in Postgres with RLS, live events on Real
 - Create: `apps/portal/README.md` section "GitHub App registration (one-time)" documenting the runbook.
 
 **Approach:**
-- Manifest JSON: name "Upwell", url `https://upwell.com`, hook_attributes.url `https://upwell.com/api/github/webhook`, redirect_url `https://upwell.com/github/setup/return`, default_permissions `contents: read, metadata: read, issues: read, pull_requests: read`, default_events `installation, installation_repositories, push, pull_request, issues`, public: true.
+- Manifest JSON: name "Risezome", url `https://risezome.app`, hook_attributes.url `https://risezome.app/api/github/webhook`, redirect_url `https://risezome.app/github/setup/return`, default_permissions `contents: read, metadata: read, issues: read, pull_requests: read`, default_events `installation, installation_repositories, push, pull_request, issues`, public: true.
 - Operator runs `node scripts/register-github-app.mjs`, follows redirect, pastes returned code. Script exchanges via `POST /app-manifests/{code}/conversions` within 1h.
 - Returned `id`, `pem`, `webhook_secret`, `client_id`, `client_secret` are written to stdout. Operator copies into Vercel project env (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` base64-encoded, `GITHUB_APP_WEBHOOK_SECRET`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`).
 
 **Verification:**
 - Manifest JSON validates against GitHub's schema.
-- A registered App with the expected slug appears under the Upwell GitHub org's settings.
+- A registered App with the expected slug appears under the Risezome GitHub org's settings.
 - Vercel env vars set successfully; portal smoke-test (U4b) can construct an octokit installation client.
 
 ---
 
 - [ ] U4b. **Per-tester GitHub App install flow + installation webhook + sources schema**
 
-**Goal:** Beta tester clicks "Install GitHub App" in the portal, lands on GitHub's installation UI for the existing Upwell App, picks repos, returns to the portal. Webhook persists the install. Per-org installation linkage happens at the **redirect callback** (authenticated session present), NOT in the webhook (no session). Sources schema and per-source state created here.
+**Goal:** Beta tester clicks "Install GitHub App" in the portal, lands on GitHub's installation UI for the existing Risezome App, picks repos, returns to the portal. Webhook persists the install. Per-org installation linkage happens at the **redirect callback** (authenticated session present), NOT in the webhook (no session). Sources schema and per-source state created here.
 
 **Requirements:** R12, R3, R15, F1 (step 4), F5
 
@@ -587,7 +587,7 @@ Data plane: corpus + meeting artifacts in Postgres with RLS, live events on Real
 - Create: `apps/portal/test/github/install-flow.test.ts`, `apps/portal/test/github/webhook.test.ts`.
 
 **Approach:**
-- The two-flow split is the load-bearing decision: install initiation is portal-side (UI button), GitHub UI hands off, redirect callback authenticates the linkage. Webhook is ONLY for "what happened" (ongoing repo changes, suspends, deletes) — it never owns the org linkage because it has no Upwell session.
+- The two-flow split is the load-bearing decision: install initiation is portal-side (UI button), GitHub UI hands off, redirect callback authenticates the linkage. Webhook is ONLY for "what happened" (ongoing repo changes, suspends, deletes) — it never owns the org linkage because it has no Risezome session.
 - CSRF state token is short-lived (15 min) HMAC of `{ org_id, user_id, nonce, exp }` signed with platform secret. Both install-callback and webhook can reconcile against it.
 - Race handling: if webhook fires before install-callback, `github_installations` row exists with `org_id = NULL`; install-callback updates the row. If install-callback fires before webhook, the row is created by install-callback and webhook becomes a no-op (or upserts repository list).
 
@@ -741,7 +741,7 @@ Data plane: corpus + meeting artifacts in Postgres with RLS, live events on Real
 
 - [ ] U7. **Upcoming meetings view + per-meeting opt-in toggle**
 
-**Goal:** Portal page at `/meetings/upcoming` shows the next 7 days of calendar events with per-event "Send Upwell bot" toggles. Toggling on persists `bot_optin = true` and queues the bot for launch at meeting start time. MVP platforms only (R11a) — Teams/Webex/GoTo toggles disabled.
+**Goal:** Portal page at `/meetings/upcoming` shows the next 7 days of calendar events with per-event "Send Risezome bot" toggles. Toggling on persists `bot_optin = true` and queues the bot for launch at meeting start time. MVP platforms only (R11a) — Teams/Webex/GoTo toggles disabled.
 
 **Requirements:** R6, R8, R9, R11a, R24, F2
 
@@ -808,11 +808,11 @@ Data plane: corpus + meeting artifacts in Postgres with RLS, live events on Real
 **Approach:**
 - Inngest function `launch-bot` runs at scheduled time. Step 1: re-fetch the calendar_event; if `bot_optin = false`, exit. Step 2: create a `meetings` row (`meeting_id` UUID, `org_id`, `user_id`, `calendar_event_id`, `started_at = NULL`, `status = 'launching'`). Step 3: HTTP POST to `https://us-east-1.recall.ai/api/v1/bot/` with payload:
   - `meeting_url`: from calendar_event.conference_url
-  - `bot_name`: "Upwell"
+  - `bot_name`: "Risezome"
   - `recording_config.retention`: **null** (R11b — enforce in code; WARN log if missing for any reason)
   - `recording_config.transcript.provider.deepgram_streaming`: `{ api_key: RECALL_DEEPGRAM_KEY, model: "nova-3", mode: "prioritize_low_latency" }`
   - `recording_config.realtime_endpoints`: `[{ type: "websocket", url: "${BOT_WORKER_BASE_URL}/recall/${meeting_id}", events: ["transcript.data", "transcript.partial_data", "participant_events.join", "participant_events.leave"] }]`
-  - `chat.on_bot_join`: `{ send_to: "everyone", message: "Upwell is taking notes for ${user.name}. View live at upwell.com/meetings/${meeting_id}/live" }`
+  - `chat.on_bot_join`: `{ send_to: "everyone", message: "Risezome is taking notes for ${user.name}. View live at risezome.app/meetings/${meeting_id}/live" }`
   - `automatic_audio_output.in_call_recording.data`: `{ kind: "mp3", b64_data: <bundled-announce-mp3-base64> }`
   - `automatic_leave`: standard timeouts
   - `metadata`: `{ org_id, meeting_id, user_id }`
@@ -865,7 +865,7 @@ Data plane: corpus + meeting artifacts in Postgres with RLS, live events on Real
 - Modify: `apps/daemon/src/cli/serve.ts` — adapt to the new `packages/engine` interface (SQLite-backed `CorpusReader` + `TranscriptStore`).
 
 **Approach:**
-- `apps/bot-worker/src/index.ts` is a long-running Node HTTP server (local laptop during early beta, exposed via Cloudflare Tunnel). On WS upgrade at `/recall/:meetingId/:jwt`, it: (1) verifies the JWT signature with `BOT_WORKER_SECRET`, (2) asserts `jwt.payload.meetingId === url.params.meetingId` (prevents cross-meeting token replay), (3) asserts `jwt.payload.botId` matches the meeting's `recall_bot_id` in the DB, (4) asserts `jwt.payload.exp > now()`, (5) spawns a per-meeting runtime if not already present, (6) routes incoming messages to it. The JWT is generated at bot-launch time in U8 (`{ meetingId, orgId, botId, iat, exp: meetingEnd + 1h }`, HS256). Recall.ai receives the full URL `wss://bot-worker.upwell.com/recall/<meetingId>/<jwt>` in `realtime_endpoints[0].url` at Create Bot time and forwards it verbatim on every connection.
+- `apps/bot-worker/src/index.ts` is a long-running Node HTTP server (local laptop during early beta, exposed via Cloudflare Tunnel). On WS upgrade at `/recall/:meetingId/:jwt`, it: (1) verifies the JWT signature with `BOT_WORKER_SECRET`, (2) asserts `jwt.payload.meetingId === url.params.meetingId` (prevents cross-meeting token replay), (3) asserts `jwt.payload.botId` matches the meeting's `recall_bot_id` in the DB, (4) asserts `jwt.payload.exp > now()`, (5) spawns a per-meeting runtime if not already present, (6) routes incoming messages to it. The JWT is generated at bot-launch time in U8 (`{ meetingId, orgId, botId, iat, exp: meetingEnd + 1h }`, HS256). Recall.ai receives the full URL `wss://bot-worker.risezome.app/recall/<meetingId>/<jwt>` in `realtime_endpoints[0].url` at Create Bot time and forwards it verbatim on every connection.
 - **Pre-implementation spike (before U9 starts):** verify against the live Recall.ai API that (a) `realtime_endpoints[].url` is preserved verbatim including path segments, (b) Recall reconnects to the same URL after a transient disconnect, (c) no path-segment limits truncate the JWT. The JWT may need to move to the query string if path length limits bite, in which case the verification logic shifts but the JWT contents and validation are unchanged. Spike duration: ~half-day, blocking U9.
 - `recall-adapter.ts`: maps Recall's `{ event: "transcript.data", data: { data: { words, participant } } }` → `Utterance { utteranceId: <derive>, text: words.map(w=>w.text).join(' '), isFinal: event==='transcript.data', speaker: participant.name, startMs: words[0].start_timestamp.relative*1000, endMs: words[at-1].end_timestamp.relative*1000, revision: <monotonic>, confidence: undefined }`. Verify against the `Utterance` shape in `packages/engine/src/transcribe/contract.ts`.
 - `meeting-runtime.ts` instantiates `MeetingSession(meetingId)`, `TranscriptWindow(meetingId, postgresTranscriptStore)`, `RetrievalPipeline({ corpusReader, embedder, session, synthesizer, classifier, skillRegistry, ...})` exactly mirroring `apps/daemon/src/cli/serve.ts`. The pipeline emits `card`, `synthesisStart/Delta/Done/Error/Retracted`, `cardUpdated`, `cardRetracted` events.
@@ -927,7 +927,7 @@ Data plane: corpus + meeting artifacts in Postgres with RLS, live events on Real
   - `bot.call_ended` → `ended` (final state for normal meetings)
   - `bot.done` → no status change (just indicates Recall is done processing); signals bot-worker to flush.
   - `bot.fatal` → `failed` + error code + human-readable message from `bot-status-mapping.ts`.
-- `bot-status-mapping.ts` translates Recall sub-codes (e.g., `microsoft_teams_captcha_detected`, `zoom_internal_error`, `meeting_not_found`) into next-action text shown in the portal: "Your IT admin needs to whitelist Upwell's bot in Teams" / "Zoom returned an error — try again" / "Couldn't find the meeting — was the URL correct?"
+- `bot-status-mapping.ts` translates Recall sub-codes (e.g., `microsoft_teams_captcha_detected`, `zoom_internal_error`, `meeting_not_found`) into next-action text shown in the portal: "Your IT admin needs to whitelist Risezome's bot in Teams" / "Zoom returned an error — try again" / "Couldn't find the meeting — was the URL correct?"
 - On `bot.fatal` or `*_denied`, the live meeting page shows a banner with the error + retry button (where applicable).
 - On `bot.call_ended`, signal the bot-worker to flush (via Postgres NOTIFY or HTTP); meeting status `completed`.
 
@@ -982,7 +982,7 @@ Data plane: corpus + meeting artifacts in Postgres with RLS, live events on Real
 - On reconnect, fetch all `meeting_events` rows with `event_id > lastEventId` (the last event the client successfully processed) ordered by `event_id` ASC. Replay each through the reducer; reducer dedupes any that arrived via the live channel before reconnect. After replay, set `lastEventId` to the highest replayed event_id and resume live subscription.
 - HUD components are copied (not shared-package) for MVP — `@upwell/hud-ui`.
 - **Status-driven rendering:** the page renders different content based on `meetings.status`:
-  - `launching`, `awaiting_recall`, `joining`, `waiting_room` → "Upwell is joining your meeting…" header + the rotating EmptyState messages from `@upwell/hud-ui` + a thin "joined N seconds ago" progress hint. No card stream surface yet.
+  - `launching`, `awaiting_recall`, `joining`, `waiting_room` → "Risezome is joining your meeting…" header + the rotating EmptyState messages from `@upwell/hud-ui` + a thin "joined N seconds ago" progress hint. No card stream surface yet.
   - `recording` → full HUD (CardStream, SynthesisStream, PinnedSection, SynthesisAnnounce).
   - `completed` → redirect to `/review`.
   - `failed` → the diagnostic banner from U10 with the human-readable error message and retry/edit-URL actions when applicable. No card stream.
@@ -1182,11 +1182,11 @@ Data plane: corpus + meeting artifacts in Postgres with RLS, live events on Real
 
 - **Platform secrets management:** Recall.ai, Anthropic, Voyage, Deepgram, GitHub App private key, Supabase secret key live in Vercel project env vars (for portal — which hosts Inngest functions too) and in the operator's local `.env` file (for bot-worker during early beta). Document the manual set-up process in `apps/portal/README.md` + `apps/bot-worker/README.md`.
 - **Local development prerequisites:** running U1's RLS tests requires the Supabase CLI (`brew install supabase/tap/supabase`) and Docker Desktop (for `supabase start`). Document in `apps/portal/README.md` under "Local Development." CI runs the same RLS tests against a temporary Supabase instance via the `supabase/setup-cli` GitHub Action.
-- **Google Cloud Console one-time setup:** the `upwell.com` domain must be added as a verified webhook destination in the Google Cloud Console for Calendar Push notifications to work. Vercel preview deploys (`*.vercel.app`) cannot receive push notifications; integration tests for U6 push are limited to staging/prod deployments behind verified domains.
-- **Bot-worker hosting (early beta):** runs as `pnpm --filter @upwell/bot-worker dev` on the operator's laptop. Cloudflare Tunnel (named tunnel `upwell-bot`, hostname `bot-worker.upwell.com`) maps inbound WSS to localhost. Operator runs `cloudflared tunnel run upwell-bot` in a second terminal. The laptop must be online during beta meeting hours; testers are aware. **Migration trigger to managed hosting (Fly.io / Railway):** any of (a) tester needs reliable 24/7 availability, (b) consistent peak > 3 concurrent meetings, or (c) beta expansion past ~10 testers. When triggered, add `Dockerfile` + `fly.toml` (or Railway equivalent) and switch CNAME of `bot-worker.upwell.com` from Cloudflare Tunnel to the managed host.
+- **Google Cloud Console one-time setup:** the `risezome.app` domain must be added as a verified webhook destination in the Google Cloud Console for Calendar Push notifications to work. Vercel preview deploys (`*.vercel.app`) cannot receive push notifications; integration tests for U6 push are limited to staging/prod deployments behind verified domains.
+- **Bot-worker hosting (early beta):** runs as `pnpm --filter @upwell/bot-worker dev` on the operator's laptop. Cloudflare Tunnel (named tunnel `upwell-bot`, hostname `bot-worker.risezome.app`) maps inbound WSS to localhost. Operator runs `cloudflared tunnel run upwell-bot` in a second terminal. The laptop must be online during beta meeting hours; testers are aware. **Migration trigger to managed hosting (Fly.io / Railway):** any of (a) tester needs reliable 24/7 availability, (b) consistent peak > 3 concurrent meetings, or (c) beta expansion past ~10 testers. When triggered, add `Dockerfile` + `fly.toml` (or Railway equivalent) and switch CNAME of `bot-worker.risezome.app` from Cloudflare Tunnel to the managed host.
 - **GitHub App manifest flow is a one-time platform setup** — the App registration is not per-user. Document this clearly.
 - **Recall.ai dashboard config:** BYO Deepgram key must be added in the Recall dashboard for the project. One-time setup step before any bot is created.
-- **Inngest setup:** Vercel integration is one-time; webhook URL needs to be registered (`https://upwell.com/api/inngest`). Document in `apps/portal/README.md`.
+- **Inngest setup:** Vercel integration is one-time; webhook URL needs to be registered (`https://risezome.app/api/inngest`). Document in `apps/portal/README.md`.
 - **Pre-meeting context-prep deferred (OQ3):** create a GitHub issue at plan completion that describes the feature, references R24 (currently silent on pre-prep), and outlines the implementation shape (early Inngest job triggered on opt-in that runs retrieval against meeting metadata; renders results as "Suggested context" section on the meeting page).
 - **`docs/solutions/` seeding:** After each phase lands, capture the load-bearing decisions: RLS shape (after U1+U2), Recall transcript adapter (after U9), ZDR enforcement (after U8), bot-worker process model (after U9-U10). Use `/ce-compound` per phase.
 - **Cost monitoring:** Recall.ai usage ($0.65/hr beta budget), Anthropic synthesis tokens, Voyage embed calls. Add a simple `telemetry_events` writer (already in daemon schema) to bot-worker so per-meeting cost can be reconstructed.

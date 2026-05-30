@@ -24,7 +24,7 @@ export async function runIndexRepo(args: readonly string[]): Promise<number> {
 
   const githubToken = requireEnv('GITHUB_TOKEN');
   const voyageKey = requireEnv('VOYAGE_API_KEY');
-  const indexFiles = optionalEnv('UPWELL_INDEX_FILES') !== 'false';
+  const indexFiles = optionalEnv('RISEZOME_INDEX_FILES') !== 'false';
 
   const dataDir = getDataDir();
   const cacheDir = join(dataDir, 'cache', 'github');

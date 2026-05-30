@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { AppStateProvider, useAppDispatch } from '../state/app-state';
-import { useUpwellSocket } from '../hooks/use-upwell-socket';
+import { useRisezomeSocket } from '../hooks/use-risezome-socket';
 import type { ServerMessage } from '../types';
 
 interface BootstrapConfig {
@@ -12,13 +12,13 @@ interface BootstrapConfig {
 
 declare global {
   interface Window {
-    UPWELL_BOOTSTRAP?: BootstrapConfig;
+    RISEZOME_BOOTSTRAP?: BootstrapConfig;
   }
 }
 
 /**
  * Wraps children in `<AppStateProvider>` and wires the WS hook so server
- * messages flow into the reducer. `window.UPWELL_BOOTSTRAP` is injected by
+ * messages flow into the reducer. `window.RISEZOME_BOOTSTRAP` is injected by
  * the daemon's HTML response; the value is read once on mount.
  *
  * If the bootstrap config is missing (e.g., dev server with no daemon),
@@ -38,12 +38,12 @@ function SocketBridge(): null {
   const [config, setConfig] = useState<BootstrapConfig | null>(null);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.UPWELL_BOOTSTRAP !== undefined) {
-      setConfig(window.UPWELL_BOOTSTRAP);
+    if (typeof window !== 'undefined' && window.RISEZOME_BOOTSTRAP !== undefined) {
+      setConfig(window.RISEZOME_BOOTSTRAP);
     }
   }, []);
 
-  useUpwellSocket({
+  useRisezomeSocket({
     url: config?.wsUrl ?? '',
     token: config?.token ?? '',
     onMessage: (msg: ServerMessage): void => {

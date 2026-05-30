@@ -1,4 +1,4 @@
-import { UpwellError } from '@upwell/shared-types';
+import { RisezomeError } from '@risezome/shared-types';
 import type { SkillRegistry } from '../skills/registry.js';
 
 export interface ClassifyInput {
@@ -34,7 +34,7 @@ export type ClassifierProviderErrorKind =
   | 'server-error'
   | 'unknown';
 
-export class ClassifierProviderError extends UpwellError {
+export class ClassifierProviderError extends RisezomeError {
   readonly kind: ClassifierProviderErrorKind;
   readonly retryAfterMs: number | undefined;
   constructor(
