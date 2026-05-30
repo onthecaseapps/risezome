@@ -13,7 +13,7 @@ export function Hero(): React.ReactElement {
         </span>
 
         <h1 className="mt-6 text-balance text-4xl font-bold tracking-tight sm:text-6xl">
-          The context finds you.
+          Answers, before you ask.
         </h1>
 
         <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg text-muted sm:text-xl">
