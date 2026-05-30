@@ -120,8 +120,8 @@ export const TIMELINE: readonly TimelineEntry[] = [
 /** When the last event has fired; the player holds here before looping. */
 export const TIMELINE_END_MS: number = TIMELINE.reduce((max, e) => Math.max(max, e.atMs), 0);
 
-/** Hold on the finished scene before resetting and looping. */
-export const LOOP_HOLD_MS = 3500;
+/** Hold on the finished scene (the completed AI Summary) before looping. */
+export const LOOP_HOLD_MS = 8000;
 
 /** Total cycle length including the end-hold. */
 export const TIMELINE_DURATION_MS: number = TIMELINE_END_MS + LOOP_HOLD_MS;
