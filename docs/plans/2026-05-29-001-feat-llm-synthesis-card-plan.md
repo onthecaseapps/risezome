@@ -145,7 +145,7 @@ Synthesized from `platform.claude.com/docs` and supporting RAG-synthesis best-pr
 
 ## Implementation Units
 
-- [ ] U1. **Anthropic synthesizer contract + streaming client + SSE test utility**
+- [x] U1. **Anthropic synthesizer contract + streaming client + SSE test utility**
 
 **Goal:** Stand up a typed `Synthesizer` interface and an `AnthropicSynthesizer` implementation that posts to Messages API, parses SSE, yields chunks via `AsyncIterable`, accepts an externally owned `AbortSignal`, and handles 429 / 5xx / transient errors with retry+backoff. Includes the `sseResponse(events)` test helper required to author streaming tests — the existing `voyage.test.ts` `new Response(string)` pattern does not cover chunked bodies.
 
@@ -189,7 +189,7 @@ Synthesized from `platform.claude.com/docs` and supporting RAG-synthesis best-pr
 
 **Verification:** All test scenarios pass. Manual smoke: with a real `ANTHROPIC_API_KEY`, calling `synthesize()` with a sample utterance + sources yields a streaming answer within ~1-2s TTFT.
 
-- [ ] U2. **Cacheable prompt assembly + citation parsing**
+- [x] U2. **Cacheable prompt assembly + citation parsing**
 
 **Goal:** Build the cacheable system prefix (system prompt + 5-7 few-shot examples) sized ≥4096 tokens for Haiku cache eligibility, the dynamic user-message body (utterance + numbered sources), and the post-hoc citation extractor / refusal-sentinel detector. Also export the `REFUSAL_SENTINEL` constant — U4 consumes it for the refusal-detection branch.
 
@@ -224,7 +224,7 @@ Synthesized from `platform.claude.com/docs` and supporting RAG-synthesis best-pr
 
 **Verification:** All scenarios pass. The token-length proxy and the live `cache_creation_input_tokens` check in U7 together prove caching engages.
 
-- [ ] U3. **Runtime consent check helper**
+- [x] U3. **Runtime consent check helper**
 
 **Goal:** Add `hasConsent(db, provider)` helper that reads the existing `consent` SQLite table. Synthesis call sites use it to short-circuit cleanly when the user hasn't granted `anthropic` consent.
 
@@ -257,7 +257,7 @@ Synthesized from `platform.claude.com/docs` and supporting RAG-synthesis best-pr
 
 **Verification:** All scenarios pass; pipeline integration in U4 demonstrates the gate working end-to-end.
 
-- [ ] U4. **Pipeline integration: gate, fire, stream, cite, retract**
+- [x] U4. **Pipeline integration: gate, fire, stream, cite, retract**
 
 **Goal:** Hook the synthesizer into `RetrievalPipeline.#evaluate()` after raw cards emit. Gate on top-card RRF score and consent. Track in-flight `AbortController` per session and abort on the next schedule. Emit new `synthesisStart` / `synthesisDelta` / `synthesisDone` / `synthesisError` / `synthesisRetracted` events. Validate citations post-hoc. Cascade retraction when a cited source retracts.
 
@@ -302,7 +302,7 @@ Synthesized from `platform.claude.com/docs` and supporting RAG-synthesis best-pr
 
 **Verification:** All scenarios pass. Pipeline tests previously green still green. The synthesizer mock can drive end-to-end behavior without an Anthropic key.
 
-- [ ] U5. **Serve.ts wiring + env config + WS broadcast bridge**
+- [x] U5. **Serve.ts wiring + env config + WS broadcast bridge**
 
 **Goal:** Instantiate the `AnthropicSynthesizer` from env, pass it (with the consent gate closure) into `RetrievalPipeline`, extend `CardBusEvents` and broadcast the new synthesis events over the existing `/ws/events` WebSocket.
 
@@ -346,7 +346,7 @@ Synthesized from `platform.claude.com/docs` and supporting RAG-synthesis best-pr
 
 **Verification:** Daemon starts cleanly with and without the new keys. The pipeline gate behavior changes correctly based on consent state. WS subscribers receive synthesis events when the pipeline emits them.
 
-- [ ] U6. **HUD: synthesis card streaming render + citation chips**
+- [x] U6. **HUD: synthesis card streaming render + citation chips**
 
 **Goal:** Extend the HUD's WS message handling and `Sidebar` to render a streaming synthesis card on top of the stream. Append delta chunks to the card body, render `[N]` citation chips that scroll to or open the matching raw card, retract the synthesis when `synthesisRetracted` arrives, fade in on start, remove cursor on done, and silently suppress refusal sentinels.
 
@@ -391,7 +391,7 @@ Synthesized from `platform.claude.com/docs` and supporting RAG-synthesis best-pr
 
 **Verification:** All scenarios pass. Manual smoke: live meeting produces a streaming synthesis card with clickable `[N]` chips that scroll to the raw cards below.
 
-- [ ] U7. **Telemetry: structured logs + cache observability**
+- [x] U7. **Telemetry: structured logs + cache observability**
 
 **Goal:** Emit structured log lines at every synthesis event boundary so cost, latency, cache hit rate, abort rate, and refusal rate are observable from the daemon terminal during dogfood. Surface them in the format that the U24 telemetry stream (separate plan) will eventually consume.
 

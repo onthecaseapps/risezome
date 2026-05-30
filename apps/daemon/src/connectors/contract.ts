@@ -5,9 +5,21 @@ export class ConnectorError extends UpwellError {}
 
 export class ConnectorAuthError extends ConnectorError {
   readonly requiredScopes: readonly string[];
-  constructor(message: string, requiredScopes: readonly string[] = [], options?: ErrorOptions) {
+  /**
+   * HTTP status code from the upstream response when known (401, 403, 404,
+   * or other non-ok). Lets typed callers branch on the actual code instead
+   * of parsing the message string. Optional for backwards compatibility
+   * with existing callers that don't set it.
+   */
+  readonly status: number | undefined;
+  constructor(
+    message: string,
+    requiredScopes: readonly string[] = [],
+    options?: ErrorOptions & { status?: number },
+  ) {
     super('connector-auth', message, options);
     this.requiredScopes = requiredScopes;
+    this.status = options?.status;
   }
 }
 

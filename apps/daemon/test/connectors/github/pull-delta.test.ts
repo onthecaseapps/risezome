@@ -131,10 +131,13 @@ describe('pullRepoIssuesAndPRs', () => {
       ]),
     });
     const result = await pullRepoIssuesAndPRs(client, TEST_AUTH, makeScope(), null);
-    const commentChunk = result.chunks.find((c) => c.text.startsWith('alice:'));
+    // After A+B the chunk text starts with the natural-language context line
+    // (`Issue acme/widget#N — title. Status: open. Labels: ...`) and the
+    // comment body comes after. Locate by the author marker inside the body.
+    const commentChunk = result.chunks.find((c) => c.text.includes('\nalice: '));
     expect(commentChunk?.text).toContain('I think we should');
     // The empty comment from bob is dropped.
-    expect(result.chunks.some((c) => c.text.startsWith('bob:'))).toBe(false);
+    expect(result.chunks.some((c) => c.text.includes('\nbob: '))).toBe(false);
   });
 
   it('paginates: returns nextCursor when page is full and null when partial', async () => {

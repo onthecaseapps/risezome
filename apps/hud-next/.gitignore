@@ -1,0 +1,10 @@
+# Next.js build artifacts
+.next/
+out/
+next-env.d.ts
+
+# pnpm
+node_modules/
+
+# tsc incremental cache
+*.tsbuildinfo

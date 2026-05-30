@@ -3,10 +3,11 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     globals: false,
-    environmentMatchGlobs: [['apps/hud/**/*.test.ts', 'happy-dom']],
+    // hud-next has its own vitest.config.ts (happy-dom, .tsx support).
+    // The root-level project covers the daemon and shared-types only.
     environment: 'node',
     include: ['**/test/**/*.test.ts', '**/*.test.ts'],
-    exclude: ['**/node_modules/**', '**/dist/**', '**/build/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', '**/build/**', '**/apps/hud-next/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],

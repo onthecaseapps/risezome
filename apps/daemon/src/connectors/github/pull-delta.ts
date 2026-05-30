@@ -1,6 +1,7 @@
 import type { AuthResult, DeltaPage, ScopeDescriptor } from '../contract.js';
 import type { CanonicalChunk, CanonicalDoc } from '../../corpus/types.js';
 import { type GithubClient } from './client.js';
+import { chunkIsMeaningful } from './chunk-shared.js';
 import type { GithubIssue } from './types.js';
 
 export const GITHUB_DEFAULT_PAGE_SIZE = 100;
@@ -53,32 +54,56 @@ export async function pullRepoIssuesAndPRs(
       provenance: 'untrusted',
     });
 
+    // Brief per-chunk context line so the body and comment chunks each
+    // carry enough structural metadata to embed well on their own.
+    // Without this, the body chunk's vector knows the prose but not "this
+    // is an open bug issue tagged P0" — which limits retrieval on
+    // metadata-heavy queries like "what bugs are open right now".
+    const kind = isPr ? 'PR' : 'Issue';
+    const statusLine = `${kind} ${ownerRepo}#${String(issue.number)} — ${issue.title}. Status: ${issue.state}.`;
+    const labelLine =
+      issue.labels.length > 0
+        ? ` Labels: ${issue.labels.map((l) => l.name).join(', ')}.`
+        : '';
+    const contextLine = statusLine + labelLine;
+
     let chunkPosition = 0;
-    chunks.push({
-      chunkId: `${docId}#chunk:${String(chunkPosition++)}`,
-      docId,
-      domain: 'text',
-      text: headerText,
-      position: chunkPosition,
-    });
-    if (body.trim().length > 0) {
+    // The "header" chunk is the structural metadata summary — title, state,
+    // labels, assignees, updated_at — in a form the embedder can read as
+    // natural language.
+    const headerChunkText = `${contextLine}\n\n${headerText}`;
+    if (chunkIsMeaningful(headerChunkText)) {
       chunks.push({
         chunkId: `${docId}#chunk:${String(chunkPosition++)}`,
         docId,
         domain: 'text',
-        text: body,
+        text: headerChunkText,
         position: chunkPosition,
       });
+    }
+    if (body.trim().length > 0) {
+      const bodyChunkText = `${contextLine}\n\n${body}`;
+      if (chunkIsMeaningful(bodyChunkText)) {
+        chunks.push({
+          chunkId: `${docId}#chunk:${String(chunkPosition++)}`,
+          docId,
+          domain: 'text',
+          text: bodyChunkText,
+          position: chunkPosition,
+        });
+      }
     }
 
     if (issue.comments_inline !== undefined) {
       for (const comment of issue.comments_inline) {
         if (comment.body.trim().length === 0) continue;
+        const commentText = `${contextLine}\n\n${comment.user.login}: ${comment.body}`;
+        if (!chunkIsMeaningful(commentText)) continue;
         chunks.push({
           chunkId: `${docId}#chunk:${String(chunkPosition++)}`,
           docId,
           domain: 'text',
-          text: `${comment.user.login}: ${comment.body}`,
+          text: commentText,
           position: chunkPosition,
         });
       }
@@ -99,6 +124,11 @@ function canonicalDocId(ownerRepo: string, issue: GithubIssue): string {
   return `gh:${ownerRepo}#${kind}:${String(issue.number)}`;
 }
 
+// Structured metadata summary that goes into the first chunk of every
+// issue/PR doc. Kept in compact key=value form for the BM25 ranker — the
+// natural-language context line above carries the embedding-friendly
+// version. Both shapes appear in the same chunk so the same doc is
+// retrievable by either lexical or semantic queries.
 function renderHeader(ownerRepo: string, issue: GithubIssue): string {
   const labels = issue.labels.map((l) => l.name).join(', ');
   return [
