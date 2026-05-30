@@ -111,10 +111,6 @@ export function MeetingDemo(): React.ReactElement {
       <DemoHeader meetingLabel={MEETING_LABEL} />
       <Transcript lines={state.transcript} activeLineTyping={typingTranscript} />
       <div className="card-stream">
-        {showRawCards &&
-          state.cards.map((card) => (
-            <HudCard key={card.id} card={card} entering={!seenCardsRef.current.has(card.id)} />
-          ))}
         {state.synthesis !== null && (
           <SynthesisCard
             synthesis={{
@@ -126,6 +122,10 @@ export function MeetingDemo(): React.ReactElement {
             entering={!seenSynthesisRef.current}
           />
         )}
+        {showRawCards &&
+          state.cards.map((card) => (
+            <HudCard key={card.id} card={card} entering={!seenCardsRef.current.has(card.id)} />
+          ))}
       </div>
     </div>
   );

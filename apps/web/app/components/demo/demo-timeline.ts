@@ -86,14 +86,14 @@ export const SYNTHESIS_TEXT: string = SYNTHESIS_CHUNKS.join('');
 
 export const TIMELINE: readonly TimelineEntry[] = [
   {
-    atMs: 300,
+    atMs: 250,
     event: {
       kind: 'transcript',
       line: { id: 't1', speaker: 'Priya', text: 'Standups — Marco, where are we on the auth migration?' },
     },
   },
   {
-    atMs: 3200,
+    atMs: 1500,
     event: {
       kind: 'transcript',
       line: {
@@ -103,16 +103,16 @@ export const TIMELINE: readonly TimelineEntry[] = [
       },
     },
   },
-  { atMs: 4400, event: { kind: 'card', card: PR_CARD } },
-  { atMs: 5200, event: { kind: 'card', card: JIRA_CARD } },
-  { atMs: 6000, event: { kind: 'card', card: DOC_CARD } },
-  { atMs: 7000, event: { kind: 'synthesisStart' } },
-  { atMs: 7000, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[0]! } },
-  { atMs: 7900, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[1]! } },
-  { atMs: 8800, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[2]! } },
-  { atMs: 9700, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[3]! } },
+  { atMs: 2300, event: { kind: 'card', card: PR_CARD } },
+  { atMs: 2800, event: { kind: 'card', card: JIRA_CARD } },
+  { atMs: 3300, event: { kind: 'card', card: DOC_CARD } },
+  { atMs: 4100, event: { kind: 'synthesisStart' } },
+  { atMs: 4100, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[0]! } },
+  { atMs: 4900, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[1]! } },
+  { atMs: 5700, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[2]! } },
+  { atMs: 6500, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[3]! } },
   {
-    atMs: 10600,
+    atMs: 7300,
     event: { kind: 'synthesisDone', citations: [1, 2, 3], sources: SYNTHESIS_SOURCES },
   },
 ];

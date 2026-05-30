@@ -50,9 +50,9 @@ describe('stateAtElapsed (cursor fold)', () => {
   });
 
   it('applies only events due so far at partial elapsed time', () => {
-    // First transcript line fires at 300ms; nothing before it.
-    expect(stateAtElapsed(299).transcript).toHaveLength(0);
-    expect(stateAtElapsed(300).transcript).toHaveLength(1);
+    // First transcript line fires at 250ms; nothing before it.
+    expect(stateAtElapsed(249).transcript).toHaveLength(0);
+    expect(stateAtElapsed(250).transcript).toHaveLength(1);
   });
 
   it('is monotonic — card count never decreases as time advances', () => {
