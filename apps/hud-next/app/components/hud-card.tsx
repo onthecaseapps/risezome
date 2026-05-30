@@ -17,12 +17,17 @@ import { PinGlyph } from './glyphs';
 export function HudCard({
   card,
   entering = false,
+  pinned = false,
 }: {
   card: CardEvent;
   entering?: boolean;
+  pinned?: boolean;
 }): ReactElement {
+  const classes = ['card'];
+  if (entering) classes.push('is-entering');
+  if (pinned) classes.push('pinned');
   return (
-    <article className={entering ? 'card is-entering' : 'card'} data-card-id={card.cardId}>
+    <article className={classes.join(' ')} data-card-id={card.cardId}>
       <CardHeaderRow card={card} />
       <div className="title">
         {typeof card.url === 'string' && card.url.length > 0 ? (
