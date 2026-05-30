@@ -16,13 +16,21 @@ import {
 
 const MEETING_LABEL = 'Sprint standup · #eng-planning';
 
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
+
 /**
  * The simulated meeting. Drives the HUD-faithful components from the canned
  * timeline (plan U6):
- *  - auto-starts when scrolled into view (IntersectionObserver) and pauses
- *    when offscreen, accumulating elapsed time only while visible;
- *  - loops with a hold at the end;
- *  - honors prefers-reduced-motion by rendering the finished scene statically.
+ *  - playback runs on mount and loops with an end-hold;
+ *  - an IntersectionObserver *pauses* it while scrolled offscreen (it does not
+ *    gate the initial start, so flaky/absent IO can't leave it stuck empty);
+ *  - prefers-reduced-motion renders the finished scene statically, no loop.
  */
 export function MeetingDemo(): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -34,65 +42,53 @@ export function MeetingDemo(): React.ReactElement {
   const seenSynthesisRef = useRef(false);
 
   useEffect(() => {
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduce) {
+    if (prefersReducedMotion()) {
       // Static end-state: the full scene, no animation, no loop.
       setState(terminalState());
       return;
     }
 
-    const elapsedRef = { value: 0 };
-    let lastTs = 0;
     let raf = 0;
-    let visible = false;
+    let lastTs = 0;
+    let elapsed = 0;
+    let paused = false;
 
     const frame = (ts: number): void => {
+      if (paused) {
+        lastTs = ts; // keep the clock from jumping while paused
+        raf = window.requestAnimationFrame(frame);
+        return;
+      }
       if (lastTs === 0) lastTs = ts;
-      const dt = ts - lastTs;
+      elapsed += ts - lastTs;
       lastTs = ts;
-      elapsedRef.value += dt;
-      if (elapsedRef.value >= TIMELINE_DURATION_MS) {
-        elapsedRef.value = 0;
+      if (elapsed >= TIMELINE_DURATION_MS) {
+        elapsed = 0;
         seenCardsRef.current.clear();
         seenSynthesisRef.current = false;
       }
-      setState(stateAtElapsed(elapsedRef.value));
+      setState(stateAtElapsed(elapsed));
       raf = window.requestAnimationFrame(frame);
     };
 
-    const start = (): void => {
-      if (raf !== 0) return;
-      lastTs = 0; // avoid a dt spike after a pause
-      raf = window.requestAnimationFrame(frame);
-    };
-    const stop = (): void => {
-      if (raf !== 0) {
-        window.cancelAnimationFrame(raf);
-        raf = 0;
-      }
-    };
+    // Start immediately — playback does not depend on the observer firing.
+    raf = window.requestAnimationFrame(frame);
 
-    const el = containerRef.current;
+    // Observer only pauses/resumes based on visibility.
     let observer: IntersectionObserver | null = null;
+    const el = containerRef.current;
     if (el !== null && typeof IntersectionObserver !== 'undefined') {
       observer = new IntersectionObserver(
         (entries) => {
-          for (const entry of entries) {
-            visible = entry.isIntersecting;
-            if (visible) start();
-            else stop();
-          }
+          for (const entry of entries) paused = !entry.isIntersecting;
         },
-        { threshold: 0.25 },
+        { threshold: 0 },
       );
       observer.observe(el);
-    } else {
-      // No IntersectionObserver (older runtime / tests): just play.
-      start();
     }
 
     return (): void => {
-      stop();
+      window.cancelAnimationFrame(raf);
       if (observer !== null) observer.disconnect();
     };
   }, []);
