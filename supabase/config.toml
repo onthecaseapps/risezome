@@ -14,7 +14,10 @@ max_rows = 1000
 [db]
 port = 54322
 shadow_port = 54320
-major_version = 15
+# Match the cloud project's Postgres version. Supabase defaults new projects
+# to 17 as of late 2025; older projects on 15 should bump after a verified
+# migration run.
+major_version = 17
 
 [studio]
 enabled = true
