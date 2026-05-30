@@ -219,6 +219,36 @@
 
 /* --- Synthesis card --------------------------------------------------- */
 
+/* Height-expansion reveal: when the synthesis card enters at the top of the
+   stream, animate its row from 0fr → 1fr so the cards below slide down
+   smoothly instead of jumping. The inner wrapper clips during the collapse. */
+.upwell-hud .synthesis-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+
+.upwell-hud .synthesis-reveal > .synthesis-reveal-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.upwell-hud .synthesis-reveal.is-entering {
+  animation: upwell-synthesis-reveal 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes upwell-synthesis-reveal {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .upwell-hud .card.synthesis {
   border-color: var(--accent);
   border-left-width: 3px;
@@ -370,7 +400,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .upwell-hud .card.is-entering {
+  .upwell-hud .card.is-entering,
+  .upwell-hud .synthesis-reveal.is-entering {
     animation: none;
   }
   .upwell-hud .synthesis-cursor,

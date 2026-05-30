@@ -36,11 +36,6 @@ export function MeetingDemo(): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<DemoState>(INITIAL_STATE);
 
-  // Cards/synthesis that have already animated in, so is-entering fires exactly
-  // once per appearance (and again after a loop reset clears the set).
-  const seenCardsRef = useRef<Set<string>>(new Set());
-  const seenSynthesisRef = useRef(false);
-
   useEffect(() => {
     if (prefersReducedMotion()) {
       // Static end-state: the full scene, no animation, no loop.
@@ -64,8 +59,6 @@ export function MeetingDemo(): React.ReactElement {
       lastTs = ts;
       if (elapsed >= TIMELINE_DURATION_MS) {
         elapsed = 0;
-        seenCardsRef.current.clear();
-        seenSynthesisRef.current = false;
       }
       setState(stateAtElapsed(elapsed));
       raf = window.requestAnimationFrame(frame);
@@ -93,39 +86,36 @@ export function MeetingDemo(): React.ReactElement {
     };
   }, []);
 
-  // After paint, mark what's now on screen as "seen" so it doesn't re-animate
-  // on the next frame's re-render.
-  useEffect(() => {
-    for (const card of state.cards) seenCardsRef.current.add(card.id);
-    if (state.synthesis !== null) seenSynthesisRef.current = true;
-  }, [state]);
-
   // Once the answer is finalized, the raw cards consolidate into the synthesis
   // card's Sources grid — mirroring the HUD. Until then they stream above it.
   const synthDone = state.synthesis !== null && !state.synthesis.streaming;
   const showRawCards = !synthDone;
   const typingTranscript = state.synthesis === null && state.transcript.length > 0;
 
+  // Entry animations are mounted via a stable `is-entering` class so they play
+  // to completion (the per-frame re-render keeps the class unchanged) and
+  // replay only when an element unmounts/remounts across a loop reset.
   return (
     <div className="upwell-hud" ref={containerRef} aria-label="Simulated Upwell meeting">
       <DemoHeader meetingLabel={MEETING_LABEL} />
       <Transcript lines={state.transcript} activeLineTyping={typingTranscript} />
       <div className="card-stream">
         {state.synthesis !== null && (
-          <SynthesisCard
-            synthesis={{
-              text: state.synthesis.text,
-              citations: state.synthesis.citations,
-              sources: state.synthesis.sources,
-            }}
-            streaming={state.synthesis.streaming}
-            entering={!seenSynthesisRef.current}
-          />
+          <div className="synthesis-reveal is-entering">
+            <div className="synthesis-reveal-inner">
+              <SynthesisCard
+                synthesis={{
+                  text: state.synthesis.text,
+                  citations: state.synthesis.citations,
+                  sources: state.synthesis.sources,
+                }}
+                streaming={state.synthesis.streaming}
+              />
+            </div>
+          </div>
         )}
         {showRawCards &&
-          state.cards.map((card) => (
-            <HudCard key={card.id} card={card} entering={!seenCardsRef.current.has(card.id)} />
-          ))}
+          state.cards.map((card) => <HudCard key={card.id} card={card} entering />)}
       </div>
     </div>
   );
