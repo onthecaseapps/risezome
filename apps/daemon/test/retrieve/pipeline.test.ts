@@ -177,7 +177,7 @@ describe('RetrievalPipeline', () => {
     expect(cards.every((c) => c.triggeredBy === 'window')).toBe(true);
   });
 
-  it('dedup: same doc never emitted twice across two consecutive window flushes', async () => {
+  it('dedup: same doc never emitted twice across two flushes of the SAME utterance text', async () => {
     indexPR(h.db, {
       id: 'gh:repo#pr:1',
       title: 'Same doc',
@@ -187,6 +187,9 @@ describe('RetrievalPipeline', () => {
     const cards: CardEvent[] = [];
     h.pipeline.on('card', (c) => cards.push(c));
 
+    // Two flushes of the SAME utterance text (e.g., a windowChanged
+    // re-fire during the debounce window). Scope is identical →
+    // dedup blocks the second emission of the same doc.
     h.window.push({
       utteranceId: 'u1',
       text: 'topic',
@@ -198,7 +201,7 @@ describe('RetrievalPipeline', () => {
     await flushDebounce();
     h.window.push({
       utteranceId: 'u2',
-      text: 'topic again',
+      text: 'topic',
       isFinal: true,
       startMs: 96_000,
       endMs: 97_000,
@@ -207,6 +210,45 @@ describe('RetrievalPipeline', () => {
     await flushDebounce();
 
     expect(cards).toHaveLength(1);
+  });
+
+  it('dedup is scoped per-utterance: a DIFFERENT question that retrieves the same doc re-surfaces it', async () => {
+    // Regression for the dogfood bug where the second question hit
+    // synthesis.skipped reason=all-already-surfaced because the
+    // retrieved docs overlapped with the first question's results.
+    // Different latest-utterance text = different scope → cards
+    // emit again.
+    indexPR(h.db, {
+      id: 'gh:repo#pr:1',
+      title: 'Shared doc',
+      text: 'project overview',
+      vec: unitVectorAt(7),
+    });
+    const cards: CardEvent[] = [];
+    h.pipeline.on('card', (c) => cards.push(c));
+
+    h.window.push({
+      utteranceId: 'u1',
+      text: 'which ai models are used',
+      isFinal: true,
+      startMs: 95_000,
+      endMs: 96_000,
+      revision: 0,
+    });
+    await flushDebounce();
+    expect(cards).toHaveLength(1);
+
+    h.window.push({
+      utteranceId: 'u2',
+      text: 'which code languages are in the project',
+      isFinal: true,
+      startMs: 96_000,
+      endMs: 97_000,
+      revision: 0,
+    });
+    await flushDebounce();
+    expect(cards).toHaveLength(2);
+    expect(cards[0]!.docId).toBe(cards[1]!.docId);
   });
 
   it('returns no card events when nothing matches', async () => {
@@ -698,11 +740,11 @@ describe('RetrievalPipeline — synthesis gate', () => {
     expect(calls).toHaveLength(1);
     expect(h.events.start).toHaveLength(1);
 
-    // Second flush on same window: no new card (already surfaced via session) →
-    // gate skips synthesis.
+    // Second flush of the SAME utterance text: scoped dedup blocks
+    // the doc → no new card → synthesis gate skips.
     h.window.push({
       utteranceId: 'u2',
-      text: 'auth refactor still',
+      text: "what's the deal with the auth refactor",
       isFinal: true,
       startMs: 97_000,
       endMs: 98_000,
@@ -1447,23 +1489,27 @@ describe('RetrievalPipeline — router outcomes', () => {
       synthesizer: synth,
       consentCheck: () => true,
     });
-    // Index a doc; pre-mark it as already-surfaced so the retrieval loop
-    // dedups it away. emittedCards will be empty.
+    // Index a doc; pre-mark it as already-surfaced FOR THE EXACT SCOPE
+    // that the upcoming flush will use, so the retrieval loop dedups it
+    // away. emittedCards will be empty.
     indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
-    h.session.recordSurfaced({
-      cardId: 'pre',
-      docId: 'gh:a#pr:1',
-      source: 'github',
-      type: 'pull-request',
-      title: 't',
-      snippet: '',
-      score: 0.5,
-      rank: 1,
-      metadata: {},
-      surfacedAt: 0,
-      triggeredBy: 'window',
-      traceId: 'pre',
-    });
+    h.session.recordSurfaced(
+      {
+        cardId: 'pre',
+        docId: 'gh:a#pr:1',
+        source: 'github',
+        type: 'pull-request',
+        title: 't',
+        snippet: '',
+        score: 0.5,
+        rank: 1,
+        metadata: {},
+        surfacedAt: 0,
+        triggeredBy: 'window',
+        traceId: 'pre',
+      },
+      'how many open issues are there',
+    );
     await pushAndFlush(h.window, 'how many open issues are there');
 
     // The tool ran AND the synthesizer was called with the tool source alone.

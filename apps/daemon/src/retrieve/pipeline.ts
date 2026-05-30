@@ -456,8 +456,14 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
     let emitted = 0;
     let rank = 0;
     const emittedCards: CardEvent[] = [];
+    // Dedup is scoped to the embed input (the latest finalized utterance).
+    // A doc surfaced for question A does not block the same doc from
+    // surfacing for question B — different questions get fresh retrieval,
+    // even when the retrieval results overlap. Within a single question's
+    // debounce/windowChanged re-fire cycle, the TTL still prevents
+    // duplicate card emissions for the same docId.
     for (const r of results) {
-      if (this.#session.hasSurfaced(r.doc.id)) continue;
+      if (this.#session.hasSurfaced(r.doc.id, embedInput)) continue;
       rank += 1;
       const url = buildCardUrl(r.doc.url, r.snippet);
       const card: CardEvent = {
@@ -476,7 +482,7 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
         ...(utteranceId !== undefined && { utteranceId }),
         ...(url !== null && { url }),
       };
-      this.#session.recordSurfaced(card);
+      this.#session.recordSurfaced(card, embedInput);
       this.emit('card', card);
       emittedCards.push(card);
       emitted += 1;

@@ -18,15 +18,16 @@ export interface ActiveSynthesis {
 
 export interface MeetingSessionOptions {
   /**
-   * How long a surfaced doc is considered "already seen" for dedup
-   * purposes. After this window expires, the doc may surface again for
-   * a follow-up question. Set to `Infinity` to restore the previous
-   * permanent-per-meeting behavior.
+   * Upper bound on how long a (docId, scope) pair is considered
+   * "already seen" for dedup purposes. Dedup is **scoped by the embed
+   * input** (the latest finalized utterance text) — so a doc surfaced
+   * for question A does NOT dedup-block the same doc from surfacing
+   * for question B, even when the retrieval happens to overlap. Within
+   * a single question's debounce/windowChanged flush cycle, the TTL
+   * still prevents duplicate card emissions.
    *
-   * The default (120s) is short enough that a legitimately new question
-   * later in a meeting can re-surface a relevant doc, but long enough
-   * that two flushes triggered by the same utterance (debounce +
-   * windowChanged re-fire) won't show the same card twice.
+   * Default 120s. Set to `Infinity` for the legacy permanent-per-meeting
+   * behavior keyed only by docId (no scope).
    */
   readonly surfacedTtlMs?: number;
   /**
@@ -61,15 +62,30 @@ export class MeetingSession {
     this.#now = options.now ?? Date.now;
   }
 
-  hasSurfaced(docId: string): boolean {
-    const at = this.#surfacedAt.get(docId);
+  /**
+   * Returns true when the doc has been surfaced for the given scope
+   * (typically the embed input — the latest finalized utterance text)
+   * within the TTL window. A doc surfaced under a different scope is
+   * NOT considered seen — the same retrieval result for a different
+   * question is allowed to re-surface, which is what users expect
+   * when they ask a follow-up question that happens to retrieve
+   * overlapping documents.
+   *
+   * When scope is `undefined`, falls back to the legacy doc-only key —
+   * preserves pinned-card lookups and existing test paths that don't
+   * care about scoping.
+   */
+  hasSurfaced(docId: string, scope?: string): boolean {
+    const key = scope === undefined ? docId : `${scope}::${docId}`;
+    const at = this.#surfacedAt.get(key);
     if (at === undefined) return false;
     if (this.#surfacedTtlMs === Infinity) return true;
     return this.#now() - at < this.#surfacedTtlMs;
   }
 
-  recordSurfaced(card: CardEvent): void {
-    this.#surfacedAt.set(card.docId, this.#now());
+  recordSurfaced(card: CardEvent, scope?: string): void {
+    const key = scope === undefined ? card.docId : `${scope}::${card.docId}`;
+    this.#surfacedAt.set(key, this.#now());
     this.#cards.set(card.cardId, card);
   }
 
