@@ -102,7 +102,7 @@
 }
 
 /* Exit/consolidation: when the answer finalizes, the raw cards collapse and
-   fade upward — folding into the synthesis card's Sources grid above them.
+   fade upward - folding into the synthesis card's Sources grid above them.
    The grid-row collapse pulls the surrounding layout closed smoothly. */
 .upwell-hud .card-collapse {
   display: grid;

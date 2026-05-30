@@ -9,14 +9,14 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'Upwell — meeting context that finds you',
+  title: 'Upwell: live meeting context',
   description:
-    'Upwell is a local-first meeting copilot that surfaces relevant context — pull requests, tickets, docs — the moment it matters. No querying, no bot, no asking.',
+    'Upwell is a meeting copilot that surfaces relevant context (pull requests, tickets, and docs) the moment it matters. No querying, no searching, no asking.',
 };
 
 // No-flash theme init: apply the .dark class before paint based on the OS
 // preference, so the ported HUD tokens render in the right mode on first paint.
-// A future toggle can override this (theme switch is deferred — see plan).
+// A future toggle can override this (theme switch is deferred - see plan).
 const themeInit = `(function(){try{if(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.classList.add('dark')}}catch(e){}})()`;
 
 export default function RootLayout({

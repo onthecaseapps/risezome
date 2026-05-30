@@ -3,7 +3,7 @@ import type { DemoCard, DemoSynthesis, TranscriptLine } from './types';
 /**
  * Canned timeline for the simulated meeting. The demo plays a believable
  * engineering standup: transcript streams, a detected question surfaces RAG
- * cards, and an AI Summary types out a cited answer. No daemon, no network —
+ * cards, and an AI Summary types out a cited answer. No daemon, no network -
  * the data is fixed and the reducer below is pure (plan U6 / KTD4).
  *
  * Event kinds echo the HUD's ServerMessage names (apps/hud/src/types.ts) for
@@ -56,7 +56,7 @@ const JIRA_CARD: DemoCard = {
   id: 'auth-204',
   source: 'jira',
   type: 'issue',
-  title: 'AUTH-204 — OAuth2 cutover',
+  title: 'AUTH-204: OAuth2 cutover',
   snippet: 'Epic tracking the OAuth2 cutover across services.',
   meta: 'In Progress · assigned to Marco',
   rank: 2,
@@ -78,7 +78,7 @@ const SYNTHESIS_CHUNKS: readonly string[] = [
   'The auth migration is in flight: PR #482 swaps session cookies for ',
   'OAuth2 and is open, waiting on review [1]. ',
   "It's tracked under AUTH-204, currently in progress with Marco [2]. ",
-  'Rollout is staged — internal, then a 10% canary, then full [3].',
+  'Rollout is staged: internal, then a 10% canary, then full [3].',
 ];
 
 /** Full answer text, assembled from the streamed chunks. */
@@ -89,7 +89,7 @@ export const TIMELINE: readonly TimelineEntry[] = [
     atMs: 250,
     event: {
       kind: 'transcript',
-      line: { id: 't1', speaker: 'Priya', text: 'Standups — Marco, where are we on the auth migration?' },
+      line: { id: 't1', speaker: 'Priya', text: 'Okay, standups. Marco, where are we on the auth migration?' },
     },
   },
   {
@@ -99,7 +99,7 @@ export const TIMELINE: readonly TimelineEntry[] = [
       line: {
         id: 't2',
         speaker: 'Marco',
-        text: "Still wrapping it up. Remind me — what's the status of the auth migration PR?",
+        text: "Still wrapping it up. Remind me, what's the status of the auth migration PR?",
       },
     },
   },

@@ -5,7 +5,7 @@ import { CardHeaderRow } from './card-bits';
  * The AI Summary (synthesis) card, mirroring the HUD's synthesis markup
  * (apps/hud/src/sidebar.ts + styles.css .card.synthesis). While `streaming`,
  * the answer types out with a blinking cursor and citations/sources are
- * withheld; once done they appear — matching the real surfacing order.
+ * withheld; once done they appear - matching the real surfacing order.
  */
 export function SynthesisCard({
   synthesis,

@@ -14,8 +14,8 @@ export default function Home(): React.ReactElement {
             Watch it work
           </h2>
           <p className="mx-auto mt-3 max-w-xl text-muted">
-            A standup, playing out live. Someone asks a question — Upwell surfaces the pull request,
-            the ticket, and the doc, then answers with citations. No one typed a search.
+            A standup, playing out live. Someone asks a question, and Upwell surfaces the pull
+            request, the ticket, and the doc, then answers with citations. No one typed a search.
           </p>
         </div>
         <div className="rounded-2xl border border-border bg-card/40 p-4 shadow-sm sm:p-6">

@@ -2,7 +2,7 @@
 
 import { useId, useState } from 'react';
 
-// Pragmatic email check — good enough for inline UX validation. Real
+// Pragmatic email check - good enough for inline UX validation. Real
 // verification would happen server-side once the form is wired up.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -31,7 +31,7 @@ export function WaitlistForm(): React.ReactElement {
 
     // Presentation-only: no network request. A real endpoint
     // (e.g. app/api/waitlist/route.ts or an external provider) attaches here
-    // later — see the landing-page plan, U7 / KTD6.
+    // later - see the landing-page plan, U7 / KTD6.
     setError('');
     setStatus('success');
   }
@@ -54,7 +54,7 @@ export function WaitlistForm(): React.ReactElement {
           >
             <p className="font-semibold text-fg">You&apos;re on the list.</p>
             <p className="mt-1 text-sm text-muted">
-              Thanks — we&apos;ll be in touch at {email.trim()}.
+              Thanks, we&apos;ll be in touch at {email.trim()}.
             </p>
           </div>
         ) : (

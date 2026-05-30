@@ -16,7 +16,7 @@ describe('Hero (U3)', () => {
 describe('ValueSections (U4)', () => {
   it('renders all three value beats', () => {
     render(<ValueSections />);
-    expect(screen.getByRole('heading', { name: /local-first & private/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /live, not after the fact/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /grounded in your tools/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /closes the doc gap/i })).toBeInTheDocument();
   });

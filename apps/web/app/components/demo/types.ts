@@ -1,7 +1,7 @@
 /**
  * Local demo types. These deliberately echo the HUD's event/card shapes
  * (apps/hud/src/types.ts) for realism but are a simplified, self-contained
- * copy — the demo imports no product code and talks to no daemon (plan KTD4).
+ * copy - the demo imports no product code and talks to no daemon (plan KTD4).
  */
 
 export type DemoSource = 'github' | 'jira' | 'slack' | 'code';
@@ -12,9 +12,9 @@ export interface DemoCard {
   readonly id: string;
   readonly source: DemoSource;
   readonly type: DemoType;
-  /** Title text — a file path, PR/issue title, or doc name. */
+  /** Title text - a file path, PR/issue title, or doc name. */
   readonly title: string;
-  /** Muted secondary line (e.g. a doc heading "## Phase 1.5 — …"). */
+  /** Muted secondary line (e.g. a doc heading "## Phase 1.5 - …"). */
   readonly docHeading?: string;
   readonly snippet: string;
   /** 1 = top match (accent "Top match" label); otherwise "Match". */

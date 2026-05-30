@@ -75,7 +75,7 @@ export function MeetingDemo(): React.ReactElement {
       raf = window.requestAnimationFrame(frame);
     };
 
-    // Start immediately — playback does not depend on the observer firing.
+    // Start immediately - playback does not depend on the observer firing.
     raf = window.requestAnimationFrame(frame);
 
     // Observer only pauses/resumes based on visibility.
@@ -98,7 +98,7 @@ export function MeetingDemo(): React.ReactElement {
   }, []);
 
   // Once the answer is finalized, the raw cards consolidate into the synthesis
-  // card's Sources grid — mirroring the HUD. Until then they stream above it.
+  // card's Sources grid - mirroring the HUD. Until then they stream above it.
   const synthDone = state.synthesis !== null && !state.synthesis.streaming;
   const typingTranscript = state.synthesis === null && state.transcript.length > 0;
 

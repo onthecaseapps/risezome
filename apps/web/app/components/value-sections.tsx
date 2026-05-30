@@ -4,14 +4,10 @@ interface Beat {
   readonly icon: React.ReactElement;
 }
 
-function ShieldIcon(): React.ReactElement {
+function BoltIcon(): React.ReactElement {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-      <path
-        d="M12 3 5 6v6c0 4 3 6.5 7 9 4-2.5 7-5 7-9V6l-7-3Z"
-        strokeLinejoin="round"
-      />
-      <path d="m9 12 2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );
 }
@@ -39,18 +35,18 @@ function LoopIcon(): React.ReactElement {
 
 const BEATS: readonly Beat[] = [
   {
-    title: 'Local-first & private',
-    body: 'Upwell runs on your machine. No bot joins the call, and audio never leaves your laptop — capture happens locally for Zoom, Meet, Teams, or a huddle alike.',
-    icon: <ShieldIcon />,
+    title: 'Live, not after the fact',
+    body: 'Context shows up during the meeting, while it can still change the decision, not buried in a summary you read tomorrow. Works the same across Zoom, Meet, Teams, or a huddle.',
+    icon: <BoltIcon />,
   },
   {
     title: 'Grounded in your tools',
-    body: "Cards pull straight from GitHub, Jira, and Slack — the PR's real status, the ticket's real owner, the doc that actually answers the question. Not a guess.",
+    body: "Cards pull straight from GitHub, Jira, and Slack: the PR's real status, the ticket's real owner, the doc that actually answers the question. Not a guess.",
     icon: <PlugIcon />,
   },
   {
     title: 'Closes the doc gap',
-    body: "When nothing answers a question, Upwell captures it with its context and turns it into a doc or ticket — so the same gap stops resurfacing next week.",
+    body: "When nothing answers a question, Upwell captures it with its context and turns it into a doc or ticket, so the same gap stops resurfacing next week.",
     icon: <LoopIcon />,
   },
 ];
@@ -59,12 +55,12 @@ const STEPS: readonly { readonly n: string; readonly title: string; readonly bod
   {
     n: '01',
     title: 'Start it before your call',
-    body: 'A background process captures system + mic audio locally. No bot, no meeting link, nothing to install for other attendees.',
+    body: 'Upwell runs alongside the meeting and follows the conversation. No meeting link to share, nothing for other attendees to set up.',
   },
   {
     n: '02',
     title: 'It listens and grounds',
-    body: 'A rolling transcript is matched against your connected sources in real time — and against the questions being asked out loud.',
+    body: 'A rolling transcript is matched against your connected sources in real time, and against the questions being asked out loud.',
   },
   {
     n: '03',

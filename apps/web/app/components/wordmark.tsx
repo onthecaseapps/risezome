@@ -1,5 +1,5 @@
 /**
- * Upwell wordmark — a small upward-swelling glyph (the "well" rising) plus the
+ * Upwell wordmark - a small upward-swelling glyph (the "well" rising) plus the
  * name. Uses the accent token so it tracks the theme. Kept as inline SVG to
  * avoid an asset request and to inherit currentColor.
  */

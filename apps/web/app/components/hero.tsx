@@ -9,7 +9,7 @@ export function Hero(): React.ReactElement {
       <div className="relative mx-auto max-w-3xl px-5 pb-16 pt-20 text-center sm:px-8 sm:pb-24 sm:pt-28">
         <span className="inline-flex items-center gap-2 rounded-full border border-border bg-card/60 px-3 py-1 text-xs font-medium text-muted">
           <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
-          Local-first meeting copilot
+          Proactive meeting copilot
         </span>
 
         <h1 className="mt-6 text-balance text-4xl font-bold tracking-tight sm:text-6xl">
@@ -17,8 +17,8 @@ export function Hero(): React.ReactElement {
         </h1>
 
         <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg text-muted sm:text-xl">
-          Upwell listens to your meeting on your own machine and surfaces the pull requests,
-          tickets, and docs that matter — the moment they matter. No querying. No bot. No asking.
+          Upwell listens to your meeting and surfaces the pull requests, tickets, and docs that
+          matter, right when they matter. No querying. No searching. No asking.
         </p>
 
         <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -37,7 +37,7 @@ export function Hero(): React.ReactElement {
         </div>
 
         <p className="mt-6 text-sm text-muted">
-          Runs locally · No bot joins your call · Grounded in GitHub, Jira &amp; Slack
+          Live during the meeting · Grounded in GitHub, Jira &amp; Slack
         </p>
       </div>
     </section>

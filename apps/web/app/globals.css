@@ -21,7 +21,7 @@
   --provisional-bg: #f0f0f5;
   --accent: #3361ff;
   --accent-fg: #ffffff;
-  /* Source-chip palette (internal convention, not brand colors) — discriminable
+  /* Source-chip palette (internal convention, not brand colors) - discriminable
      and ≥4.5:1 against the card background. Mirrors the HUD SOURCE_ACCENT map. */
   --src-github: #1f5fbf;
   --src-jira: #0b5fc7;
