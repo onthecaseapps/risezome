@@ -1,0 +1,6 @@
+/*
+ * Tailwind v4 CSS-first config. U2 fills in the tokens and the
+ * landing-page demo CSS via the Token Reconciliation pass.
+ */
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
