@@ -3,7 +3,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
+import fastifyStatic from '@fastify/static';
 import { buildCspHeader } from '../server/csp.js';
+import { loadHudInlineScriptHashes } from '../server/hud-inline-hashes.js';
 import { openCorpusDb } from '../corpus/db.js';
 import { migrate } from '../corpus/migrate.js';
 import type { FastifyInstance } from 'fastify';
@@ -35,7 +37,18 @@ import { skills as githubSkills } from '../skills/github/index.js';
 import { hasConsent } from './consent-store.js';
 import { envFloat, envInt, log, optionalEnv, requireEnv } from './util.js';
 
-const HUD_DIST = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'hud', 'dist');
+// Next.js static export from apps/hud-next. The U5 cutover moved this from
+// the legacy esbuild bundle (apps/hud/dist) to the Next.js export. The
+// daemon now serves the chunked `_next/static/*` tree directly; the entry
+// HTML still passes through the bootstrap-injection logic at `/`.
+const HUD_DIST = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+  'hud-next',
+  'out',
+);
 
 interface ActiveMeeting {
   readonly meetingId: string;
@@ -102,8 +115,25 @@ export async function runServe(): Promise<number> {
   } catch {
     log(
       'warn',
-      `HUD bundle not found at ${HUD_DIST}. Run 'pnpm --filter @upwell/hud build' first.`,
+      `HUD bundle not found at ${HUD_DIST}. Run 'pnpm --filter @upwell/hud-next build' first.`,
     );
+  }
+
+  // Compute SHA-256 hashes of every inline <script> body in the static
+  // export. Next.js ships several inline scripts (theme init + hydration
+  // payload); strict CSP requires either 'unsafe-inline' or the hash of
+  // each script body. We choose hashes — strictest policy that still
+  // allows the page to hydrate. Hashes are computed once at startup;
+  // they only change when the HUD build changes, which requires a daemon
+  // restart anyway.
+  const hudInlineScriptHashes = await loadHudInlineScriptHashes(HUD_DIST);
+  if (hudInlineScriptHashes.length === 0 && hudBootstrapHtml !== null) {
+    log(
+      'warn',
+      `HUD has no inline-script hashes — strict CSP may block hydration. Build at ${HUD_DIST} may be malformed.`,
+    );
+  } else {
+    log('info', `HUD inline-script hashes: ${String(hudInlineScriptHashes.length)} computed`);
   }
 
   const wsConnections = new Set<{ send: (data: string) => void }>();
@@ -385,6 +415,7 @@ export async function runServe(): Promise<number> {
         () => hudBootstrapHtml,
         () => server.boundPort,
         () => server.sessionAuth.token,
+        hudInlineScriptHashes,
       );
       app.get('/ws/events', { websocket: true }, (socket) => {
         socket.send(JSON.stringify({ type: 'hello', version: '0.0.0-dev' }));
@@ -492,42 +523,38 @@ function wireHudRoutesOnApp(
   getHtml: () => string | null,
   getPort: () => number,
   getToken: () => string,
+  inlineScriptHashes: readonly string[],
 ): void {
   app.get('/', (_req, reply) => {
     const bootstrapHtml = getHtml();
     if (bootstrapHtml === null) {
-      void reply.type('text/plain').send('HUD not built. Run `pnpm --filter @upwell/hud build`.');
+      void reply
+        .type('text/plain')
+        .send('HUD not built. Run `pnpm --filter @upwell/hud-next build`.');
       return;
     }
     const port = getPort();
     const wsUrl = `ws://127.0.0.1:${String(port)}/ws/events`;
-    // Per-request nonce: required so the inline bootstrap script can run
-    // under the strict `script-src 'self'` CSP without falling back to
-    // 'unsafe-inline'. Same value goes on the <script nonce="..."> tag and
-    // in the CSP `script-src 'nonce-...'` directive — browser only runs the
-    // script when the two match.
+    // Per-request nonce authorizes the bootstrap-config inline script.
+    // The Next.js hydration scripts are authorized via the hash allow-list
+    // computed at startup. Both mechanisms coexist in script-src.
     const nonce = randomBytes(16).toString('base64');
     const inject = `<script nonce="${nonce}">window.UPWELL_BOOTSTRAP = { wsUrl: ${JSON.stringify(wsUrl)}, token: ${JSON.stringify(getToken())} };</script>\n`;
     const html = bootstrapHtml.replace('</head>', `${inject}</head>`);
-    void reply.header('Content-Security-Policy', buildCspHeader(port, nonce));
+    void reply.header('Content-Security-Policy', buildCspHeader(port, nonce, inlineScriptHashes));
     void reply.type('text/html').send(html);
   });
 
-  app.get('/assets/main.js', async (_req, reply) => {
-    try {
-      const body = await readFile(join(HUD_DIST, 'main.js'));
-      void reply.type('application/javascript').send(body);
-    } catch {
-      void reply.code(404).send({ code: 'asset-missing', userMessage: 'main.js not built' });
-    }
-  });
-
-  app.get('/assets/styles.css', async (_req, reply) => {
-    try {
-      const body = await readFile(join(HUD_DIST, 'styles.css'));
-      void reply.type('text/css').send(body);
-    } catch {
-      void reply.code(404).send({ code: 'asset-missing', userMessage: 'styles.css not built' });
-    }
+  // Next.js chunked assets. `@fastify/static` handles MIME, range
+  // requests, and path-traversal protection — the assets live under
+  // `_next/static/<hashed-id>/...` and are content-addressed, so we can
+  // serve them with a long-lived Cache-Control safely.
+  void app.register(fastifyStatic, {
+    root: join(HUD_DIST, '_next'),
+    prefix: '/_next/',
+    decorateReply: false,
+    cacheControl: true,
+    maxAge: '1y',
+    immutable: true,
   });
 }
