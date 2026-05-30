@@ -11,10 +11,11 @@ export default tseslint.config(
       '**/coverage/**',
       'sidecars/**',
       'pnpm-lock.yaml',
-      // apps/web (Next.js) owns its own lint toolchain — see apps/web/eslint.config.mjs
-      // and the landing-page plan (KTD1). The root type-checked config would
-      // otherwise try to parse it outside its tsconfig project.
-      'apps/web/**',
+      // apps/portal (Next.js) owns its own lint toolchain — see apps/portal/eslint.config.mjs.
+      // The root type-checked config would otherwise try to parse it outside its tsconfig project.
+      'apps/portal/**',
+      // apps/hud-next likewise.
+      'apps/hud-next/**',
     ],
   },
   js.configs.recommended,

@@ -7,7 +7,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const nextConfig = {
   reactStrictMode: true,
   // Pin the workspace root so Turbopack doesn't infer it from an ancestor
-  // lockfile (this app lives in a pnpm monorepo at <repo>/apps/web).
+  // lockfile (this app lives in a pnpm monorepo at <repo>/apps/portal).
   turbopack: {
     root: resolve(here, '..', '..'),
   },

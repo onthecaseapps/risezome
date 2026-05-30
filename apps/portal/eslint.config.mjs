@@ -2,8 +2,8 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 
-// Self-contained flat config. The repo-root flat config ignores apps/web
-// (Next.js owns its own toolchain — see the landing-page plan, KTD1). We lint
+// Self-contained flat config. The repo-root flat config ignores apps/portal
+// (Next.js owns its own toolchain). We lint
 // with typescript-eslint's recommended set plus react-hooks rules rather than
 // eslint-config-next, which doesn't load cleanly through FlatCompat on ESLint 9.
 export default tseslint.config(

@@ -6,7 +6,7 @@ import { ValueSections } from '../app/components/value-sections';
 describe('Hero (U3)', () => {
   it('leads with the proactive headline and a CTA anchoring the waitlist', () => {
     render(<Hero />);
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/context finds you/i);
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/answers, before you ask/i);
     const cta = screen.getByRole('link', { name: /request early access/i });
     expect(cta).toHaveAttribute('href', '#waitlist');
     expect(screen.getByRole('link', { name: /see it live/i })).toHaveAttribute('href', '#demo');
