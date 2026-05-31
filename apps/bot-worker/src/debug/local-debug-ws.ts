@@ -28,7 +28,9 @@
 
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { type WebSocket } from 'ws';
 import { SidecarRunner } from './sidecar-runner.js';
 import { DeepgramTranscriptionEngine } from './deepgram.js';
@@ -369,38 +371,31 @@ function send(socket: WebSocket, payload: Record<string, unknown>): void {
 }
 
 function defaultSidecarPath(): string {
-  // RISEZOME_SIDECAR_PATH env var wins when set (absolute path).
+  // RISEZOME_SIDECAR_PATH env var wins when set.
   const fromEnv = process.env['RISEZOME_SIDECAR_PATH'];
   if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
 
-  // Walk up from the bot-worker's source location to find the repo
-  // root (the directory containing the `sidecars/` folder). pnpm's
-  // dev script sets cwd to apps/bot-worker/, not the repo root, so a
-  // naive relative resolution from cwd misses by one directory.
-  const fileUrl = new URL(import.meta.url);
-  let dir = resolve(fileUrl.pathname, '..');
-  // `src/debug/` → 5 levels up gets to the repo root in this layout:
-  // .../apps/bot-worker/src/debug/local-debug-ws.ts → .../upwell/
-  // We walk until we see a `sidecars` sibling directory.
+  // Walk up from this source file's location to find the repo root
+  // (the directory containing the `sidecars/` folder). pnpm's dev
+  // script sets cwd to apps/bot-worker/, not the repo root, so a
+  // naive cwd-relative resolution misses by one directory.
+  //
+  // .../apps/bot-worker/src/debug/local-debug-ws.ts → walk up to
+  // .../upwell/ (5 hops), then sidecars/linux/build/upwell-sidecar-linux.
+  const here = fileURLToPath(import.meta.url);
+  let dir = resolve(here, '..');
   for (let i = 0; i < 8; i++) {
     const candidate = resolve(dir, 'sidecars/linux/build/upwell-sidecar-linux');
-    try {
-      // Synchronous existsSync would be cleaner but we already lazy-
-      // import node:fs elsewhere — keep this fn synchronous for
-      // callers and accept the small require cost.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
-      if (fs.existsSync(candidate)) return candidate;
-    } catch {
-      /* ignore */
-    }
+    if (existsSync(candidate)) return candidate;
     const parent = resolve(dir, '..');
     if (parent === dir) break;
     dir = parent;
   }
 
-  // Last resort: cwd-relative (preserves prior behavior so the error
-  // message stays familiar if all the lookups fail).
+  // Last resort: cwd-relative. If we land here the resulting error
+  // message ("ENOENT … apps/bot-worker/sidecars/…") is the signal
+  // that walk-up found nothing — set RISEZOME_SIDECAR_PATH or build
+  // the sidecar binary at sidecars/linux/build/upwell-sidecar-linux.
   return resolve(process.cwd(), 'sidecars/linux/build/upwell-sidecar-linux');
 }
 
