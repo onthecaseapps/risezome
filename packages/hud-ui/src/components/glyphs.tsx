@@ -55,6 +55,13 @@ export function TypeGlyph({ type, label }: { type: KnownType; label: string }): 
           <path d="M5 6h6M5 8.5h4" />
         </svg>
       );
+    case 'page':
+      return (
+        <svg {...common}>
+          <path d="M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6z" />
+          <path d="M9 2v4h4M5.5 8.5h5M5.5 11h5" />
+        </svg>
+      );
     case 'doc':
     default:
       return (

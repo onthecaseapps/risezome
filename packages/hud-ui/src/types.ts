@@ -138,8 +138,8 @@ export type ServerMessage =
 // `string` (whatever the daemon emits) — these capture the subset the
 // HUD knows how to style and provide explicit fallbacks for unknowns.
 
-export type KnownSource = 'github' | 'jira' | 'slack' | 'code' | 'trello';
-export type KnownType = 'issue' | 'pull-request' | 'code' | 'doc' | 'card';
+export type KnownSource = 'github' | 'jira' | 'slack' | 'code' | 'trello' | 'confluence';
+export type KnownType = 'issue' | 'pull-request' | 'code' | 'doc' | 'card' | 'page';
 
-export const KNOWN_SOURCES: readonly KnownSource[] = ['github', 'jira', 'slack', 'code', 'trello'];
-export const KNOWN_TYPES: readonly KnownType[] = ['issue', 'pull-request', 'code', 'doc', 'card'];
+export const KNOWN_SOURCES: readonly KnownSource[] = ['github', 'jira', 'slack', 'code', 'trello', 'confluence'];
+export const KNOWN_TYPES: readonly KnownType[] = ['issue', 'pull-request', 'code', 'doc', 'card', 'page'];

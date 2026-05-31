@@ -9,6 +9,7 @@ const TYPE_LABEL: Readonly<Record<KnownType, string>> = {
   code: 'Code',
   doc: 'Doc',
   card: 'Card',
+  page: 'Page',
 };
 
 function isKnownSource(s: string): s is KnownSource {
