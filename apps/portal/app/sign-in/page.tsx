@@ -3,19 +3,17 @@ import { Logo } from '../_components/logo';
 import { GoogleSignInButton } from './google-sign-in-button';
 
 /**
- * Sign-in page. Split-screen: brand + rising-signals SVG on the left,
- * sign-in form on the right. Sign-in is the user's first impression of
- * Risezome (post-landing-page); the layout is self-contained — the
- * sibling sign-in/layout.tsx overrides the marketing chrome so there's
- * no duplicate wordmark / nav competing for attention.
+ * Sign-in page. Responsive layout:
+ *   - Mobile (< lg): vertically stacked. Brand + rising-signals + tagline
+ *     at the top (compact), sign-in form below. Page scrolls if content
+ *     exceeds viewport.
+ *   - Desktop (≥ lg): split-screen, fixed viewport height. Brand + signals
+ *     + tagline fill the left column; form is vertically centered in the
+ *     right column.
  *
- * Layout strategy:
- *   - Fixed h-dvh on the outer grid (exact viewport height, no scroll).
- *   - Each column is its own flex container with internal layout.
- *   - Left aside: brand pinned top-left; tagline + copy block centered
- *     vertically with safe padding so it never clips against the bottom.
- *   - Right column: form vertically centered, overflow-y-auto for short
- *     viewports.
+ * Sign-in is the user's first impression post-landing-page — the sibling
+ * sign-in route is NOT in (marketing)/ so the marketing SiteHeader +
+ * SiteFooter chrome doesn't render here.
  *
  * Currently Google-only per R1. GitHub SSO + email magic link are tracked
  * as GH issues (#18, #19); both fit in the form column without restructuring.
@@ -26,45 +24,36 @@ export default function SignInPage({
   searchParams: Promise<{ error?: string; reason?: string }>;
 }): ReactElement {
   return (
-    <main className="grid h-dvh grid-cols-1 lg:grid-cols-2 overflow-hidden">
-      {/* Left: brand wordmark top-left, tagline + copy block vertically
-          centered low. The RisingSignalsBackdrop fills the column behind
-          the foreground content. */}
-      <aside className="relative hidden flex-col overflow-hidden bg-accent/[0.06] p-10 lg:flex">
+    <main className="flex min-h-dvh flex-col lg:grid lg:h-dvh lg:min-h-0 lg:grid-cols-2 lg:overflow-hidden">
+      {/* Left / top: brand + signals + tagline */}
+      <aside className="relative flex min-h-[60vh] flex-col overflow-hidden bg-accent/[0.06] p-6 sm:p-10 lg:min-h-0">
         <div className="relative z-10 flex items-center gap-3">
-          <Logo size={44} className="text-accent" />
-          <span className="text-3xl font-semibold tracking-tight">Risezome</span>
+          <Logo size={40} className="text-accent" />
+          <span className="text-2xl font-semibold tracking-tight sm:text-3xl">Risezome</span>
         </div>
 
         <RisingSignalsBackdrop />
 
-        {/* Anchored block: centered in the lower-half of the column.
-            mt-auto pushes it down from the brand; mb-12 leaves breathing
-            room above the bottom edge so the paragraph never clips.
-            backdrop-blur with a faint bg tint isolates the text from the
-            rising-signals SVG behind it so it stays readable regardless
-            of which dots/lines pass behind. */}
-        <div className="relative z-10 mb-12 mt-auto max-w-md space-y-4 rounded-2xl bg-bg/30 p-6 backdrop-blur-md">
-          <h2 className="text-5xl font-semibold leading-[1.05] tracking-tight">
+        {/* Tagline block: pushed toward the bottom of the aside via mt-auto,
+            with backdrop-blur over a faint surface tint so it reads cleanly
+            against whichever dots/lines pass behind it. */}
+        <div className="relative z-10 mb-4 mt-auto max-w-md space-y-3 rounded-2xl bg-bg/30 p-5 backdrop-blur-md sm:mb-12 sm:space-y-4 sm:p-6">
+          <h2 className="text-3xl font-semibold leading-[1.05] tracking-tight sm:text-5xl">
             Answers, before<br />you ask.
           </h2>
-          <p className="text-base text-fg/80">
+          <p className="text-sm text-fg/80 sm:text-base">
             Risezome surfaces the right PR, ticket, and doc from your codebase the
             moment they come up in a meeting.
           </p>
         </div>
       </aside>
 
-      {/* Right: sign-in form. overflow-y-auto so it scrolls internally on
-          short viewports without breaking the split-screen shape. */}
-      <section className="flex flex-col items-center justify-center overflow-y-auto px-6 py-12">
+      {/* Right / bottom: sign-in form. On desktop the form is vertically
+          centered in its column; on mobile it sits at the top of the lower
+          section with comfortable padding. overflow-y-auto allows internal
+          scroll on very short desktop viewports without breaking the split. */}
+      <section className="flex flex-col items-center justify-start px-6 py-10 sm:py-12 lg:justify-center lg:overflow-y-auto">
         <div className="w-full max-w-sm space-y-8">
-          {/* Mobile brand (the aside is hidden < lg). */}
-          <div className="flex items-center justify-center gap-3 lg:hidden">
-            <Logo size={34} className="text-accent" />
-            <span className="text-xl font-semibold tracking-tight">Risezome</span>
-          </div>
-
           <header className="space-y-1.5">
             <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
             <p className="text-sm text-muted">Sign in to your workspace.</p>
@@ -93,14 +82,14 @@ export default function SignInPage({
 }
 
 /**
- * Decorative rising-signals SVG that fills the brand aside. Three
- * curving gradient-stroked paths rise from the bottom edge, with
- * scattered filled + outlined dots. Positioned absolute behind
- * foreground content (z-index 0).
+ * Decorative rising-signals SVG. Three gradient-stroked paths rise from
+ * the bottom edge, with scattered filled + outlined dots. Positioned
+ * absolute behind foreground content (z-index 0). The three line-end
+ * dots are fully opaque so they cleanly cap each path.
  *
- * Source paths from the Login design mockup, cleaned of inline-style
- * noise. preserveAspectRatio="xMidYMax slice" anchors the pattern to
- * bottom-center so it always reads as rising from below.
+ * preserveAspectRatio="xMidYMax slice" anchors the pattern to bottom-
+ * center so it always reads as rising from below regardless of viewport
+ * aspect (mobile portrait or desktop landscape).
  */
 function RisingSignalsBackdrop(): ReactElement {
   return (
