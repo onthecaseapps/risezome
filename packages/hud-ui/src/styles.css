@@ -57,6 +57,11 @@
   --syn-builtin: #005a9c;
   --syn-class: #005a9c;
   --syn-regex: #b8463a;
+  /* U3 quote highlight: light amber wash. Sits over var(--card-bg)
+   * (#ffffff) — yellow #fff3b0 + dark text gives ~8.5:1 contrast vs the
+   * surrounding source-body text, AA-pass for small text. */
+  --quote-highlight-bg: #fff3b0;
+  --quote-highlight-fg: #1a1a1c;
 }
 
 /*
@@ -106,6 +111,11 @@
   --syn-builtin: #82aaff;
   --syn-class: #ffcb6b;
   --syn-regex: #f78c6c;
+  /* U3 quote highlight (dark): amber tint with light text. Background
+   * sits over var(--card-bg) #161a20; #4a3a10 with #f4e29c text gives
+   * 8.1:1 — AA-pass for small text. */
+  --quote-highlight-bg: #4a3a10;
+  --quote-highlight-fg: #f4e29c;
 }
 
 * {
@@ -623,6 +633,70 @@ body {
 
 .card.consolidated .actions {
   display: none;
+}
+
+/* Source-card-expanded — the inline, click-to-expand source rendered
+ * beneath a synthesis answer. Collapsed: header + title only (looks
+ * like the old "consolidated" card). Expanded: full chunk body shown
+ * with optional `<mark>` highlight on the LLM-emitted quote. Plan U3.
+ */
+.synthesis-sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.source-card-expanded {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--code-bg);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: default;
+  transition: background-color 120ms ease-out;
+}
+
+.source-card-expanded.is-open {
+  background: var(--card-bg);
+  outline: 1px solid var(--border);
+  outline-offset: -1px;
+}
+
+.source-card-expanded .header {
+  font-size: 9.5px;
+}
+
+.source-card-expanded .title {
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.source-body {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--fg);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* Quote highlight inside an expanded source body. Token pair lives in
+ * the :root / :root.dark blocks so light and dark themes both meet
+ * AA contrast against the source-body background (which is var(--fg)
+ * over var(--card-bg)). */
+.quote-highlight {
+  background: var(--quote-highlight-bg);
+  color: var(--quote-highlight-fg);
+  border-radius: 2px;
+  padding: 0 2px;
+  margin: 0 -2px;
+  /* No mark default browser yellow — explicit token. */
 }
 
 /* Quirky empty-state placeholder. Lives inside #card-stream as a soft

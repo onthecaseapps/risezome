@@ -1,65 +1,77 @@
 'use client';
 
-import { useRef, type ReactElement } from 'react';
+import { type ReactElement } from 'react';
 
 /**
- * Inline citation pill rendered by SynthesisStream when an `[N]` token is
- * detected in the streaming text.
+ * Inline citation pill rendered by SynthesisStream when an `[N]` or
+ * `[N: "quote"]` token is detected in the streaming text.
  *
- * **NET-NEW component, not copied from the demo.** The landing-page demo
- * renders citations as inert `<span>[N]</span>`. This component implements
- * the polish-plan U5 contract:
+ * Behavioral evolution (plan U3):
  *
- * - `<button type="button">` so the chip is in the keyboard tab order with
- *   native Enter/Space activation and screen-reader role.
- * - `title` set to the source card's title (hover preview).
- * - Click handler resolves `article[data-card-id="…"]`, scrollIntoView with
- *   smooth/center, and adds `.is-cited-target` for 700ms so the eye finds
- *   the destination even when the target was already in view.
- * - When the target is missing (source retracted before chip was clicked),
- *   sets `data-source-retracted="true"` and updates `title` to "Source no
- *   longer available". The retracted state is visible via CSS so the user
- *   sees the click as a deliberate no-op, not a broken UI.
- * - `:focus-visible` ring is handled in styles.css.
+ *   Before: chip owned a `document.querySelector('article[data-card-id=…]')`
+ *   + scrollIntoView + ephemeral `.is-cited-target` class. That model
+ *   assumed sources lived in a sibling DOM region with stable IDs.
  *
- * Selector uses `article[data-card-id="…"]` — scoped to articles so the
- * chip's own data-card-id (it does not carry one — `data-card-id` on the
- * chip lives on the button) is not accidentally matched.
+ *   Now: chips are pure presentation + a callback. The parent
+ *   `SynthesisCard` owns the expansion state (`{expandedSourceId,
+ *   activeQuote}`) and provides `onActivate(rank, quote, cardId)`. The
+ *   chip fires the callback on click; the parent re-renders the matching
+ *   `<SourceCardExpanded>` with the new active quote, which in turn
+ *   handles its own scrollIntoView on the highlighted `<mark>`.
+ *
+ * The callback shape (rank + quote + cardId) is the union of what the
+ * parent needs to know. It can't derive `quote` from the chip's position
+ * without re-walking the answer text, so the chip passes it along.
+ *
+ * Retracted source: when the parent's source list doesn't contain a card
+ * matching `cardId` (source retracted between synthesis-done and click),
+ * the parent's onActivate sees the missing source and signals back via
+ * the chip's `data-source-retracted` attribute (set imperatively in the
+ * onClick wrapper so CSS can style the inert state).
+ *
+ * Accessibility (S8): chips render as `<button type="button">` so they
+ * sit in the keyboard tab order with native Enter/Space activation. When
+ * a parent passes `disabled` (during placeholder phase / pre-completion
+ * streaming), `aria-disabled` reflects it and the button skips tab order.
  */
+export interface CitationChipProps {
+  readonly rank: number;
+  readonly cardId: string;
+  readonly sourceTitle?: string | undefined;
+  /** Verbatim quote for this citation occurrence. Undefined for bare
+   *  `[N]` (parser fell back from misformatted output). */
+  readonly quote?: string | undefined;
+  /** Parent-supplied click handler. When omitted (e.g. SSR / preview),
+   *  the chip is inert. */
+  readonly onActivate?: (args: { rank: number; cardId: string; quote: string | undefined }) => void;
+  /** Marks the chip inert (aria-disabled + click no-op). Used during
+   *  streaming when the parser hasn't run yet. */
+  readonly disabled?: boolean;
+}
+
 export function CitationChip({
   rank,
   cardId,
   sourceTitle,
-}: {
-  rank: number;
-  cardId: string;
-  sourceTitle: string | undefined;
-}): ReactElement {
-  const btnRef = useRef<HTMLButtonElement | null>(null);
-
-  function onClick(): void {
-    const btn = btnRef.current;
-    if (btn === null) return;
-    const target = document.querySelector<HTMLElement>(`article[data-card-id="${cardId}"]`);
-    if (target === null) {
-      btn.dataset['sourceRetracted'] = 'true';
-      btn.title = 'Source no longer available';
-      return;
-    }
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    target.classList.add('is-cited-target');
-    window.setTimeout(() => target.classList.remove('is-cited-target'), 700);
+  quote,
+  onActivate,
+  disabled = false,
+}: CitationChipProps): ReactElement {
+  function handleClick(): void {
+    if (disabled) return;
+    onActivate?.({ rank, cardId, quote });
   }
 
   return (
     <button
-      ref={btnRef}
       type="button"
       className="citation-chip"
       data-rank={rank}
       data-card-id={cardId}
-      title={sourceTitle ?? `Source ${rank}`}
-      onClick={onClick}
+      title={sourceTitle ?? `Source ${String(rank)}`}
+      aria-disabled={disabled ? 'true' : undefined}
+      tabIndex={disabled ? -1 : 0}
+      onClick={handleClick}
     >
       [{rank}]
     </button>

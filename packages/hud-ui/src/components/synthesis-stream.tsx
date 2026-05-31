@@ -3,8 +3,8 @@
 import { Fragment, type ReactElement, type ReactNode } from 'react';
 import { useAppState, type SynthesisRecord } from '../state/app-state';
 import { CitationChip } from './citation-chip';
-import { SynthesisCard } from './synthesis-card';
-import type { CardEvent } from '../types';
+import { SynthesisCard, useSynthesisActivate } from './synthesis-card';
+import type { CardEvent, SynthesisCitation } from '../types';
 
 /**
  * Streaming + final synthesis rendering.
@@ -12,19 +12,20 @@ import type { CardEvent } from '../types';
  * Parses `[N]` and `[N: "..."]` tokens from the synthesis's accumulated
  * text and emits inline `<CitationChip>` components in their place. For
  * streaming syntheses, every in-range token (1 ≤ N ≤ sourceCardIds.length)
- * becomes a chip; the synthesizer's parser corrects the final citation
- * list on `synthesisDone`, at which point we drop tokens whose N is not
- * in `citations` and tidy adjacent whitespace.
+ * becomes a chip rendered inert (no click handler — the parser hasn't
+ * run yet); the synthesizer's parser corrects the final citation list
+ * on `synthesisDone`, at which point we drop tokens whose N is not in
+ * `citations` and tidy adjacent whitespace, and chips become live with
+ * their per-occurrence quote attached.
  *
- * The cleanup mirrors `finalizeSynthesis` in apps/hud/src/sidebar.ts:
- * any `[N]` or `[N: "..."]` token whose N isn't in the final set is
- * stripped along with leading whitespace; `\s+([.,;:!?])` collapses
- * to the punctuation; `\s{2,}` → single space.
+ * Per-occurrence quote routing: each inline match in the answer text
+ * corresponds (in order, by rank-queue position) to one entry in
+ * `syn.citations`. So `[2]` appearing twice with two different quotes
+ * routes each occurrence to its own quote — click the first to highlight
+ * line A, click the second to highlight line B in the same source.
  *
- * The citation regex matches both formats in one pass so cleanup AND
- * chip emission handle the new [N: "verbatim quote"] shape (plan U2)
- * AND the legacy bare-[N] shape (backward compat with pre-deploy
- * syntheses and any Claude misformat).
+ * Inline chips fire through the `useSynthesisActivate` context exposed
+ * by the parent `SynthesisCard` — no DOM globals, no querySelector.
  *
  * Per-synthesis ordering: newest synthesis on top, matching the stream's
  * `insertBefore(el, firstChild)` semantics.
@@ -44,11 +45,10 @@ export function SynthesisStream(): ReactElement {
   );
 }
 
-// Matches both [N] and [N: "..."] in one walk. Captures the rank in
-// group 1; group 2 (the quote) is unused at this layer — the quote
-// lives in syn.citations[i].quote and U3 wires it through to the chip
-// for highlight rendering. We just need to recognize and step over the
-// extended form here so it doesn't leak into the rendered body.
+// Matches both [N] and [N: "..."] in one walk. Captures rank in group 1.
+// Quote payload (group 2) is consumed for the regex's bookkeeping but
+// not used here — quotes live in syn.citations[i].quote, looked up by
+// rank-queue order during chip emission.
 const CITATION_REGEX = /\[(\d+)(?::\s*"(?:\\.|[^"])*")?\]/g;
 
 function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
@@ -59,18 +59,20 @@ function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
     if (rec !== undefined) sources.push(rec.card);
   }
 
-  // Derive the valid-rank set from per-occurrence citation objects.
-  // While streaming we keep everything; on done we restrict to the
-  // ranks the parser actually emitted (in-range, post-dedup).
   const validCitations: Set<number> | null = syn.streaming
     ? null
     : new Set(syn.citations.map((c) => c.rank));
 
-  const answer = renderAnswer(syn.accumulatedText, syn.sourceCardIds, sources, validCitations);
+  const answer = renderAnswer(
+    syn.accumulatedText,
+    syn.sourceCardIds,
+    sources,
+    validCitations,
+    syn.citations,
+    syn.streaming,
+  );
 
-  // Final citations row: one chip PER UNIQUE SOURCE (not per occurrence)
-  // ordered by rank ascending. Per-occurrence chips live inline in the
-  // answer body via renderAnswer; this row is the consolidated index.
+  // Final citations row: one chip per unique source, ordered by rank.
   const uniqueRanks = !syn.streaming
     ? [...new Set(syn.citations.map((c) => c.rank))].sort((a, b) => a - b)
     : [];
@@ -78,12 +80,18 @@ function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
     const cardId = syn.sourceCardIds[rank - 1];
     if (typeof cardId !== 'string') return null;
     const sourceCard = state.cards.get(cardId);
+    // For the consolidated row, the "active quote" we'd flip to on click
+    // is the first per-occurrence quote for this rank (so clicking the
+    // bottom-row chip highlights the same span as the first inline
+    // occurrence). Stays consistent with the inline behavior.
+    const firstQuote = syn.citations.find((c) => c.rank === rank)?.quote;
     return (
-      <CitationChip
+      <ActivatableCitationChip
         key={`final-${String(rank)}`}
         rank={rank}
         cardId={cardId}
         sourceTitle={sourceCard?.card.title}
+        quote={firstQuote}
       />
     );
   });
@@ -94,7 +102,33 @@ function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
       answer={answer}
       citations={citationNodes.filter((n): n is ReactElement => n !== null)}
       sources={sources}
+      citationRecords={syn.citations}
       streaming={syn.streaming}
+    />
+  );
+}
+
+/**
+ * CitationChip wrapper that pulls the activate callback from the
+ * surrounding SynthesisCard via context, so the inline answer rendering
+ * doesn't have to prop-drill it through every ReactNode child.
+ */
+function ActivatableCitationChip(props: {
+  rank: number;
+  cardId: string;
+  sourceTitle: string | undefined;
+  quote: string | undefined;
+  disabled?: boolean;
+}): ReactElement {
+  const activate = useSynthesisActivate();
+  return (
+    <CitationChip
+      rank={props.rank}
+      cardId={props.cardId}
+      disabled={props.disabled ?? false}
+      {...(props.sourceTitle !== undefined ? { sourceTitle: props.sourceTitle } : {})}
+      {...(props.quote !== undefined ? { quote: props.quote } : {})}
+      {...(activate !== null ? { onActivate: activate } : {})}
     />
   );
 }
@@ -104,12 +138,11 @@ function renderAnswer(
   sourceCardIds: readonly string[],
   sources: readonly CardEvent[],
   validCitations: Set<number> | null,
+  citations: readonly SynthesisCitation[],
+  streaming: boolean,
 ): ReactNode {
-  // Strip out-of-range citations on done. While streaming, keep everything
-  // and let in-range tokens render as chips. The regex matches both
-  // bare-[N] and [N: "..."] forms so the full token (and its quote
-  // payload) is removed when the rank is out of range — otherwise the
-  // quote text would leak into the body.
+  // Strip out-of-range citations on done. While streaming, keep
+  // everything; in-range tokens render as inert chips.
   let cleaned = text;
   if (validCitations !== null) {
     cleaned = cleaned
@@ -122,12 +155,25 @@ function renderAnswer(
       .trim();
   }
 
-  // Walk the cleaned text and emit chips for both [N] and [N: "..."]
-  // tokens whose N is in range. The inline chip ignores the quote
-  // payload at this layer (the U3 highlight pass reads from
-  // syn.citations[i].quote, not from the inline token); we just need
-  // to render the chip in the right position and step the regex over
-  // the full token shape so non-chip text continues correctly.
+  // Per-occurrence quote routing: walk syn.citations once to build a
+  // per-rank queue of quotes. Each in-order match in `cleaned` pops
+  // the next quote for its rank.
+  const quoteQueueByRank = new Map<number, string[]>();
+  for (const c of citations) {
+    let q = quoteQueueByRank.get(c.rank);
+    if (q === undefined) {
+      q = [];
+      quoteQueueByRank.set(c.rank, q);
+    }
+    q.push(c.quote ?? '');
+  }
+  function shiftQuote(rank: number): string | undefined {
+    const q = quoteQueueByRank.get(rank);
+    if (q === undefined || q.length === 0) return undefined;
+    const next = q.shift();
+    return next === '' ? undefined : next;
+  }
+
   const out: ReactNode[] = [];
   const re = new RegExp(CITATION_REGEX.source, 'g');
   let lastIdx = 0;
@@ -146,11 +192,13 @@ function renderAnswer(
       if (match.index > lastIdx) out.push(cleaned.slice(lastIdx, match.index));
       const sourceCard = sourceById.get(cardId);
       out.push(
-        <CitationChip
+        <ActivatableCitationChip
           key={`chip-${String(key++)}`}
           rank={n}
           cardId={cardId}
           sourceTitle={sourceCard?.title}
+          quote={shiftQuote(n)}
+          disabled={streaming}
         />,
       );
       lastIdx = match.index + match[0].length;

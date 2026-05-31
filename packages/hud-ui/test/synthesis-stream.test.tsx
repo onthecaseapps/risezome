@@ -158,4 +158,91 @@ describe('SynthesisStream', () => {
     );
     expect(container.querySelector('.synthesis-sources')).toBeNull();
   });
+
+  it('U3 integration: click inline chip expands the matching source with the quote highlighted', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    const card = mkCard({ cardId: 'src1', body: 'preamble edition = "2021" tail' });
+    const syn = mkSyn({
+      accumulatedText: 'See [1] for the line.',
+      streaming: false,
+      sourceCardIds: ['src1'],
+      citations: [{ rank: 1, cardId: 'src1', position: 4, quote: 'edition = "2021"' }],
+    });
+    const { container } = render(
+      <AppStateProvider initial={stateWith({ cards: [card], syntheses: [syn] })}>
+        <SynthesisStream />
+      </AppStateProvider>,
+    );
+    // Source starts collapsed (no .source-body inside src1's source-card-expanded).
+    const sourceArticle = container.querySelector(
+      'article.source-card-expanded[data-card-id="src1"]',
+    );
+    expect(sourceArticle).not.toBeNull();
+    expect(sourceArticle?.querySelector('.source-body')).toBeNull();
+
+    // Click the inline chip in the answer body.
+    const inlineChip = container.querySelector(
+      '.synthesis-body button.citation-chip',
+    );
+    expect(inlineChip).not.toBeNull();
+    fireEvent.click(inlineChip!);
+
+    // Source is now expanded and the quote is highlighted.
+    const body = container.querySelector(
+      'article.source-card-expanded[data-card-id="src1"] .source-body',
+    );
+    expect(body).not.toBeNull();
+    const mark = container.querySelector(
+      'article.source-card-expanded[data-card-id="src1"] mark.quote-highlight',
+    );
+    expect(mark?.textContent).toBe('edition = "2021"');
+
+    // Re-clicking the same chip collapses.
+    fireEvent.click(inlineChip!);
+    expect(
+      container.querySelector(
+        'article.source-card-expanded[data-card-id="src1"] .source-body',
+      ),
+    ).toBeNull();
+  });
+
+  it('U3: per-occurrence quotes — same source, two chips, two different highlights', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    const card = mkCard({
+      cardId: 'src1',
+      body: 'first thing happens and then second thing happens',
+    });
+    const syn = mkSyn({
+      accumulatedText: 'A [1] then B [1].',
+      streaming: false,
+      sourceCardIds: ['src1'],
+      citations: [
+        { rank: 1, cardId: 'src1', position: 2, quote: 'first thing' },
+        { rank: 1, cardId: 'src1', position: 13, quote: 'second thing' },
+      ],
+    });
+    const { container } = render(
+      <AppStateProvider initial={stateWith({ cards: [card], syntheses: [syn] })}>
+        <SynthesisStream />
+      </AppStateProvider>,
+    );
+    const inlineChips = container.querySelectorAll(
+      '.synthesis-body button.citation-chip',
+    );
+    expect(inlineChips.length).toBe(2);
+
+    fireEvent.click(inlineChips[0]!);
+    expect(
+      container.querySelector(
+        'article.source-card-expanded[data-card-id="src1"] mark.quote-highlight',
+      )?.textContent,
+    ).toBe('first thing');
+
+    fireEvent.click(inlineChips[1]!);
+    expect(
+      container.querySelector(
+        'article.source-card-expanded[data-card-id="src1"] mark.quote-highlight',
+      )?.textContent,
+    ).toBe('second thing');
+  });
 });
