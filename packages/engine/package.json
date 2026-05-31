@@ -1,0 +1,42 @@
+{
+  "name": "@risezome/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./chunker": {
+      "types": "./dist/chunker/index.d.ts",
+      "default": "./dist/chunker/index.js"
+    },
+    "./embed": {
+      "types": "./dist/embed/index.d.ts",
+      "default": "./dist/embed/index.js"
+    },
+    "./skills": {
+      "types": "./dist/skills/index.d.ts",
+      "default": "./dist/skills/index.js"
+    },
+    "./transcribe": {
+      "types": "./dist/transcribe/index.d.ts",
+      "default": "./dist/transcribe/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -b tsconfig.build.json && tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@risezome/shared-types": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

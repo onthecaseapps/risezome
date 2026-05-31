@@ -192,6 +192,19 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.19)(happy-dom@15.11.7)(jsdom@25.0.1)(lightningcss@1.32.0)
 
+  packages/engine:
+    dependencies:
+      '@risezome/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(happy-dom@15.11.7)(jsdom@25.0.1)(lightningcss@1.32.0)
+
   packages/shared-types:
     devDependencies:
       typescript:
