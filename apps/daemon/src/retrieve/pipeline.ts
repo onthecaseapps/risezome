@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import type { Database as DatabaseType } from 'better-sqlite3';
-import type { Embedder } from '../embed/contract.js';
+import type { Embedder } from '@risezome/engine/embed';
 import { hybridSearch } from '../corpus/query.js';
-import { hasEntityLikeToken } from '../corpus/text-heuristics.js';
+import { hasEntityLikeToken } from '@risezome/engine/chunker';
 import type { TranscriptWindow, WindowText } from '../transcript/window.js';
 import type { MeetingSession } from '../meeting/session.js';
 import {

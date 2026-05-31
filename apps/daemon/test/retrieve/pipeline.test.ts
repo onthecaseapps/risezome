@@ -11,7 +11,7 @@ import { TranscriptStore } from '../../src/transcript/store.js';
 import { TranscriptWindow } from '../../src/transcript/window.js';
 import { RetrievalPipeline } from '../../src/retrieve/pipeline.js';
 import type { CardEvent, RetrievalTrace } from '../../src/retrieve/contract.js';
-import type { EmbedRequest, EmbedResult, Embedder } from '../../src/embed/contract.js';
+import type { EmbedRequest, EmbedResult, Embedder } from '@risezome/engine/embed';
 
 interface Harness {
   db: DatabaseType;

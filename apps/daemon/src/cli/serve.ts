@@ -17,7 +17,7 @@ import { DeepgramTranscriptionEngine } from '../transcribe/deepgram.js';
 import { TranscriptStore } from '../transcript/store.js';
 import { TranscriptWindow } from '../transcript/window.js';
 import { MeetingSession } from '../meeting/session.js';
-import { VoyageEmbedder } from '../embed/voyage.js';
+import { VoyageEmbedder } from '@risezome/engine/embed';
 import { RetrievalPipeline } from '../retrieve/pipeline.js';
 import type {
   CardEvent,

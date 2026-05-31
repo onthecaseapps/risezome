@@ -9,5 +9,8 @@
   },
   "include": ["src/**/*"],
   "exclude": ["dist", "node_modules", "test"],
-  "references": [{ "path": "../../packages/shared-types/tsconfig.build.json" }]
+  "references": [
+    { "path": "../../packages/shared-types/tsconfig.build.json" },
+    { "path": "../../packages/engine/tsconfig.build.json" }
+  ]
 }

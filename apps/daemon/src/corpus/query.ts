@@ -1,6 +1,6 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { CorpusError, DEFAULT_EMBEDDING_DIM } from './db.js';
-import { buildFtsQuery, hasEntityLikeToken } from './text-heuristics.js';
+import { buildFtsQuery, hasEntityLikeToken } from '@risezome/engine/chunker';
 import type { CanonicalChunk, CanonicalDoc, RetrievalResult } from './types.js';
 
 export const RRF_K = 60;

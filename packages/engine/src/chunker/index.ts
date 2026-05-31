@@ -1,6 +1,17 @@
-// Chunker placeholder. U5b lifts the real chunker pattern from
-// apps/daemon/src/corpus/text-heuristics.ts and adds text + code chunkers
-// here. This file exists so the package's public exports compile against
-// the skeleton.
+// Chunking + text-heuristics surface.
+//
+// Two consumers today:
+//   - The indexer (U5c) uses chunkFile + classifyFile to turn raw file
+//     bytes from GitHub into embedding-shaped chunks.
+//   - The retrieval pipeline (U7 — lifts later from apps/daemon) uses
+//     the text-heuristics helpers (hasEntityLikeToken, buildFtsQuery)
+//     for query rewriting + hybrid retrieval.
 
-export const CHUNKER_VERSION = '0.0.0-skeleton';
+export { chunkFile, classifyFile, type FileChunkerOptions } from './file-chunker.js';
+export {
+  tokenize,
+  stripStopwords,
+  hasEntityLikeToken,
+  escapeFtsTerm,
+  buildFtsQuery,
+} from './text-heuristics.js';

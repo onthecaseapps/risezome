@@ -1,6 +1,6 @@
 import { NotImplementedError } from '@risezome/shared-types';
-import type { EmbedRequest, EmbedResult, Embedder } from './contract.js';
-import { DEFAULT_VOYAGE_DIMENSION } from './voyage.js';
+import type { EmbedRequest, EmbedResult, Embedder } from '@risezome/engine/embed';
+import { DEFAULT_VOYAGE_DIMENSION } from '@risezome/engine/embed';
 
 export class LocalBgeEmbedder implements Embedder {
   readonly dimension = DEFAULT_VOYAGE_DIMENSION;
