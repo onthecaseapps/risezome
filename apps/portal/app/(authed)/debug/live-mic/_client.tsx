@@ -78,6 +78,19 @@ interface RetrievalSkipEvent {
   detail?: string;
 }
 
+interface MeetingSummaryPayload {
+  summary: string;
+  current_topic: string;
+  open_questions: string[];
+  key_terms: string[];
+}
+
+interface SummaryEvent {
+  type: 'summary';
+  summary: MeetingSummaryPayload;
+  at: number;
+}
+
 interface OtherEvent {
   type: string;
   [k: string]: unknown;
@@ -97,6 +110,7 @@ type DebugEvent =
   | SynthesisDoneEvent
   | SynthesisAbortedEvent
   | RetrievalSkipEvent
+  | SummaryEvent
   | OtherEvent;
 
 interface SynthesisRecord {
@@ -130,6 +144,8 @@ export function LiveMicDebugClient({
   const [cardGroups, setCardGroups] = useState<CardGroup[]>([]);
   const [syntheses, setSyntheses] = useState<SynthesisRecord[]>([]);
   const [systemEvents, setSystemEvents] = useState<string[]>([]);
+  const [currentSummary, setCurrentSummary] = useState<MeetingSummaryPayload | null>(null);
+  const [summaryAt, setSummaryAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   const handleEvent = useCallback((evt: DebugEvent) => {
@@ -211,6 +227,12 @@ export function LiveMicDebugClient({
         );
         return;
       }
+      case 'summary': {
+        const s = evt as SummaryEvent;
+        setCurrentSummary(s.summary);
+        setSummaryAt(s.at);
+        return;
+      }
       case 'synthesisDone':
       case 'synthesisRefusal': {
         const d = evt as SynthesisDoneEvent;
@@ -289,6 +311,8 @@ export function LiveMicDebugClient({
     setCardGroups([]);
     setSyntheses([]);
     setSystemEvents([]);
+    setCurrentSummary(null);
+    setSummaryAt(null);
   }, []);
 
   return (
@@ -340,6 +364,8 @@ export function LiveMicDebugClient({
           </button>
         </div>
       </header>
+
+      <SummaryStrip summary={currentSummary} summaryAt={summaryAt} />
 
       <div className="grid min-h-0 flex-1 grid-cols-3 gap-4">
         <Panel title={`Utterances (${utterances.length})`}>
@@ -496,5 +522,102 @@ function EmptyHint({ text }: { text: string }): ReactElement {
     <div className="rounded border border-dashed border-border px-4 py-8 text-center text-xs italic text-muted">
       {text}
     </div>
+  );
+}
+
+/**
+ * DEBUG-ONLY summary panel. DO NOT promote this panel to the live page
+ * without revisiting the identity-drift Risks-table decision in
+ * docs/plans/2026-05-31-002-feat-rolling-meeting-summary-plan.md —
+ * surfacing the rolling summary as a user-facing artifact moves the
+ * product toward "AI meeting assistant" territory, which is a
+ * deliberate non-goal of V1.
+ *
+ * Styled monospace + dense + no chrome so the visual language reads as
+ * "diagnostic tool", not "feature".
+ */
+function SummaryStrip({
+  summary,
+  summaryAt,
+}: {
+  summary: MeetingSummaryPayload | null;
+  summaryAt: number | null;
+}): ReactElement {
+  const [now, setNow] = useState<number>(Date.now());
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (summary === null || summaryAt === null) {
+    return (
+      <section className="mb-3 rounded border border-dashed border-border bg-card/30 px-3 py-2 font-mono text-[11px] text-muted">
+        <span className="uppercase tracking-wider">Rolling summary</span>{' '}
+        <span className="italic">
+          No summary yet — first refresh after 30 seconds or 5 utterances.
+        </span>
+      </section>
+    );
+  }
+
+  const ageMs = now - summaryAt;
+  const ageSec = Math.max(0, Math.floor(ageMs / 1000));
+  const isStale = ageMs > 5 * 60_000;
+
+  return (
+    <section
+      className={
+        'mb-3 rounded border border-border bg-card/40 px-3 py-2 font-mono text-[11px]' +
+        (isStale ? ' opacity-60' : '')
+      }
+    >
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="flex items-baseline gap-2">
+          <span className="uppercase tracking-wider text-muted">Topic</span>
+          <span className="text-sm font-semibold text-fg">
+            {summary.current_topic.length > 0 ? summary.current_topic : '(none)'}
+          </span>
+        </div>
+        <span className={isStale ? 'text-rose-400' : 'text-muted'}>
+          Updated {String(ageSec)}s ago
+        </span>
+      </div>
+      {summary.summary.length > 0 && (
+        <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-fg/90">
+          {summary.summary}
+        </p>
+      )}
+      <div className="mt-1 flex flex-wrap items-start gap-x-4 gap-y-1">
+        {summary.open_questions.length > 0 && (
+          <div className="flex-1 min-w-[200px]">
+            <div className="text-[10px] uppercase tracking-wider text-muted">
+              Open questions
+            </div>
+            <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-[11px] text-fg/90">
+              {summary.open_questions.map((q, i) => (
+                <li key={`oq-${String(i)}`}>{q}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {summary.key_terms.length > 0 && (
+          <div className="flex-1 min-w-[200px]">
+            <div className="text-[10px] uppercase tracking-wider text-muted">
+              Key terms
+            </div>
+            <div className="mt-0.5 flex flex-wrap gap-1">
+              {summary.key_terms.map((t, i) => (
+                <span
+                  key={`kt-${String(i)}`}
+                  className="rounded border border-border bg-code-bg px-1.5 py-0.5 text-[10px]"
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
