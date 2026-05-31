@@ -40,7 +40,12 @@ import {
   parseSynthesisOutput,
   type SynthesisSource,
 } from '@risezome/engine/synthesize';
-import { AnthropicSummarizer } from '@risezome/engine/summarize';
+import { AnthropicSummarizer, type MeetingSummary } from '@risezome/engine/summarize';
+import {
+  AnthropicRelevanceClassifier,
+  classifyRelevanceHeuristic,
+  type RelevanceClassifier,
+} from '@risezome/engine/relevance';
 import type { AudioFrame } from '@risezome/shared-types';
 import type { Utterance } from '@risezome/engine/transcribe';
 import { MeetingSummarizerRuntime } from '../summarizer-runtime.js';
@@ -62,6 +67,18 @@ export interface LocalDebugHandlerArgs {
 
 const TOP_K = 5;
 const SYNTHESIS_MAX_TOKENS = 200;
+
+// Relevance gate config — mirrors apps/bot-worker/src/retrieval.ts so the
+// debug pipeline has the same cost shape as production Recall.
+const RELEVANCE_SKIP_THRESHOLD = 0.7;
+const RELEVANCE_TIMEOUT_MS = 3_000;
+
+// Voyage embeddings are trained on natural sentences, not keyword bags.
+// Concatenating key_terms can EITHER boost recall on short follow-up
+// utterances OR degrade similarity. Ship gated behind an env flag for
+// the first live test so the behavior can be A/B'd against a recorded
+// session. Default OFF.
+const KEY_TERMS_BOOST_ENABLED = process.env['RISEZOME_DEBUG_KEY_TERMS_BOOST'] === 'true';
 
 // Rolling-context tuning. Five utterances or 60 seconds, whichever is
 // hit first — long enough to chain a question across 2-3 splits without
@@ -147,6 +164,10 @@ export async function handleLocalDebugWs(
     maxTokens: SYNTHESIS_MAX_TOKENS,
   });
   const summarizer = new AnthropicSummarizer({
+    apiKey: args.anthropicKey,
+    model: args.anthropicModel,
+  });
+  const relevanceClassifier = new AnthropicRelevanceClassifier({
     apiKey: args.anthropicKey,
     model: args.anthropicModel,
   });
@@ -299,11 +320,13 @@ export async function handleLocalDebugWs(
       utteranceText: effectiveUtterance,
       utteranceId: t.utterance.utteranceId,
       recentContext,
+      lastSummary: lastSummaryAtBuild,
       priorSynth,
       socket,
       args,
       embedder,
       synthesizer,
+      relevanceClassifier,
       abortSignal: ac.signal,
       onComplete: (sourceCardIds) => {
         priorSynth = { synthesisId, sourceCardIds, completedAt: Date.now() };
@@ -366,6 +389,13 @@ interface PipelineArgs {
   readonly utteranceId: string;
   /** Rolling prior-utterance context passed to the synthesizer. */
   readonly recentContext: readonly string[];
+  /** Snapshot of the rolling summary at call-fire time. The pipeline
+   *  reads `current_topic` + `open_questions` from this for the
+   *  classifier's coherence-in-context judgment, and reads `key_terms`
+   *  for the embedding-query boost (env-gated). Captured by the caller
+   *  ONCE at fire time so a mid-flight summary refresh can't produce
+   *  a torn read. */
+  readonly lastSummary: MeetingSummary | null;
   /** Last completed synthesis (if any). Used to compute
    *  replacesSynthesisId on the new synthesisStart so the page can
    *  replace the prior card in place when the new answer is a
@@ -379,6 +409,7 @@ interface PipelineArgs {
   readonly args: LocalDebugHandlerArgs;
   readonly embedder: VoyageEmbedder;
   readonly synthesizer: AnthropicSynthesizer;
+  readonly relevanceClassifier: RelevanceClassifier;
   readonly abortSignal: AbortSignal;
   /** Called after the pipeline completes successfully (non-refusal)
    *  so the caller can update `priorSynth`. */
@@ -393,18 +424,92 @@ interface PipelineArgs {
 async function runDebugPipeline(p: PipelineArgs): Promise<void> {
   const traceId = randomUUID();
   const synthesisId = p.synthesisId;
-  const { socket, args, embedder, synthesizer, abortSignal } = p;
+  const { socket, args, embedder, synthesizer, relevanceClassifier, abortSignal } = p;
 
   args.logger.info(
     { traceId, synthesisId, utteranceId: p.utteranceId, text: p.utteranceText },
     'local-debug.pipeline.start',
   );
 
+  // ── Relevance gate: heuristic first, LLM only on ambiguous.
+  // Mirrors the production pipeline's two-stage gate so debug-cost shape
+  // matches production. Pass classifier context (current_topic +
+  // open_questions) from the rolling summary so a fragment like "in the
+  // app and where in the code base are they" is judged in-context as a
+  // coherent continuation rather than as isolated filler.
+  const heuristic = classifyRelevanceHeuristic(p.utteranceText);
+  if (heuristic === 'clearly_filler') {
+    args.logger.info(
+      { traceId, utteranceId: p.utteranceId, relevance: heuristic },
+      'local-debug.relevance.skip.filler',
+    );
+    send(socket, { type: 'retrieval-skip', reason: 'heuristic-filler', traceId, utteranceId: p.utteranceId });
+    return;
+  }
+  if (heuristic === 'ambiguous') {
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), RELEVANCE_TIMEOUT_MS);
+    try {
+      const result = await relevanceClassifier.classify(p.utteranceText, {
+        signal: controller.signal,
+        ...(p.lastSummary !== null && {
+          context: {
+            current_topic: p.lastSummary.current_topic,
+            open_questions: p.lastSummary.open_questions,
+          },
+        }),
+      });
+      if (result.decision === 'skip' && result.confidence >= RELEVANCE_SKIP_THRESHOLD) {
+        args.logger.info(
+          {
+            traceId,
+            utteranceId: p.utteranceId,
+            confidence: result.confidence,
+            reason: result.reason,
+            hadContext: p.lastSummary !== null,
+          },
+          'local-debug.relevance.skip.llm',
+        );
+        send(socket, {
+          type: 'retrieval-skip',
+          reason: 'classifier-skip',
+          traceId,
+          utteranceId: p.utteranceId,
+          confidence: result.confidence,
+        });
+        return;
+      }
+    } catch (err) {
+      // Fail-open: classifier error doesn't block retrieval. Log and continue.
+      args.logger.warn(
+        { traceId, err: String(err), utteranceId: p.utteranceId },
+        'local-debug.relevance.llm.failed',
+      );
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+    if (abortSignal.aborted) {
+      args.logger.info({ traceId }, 'local-debug.pipeline.aborted.post-relevance');
+      return;
+    }
+  }
+
   // ── Embed
+  // Optional key_terms boost: append project nouns the rolling summary
+  // extracted so short follow-up utterances ("about that auth flow")
+  // carry the topic vocabulary into the embedding. Env-gated default-
+  // off; see KEY_TERMS_BOOST_ENABLED comment for rationale.
+  const keyTermsBoost =
+    KEY_TERMS_BOOST_ENABLED &&
+    p.lastSummary !== null &&
+    p.lastSummary.key_terms.length > 0
+      ? ` ${p.lastSummary.key_terms.join(' ')}`
+      : '';
+  const embedText = p.utteranceText + keyTermsBoost;
   send(socket, { type: 'embed-start', utteranceId: p.utteranceId, traceId });
   const embedStartMs = Date.now();
   const embedResult = await embedder.embed({
-    items: [{ text: p.utteranceText, domain: 'text' }],
+    items: [{ text: embedText, domain: 'text' }],
   });
   args.logger.info(
     { traceId, latencyMs: Date.now() - embedStartMs },
