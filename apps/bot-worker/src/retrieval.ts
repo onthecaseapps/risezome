@@ -32,7 +32,14 @@ import { persistAndBroadcast } from './db.js';
  * we keep a local interface that's a structural subset.
  */
 
-const UTTERANCE_THRESHOLD = 3; // retrieve after every 3rd final utterance
+// Retrieve on EVERY finalized utterance — a clear single question
+// should fire retrieval immediately rather than wait for two more
+// utterances. The 10s cooldown still prevents spam (max one retrieval
+// per 10s); the relevance classifier filters filler before the
+// expensive synthesis call. Live testing showed threshold=3 made the
+// system feel laggy: "What models are used?" wouldn't trip retrieval
+// because it was only one utterance.
+const UTTERANCE_THRESHOLD = 1;
 const COOLDOWN_MS = 10_000; // ... but at most once per 10s
 const TOP_K = 3;
 const WINDOW_UTTERANCES = 8; // last 8 final utterances form the query
