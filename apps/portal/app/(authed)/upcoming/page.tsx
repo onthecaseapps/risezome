@@ -41,6 +41,23 @@ interface CalendarEventRow {
   bot_optin: boolean;
 }
 
+export type MeetingStatus =
+  | 'launching'
+  | 'awaiting_recall'
+  | 'joining'
+  | 'waiting_room'
+  | 'recording'
+  | 'completed'
+  | 'failed';
+
+export interface MeetingRow {
+  meeting_id: string;
+  calendar_event_id: string | null;
+  status: MeetingStatus;
+  error_message: string | null;
+  started_at: string | null;
+}
+
 export default async function UpcomingPage(): Promise<ReactElement> {
   const { user, orgId, orgName } = await requireAuthedUserWithOrg();
 
@@ -59,6 +76,7 @@ export default async function UpcomingPage(): Promise<ReactElement> {
     .order('start_at', { ascending: true });
 
   const events = (rows ?? []) as CalendarEventRow[];
+  const meetingsByEventId = await lookupMeetingsForEvents(orgId, events.map((e) => e.id));
   const grouped = groupByDay(events);
   const todayCount = countToday(events);
   const lastSyncedAt = await lookupLastSyncedAt(user.id);
@@ -97,7 +115,13 @@ export default async function UpcomingPage(): Promise<ReactElement> {
         <>
           <div className="flex flex-col gap-6">
             {grouped.map((group) => (
-              <DayGroup key={group.dayKey} day={group.day} events={group.events} currentUserId={user.id} />
+              <DayGroup
+                key={group.dayKey}
+                day={group.day}
+                events={group.events}
+                meetingsByEventId={meetingsByEventId}
+                currentUserId={user.id}
+              />
             ))}
           </div>
           <p className="mt-8 text-center text-xs text-muted">
@@ -140,10 +164,12 @@ function EmptyState(): ReactElement {
 function DayGroup({
   day,
   events,
+  meetingsByEventId,
   currentUserId,
 }: {
   day: string;
   events: CalendarEventRow[];
+  meetingsByEventId: Map<string, MeetingRow>;
   currentUserId: string;
 }): ReactElement {
   return (
@@ -152,7 +178,7 @@ function DayGroup({
       <ul className="flex flex-col gap-2">
         {events.map((e) => (
           <li key={e.id}>
-            <EventRow event={e} currentUserId={currentUserId} />
+            <EventRow event={e} meeting={meetingsByEventId.get(e.id) ?? null} currentUserId={currentUserId} />
           </li>
         ))}
       </ul>
@@ -162,13 +188,15 @@ function DayGroup({
 
 function EventRow({
   event,
+  meeting,
   currentUserId,
 }: {
   event: CalendarEventRow;
+  meeting: MeetingRow | null;
   currentUserId: string;
 }): ReactElement {
   const owned = event.user_id === currentUserId;
-  const status = describeStatus(event.start_at, event.end_at);
+  const status = describeRowStatus(event, meeting);
   return (
     <div className="flex items-center gap-4 rounded-xl border border-border bg-card p-4">
       <div className="flex w-14 flex-shrink-0 flex-col items-end text-xs text-muted">
@@ -216,16 +244,27 @@ function EventRow({
   );
 }
 
-function StatusChip({ status }: { status: { label: string; tone: 'live' | 'soon' | 'later' } | null }): ReactElement | null {
+interface RowStatus {
+  label: string;
+  tone: 'live' | 'launching' | 'joining' | 'soon' | 'later' | 'failed';
+  tooltip?: string;
+}
+
+function StatusChip({ status }: { status: RowStatus | null }): ReactElement | null {
   if (status === null) return null;
-  const toneClass =
-    status.tone === 'live'
-      ? 'bg-emerald-500/15 text-emerald-300'
-      : status.tone === 'soon'
-      ? 'bg-accent-soft text-accent'
-      : 'bg-bg/60 text-muted';
+  const map: Record<RowStatus['tone'], string> = {
+    live: 'bg-rose-500/20 text-rose-300 animate-pulse',
+    launching: 'bg-accent-soft text-accent',
+    joining: 'bg-accent-soft text-accent',
+    soon: 'bg-accent-soft text-accent',
+    later: 'bg-bg/60 text-muted',
+    failed: 'bg-rose-500/15 text-rose-300',
+  };
   return (
-    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${toneClass}`}>
+    <span
+      title={status.tooltip}
+      className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${map[status.tone]}`}
+    >
       {status.label}
     </span>
   );
@@ -269,23 +308,133 @@ function countToday(events: CalendarEventRow[]): number {
   return events.filter((e) => new Date(e.start_at).toDateString() === today).length;
 }
 
-function describeStatus(
-  startIso: string,
-  endIso: string,
-): { label: string; tone: 'live' | 'soon' | 'later' } | null {
+/**
+ * Pick the row's status chip. Priority order matters — bot lifecycle
+ * states dominate the time-based label so the user always sees the
+ * most useful information.
+ */
+function describeRowStatus(event: CalendarEventRow, meeting: MeetingRow | null): RowStatus | null {
   const now = Date.now();
-  const start = new Date(startIso).getTime();
-  const end = new Date(endIso).getTime();
+  const start = new Date(event.start_at).getTime();
+  const end = new Date(event.end_at).getTime();
 
-  if (start <= now && end > now) return { label: 'Live now', tone: 'live' };
+  // 1. Meeting in flight / live / failed — these all dominate.
+  if (meeting !== null) {
+    if (meeting.status === 'recording') {
+      const mins = meeting.started_at !== null
+        ? Math.max(0, Math.round((now - new Date(meeting.started_at).getTime()) / 60_000))
+        : 0;
+      return { label: `Live now${mins > 0 ? ` · ${mins}m in` : ''}`, tone: 'live' };
+    }
+    if (meeting.status === 'failed') {
+      return {
+        label: 'Bot launch failed',
+        tone: 'failed',
+        tooltip: meeting.error_message ?? 'Check the meeting URL and try toggling off + on',
+      };
+    }
+    if (
+      meeting.status === 'launching' ||
+      meeting.status === 'awaiting_recall' ||
+      meeting.status === 'joining' ||
+      meeting.status === 'waiting_room'
+    ) {
+      return { label: 'Bot joining…', tone: 'joining' };
+    }
+    // 'completed' falls through to time-based handling
+  }
 
+  // 2. Live (no meeting record — user didn't opt in, but the meeting is happening).
+  if (start <= now && end > now) {
+    return event.bot_optin
+      ? { label: 'Starting now', tone: 'launching' }
+      : { label: 'Live (no bot)', tone: 'later' };
+  }
+
+  // 3. Bot scheduled + start imminent.
+  if (event.bot_optin && start > now) {
+    const diffMin = Math.round((start - now) / 60_000);
+    if (diffMin <= 15) return { label: `Bot launching in ${diffMin} min`, tone: 'launching' };
+    if (diffMin <= 60) return { label: `Bot scheduled · in ${diffMin} min`, tone: 'soon' };
+    const diffHr = Math.round(diffMin / 60);
+    if (diffHr < 24) return { label: `Bot scheduled · in ${diffHr}h`, tone: 'soon' };
+    return { label: 'Bot scheduled', tone: 'soon' };
+  }
+
+  // 4. Plain time-based label for non-opted-in upcoming events.
   const diffMin = Math.round((start - now) / 60_000);
-  if (diffMin <= 0) return null; // already past, shouldn't normally hit
-  if (diffMin <= 15) return { label: `In ${diffMin} min`, tone: 'soon' };
+  if (diffMin <= 0) return null;
   if (diffMin <= 60) return { label: `In ${diffMin} min`, tone: 'soon' };
   const diffHr = Math.round(diffMin / 60);
   if (diffHr < 24) return { label: `In ${diffHr} h`, tone: 'later' };
-  return null; // > 1 day: row's day-group header tells the user the day
+  return null;
+}
+
+/**
+ * Bulk-fetch meetings linked to the events being rendered. Returns a
+ * Map keyed by calendar_event_id; non-existent links are absent.
+ *
+ * We restrict to non-failed rows so a stale failure doesn't shadow a
+ * new in-flight launch (e.g., user re-toggles after fixing the URL).
+ * The active-row uniqueness from the partial index guarantees at most
+ * one such row per event.
+ */
+async function lookupMeetingsForEvents(
+  orgId: string,
+  eventIds: string[],
+): Promise<Map<string, MeetingRow>> {
+  const out = new Map<string, MeetingRow>();
+  if (eventIds.length === 0) return out;
+
+  const service = createServiceRoleClient();
+  const { data } = await service
+    .from('meetings')
+    .select('meeting_id, calendar_event_id, status, error_message, started_at')
+    .eq('org_id', orgId)
+    .in('calendar_event_id', eventIds)
+    .neq('status', 'failed');
+
+  for (const row of data ?? []) {
+    const eventId = row.calendar_event_id as string | null;
+    if (eventId === null) continue;
+    out.set(eventId, {
+      meeting_id: row.meeting_id as string,
+      calendar_event_id: eventId,
+      status: row.status as MeetingStatus,
+      error_message: (row.error_message as string | null) ?? null,
+      started_at: (row.started_at as string | null) ?? null,
+    });
+  }
+
+  // Also surface the latest FAILED launch when no active row exists, so
+  // the user sees the failure on the row and can retry by toggling.
+  const eventsWithMeeting = new Set(out.keys());
+  const failedEventIds = eventIds.filter((id) => !eventsWithMeeting.has(id));
+  if (failedEventIds.length > 0) {
+    const { data: failed } = await service
+      .from('meetings')
+      .select('meeting_id, calendar_event_id, status, error_message, started_at')
+      .eq('org_id', orgId)
+      .in('calendar_event_id', failedEventIds)
+      .eq('status', 'failed')
+      .order('updated_at', { ascending: false });
+
+    const seen = new Set<string>();
+    for (const row of failed ?? []) {
+      const eventId = row.calendar_event_id as string | null;
+      if (eventId === null || seen.has(eventId)) continue;
+      seen.add(eventId);
+      out.set(eventId, {
+        meeting_id: row.meeting_id as string,
+        calendar_event_id: eventId,
+        status: 'failed',
+        error_message: (row.error_message as string | null) ?? null,
+        started_at: (row.started_at as string | null) ?? null,
+      });
+    }
+  }
+
+  return out;
 }
 
 /**

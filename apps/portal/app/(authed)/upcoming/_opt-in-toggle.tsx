@@ -93,6 +93,12 @@ export function OptInToggle({
 }
 
 function humanError(code: string): string {
-  if (code === 'missing_event_id') return 'Internal error';
-  return code.slice(0, 60);
+  const map: Record<string, string> = {
+    missing_event_id: 'Internal error',
+    event_not_found: 'Event not found',
+    unsupported_platform: 'Bot join not available for this platform',
+    no_conference_url: 'No conference link on this event',
+    past_meeting: "That meeting has already started",
+  };
+  return map[code] ?? code.slice(0, 60);
 }
