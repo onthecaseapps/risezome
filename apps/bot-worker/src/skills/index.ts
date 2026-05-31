@@ -14,6 +14,13 @@
  */
 
 import { SkillRegistry } from '@risezome/engine/skills';
+import { GithubClient } from './github/client.js';
+import { readGithubEnv } from './github/auth.js';
+import type { LiveSkillContext } from './github/live-context.js';
+import { buildIssueAssigneesSkill } from './github/issue_assignees.js';
+import { buildByAssigneeCountSkill } from './github/by_assignee_count.js';
+import { buildByAssigneeListSkill } from './github/by_assignee_list.js';
+import { buildIssueProgressSkill } from './github/issue_progress.js';
 
 export interface BuildSkillRegistryOptions {
   readonly logger: {
@@ -25,10 +32,40 @@ export interface BuildSkillRegistryOptions {
 export function buildSkillRegistry(options: BuildSkillRegistryOptions): SkillRegistry {
   const registry = new SkillRegistry();
 
-  // U4 (live-API GitHub skills) and U6 (Postgres corpus GitHub
-  // skills) register their skills here once they land. Each block
-  // gates on env-var presence so an unconfigured environment yields
-  // a smaller registry instead of erroring at startup.
+  // ── Live-API GitHub skills (U4) ─────────────────────────────────
+  // Register when both GITHUB_TOKEN and UPWELL_GITHUB_REPO are
+  // configured. Either missing logs a disable-reason and skips
+  // registration — the corpus skills (U6) and the rest of the
+  // pipeline still work.
+  const githubEnv = readGithubEnv();
+  if (githubEnv === null) {
+    options.logger.info(
+      {
+        hasToken: process.env['GITHUB_TOKEN'] !== undefined,
+        hasRepo: process.env['UPWELL_GITHUB_REPO'] !== undefined,
+      },
+      'github.live.disabled',
+    );
+  } else {
+    const githubClient = new GithubClient({});
+    const liveContext: LiveSkillContext = {
+      client: githubClient,
+      auth: githubEnv.auth,
+      repo: githubEnv.repo,
+    };
+    registry.register(buildIssueAssigneesSkill(liveContext));
+    registry.register(buildByAssigneeCountSkill(liveContext));
+    registry.register(buildByAssigneeListSkill(liveContext));
+    registry.register(buildIssueProgressSkill(liveContext));
+    options.logger.info(
+      { repo: `${githubEnv.repo.owner}/${githubEnv.repo.name}` },
+      'github.live.enabled',
+    );
+  }
+
+  // ── Corpus GitHub skills (U6) ───────────────────────────────────
+  // Registered after the portal-side issue/PR indexer (U5) lands.
+  // Today: not yet wired.
 
   options.logger.info(
     { registeredSkills: registry.list().map((s) => s.name) },
