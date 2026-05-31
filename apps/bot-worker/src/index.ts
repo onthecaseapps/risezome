@@ -24,6 +24,10 @@ import {
   AnthropicRelevanceClassifier,
   type RelevanceClassifier,
 } from '@risezome/engine/relevance';
+import {
+  AnthropicSummarizer,
+  type Summarizer,
+} from '@risezome/engine/summarize';
 import { adaptRecallMessage } from './recall-adapter.js';
 import { verifyBotWsJwt, type BotWsJwtPayload } from './jwt.js';
 import { handleLocalDebugWs } from './debug/local-debug-ws.js';
@@ -38,6 +42,7 @@ import {
   newRetrievalRuntime,
   type RetrievalRuntime,
 } from './retrieval.js';
+import { MeetingSummarizerRuntime } from './summarizer-runtime.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 interface PerMeetingRuntime {
@@ -51,6 +56,11 @@ interface PerMeetingRuntime {
   markedRecording: boolean;
   /** Retrieval state — rolling window + throttling counters. */
   retrieval: RetrievalRuntime;
+  /** Rolling-summary runtime — accumulates the transcript, fires the
+   *  summarizer on cadence, exposes lastSummary for classifier-context
+   *  + key_terms boost + synthesizer recentContext. Null when
+   *  ANTHROPIC_API_KEY is unset (summarizer disabled). */
+  summarizer: MeetingSummarizerRuntime | null;
 }
 
 const runtimes = new Map<string, PerMeetingRuntime>();
@@ -90,8 +100,11 @@ async function main(): Promise<void> {
   const relevanceClassifier: RelevanceClassifier | null = anthropicKey !== undefined && anthropicKey.length > 0
     ? new AnthropicRelevanceClassifier({ apiKey: anthropicKey, model: anthropicModel })
     : null;
+  const summarizer: Summarizer | null = anthropicKey !== undefined && anthropicKey.length > 0
+    ? new AnthropicSummarizer({ apiKey: anthropicKey, model: anthropicModel })
+    : null;
   if (synthesizer === null) {
-    console.warn('[bot-worker] ANTHROPIC_API_KEY unset — synthesis + LLM relevance disabled');
+    console.warn('[bot-worker] ANTHROPIC_API_KEY unset — synthesis + LLM relevance + rolling summary disabled');
   }
 
   const fastify = Fastify({ logger: { level: 'info' } });
@@ -107,6 +120,7 @@ async function main(): Promise<void> {
     const meetingId = req.params.id;
     const runtime = runtimes.get(meetingId);
     if (runtime === undefined) return reply.send({ ok: true, removed: false });
+    if (runtime.summarizer !== null) runtime.summarizer.dispose();
     runtimes.delete(meetingId);
     return reply.send({ ok: true, removed: true });
   });
@@ -153,6 +167,7 @@ async function main(): Promise<void> {
         // Reuse a runtime if Recall reconnected; otherwise spin one up.
         let runtime = runtimes.get(meetingId);
         if (runtime === undefined) {
+          const logger = req.log;
           runtime = {
             meetingId,
             orgId: payload.orgId,
@@ -160,9 +175,29 @@ async function main(): Promise<void> {
             utteranceCount: 0,
             markedRecording: false,
             retrieval: newRetrievalRuntime(),
+            summarizer: summarizer !== null
+              ? new MeetingSummarizerRuntime({
+                  summarizer,
+                  onSummaryUpdated: (s, at) => {
+                    logger.info(
+                      {
+                        meetingId,
+                        currentTopic: s.current_topic,
+                        openQuestions: s.open_questions.length,
+                        keyTerms: s.key_terms.length,
+                        at,
+                      },
+                      'summary.updated',
+                    );
+                  },
+                  onSummarizerError: (err) => {
+                    logger.warn({ meetingId, err: String(err) }, 'summarizer.error');
+                  },
+                })
+              : null,
           };
           runtimes.set(meetingId, runtime);
-          req.log.info({ meetingId, orgId: payload.orgId }, 'runtime.created');
+          req.log.info({ meetingId, orgId: payload.orgId, summarizer: runtime.summarizer !== null }, 'runtime.created');
         } else {
           req.log.info({ meetingId }, 'runtime.reconnected');
         }
@@ -327,6 +362,17 @@ async function handleMessage(
   // moving the rolling window each time a word changes). Also
   // requires the embedder to be configured.
   if (adapted.utterance.isFinal && embedder !== null && runtime !== undefined) {
+    // Feed the summarizer runtime BEFORE retrieval so the current
+    // utterance is part of the next summary's transcript window.
+    // The summary used FOR this retrieval is the prior one (already
+    // in lastSummary) — that's correct: we want the long-range context
+    // that existed when this utterance was spoken, not a future summary.
+    if (runtime.summarizer !== null) {
+      runtime.summarizer.recordUtterance(adapted.utterance.text);
+    }
+    // Read lastSummary ONCE here, atomically, before the async pipeline
+    // begins — same invariant as the debug path's torn-read guard.
+    const lastSummary = runtime.summarizer !== null ? runtime.summarizer.getLastSummary() : null;
     const retrievalResult = await maybeRetrieveAndEmit({
       runtime: runtime.retrieval,
       utteranceText: adapted.utterance.text,
@@ -337,6 +383,7 @@ async function handleMessage(
       embedder,
       ...(synthesizer !== null ? { synthesizer } : {}),
       ...(relevanceClassifier !== null ? { relevanceClassifier } : {}),
+      ...(lastSummary !== null ? { lastSummary } : {}),
       logger,
     });
     if (retrievalResult.emitted > 0 || retrievalResult.skipped !== undefined) {

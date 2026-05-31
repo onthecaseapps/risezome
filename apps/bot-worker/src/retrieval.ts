@@ -10,6 +10,7 @@ import {
   classifyRelevanceHeuristic,
   type RelevanceClassifier,
 } from '@risezome/engine/relevance';
+import type { MeetingSummary } from '@risezome/engine/summarize';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { persistAndBroadcast } from './db.js';
 
@@ -43,6 +44,13 @@ const UTTERANCE_THRESHOLD = 1;
 const COOLDOWN_MS = 10_000; // ... but at most once per 10s
 const TOP_K = 3;
 const WINDOW_UTTERANCES = 8; // last 8 final utterances form the query
+
+// Voyage embeddings are trained on natural sentences, not keyword bags.
+// Concatenating key_terms can EITHER boost recall on short follow-up
+// utterances OR degrade similarity. Ship gated behind an env flag for
+// the first live test so the behavior can be A/B'd against a recorded
+// session. Default OFF — mirrors the debug-path flag.
+const KEY_TERMS_BOOST_ENABLED = process.env['RISEZOME_KEY_TERMS_BOOST'] === 'true';
 
 export interface RetrievalRuntime {
   /** Concatenated text of recent final utterances. */
@@ -106,6 +114,13 @@ export async function maybeRetrieveAndEmit(args: {
    *  ambiguous utterances default to synthesizing (same fail-open
    *  posture as the daemon pipeline). */
   relevanceClassifier?: RelevanceClassifier;
+  /** Snapshot of the rolling summary at call-fire time. Provides:
+   *   - classifier context (current_topic + open_questions)
+   *   - embedding-query key_terms boost (env-gated)
+   *   - synthesizer recentContext (summary prose at head)
+   *  Captured atomically by the caller (handleMessage) so an in-flight
+   *  refresh cannot torn-read this value mid-pipeline. */
+  lastSummary?: MeetingSummary;
   logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void };
 }): Promise<{ emitted: number; skipped?: string }> {
   args.runtime.recentFinals.push(args.utteranceText);
@@ -128,6 +143,19 @@ export async function maybeRetrieveAndEmit(args: {
   const queryText = args.runtime.recentFinals.join(' ').trim();
   if (queryText.length === 0) return { emitted: 0, skipped: 'empty_query' };
 
+  // Optional key_terms boost: append project nouns the rolling summary
+  // extracted so short follow-up utterances ("about that auth flow")
+  // carry the topic vocabulary into the embedding. Env-gated default-off
+  // because keyword-stuffing can degrade Voyage similarity on
+  // natural-sentence input. See KEY_TERMS_BOOST_ENABLED comment.
+  const keyTermsBoost =
+    KEY_TERMS_BOOST_ENABLED &&
+    args.lastSummary !== undefined &&
+    args.lastSummary.key_terms.length > 0
+      ? ` ${args.lastSummary.key_terms.join(' ')}`
+      : '';
+  const embedQueryText = queryText + keyTermsBoost;
+
   // Embed the rolling-window text as the query. Use text-domain so
   // we hit voyage-3-large (matching the prose chunks of the indexed
   // corpus). Code-chunk recall via prose queries is the cross-space
@@ -135,7 +163,7 @@ export async function maybeRetrieveAndEmit(args: {
   let queryEmbedding: Float32Array;
   try {
     const result = await args.embedder.embed({
-      items: [{ text: queryText, domain: 'text' }],
+      items: [{ text: embedQueryText, domain: 'text' }],
     });
     const vec = result.vectors[0]?.vector;
     if (vec === undefined) {
@@ -319,12 +347,30 @@ export async function maybeRetrieveAndEmit(args: {
             utterance: args.utteranceText,
             meetingId: args.meetingId,
             utteranceId: args.utteranceId,
+            ...(args.lastSummary !== undefined && {
+              context: {
+                current_topic: args.lastSummary.current_topic,
+                open_questions: args.lastSummary.open_questions,
+              },
+            }),
             logger: args.logger,
           })
         : false;
       if (shouldSkip) {
         // Already logged inside classifyLlmAndDecide.
       } else {
+        // recentContext for the synthesizer: rolling summary prose at
+        // head (oldest = longest-range topic context), then recent
+        // finals excluding the current utterance (which IS the query
+        // arg). Mirrors the debug-path construction so both pipelines
+        // give the synthesizer the same long-range memory.
+        const recentContext: string[] = [];
+        if (args.lastSummary !== undefined && args.lastSummary.summary.length > 0) {
+          recentContext.push(args.lastSummary.summary);
+        }
+        for (const finalText of args.runtime.recentFinals.slice(0, -1)) {
+          recentContext.push(finalText);
+        }
         void runSynthesisAndBroadcast({
           synthesizer: args.synthesizer,
           utterance: queryText,
@@ -334,6 +380,7 @@ export async function maybeRetrieveAndEmit(args: {
           meetingId: args.meetingId,
           orgId: args.orgId,
           db: args.db,
+          ...(recentContext.length > 0 && { recentContext }),
           logger: args.logger,
         });
       }
@@ -425,12 +472,22 @@ async function classifyLlmAndDecide(args: {
   utterance: string;
   meetingId: string;
   utteranceId: string;
+  /** Optional meeting context for coherence-in-context judgment. When
+   *  present, a short fragment that looks like filler in isolation can
+   *  still surface as a coherent continuation of an open topic. */
+  context?: {
+    readonly current_topic?: string;
+    readonly open_questions?: readonly string[];
+  };
   logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void };
 }): Promise<boolean> {
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), RELEVANCE_TIMEOUT_MS);
   try {
-    const result = await args.classifier.classify(args.utterance, { signal: controller.signal });
+    const result = await args.classifier.classify(args.utterance, {
+      signal: controller.signal,
+      ...(args.context !== undefined && { context: args.context }),
+    });
     if (result.decision === 'skip' && result.confidence >= RELEVANCE_SKIP_THRESHOLD) {
       args.logger.info(
         {
@@ -438,6 +495,7 @@ async function classifyLlmAndDecide(args: {
           utteranceId: args.utteranceId,
           confidence: result.confidence,
           reason: result.reason,
+          hadContext: args.context !== undefined,
         },
         'synthesis.skipped.llm',
       );
@@ -485,6 +543,10 @@ async function runSynthesisAndBroadcast(args: {
   meetingId: string;
   orgId: string;
   db: SupabaseClient;
+  /** Oldest-first prior context for pronoun + fragment resolution.
+   *  Head entry is the rolling-summary prose (long-range memory);
+   *  remainder are recent finals (short-range). */
+  recentContext?: readonly string[];
   logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void };
 }): Promise<void> {
   const synthesisId = `synth_${randomUUID()}`;
@@ -549,6 +611,9 @@ async function runSynthesisAndBroadcast(args: {
       utterance: args.utterance,
       sources: args.sources,
       maxTokens: SYNTHESIS_MAX_TOKENS,
+      ...(args.recentContext !== undefined && args.recentContext.length > 0
+        ? { recentContext: args.recentContext }
+        : {}),
     })) {
       if (chunk.type === 'start') {
         startUsage = chunk.usage;
