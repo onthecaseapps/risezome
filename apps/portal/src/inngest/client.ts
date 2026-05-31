@@ -20,6 +20,15 @@ export interface SourceIndexRequestedEvent {
   };
 }
 
+export interface CalendarSyncRequestedEvent {
+  name: 'risezome/calendar.sync-requested';
+  data: {
+    userId: string;
+    orgId: string;
+    reason: 'sign-in' | 'cron' | 'manual';
+  };
+}
+
 /**
  * The Inngest client is a singleton per process. Production uses the
  * INNGEST_EVENT_KEY/INNGEST_SIGNING_KEY env vars set by the Vercel-Inngest

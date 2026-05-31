@@ -1,6 +1,7 @@
 import { serve } from 'inngest/next';
 import { inngest } from '../../../src/inngest/client';
 import { indexRepoFn } from '../../../src/inngest/functions/index-repo';
+import { syncCalendarFn, syncAllCalendarsCron } from '../../../src/inngest/functions/sync-calendar';
 
 /**
  * Inngest function registry, exposed at /api/inngest.
@@ -15,5 +16,5 @@ import { indexRepoFn } from '../../../src/inngest/functions/index-repo';
  */
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [indexRepoFn],
+  functions: [indexRepoFn, syncCalendarFn, syncAllCalendarsCron],
 });

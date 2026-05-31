@@ -107,6 +107,26 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       if (upsertErr !== null) {
         // eslint-disable-next-line no-console
         console.error('[auth.callback] user_google_tokens upsert failed:', upsertErr);
+      } else {
+        // Token stored — kick off an immediate calendar sync so the user
+        // lands on /upcoming with data already there instead of waiting
+        // for the 5-min cron. Best-effort: we look up the user's first
+        // org membership; if they're brand-new (still going to onboarding),
+        // we skip and let the cron pick them up after they pick an org.
+        const { data: membership } = await service
+          .from('org_members')
+          .select('org_id')
+          .eq('user_id', user.id)
+          .order('joined_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (membership !== null) {
+          const { inngest } = await import('../../../../src/inngest/client');
+          await inngest.send({
+            name: 'risezome/calendar.sync-requested',
+            data: { userId: user.id, orgId: membership.org_id as string, reason: 'sign-in' },
+          });
+        }
       }
     }
   }
