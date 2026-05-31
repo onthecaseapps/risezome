@@ -40,12 +40,15 @@ export default function SignInPage({
 
         {/* Anchored block: centered in the lower-half of the column.
             mt-auto pushes it down from the brand; mb-12 leaves breathing
-            room above the bottom edge so the paragraph never clips. */}
-        <div className="relative z-10 mb-12 mt-auto max-w-md space-y-4">
-          <h2 className="text-4xl font-semibold leading-tight tracking-tight">
+            room above the bottom edge so the paragraph never clips.
+            backdrop-blur with a faint bg tint isolates the text from the
+            rising-signals SVG behind it so it stays readable regardless
+            of which dots/lines pass behind. */}
+        <div className="relative z-10 mb-12 mt-auto max-w-md space-y-4 rounded-2xl bg-bg/30 p-6 backdrop-blur-md">
+          <h2 className="text-5xl font-semibold leading-[1.05] tracking-tight">
             Answers, before<br />you ask.
           </h2>
-          <p className="text-sm text-muted">
+          <p className="text-base text-fg/80">
             Risezome surfaces the right PR, ticket, and doc from your codebase the
             moment they come up in a meeting.
           </p>
