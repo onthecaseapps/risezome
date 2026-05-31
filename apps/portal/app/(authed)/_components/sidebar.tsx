@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { Logo } from '../../_components/logo';
 import { CURRENT_ORG_COOKIE, listUserOrgs, requireAuthedUser } from '../../_lib/auth';
+import { createServerClient } from '../../_lib/supabase-server';
 import { cookies } from 'next/headers';
 import { OrgSwitcher } from './org-switcher';
 import { SidebarNavLink } from './sidebar-nav-link';
@@ -11,14 +12,14 @@ import { UserCard } from './user-card';
  * Left sidebar shared across all `(authed)` routes. Top→bottom:
  *   1. Logo + Risezome wordmark
  *   2. Current-org chip with built-in switcher (none if user hasn't onboarded)
- *   3. Nav: Upcoming, Live meeting, Sources, Captures
- *      — Upcoming/Live/Captures are disabled until their pages ship (U7/U11/U12);
- *      they render greyed-out so the sidebar shape is complete and the
- *      forthcoming surfaces are visible to the user
+ *   3. Nav: Upcoming, Live meeting (dynamic), Sources, Captures, Settings
+ *      — Live meeting smart-links to the currently-recording meeting in
+ *        the user's current org when one exists, with a pulsing red dot;
+ *        otherwise it stays disabled.
  *   4. UserCard at the bottom with avatar + email + sign-out
  *
- * Server component: reads user + orgs + cookie on the server, hydrates the
- * OrgSwitcher client component with the data already shaped.
+ * Server component: re-evaluates the active-meeting lookup on every
+ * render. Cheap query: indexed (org_id, status) on meetings.
  */
 export async function Sidebar(): Promise<ReactElement> {
   const user = await requireAuthedUser();
@@ -29,6 +30,22 @@ export async function Sidebar(): Promise<ReactElement> {
 
   const fullName = (user.user_metadata?.['full_name'] as string | undefined) ?? undefined;
   const email = user.email ?? '';
+
+  // Find the most-recent recording meeting in the current org. RLS
+  // scopes to org members so users only see their org's live meeting.
+  let activeMeetingId: string | null = null;
+  if (current !== null) {
+    const supabase = await createServerClient();
+    const { data: live } = await supabase
+      .from('meetings')
+      .select('meeting_id')
+      .eq('org_id', current.id)
+      .eq('status', 'recording')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (live !== null) activeMeetingId = live.meeting_id as string;
+  }
 
   return (
     <aside className="flex h-dvh w-60 shrink-0 flex-col border-r border-border bg-card">
@@ -58,11 +75,21 @@ export async function Sidebar(): Promise<ReactElement> {
           label="Upcoming"
         />
         <SidebarNavLink
-          href="/meetings/live"
-          matchPrefix="/meetings/live"
+          href={activeMeetingId !== null ? `/meetings/${activeMeetingId}/live` : '/meetings/live'}
+          matchPrefix="/meetings/"
           icon={<LiveIcon />}
           label="Live meeting"
-          disabled
+          disabled={activeMeetingId === null}
+          {...(activeMeetingId !== null
+            ? {
+                dot: (
+                  <span
+                    aria-label="Recording"
+                    className="inline-block h-2 w-2 animate-pulse rounded-full bg-rose-400"
+                  />
+                ),
+              }
+            : {})}
         />
         <SidebarNavLink
           href="/sources"
@@ -75,7 +102,6 @@ export async function Sidebar(): Promise<ReactElement> {
           matchPrefix="/captures"
           icon={<CapturesIcon />}
           label="Captures"
-          disabled
         />
         <SidebarNavLink
           href="/settings"
