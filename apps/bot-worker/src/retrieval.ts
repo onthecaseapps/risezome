@@ -5,6 +5,7 @@ import type {
   SynthesisSource,
   SynthesisUsage,
 } from '@risezome/engine/synthesize';
+import { parseSynthesisOutput } from '@risezome/engine/synthesize';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { persistAndBroadcast } from './db.js';
 
@@ -398,11 +399,53 @@ async function runSynthesisAndBroadcast(args: {
         await flush(); // final delta with the tail tokens
 
         const latencyMs = Date.now() - startedAt;
+        const parsed = parseSynthesisOutput(accumulated, args.sources.length);
+
+        if (parsed.isRefusal) {
+          // The model emitted "No relevant context." — surface as a
+          // retraction so the right panel collapses gracefully instead
+          // of showing the literal refusal text. The cards on the left
+          // still stand.
+          await args.db
+            .from('syntheses')
+            .update({
+              status: 'retracted',
+              retracted_at: new Date().toISOString(),
+              retracted_reason: 'refusal',
+              stop_reason: chunk.stopReason,
+              input_tokens: chunk.usage.inputTokens,
+              output_tokens: chunk.usage.outputTokens,
+              cache_read_tokens: chunk.usage.cacheReadTokens,
+              cache_creation_tokens: chunk.usage.cacheCreationTokens,
+              latency_ms: latencyMs,
+            })
+            .eq('synthesis_id', synthesisId);
+
+          await persistAndBroadcast(args.db, {
+            meetingId: args.meetingId,
+            orgId: args.orgId,
+            type: 'synthesisRetracted',
+            payload: {
+              retracted: {
+                synthesisId,
+                reason: 'source-retracted',
+              },
+            },
+          });
+
+          args.logger.info(
+            { synthesisId, meetingId: args.meetingId, latencyMs },
+            'synthesis.refusal',
+          );
+          return;
+        }
+
         await args.db
           .from('syntheses')
           .update({
             status: 'done',
             stop_reason: chunk.stopReason,
+            citations: parsed.citations,
             input_tokens: chunk.usage.inputTokens,
             output_tokens: chunk.usage.outputTokens,
             cache_read_tokens: chunk.usage.cacheReadTokens,
@@ -419,9 +462,7 @@ async function runSynthesisAndBroadcast(args: {
             done: {
               synthesisId,
               stopReason: chunk.stopReason,
-              citations: [], // Citation extraction lives in the daemon's
-                            // pipeline; not lifted yet (see U9e + the
-                            // parseSynthesisOutput helper in engine).
+              citations: parsed.citations,
               usage: chunk.usage,
               ttftMs: 0, // Not currently measured at this layer.
               latencyMs,
@@ -430,7 +471,13 @@ async function runSynthesisAndBroadcast(args: {
         });
 
         args.logger.info(
-          { synthesisId, meetingId: args.meetingId, latencyMs, outputTokens: chunk.usage.outputTokens },
+          {
+            synthesisId,
+            meetingId: args.meetingId,
+            latencyMs,
+            outputTokens: chunk.usage.outputTokens,
+            citations: parsed.citations.length,
+          },
           'synthesis.done',
         );
         return;

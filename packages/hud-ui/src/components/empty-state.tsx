@@ -27,14 +27,20 @@ export const EMPTY_STATE_MESSAGES: readonly string[] = [
   'Hush mode engaged. The HUD listens.',
 ];
 
-function pickInitial(): number {
-  return Math.floor(Math.random() * EMPTY_STATE_MESSAGES.length);
-}
-
 export function EmptyState(): ReactElement {
-  const [idx, setIdx] = useState<number>(pickInitial);
+  // Start at index 0 on both server and client to guarantee a matching
+  // first render. The rotation effect bumps the index after mount, so
+  // by the time the user notices, we've moved past the deterministic
+  // first message anyway. Previously we used `Math.random()` for the
+  // initial pick, which threw a React hydration warning every time
+  // the SSR pick happened to differ from the client pick.
+  const [idx, setIdx] = useState<number>(0);
 
   useEffect(() => {
+    // Kick off with a random offset on first effect tick so different
+    // tabs / reloads see different starting messages — without breaking
+    // SSR determinism.
+    setIdx(Math.floor(Math.random() * EMPTY_STATE_MESSAGES.length));
     const id = window.setInterval(() => {
       setIdx((prev) => {
         if (EMPTY_STATE_MESSAGES.length <= 1) return prev;
