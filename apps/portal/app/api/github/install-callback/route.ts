@@ -122,6 +122,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // Insert one sources row per granted repo. Webhook may also try to insert
   // these via installation_repositories.added — the unique (installation_id,
   // repo_full_name) constraint + onConflict: do-nothing keeps both paths idempotent.
+  // After insert, fan out an Inngest event per newly-created source so the
+  // indexer picks them up. We use `select()` on the upsert so we get back
+  // the source ids regardless of whether we created the rows or they already
+  // existed (the user re-installing the App).
   if (repos.length > 0) {
     const rows = repos.map((r) => ({
       org_id: orgId,
@@ -138,6 +142,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       // eslint-disable-next-line no-console
       console.error('[install-callback] sources insert failed:', sourcesErr);
       // Not fatal: the row exists, the user can refresh; webhook fills gaps.
+    } else {
+      // Re-select the source ids (ignoreDuplicates means upsert doesn't
+      // return existing rows) and fan out index-requested events.
+      const { data: persisted } = await service
+        .from('sources')
+        .select('id, repo_full_name')
+        .eq('installation_id', installationId)
+        .eq('org_id', orgId)
+        .in('repo_full_name', repos.map((r) => r.full_name));
+
+      if (persisted !== null && persisted.length > 0) {
+        const { inngest } = await import('../../../../src/inngest/client');
+        await inngest.send(
+          persisted.map((s) => ({
+            name: 'risezome/source.index-requested' as const,
+            data: { orgId, sourceId: s.id as string, reason: 'install' as const },
+          })),
+        );
+      }
     }
   }
 

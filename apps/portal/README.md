@@ -140,7 +140,43 @@ For local testing, use `gh webhook forward` or a tunnel (Cloudflare /
 ngrok) and override `Webhook URL` in the App's settings under
 `https://github.com/organizations/onthecaseapps/settings/apps/<slug>`.
 
-### 5. (Later units) Recall.ai, Fly.io (bot-worker), Inngest
+### 5. Inngest + Voyage (U5: indexer)
+
+The indexer runs as an Inngest function (`apps/portal/src/inngest/functions/index-repo.ts`)
+triggered by the `risezome/source.index-requested` event. The install-callback
+fans out one event per granted repo; user-initiated Reindex (U5d) emits the
+same event.
+
+**Voyage API key** (`VOYAGE_API_KEY`): create at
+[https://dash.voyageai.com/api-keys](https://dash.voyageai.com/api-keys).
+Paid plan recommended once you exceed the free-tier 10k TPM. Server-only.
+
+**Inngest production:** the Vercel-Inngest integration handles registration
++ signing-key provisioning. One-time setup: visit the Inngest dashboard,
+connect the Vercel project, and the integration writes
+`INNGEST_SIGNING_KEY` + `INNGEST_EVENT_KEY` into the Vercel env.
+
+**Inngest local dev (no cloud account needed):**
+
+```bash
+# Terminal 1: portal dev server (exposes /api/inngest at localhost:3000)
+pnpm --filter @risezome/portal dev
+
+# Terminal 2: Inngest dev CLI (auto-discovers functions; UI at localhost:8288)
+npx inngest-cli@latest dev
+```
+
+The dev CLI runs functions in-process against your local portal — when an
+install-callback or webhook handler calls `inngest.send(...)`, the dev CLI
+picks it up and runs `index-repo` against the local Supabase stack. Leave
+`INNGEST_EVENT_KEY` + `INNGEST_SIGNING_KEY` unset in `.env.local`; the SDK
+auto-detects dev mode and skips signing.
+
+The Inngest UI at `http://localhost:8288` shows event flow, step traces,
+retry attempts, and lets you replay events. Use it to debug indexer runs
+without poking through Supabase row-by-row.
+
+### 6. (Later units) Recall.ai, Fly.io (bot-worker)
 
 Documented as each unit lands. See the plan's `Documentation / Operational
 Notes` section for the full inventory.
