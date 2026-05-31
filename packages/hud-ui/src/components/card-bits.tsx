@@ -8,6 +8,7 @@ const TYPE_LABEL: Readonly<Record<KnownType, string>> = {
   'pull-request': 'PR',
   code: 'Code',
   doc: 'Doc',
+  card: 'Card',
 };
 
 function isKnownSource(s: string): s is KnownSource {

@@ -48,6 +48,13 @@ export function TypeGlyph({ type, label }: { type: KnownType; label: string }): 
           <path d="M5.5 5.5 3 8l2.5 2.5M10.5 5.5 13 8l-2.5 2.5" />
         </svg>
       );
+    case 'card':
+      return (
+        <svg {...common}>
+          <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+          <path d="M5 6h6M5 8.5h4" />
+        </svg>
+      );
     case 'doc':
     default:
       return (

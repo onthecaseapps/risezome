@@ -32,6 +32,7 @@
   --src-jira: #0b5fc7;
   --src-slack: #b8463a;
   --src-code: #6f42c1;
+  --src-trello: #0b6bcb;
   --src-default: #4a4a55;
   /* U4: subtle wash so the synthesis card reads as "the answer layer"
      without being garish. Light: 4% of the accent color. */
@@ -92,6 +93,7 @@
   --src-jira: #5cc8ff;
   --src-slack: #ff9080;
   --src-code: #c792ea;
+  --src-trello: #5cc8ff;
   --src-default: #a8aeb8;
   /* U4 dark: brighter wash because dark backgrounds need more lift to
      read as a distinct layer. 6% of the dark accent. */
@@ -299,6 +301,7 @@ body {
 .chip-source-jira { color: var(--src-jira); }
 .chip-source-slack { color: var(--src-slack); }
 .chip-source-code { color: var(--src-code); }
+.chip-source-trello { color: var(--src-trello); }
 .chip-source-default { color: var(--src-default); }
 
 .chip-type {
