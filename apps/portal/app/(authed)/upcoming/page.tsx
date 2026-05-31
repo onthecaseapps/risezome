@@ -111,13 +111,28 @@ export default async function UpcomingPage(): Promise<ReactElement> {
 
 function EmptyState(): ReactElement {
   return (
-    <div className="rounded-xl border border-dashed border-border bg-card/40 p-10 text-center">
-      <h2 className="text-lg font-semibold tracking-tight">No upcoming meetings</h2>
-      <p className="mx-auto mt-2 max-w-md text-sm text-muted">
-        Your Google Calendar has no events in the next 7 days, or the calendar sync hasn&apos;t
-        run yet. Try <span className="text-fg">Sync now</span> above. If you haven&apos;t connected
-        Google yet, sign out and back in to grant calendar access.
+    <div className="rounded-xl border border-dashed border-border bg-card/40 px-6 py-14 text-center">
+      <h2 className="text-xl font-semibold tracking-tight">All quiet today</h2>
+      <p className="mx-auto mt-2 max-w-sm text-sm text-muted">
+        Nothing on the calendar in the next 7 days. Add one or make sure your sources are
+        connected so Risezome has context when meetings do show up.
       </p>
+      <div className="mt-6 flex items-center justify-center gap-2">
+        <a
+          href="https://calendar.google.com/calendar/u/0/r/eventedit"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center justify-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-accent-press"
+        >
+          Schedule a meeting
+        </a>
+        <a
+          href="/sources"
+          className="inline-flex items-center justify-center rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium text-fg hover:bg-accent-soft"
+        >
+          Check sources
+        </a>
+      </div>
     </div>
   );
 }
