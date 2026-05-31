@@ -46,6 +46,14 @@ export interface SynthesisRecord {
   readonly stopReason?: string;
   readonly ttftMs?: number;
   readonly latencyMs?: number;
+  /** Whether the user has pinned this synthesis to the top of the
+   *  page (plan U5). False by default; flips via the
+   *  `synthesisPinned` reducer action which the pin server action
+   *  drives. */
+  readonly pinned: boolean;
+  /** ISO timestamp of the most recent pin action. Null when unpinned.
+   *  Used by PinnedSynthesesSection for pin-time DESC ordering. */
+  readonly pinnedAt: string | null;
 }
 
 export type MeetingMode = 'idle' | 'live';
@@ -86,7 +94,8 @@ export type AppAction =
   | { type: 'synthesisDelta'; delta: SynthesisDeltaEvent }
   | { type: 'synthesisDone'; done: SynthesisDoneEvent }
   | { type: 'synthesisError'; error: SynthesisErrorEvent }
-  | { type: 'synthesisRetracted'; retracted: SynthesisRetractedEvent };
+  | { type: 'synthesisRetracted'; retracted: SynthesisRetractedEvent }
+  | { type: 'synthesisPinned'; synthesisId: string; pinned: boolean; pinnedAt: string | null };
 
 function cloneMap<K, V>(m: ReadonlyMap<K, V>): Map<K, V> {
   return new Map(m);
@@ -132,13 +141,18 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
       if (!state.cards.has(action.retracted.cardId)) return state;
       const cards = cloneMap(state.cards);
       cards.delete(action.retracted.cardId);
-      // Cascade: drop any synthesis citing the retracted card. Mirrors the
-      // current HUD's behavior in apps/hud/src/sidebar.ts retractCard, which
-      // calls #cascadeSynthesisOnSourceRetraction.
+      // Cascade: drop UNPINNED syntheses citing the retracted card.
+      // S2 from review: pinned syntheses survive the cascade so a user's
+      // explicit "keep this on screen" intent isn't silently overridden
+      // by retrieval pipeline churn. The expanded-source view for the
+      // missing card will render a "source no longer available" state
+      // on the next click (the cardId is still in sourceCardIds; the
+      // SourceCardExpanded simply doesn't get the CardEvent at render
+      // time so it shows the empty state).
       const syntheses = cloneMap(state.syntheses);
       let cascaded = false;
       for (const [id, syn] of syntheses) {
-        if (syn.sourceCardIds.includes(action.retracted.cardId)) {
+        if (syn.sourceCardIds.includes(action.retracted.cardId) && !syn.pinned) {
           syntheses.delete(id);
           cascaded = true;
         }
@@ -181,6 +195,8 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
         accumulatedText: '',
         streaming: true,
         citations: [],
+        pinned: false,
+        pinnedAt: null,
       };
       syntheses.set(action.start.synthesisId, rec);
       return { ...state, syntheses };
@@ -224,6 +240,21 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
       if (!state.syntheses.has(action.retracted.synthesisId)) return state;
       const syntheses = cloneMap(state.syntheses);
       syntheses.delete(action.retracted.synthesisId);
+      return { ...state, syntheses };
+    }
+
+    case 'synthesisPinned': {
+      const existing = state.syntheses.get(action.synthesisId);
+      if (existing === undefined) return state;
+      if (existing.pinned === action.pinned && existing.pinnedAt === action.pinnedAt) {
+        return state;
+      }
+      const syntheses = cloneMap(state.syntheses);
+      syntheses.set(action.synthesisId, {
+        ...existing,
+        pinned: action.pinned,
+        pinnedAt: action.pinnedAt,
+      });
       return { ...state, syntheses };
     }
 

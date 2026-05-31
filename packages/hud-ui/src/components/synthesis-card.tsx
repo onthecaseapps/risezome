@@ -10,6 +10,7 @@ import {
 } from 'react';
 import type { CardEvent, SynthesisCitation } from '../types';
 import { SourceCardExpanded } from './source-card-expanded';
+import { useSynthesisActions } from '../state/synthesis-actions';
 
 /**
  * AI Summary card. Internally branches between three phases — placeholder,
@@ -52,6 +53,11 @@ export interface SynthesisCardProps {
    *  chip activations to look up the right quote when the chip fires
    *  onActivate. */
   readonly citationRecords?: readonly SynthesisCitation[];
+  /** Pin state from the reducer. Drives the pin button glyph + ARIA
+   *  label. The actual pin/unpin call goes through SynthesisActions
+   *  context (host-injected). When the host doesn't provide actions
+   *  the button hides. */
+  readonly pinned?: boolean;
   readonly entering?: boolean;
 }
 
@@ -66,16 +72,20 @@ export function SynthesisCard({
   answer,
   citations,
   sources,
+  pinned = false,
   entering = false,
 }: SynthesisCardProps): ReactElement {
   const className = [
     'card',
     'synthesis',
     `synthesis-phase-${phase}`,
+    pinned ? 'is-pinned' : null,
     entering ? 'is-entering' : null,
   ]
     .filter(Boolean)
     .join(' ');
+
+  const synthesisActions = useSynthesisActions();
 
   // Per-synthesis expansion state. Cleared on every render of a different
   // synthesisId because useState binds to component instance + key.
@@ -110,9 +120,20 @@ export function SynthesisCard({
         data-kind="synthesis"
         data-synthesis-id={synthesisId}
         data-phase={phase}
+        data-pinned={pinned ? 'true' : 'false'}
         aria-busy={ariaBusy}
       >
-        <span className="ai-label">AI Summary</span>
+        <div className="synthesis-header">
+          <span className="ai-label">AI Summary</span>
+          {phase === 'done' && (
+            <PinButton
+              synthesisId={synthesisId}
+              pinned={pinned}
+              {...(synthesisActions.pin !== undefined ? { pin: synthesisActions.pin } : {})}
+              {...(synthesisActions.unpin !== undefined ? { unpin: synthesisActions.unpin } : {})}
+            />
+          )}
+        </div>
         <div className="synthesis-body" aria-live={ariaLive}>
           {phase === 'placeholder' ? (
             <SkeletonBars />
@@ -157,6 +178,80 @@ export function SynthesisCard({
         )}
       </article>
     </SynthesisCardActivateContext.Provider>
+  );
+}
+
+/**
+ * Pin / unpin affordance for a completed synthesis. Hidden when the
+ * host hasn't injected SynthesisActions (e.g. SSR, demo embeds).
+ * Position is top-right of the card body — S9's 16px dead-zone is
+ * enforced by the .pin-button class margin in styles.css so the
+ * button can't sit on top of inline citation chips or the source-
+ * expand chevron.
+ */
+function PinButton({
+  synthesisId,
+  pinned,
+  pin,
+  unpin,
+}: {
+  synthesisId: string;
+  pinned: boolean;
+  pin?: (synthesisId: string) => void | Promise<void>;
+  unpin?: (synthesisId: string) => void | Promise<void>;
+}): ReactElement | null {
+  // If neither handler is wired, the button isn't useful — hide it.
+  if (pin === undefined && unpin === undefined) return null;
+  const handler = pinned ? unpin : pin;
+  if (handler === undefined) return null;
+  const label = pinned ? 'Unpin synthesis' : 'Pin synthesis';
+  return (
+    <button
+      type="button"
+      className="pin-button"
+      aria-label={label}
+      title={label}
+      aria-pressed={pinned}
+      onClick={() => {
+        void handler(synthesisId);
+      }}
+    >
+      {pinned ? <PinFilledGlyph /> : <PinOutlineGlyph />}
+    </button>
+  );
+}
+
+function PinOutlineGlyph(): ReactElement {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 17v5" />
+      <path d="M9 10.5V4h6v6.5l3 3.5H6l3-3.5z" />
+    </svg>
+  );
+}
+
+function PinFilledGlyph(): ReactElement {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M9 10.5V4h6v6.5l3 3.5v1H6v-1l3-3.5z" />
+      <path d="M11.4 16h1.2v6h-1.2z" />
+    </svg>
   );
 }
 

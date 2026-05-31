@@ -135,6 +135,112 @@ describe('SynthesisCard — phase: streaming', () => {
   });
 });
 
+describe('SynthesisCard — pin button (U5)', () => {
+  it('hides the pin button when no SynthesisActions are wired', () => {
+    const { container } = render(
+      <SynthesisCard
+        synthesisId="s1"
+        phase="done"
+        answer={<>x</>}
+        citations={[]}
+        sources={[]}
+      />,
+    );
+    expect(container.querySelector('.pin-button')).toBeNull();
+  });
+
+  it('renders an unpinned glyph when pinned=false and pin action is wired', async () => {
+    const { SynthesisActionsProvider } = await import('../src/state/synthesis-actions.js');
+    const { container } = render(
+      <SynthesisActionsProvider actions={{ pin: () => {} }}>
+        <SynthesisCard
+          synthesisId="s1"
+          phase="done"
+          answer={<>x</>}
+          citations={[]}
+          sources={[]}
+          pinned={false}
+        />
+      </SynthesisActionsProvider>,
+    );
+    const btn = container.querySelector('.pin-button');
+    expect(btn).not.toBeNull();
+    expect(btn?.getAttribute('aria-pressed')).toBe('false');
+    expect(btn?.getAttribute('aria-label')).toBe('Pin synthesis');
+  });
+
+  it('renders a pinned glyph when pinned=true and unpin action is wired', async () => {
+    const { SynthesisActionsProvider } = await import('../src/state/synthesis-actions.js');
+    const { container } = render(
+      <SynthesisActionsProvider actions={{ unpin: () => {} }}>
+        <SynthesisCard
+          synthesisId="s1"
+          phase="done"
+          answer={<>x</>}
+          citations={[]}
+          sources={[]}
+          pinned={true}
+        />
+      </SynthesisActionsProvider>,
+    );
+    const btn = container.querySelector('.pin-button');
+    expect(btn).not.toBeNull();
+    expect(btn?.getAttribute('aria-pressed')).toBe('true');
+    expect(btn?.getAttribute('aria-label')).toBe('Unpin synthesis');
+  });
+
+  it('hides the pin button during placeholder + streaming phases', async () => {
+    const { SynthesisActionsProvider } = await import('../src/state/synthesis-actions.js');
+    const placeholder = render(
+      <SynthesisActionsProvider actions={{ pin: () => {}, unpin: () => {} }}>
+        <SynthesisCard
+          synthesisId="s1"
+          phase="placeholder"
+          answer={null}
+          citations={[]}
+          sources={[]}
+        />
+      </SynthesisActionsProvider>,
+    );
+    expect(placeholder.container.querySelector('.pin-button')).toBeNull();
+    placeholder.unmount();
+
+    const streaming = render(
+      <SynthesisActionsProvider actions={{ pin: () => {}, unpin: () => {} }}>
+        <SynthesisCard
+          synthesisId="s1"
+          phase="streaming"
+          answer={<>x</>}
+          citations={[]}
+          sources={[]}
+        />
+      </SynthesisActionsProvider>,
+    );
+    expect(streaming.container.querySelector('.pin-button')).toBeNull();
+  });
+
+  it('clicking pin fires the host action with synthesisId', async () => {
+    const { SynthesisActionsProvider } = await import('../src/state/synthesis-actions.js');
+    const { fireEvent } = await import('@testing-library/react');
+    const { vi } = await import('vitest');
+    const pin = vi.fn();
+    const { container } = render(
+      <SynthesisActionsProvider actions={{ pin }}>
+        <SynthesisCard
+          synthesisId="my-syn"
+          phase="done"
+          answer={<>x</>}
+          citations={[]}
+          sources={[]}
+          pinned={false}
+        />
+      </SynthesisActionsProvider>,
+    );
+    fireEvent.click(container.querySelector('.pin-button')!);
+    expect(pin).toHaveBeenCalledWith('my-syn');
+  });
+});
+
 describe('SynthesisCard — phase: done', () => {
   it('hides cursor; renders citations + sources', () => {
     const sources = [mkCard()];

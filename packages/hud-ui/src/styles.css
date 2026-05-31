@@ -767,6 +767,76 @@ body {
   font-size: 9.5px;
 }
 
+/* Synthesis card header — holds the AI Summary label + pin button.
+ * Flex row so the pin sits at the right edge with a guaranteed gap
+ * to any inline content (S9's 16px misclick guardrail). */
+.synthesis-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px; /* S9 dead-zone */
+  margin-bottom: 4px;
+}
+
+/* Pin button — small icon at top-right of a completed synthesis card.
+ * Hover and pressed states use the existing accent token pair. */
+.pin-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 120ms ease-out, background-color 120ms ease-out;
+}
+.pin-button:hover {
+  color: var(--fg);
+  background: var(--accent-soft, rgba(0, 0, 0, 0.04));
+}
+.pin-button[aria-pressed='true'] {
+  color: var(--accent);
+}
+.pin-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.card.synthesis.is-pinned {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--card-shadow);
+}
+
+/* Pinned syntheses section — wraps the top-of-page pinned cards.
+ * Section is omitted entirely when no syntheses are pinned, so the
+ * label only appears when there's something to label. */
+.pinned-syntheses {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pinned-syntheses-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.pinned-syntheses-label {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+
 /* Quirky empty-state placeholder. Lives inside #card-stream as a soft
    centered card-like block; visible only when the stream has no cards
    or syntheses. The 10-second rotation runs in JS; this only owns

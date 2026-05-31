@@ -112,7 +112,7 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
     const { data: synthRows } = await supabase
       .from('syntheses')
       .select(
-        'synthesis_id, source_card_ids, accumulated_text, status, stop_reason, error_code, error_message, citations, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, ttft_ms, latency_ms, trace_id, retracted_at, created_at',
+        'synthesis_id, source_card_ids, accumulated_text, status, stop_reason, error_code, error_message, citations, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, ttft_ms, latency_ms, trace_id, retracted_at, created_at, pinned, pinned_at',
       )
       .eq('meeting_id', meetingId)
       .order('created_at', { ascending: false });
@@ -132,6 +132,8 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
             sourceCardIds,
             s.accumulated_text as string,
           ),
+          pinned: (s.pinned as boolean | null) ?? false,
+          pinnedAt: (s.pinned_at as string | null) ?? null,
         };
         if (s.stop_reason !== null) out.stopReason = s.stop_reason as string;
         if (s.error_code !== null) out.errorCode = s.error_code as SynthesisErrorCode;
@@ -175,6 +177,8 @@ export interface InitialSynthesis {
   errorCode?: SynthesisErrorCode;
   errorMessage?: string;
   citations: NormalizedCitation[];
+  pinned: boolean;
+  pinnedAt: string | null;
   usage?: {
     inputTokens: number;
     outputTokens: number;

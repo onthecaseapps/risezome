@@ -18,8 +18,10 @@ export { TypeGlyph, PinGlyph } from './components/glyphs';
 export { HudCard } from './components/hud-card';
 export { HudShell } from './components/hud-shell';
 export { PinnedSection } from './components/pinned-section';
+export { PinnedSynthesesSection } from './components/pinned-syntheses-section';
+export { SourceCardExpanded } from './components/source-card-expanded';
 export { SynthesisAnnounce } from './components/synthesis-announce';
-export { SynthesisCard } from './components/synthesis-card';
+export { SynthesisCard, type SynthesisPhase } from './components/synthesis-card';
 export { SynthesisStream } from './components/synthesis-stream';
 export { ThemeToggle } from './components/theme-toggle';
 
@@ -41,6 +43,11 @@ export {
   useCardActions,
   type CardActions,
 } from './state/card-actions';
+export {
+  SynthesisActionsProvider,
+  useSynthesisActions,
+  type SynthesisActions,
+} from './state/synthesis-actions';
 
 // Lib
 export {
@@ -52,3 +59,4 @@ export {
   resolveEffectiveTheme,
   type ThemePreference,
 } from './lib/theme';
+export { findQuoteInBody, type QuoteMatch } from './lib/quote-match';

@@ -9,6 +9,7 @@ import {
   CardStream,
   EmptyState,
   PinnedSection,
+  SynthesisActionsProvider,
   SynthesisAnnounce,
   SynthesisStream,
   initialAppState,
@@ -18,6 +19,7 @@ import {
   type CardActions,
   type CardEvent,
   type CardRecord,
+  type SynthesisActions,
   type SynthesisRecord,
 } from '@risezome/hud-ui';
 import {
@@ -25,6 +27,7 @@ import {
   type BroadcastedStatus,
 } from '../../../../_lib/realtime-meeting-channel';
 import { pinCardAction, dismissCardAction } from './card-actions-server';
+import { pinSynthesisAction } from './synthesis-actions-server';
 import type { InitialSynthesis } from './page';
 
 export type MeetingStatus =
@@ -149,10 +152,45 @@ function RealtimeWrapper({
     [dispatch],
   );
 
+  // Synthesis-level pin (plan U5). Same optimistic-then-server pattern
+  // as cardActions; rollback on failure restores the prior pin state.
+  // No broadcast in V1 — cross-tab sync deferred per Scope Boundaries.
+  const synthesisActions = useMemo<SynthesisActions>(
+    () => ({
+      pin: async (synthesisId: string) => {
+        const at = new Date().toISOString();
+        dispatch({ type: 'synthesisPinned', synthesisId, pinned: true, pinnedAt: at });
+        const result = await pinSynthesisAction(synthesisId, true);
+        if (!result.ok) {
+          dispatch({ type: 'synthesisPinned', synthesisId, pinned: false, pinnedAt: null });
+          throw new Error(result.error);
+        }
+      },
+      unpin: async (synthesisId: string) => {
+        // Capture prior pinnedAt for rollback so we don't lose it on a
+        // server failure.
+        dispatch({ type: 'synthesisPinned', synthesisId, pinned: false, pinnedAt: null });
+        const result = await pinSynthesisAction(synthesisId, false);
+        if (!result.ok) {
+          dispatch({
+            type: 'synthesisPinned',
+            synthesisId,
+            pinned: true,
+            pinnedAt: new Date().toISOString(),
+          });
+          throw new Error(result.error);
+        }
+      },
+    }),
+    [dispatch],
+  );
+
   if (effectiveStatus === 'recording') {
     return (
       <CardActionsProvider actions={cardActions}>
-        <RecordingShell title={title} startedAtIso={startedAtIso} channelStatus={channel.status} />
+        <SynthesisActionsProvider actions={synthesisActions}>
+          <RecordingShell title={title} startedAtIso={startedAtIso} channelStatus={channel.status} />
+        </SynthesisActionsProvider>
       </CardActionsProvider>
     );
   }
@@ -186,6 +224,8 @@ function seedState(
       accumulatedText: s.accumulatedText,
       streaming: s.status === 'running',
       citations: s.citations,
+      pinned: s.pinned ?? false,
+      pinnedAt: s.pinnedAt ?? null,
       ...(s.stopReason !== undefined ? { stopReason: s.stopReason } : {}),
       ...(s.ttftMs !== undefined ? { ttftMs: s.ttftMs } : {}),
       ...(s.latencyMs !== undefined ? { latencyMs: s.latencyMs } : {}),

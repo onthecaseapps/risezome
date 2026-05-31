@@ -2,62 +2,64 @@
 
 import { Fragment, type ReactElement, type ReactNode } from 'react';
 import { useAppState, type SynthesisRecord } from '../state/app-state';
+import { useSynthesisActivate, SynthesisCard, type SynthesisPhase } from './synthesis-card';
 import { CitationChip } from './citation-chip';
-import { SynthesisCard, useSynthesisActivate, type SynthesisPhase } from './synthesis-card';
 import type { CardEvent, SynthesisCitation } from '../types';
 
 /**
- * Streaming + final synthesis rendering.
+ * Pinned syntheses section — renders above the chronological
+ * SynthesisStream on the live page (plan U5).
  *
- * Parses `[N]` and `[N: "..."]` tokens from the synthesis's accumulated
- * text and emits inline `<CitationChip>` components in their place. For
- * streaming syntheses, every in-range token (1 ≤ N ≤ sourceCardIds.length)
- * becomes a chip rendered inert (no click handler — the parser hasn't
- * run yet); the synthesizer's parser corrects the final citation list
- * on `synthesisDone`, at which point we drop tokens whose N is not in
- * `citations` and tidy adjacent whitespace, and chips become live with
- * their per-occurrence quote attached.
+ * Filters state.syntheses for {pinned: true} and renders them in
+ * pin-time DESC order (most recently pinned at top). When nothing is
+ * pinned the section is omitted entirely (empty React fragment).
  *
- * Per-occurrence quote routing: each inline match in the answer text
- * corresponds (in order, by rank-queue position) to one entry in
- * `syn.citations`. So `[2]` appearing twice with two different quotes
- * routes each occurrence to its own quote — click the first to highlight
- * line A, click the second to highlight line B in the same source.
+ * Pinning removes the synthesis from the chronological feed — the
+ * stream's selector excludes pinned. The convention is: pinned
+ * syntheses move from the stream to this section; unpinning sends
+ * them back. (Decision recorded in U5's S7 test scenarios.)
  *
- * Inline chips fire through the `useSynthesisActivate` context exposed
- * by the parent `SynthesisCard` — no DOM globals, no querySelector.
- *
- * Per-synthesis ordering: newest synthesis on top, matching the stream's
- * `insertBefore(el, firstChild)` semantics.
+ * **Code-shape note.** The render logic intentionally duplicates a
+ * small amount of synthesis-stream logic (chip walking, source
+ * resolution) because lifting it into a shared helper would have to
+ * carry six positional args and the duplication is currently 30
+ * lines. If a third caller appears (review-page synthesis-pin
+ * follow-up?), extract then.
  */
-export function SynthesisStream(): ReactElement {
+export function PinnedSynthesesSection(): ReactElement {
   const state = useAppState();
-  if (state.syntheses.size === 0) {
-    return <Fragment />;
+  const pinned: SynthesisRecord[] = [];
+  for (const syn of state.syntheses.values()) {
+    if (syn.pinned) pinned.push(syn);
   }
-  // Pinned syntheses move to PinnedSynthesesSection — exclude them
-  // from the chronological feed so the user doesn't see them rendered
-  // twice (plan U5).
-  const chronological = Array.from(state.syntheses.values())
-    .filter((s) => !s.pinned)
-    .reverse();
-  if (chronological.length === 0) return <Fragment />;
+  if (pinned.length === 0) return <Fragment />;
+
+  // pin-time DESC: most recently pinned at top.
+  pinned.sort((a, b) => {
+    if (a.pinnedAt === null && b.pinnedAt === null) return 0;
+    if (a.pinnedAt === null) return 1;
+    if (b.pinnedAt === null) return -1;
+    return b.pinnedAt.localeCompare(a.pinnedAt);
+  });
+
   return (
-    <Fragment>
-      {chronological.map((syn) => (
-        <SynthesisStreamItem key={syn.synthesisId} syn={syn} />
+    <section className="pinned-syntheses" aria-label="Pinned AI summaries">
+      <header className="pinned-syntheses-header">
+        <span className="pinned-syntheses-label">
+          Pinned ({String(pinned.length)})
+        </span>
+      </header>
+      {pinned.map((syn) => (
+        <PinnedSynthesisItem key={syn.synthesisId} syn={syn} />
       ))}
-    </Fragment>
+    </section>
   );
 }
 
-// Matches both [N] and [N: "..."] in one walk. Captures rank in group 1.
-// Quote payload (group 2) is consumed for the regex's bookkeeping but
-// not used here — quotes live in syn.citations[i].quote, looked up by
-// rank-queue order during chip emission.
+// Matches both [N] and [N: "..."] — same regex synthesis-stream uses.
 const CITATION_REGEX = /\[(\d+)(?::\s*"(?:\\.|[^"])*")?\]/g;
 
-function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
+function PinnedSynthesisItem({ syn }: { syn: SynthesisRecord }): ReactElement {
   const state = useAppState();
   const sources: CardEvent[] = [];
   for (const id of syn.sourceCardIds) {
@@ -65,11 +67,9 @@ function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
     if (rec !== undefined) sources.push(rec.card);
   }
 
-  // Phase derives from streaming + accumulatedText. Placeholder is the
-  // window between synthesisStart and the first synthesisDelta (D6).
-  // The card is the same React element across all three phases — internal
-  // branching avoids the remount that two separate components at the
-  // same tree slot would trigger (B4 from review).
+  // Pinned syntheses are always done (you can't pin a streaming one —
+  // the pin button only shows on phase==='done'). Phase here mirrors
+  // that invariant.
   const phase: SynthesisPhase = syn.streaming
     ? syn.accumulatedText.length === 0
       ? 'placeholder'
@@ -88,7 +88,6 @@ function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
     phase !== 'done',
   );
 
-  // Final citations row: one chip per unique source, ordered by rank.
   const uniqueRanks =
     phase === 'done'
       ? [...new Set(syn.citations.map((c) => c.rank))].sort((a, b) => a - b)
@@ -122,11 +121,6 @@ function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
   );
 }
 
-/**
- * CitationChip wrapper that pulls the activate callback from the
- * surrounding SynthesisCard via context, so the inline answer rendering
- * doesn't have to prop-drill it through every ReactNode child.
- */
 function ActivatableCitationChip(props: {
   rank: number;
   cardId: string;
@@ -155,8 +149,6 @@ function renderAnswer(
   citations: readonly SynthesisCitation[],
   streaming: boolean,
 ): ReactNode {
-  // Strip out-of-range citations on done. While streaming, keep
-  // everything; in-range tokens render as inert chips.
   let cleaned = text;
   if (validCitations !== null) {
     cleaned = cleaned
@@ -168,10 +160,6 @@ function renderAnswer(
       .replace(/\s{2,}/g, ' ')
       .trim();
   }
-
-  // Per-occurrence quote routing: walk syn.citations once to build a
-  // per-rank queue of quotes. Each in-order match in `cleaned` pops
-  // the next quote for its rank.
   const quoteQueueByRank = new Map<number, string[]>();
   for (const c of citations) {
     let q = quoteQueueByRank.get(c.rank);

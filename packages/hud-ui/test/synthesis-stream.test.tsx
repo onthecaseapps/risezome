@@ -35,6 +35,8 @@ function mkSyn(over: Partial<SynthesisRecord> = {}): SynthesisRecord {
     accumulatedText: '',
     streaming: true,
     citations: [],
+    pinned: false,
+    pinnedAt: null,
     ...over,
   };
 }

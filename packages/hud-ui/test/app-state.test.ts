@@ -238,4 +238,91 @@ describe('appStateReducer', () => {
     expect(s.syntheses.get('syn1')?.accumulatedText).toBe('ABC');
     expect(s.syntheses.get('syn1')?.streaming).toBe(false);
   });
+
+  describe('synthesisPinned (U5)', () => {
+    it('flips pinned + pinnedAt on the matching record', () => {
+      let s = appStateReducer(initialAppState, { type: 'card', card: mkCard() });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' },
+      });
+      expect(s.syntheses.get('syn1')?.pinned).toBe(false);
+      expect(s.syntheses.get('syn1')?.pinnedAt).toBeNull();
+
+      const at = '2026-05-31T12:00:00.000Z';
+      s = appStateReducer(s, { type: 'synthesisPinned', synthesisId: 'syn1', pinned: true, pinnedAt: at });
+      expect(s.syntheses.get('syn1')?.pinned).toBe(true);
+      expect(s.syntheses.get('syn1')?.pinnedAt).toBe(at);
+    });
+
+    it('unpinning clears pinnedAt', () => {
+      let s = appStateReducer(initialAppState, { type: 'card', card: mkCard() });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' },
+      });
+      s = appStateReducer(s, { type: 'synthesisPinned', synthesisId: 'syn1', pinned: true, pinnedAt: '2026-05-31T12:00:00.000Z' });
+      s = appStateReducer(s, { type: 'synthesisPinned', synthesisId: 'syn1', pinned: false, pinnedAt: null });
+      expect(s.syntheses.get('syn1')?.pinned).toBe(false);
+      expect(s.syntheses.get('syn1')?.pinnedAt).toBeNull();
+    });
+
+    it('is a no-op when the synthesisId is unknown', () => {
+      const next = appStateReducer(initialAppState, {
+        type: 'synthesisPinned',
+        synthesisId: 'ghost',
+        pinned: true,
+        pinnedAt: '2026-05-31T12:00:00.000Z',
+      });
+      expect(next).toBe(initialAppState);
+    });
+
+    it('is idempotent — same state dispatch twice produces identity-equal state', () => {
+      let s = appStateReducer(initialAppState, { type: 'card', card: mkCard() });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' },
+      });
+      s = appStateReducer(s, { type: 'synthesisPinned', synthesisId: 'syn1', pinned: true, pinnedAt: 'X' });
+      const next = appStateReducer(s, { type: 'synthesisPinned', synthesisId: 'syn1', pinned: true, pinnedAt: 'X' });
+      expect(next).toBe(s);
+    });
+  });
+
+  describe('cardRetracted cascade preservation for pinned syntheses (U5 / S2)', () => {
+    it('drops unpinned syntheses citing the retracted card but PRESERVES pinned ones', () => {
+      // Seed: card c1, two syntheses, only one is pinned.
+      let s = appStateReducer(initialAppState, { type: 'card', card: mkCard() });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'unpinned', sourceCardIds: ['c1'], traceId: 'tA' },
+      });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'pinned', sourceCardIds: ['c1'], traceId: 'tB' },
+      });
+      s = appStateReducer(s, {
+        type: 'synthesisPinned',
+        synthesisId: 'pinned',
+        pinned: true,
+        pinnedAt: '2026-05-31T12:00:00.000Z',
+      });
+      expect(s.syntheses.size).toBe(2);
+
+      // Retract the cited card.
+      s = appStateReducer(s, {
+        type: 'cardRetracted',
+        retracted: { cardId: 'c1', reason: 'verifier-downgraded' },
+      });
+
+      // Card gone; unpinned synthesis cascaded; pinned synthesis SURVIVES.
+      expect(s.cards.size).toBe(0);
+      expect(s.syntheses.has('unpinned')).toBe(false);
+      expect(s.syntheses.has('pinned')).toBe(true);
+      // Pinned synthesis still tracks the retracted cardId in sourceCardIds;
+      // the SourceCardExpanded for it will render an empty / "source no
+      // longer available" state since the card itself is gone from state.
+      expect(s.syntheses.get('pinned')?.sourceCardIds).toContain('c1');
+    });
+  });
 });
