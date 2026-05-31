@@ -3,11 +3,12 @@ import { Logo } from '../../_components/logo';
 import { GoogleSignInButton } from './google-sign-in-button';
 
 /**
- * Sign-in page. Currently Google-only per R1. Future providers (GitHub,
- * Microsoft) hang off here as additional buttons.
+ * Sign-in page. Split-screen: brand + tagline on the left (dark in dark
+ * mode, soft indigo wash in light), sign-in form on the right.
  *
- * Calm layout: centered card on a soft background. Brand at top so the
- * sign-in surface reads as Risezome's, not as an anonymous OAuth form.
+ * Currently Google-only per R1. Future SSO providers (GitHub) and the
+ * magic-link email fallback are tracked as GH issues; they'll fit in the
+ * same form column without restructuring.
  */
 export default function SignInPage({
   searchParams,
@@ -15,26 +16,57 @@ export default function SignInPage({
   searchParams: Promise<{ error?: string; reason?: string }>;
 }): ReactElement {
   return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center px-6">
-      <div className="w-full space-y-8">
-        <header className="flex flex-col items-center gap-3 text-center">
-          <Logo size={44} className="text-accent" />
-          <h1 className="text-2xl font-semibold tracking-tight">Sign in to Risezome</h1>
+    <main className="grid min-h-dvh grid-cols-1 lg:grid-cols-2">
+      {/* Left: brand + tagline */}
+      <aside className="relative hidden flex-col justify-between overflow-hidden bg-accent/[0.06] p-12 lg:flex">
+        <div className="flex items-center gap-2.5">
+          <Logo size={28} className="text-accent" />
+          <span className="text-base font-semibold tracking-tight">Risezome</span>
+        </div>
+        <div className="relative z-10 space-y-4">
+          <h2 className="text-4xl font-semibold tracking-tight">
+            Answers, before<br />you ask.
+          </h2>
           <p className="max-w-sm text-sm text-muted">
-            Answers, before you ask. We&apos;ll request calendar access so the bot can join
-            the meetings you opt into.
+            Risezome surfaces the right PR, ticket, and doc from your codebase the moment
+            they come up in a meeting.
           </p>
-        </header>
+        </div>
+      </aside>
 
-        <SignInError searchParams={searchParams} />
+      {/* Right: sign-in form */}
+      <section className="flex flex-col items-center justify-center px-6 py-12">
+        <div className="w-full max-w-sm space-y-8">
+          {/* Mobile-only brand (left aside is hidden < lg) */}
+          <div className="flex items-center justify-center gap-2.5 lg:hidden">
+            <Logo size={28} className="text-accent" />
+            <span className="text-base font-semibold tracking-tight">Risezome</span>
+          </div>
 
-        <GoogleSignInButton />
+          <header className="space-y-1.5">
+            <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
+            <p className="text-sm text-muted">Sign in to your workspace.</p>
+          </header>
 
-        <p className="text-center text-xs text-muted">
-          By signing in, you agree to be a beta tester. No paid plans yet; provider costs
-          absorbed during beta.
+          <SignInError searchParams={searchParams} />
+
+          <GoogleSignInButton />
+
+          <p className="text-center text-sm text-muted">
+            New to Risezome?{' '}
+            {/* Same OAuth flow — sign-in and "create workspace" both land at /onboarding
+                after auth; the onboarding page detects zero-orgs and renders the
+                workspace-creation form. */}
+            <a href="/sign-in" className="font-medium text-accent hover:text-accent-press">
+              Create a workspace
+            </a>
+          </p>
+        </div>
+
+        <p className="mt-12 text-center text-xs text-muted">
+          Beta. Provider costs absorbed; no payment required.
         </p>
-      </div>
+      </section>
     </main>
   );
 }

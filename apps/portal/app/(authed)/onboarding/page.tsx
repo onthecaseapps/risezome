@@ -33,8 +33,8 @@ export default async function OnboardingPage({
           <Logo size={40} className="text-accent" />
           <h1 className="text-2xl font-semibold tracking-tight">Welcome to Risezome</h1>
           <p className="max-w-sm text-sm text-muted">
-            Let&apos;s name your team. You can rename it later in Settings, and add more
-            teams from the sidebar.
+            Let&apos;s name your workspace. You can rename it later in Settings, and add more
+            workspaces from the sidebar.
           </p>
         </header>
 
@@ -42,7 +42,7 @@ export default async function OnboardingPage({
 
         <form action={createOrg} className="space-y-4">
           <label className="block text-sm">
-            <span className="mb-1.5 block font-medium">Team name</span>
+            <span className="mb-1.5 block font-medium">Workspace name</span>
             <input
               name="name"
               type="text"
@@ -57,7 +57,7 @@ export default async function OnboardingPage({
             type="submit"
             className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:bg-accent-press"
           >
-            Create team
+            Create workspace
           </button>
         </form>
       </div>
@@ -69,13 +69,13 @@ function OnboardingError({ code }: { code: string }): ReactElement {
   let message: string;
   switch (code) {
     case 'empty_name':
-      message = 'Team name is required.';
+      message = 'Workspace name is required.';
       break;
     case 'name_too_long':
-      message = 'Team name must be 100 characters or less.';
+      message = 'Workspace name must be 100 characters or less.';
       break;
     case 'create_failed':
-      message = 'Couldn’t create the team. Try again, or contact support if it keeps happening.';
+      message = 'Couldn’t create the workspace. Try again, or contact support if it keeps happening.';
       break;
     default:
       message = 'Something went wrong. Try again.';

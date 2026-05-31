@@ -18,9 +18,9 @@ export default async function NewOrgPage({
   return (
     <main className="mx-auto max-w-md px-6 py-12">
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Create a new team</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Create a new workspace</h1>
         <p className="mt-2 text-sm text-muted">
-          You&apos;ll be added as the admin. Switch between teams from the sidebar.
+          You&apos;ll be added as the admin. Switch between workspaces from the sidebar.
         </p>
       </header>
 
@@ -29,13 +29,13 @@ export default async function NewOrgPage({
           role="alert"
           className="mb-6 rounded-md border border-error bg-error/10 p-3 text-sm text-error"
         >
-          Couldn&apos;t create the team. Try again.
+          Couldn&apos;t create the workspace. Try again.
         </div>
       )}
 
       <form action={createOrg} className="space-y-4">
         <label className="block text-sm">
-          <span className="mb-1.5 block font-medium">Team name</span>
+          <span className="mb-1.5 block font-medium">Workspace name</span>
           <input
             name="name"
             type="text"
@@ -57,7 +57,7 @@ export default async function NewOrgPage({
             type="submit"
             className="flex-1 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:bg-accent-press"
           >
-            Create team
+            Create workspace
           </button>
         </div>
       </form>
