@@ -102,6 +102,44 @@ export function useRealtimeMeetingChannel(opts: UseRealtimeMeetingChannelOpts): 
     };
   }, [meetingId, orgId, dispatch]);
 
+  // Polling fallback for status transitions. The Realtime broadcast +
+  // reconnect-fetch SHOULD be enough on its own, but live testing has
+  // shown the joining-shell occasionally stays stuck even after the bot
+  // started recording — root cause is suspected to be a private-channel
+  // auth timing edge but isn't pinned down yet. Poll meetings.status
+  // every 3s while the page hasn't seen a live=recording status yet, so
+  // the page is guaranteed to flip out of JoiningShell within ~3s of
+  // the bot starting to record, regardless of broadcast delivery.
+  // Stops polling the moment liveMeetingStatus becomes anything (live
+  // path took over) OR we observe 'recording' (we no longer need to
+  // poll). Cheap query (~1 row, indexed lookup).
+  useEffect(() => {
+    if (state.liveMeetingStatus !== null) return;
+    let cancelled = false;
+    const supabase = getBrowserClient();
+    const interval = window.setInterval(() => {
+      void (async () => {
+        const { data } = await supabase
+          .from('meetings')
+          .select('status')
+          .eq('meeting_id', meetingId)
+          .maybeSingle();
+        if (cancelled) return;
+        const s = (data?.status as BroadcastedStatus | null) ?? null;
+        if (s === null) return;
+        setState((prev) => (prev.liveMeetingStatus === s ? prev : { ...prev, liveMeetingStatus: s }));
+        dispatch({
+          type: 'meetingStatus',
+          mode: s === 'recording' ? 'live' : 'idle',
+        });
+      })();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [meetingId, dispatch, state.liveMeetingStatus]);
+
   return state;
 }
 
