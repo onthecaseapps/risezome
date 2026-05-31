@@ -1,11 +1,11 @@
 # @risezome/portal
 
 The hosted Risezome portal — Next.js 16 App Router app on Vercel. Hosts both the
-public marketing surface (`/`, `/sign-in`) and authenticated routes
-(`/onboarding`, `/sources`, `/meetings`, `/settings`) once subsequent
-implementation units land.
+public marketing surface (`/`, `/sign-in`) and the authenticated app
+(`/onboarding`, `/sources`, `/upcoming`, `/meetings`, `/settings`), plus the
+Inngest endpoint (`/api/inngest`) and OAuth/webhook callbacks.
 
-Implementation plan: [`docs/plans/2026-05-30-002-feat-upwell-portal-saas-plan.md`](../../docs/plans/2026-05-30-002-feat-upwell-portal-saas-plan.md).
+Historical implementation plan: [`docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md`](../../docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md).
 
 ## Local development
 
@@ -56,9 +56,9 @@ Vercel project env vars (prod).
 
 The Risezome GitHub App is a single platform-owned object (owned by the
 `onthecaseapps` GitHub org) that beta testers install on their own orgs to
-let us index their repos. This is a **one-time setup** done by an Upwell
+let us index their repos. This is a **one-time setup** done by a Risezome
 operator; testers do not run this — they click an Install link served by
-U4b's per-tester install flow.
+the per-tester install flow.
 
 Run the registration script:
 
@@ -176,10 +176,13 @@ The Inngest UI at `http://localhost:8288` shows event flow, step traces,
 retry attempts, and lets you replay events. Use it to debug indexer runs
 without poking through Supabase row-by-row.
 
-### 6. (Later units) Recall.ai, Fly.io (bot-worker)
+### 6. Recall.ai + bot-worker (Fly.io)
 
-Documented as each unit lands. See the plan's `Documentation / Operational
-Notes` section for the full inventory.
+The meeting bot (Recall.ai) and the WebSocket service it connects back to
+live in `apps/bot-worker`. Recall keys (`RECALL_API_KEY`,
+`RECALL_DEEPGRAM_KEY`), the bot-worker URL (`BOT_WORKER_BASE_URL`), and the
+shared JWT secret (`BOT_WORKER_SECRET`) are documented in
+[`apps/bot-worker/README.md`](../bot-worker/README.md) and its `.env.example`.
 
 ## Test commands
 

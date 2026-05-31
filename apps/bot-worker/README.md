@@ -6,22 +6,27 @@ the engine's `Utterance` shape, runs the engine pipeline (retrieval +
 synthesis) against the org's pgvector corpus, persists cards / syntheses
 / gaps to Postgres, and broadcasts to Supabase Realtime.
 
-## What's in U9c (this commit)
+## Pipeline
 
-- HTTP server with WS upgrade at `/recall/:meetingId/:jwt`
-- JWT verification (HS256, signed with `BOT_WORKER_SECRET`)
-- Recall transcript adapter (`transcript.data` / `transcript.partial_data`
-  → engine `Utterance`)
-- In-memory per-meeting runtime (logs adapter output for now)
+Per active meeting the service:
 
-## What lands in U9d
+- Accepts the Recall.ai realtime WS at `/recall/:meetingId/:jwt` and
+  verifies the JWT (HS256, signed with `BOT_WORKER_SECRET`, bound to the
+  meeting).
+- Adapts the Recall transcript format (`transcript.data` /
+  `transcript.partial_data`) into the engine's `Utterance` shape and
+  maintains a rolling transcript window + rolling summary per meeting.
+- On each final utterance: embeds the window (Voyage), retrieves the top
+  matches from the org's pgvector corpus, optionally routes the query to a
+  skill (router classifier + skill registry), and synthesizes a cited
+  answer (Claude) gated by the relevance classifier.
+- Persists `meeting_events`, `cards`, and `syntheses` to Postgres and
+  broadcasts the same events to Supabase Realtime on the meeting channel,
+  which the portal's live page subscribes to.
 
-- Engine pipeline wiring (RetrievalPipeline + MeetingSession +
-  TranscriptWindow per meeting)
-- Postgres-backed `TranscriptStore` + `CorpusReader`
-- DB writes (cards, syntheses, gaps, meeting_events) before broadcast
-- Supabase Realtime broadcast on `meeting:<orgId>:<meetingId>`
-- JWT issuance in the portal's U8 launcher
+The portal's Inngest launcher issues the JWT and tells Recall to connect
+here. See [the architecture overview](../../README.md) for the end-to-end
+flow.
 
 ## Local dev
 
@@ -34,7 +39,10 @@ Required env vars:
 - `BOT_WORKER_SECRET` — HS256 secret for JWT signing. Generate with
   `openssl rand -base64 32`. Must match the launcher's secret.
 - `BOT_WORKER_PORT` — defaults to `8787`.
-- `SUPABASE_URL`, `SUPABASE_SECRET_KEY` — for DB writes (U9d).
+- `SUPABASE_URL`, `SUPABASE_SECRET_KEY` — required, for DB writes +
+  Realtime broadcast (service-role; server-only).
+- `VOYAGE_API_KEY`, `ANTHROPIC_API_KEY` — enable retrieval embeddings and
+  synthesis/classification respectively.
 
 To expose to a real Recall.ai bot during development, tunnel localhost:
 

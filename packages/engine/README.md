@@ -8,21 +8,27 @@ Lifted from `apps/daemon/src/` so the two surfaces don't drift.
 
 ```
 src/
-├── chunker/      # text + code chunking (lifted in U5b)
-├── embed/        # Voyage embedder + cache + contract (lifted in U5b)
-├── skills/       # registry + GitHub skills (lifted in U5b)
-├── transcribe/   # transcript provider contract (lifted in U5b)
+├── chunker/      # text + code chunking (used by the indexers)
+├── embed/        # Voyage embedder + cache + contract
+├── synthesize/   # Anthropic synthesizer + citation parsing + prompt
+├── relevance/    # heuristic-gated LLM relevance classifier (skip filler)
+├── router/       # tool-vs-RAG router classifier (heuristic + Anthropic)
+├── skills/       # skill contract (SkillContext/SkillResult) + registry
+├── summarize/    # rolling-window summarizer (Anthropic)
+├── transcribe/   # transcript provider contract (used by the legacy daemon)
 └── types.ts      # canonical types (CanonicalDoc, CanonicalChunk, ...)
 ```
 
-## Storage abstraction
+Each directory is a separate package export (e.g. `@risezome/engine/chunker`,
+`@risezome/engine/router`).
 
-This package defines **interfaces** for `TranscriptStore`, `CorpusReader`,
-and `MeetingSessionStore` (added later in U9–U10). The daemon implements
-them against SQLite; the bot-worker implements them against Postgres. The
-shared pipeline classes (retrieval, synthesis) take these interfaces as
-constructor params — no SQLite or Postgres types leak into the engine
-itself.
+## Stateless by design
+
+The engine holds no storage. Consumers own persistence and pass what each
+function needs explicitly: the bot-worker passes a Supabase client into the
+skill `SkillContext`; the Inngest indexers call the chunker + embedder and
+write to Postgres themselves; the legacy daemon does the same against SQLite.
+No SQLite or Postgres types leak into the engine.
 
 ## What this package does NOT do
 

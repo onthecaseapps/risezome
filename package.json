@@ -1,8 +1,8 @@
 {
-  "name": "upwell",
+  "name": "risezome",
   "version": "0.0.0",
   "private": true,
-  "description": "Meeting context copilot — captures meeting audio locally, surfaces relevant context from connected sources, and feeds unanswered questions back into documentation.",
+  "description": "Risezome — a cloud meeting-context copilot: a Recall.ai bot joins your calls, retrieves relevant context from connected sources (GitHub, Trello, Jira, Confluence), and surfaces synthesized answers in real time.",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=22.0.0",
@@ -17,7 +17,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "daemon": "pnpm --filter @upwell/daemon dev"
+    "daemon": "pnpm --filter @risezome/daemon dev"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

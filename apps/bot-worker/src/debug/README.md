@@ -31,7 +31,7 @@ total) — small refactor.
 
 ## Linux only
 
-The Linux sidecar binary at `sidecars/linux/build/upwell-sidecar-linux`
+The Linux sidecar binary at `sidecars/linux/build/risezome-sidecar-linux`
 is the only one wired here. macOS sidecar has a different protocol /
 calling convention — debug-page support for macOS would be a follow-up.
 
@@ -39,4 +39,4 @@ calling convention — debug-page support for macOS would be a follow-up.
 
 - `DEEPGRAM_API_KEY` — required for the debug pipeline.
 - `RISEZOME_SIDECAR_PATH` — optional, defaults to
-  `sidecars/linux/build/upwell-sidecar-linux` relative to the repo root.
+  `sidecars/linux/build/risezome-sidecar-linux` relative to the repo root.

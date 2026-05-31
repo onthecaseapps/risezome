@@ -1,6 +1,6 @@
 # Persistent bot-worker tunnel (named Cloudflare tunnel)
 
-Last updated: 2026-06-02
+Last updated: 2026-05-31
 
 ## Problem
 

@@ -1,4 +1,4 @@
-# Upwell Linux audio sidecar
+# Risezome Linux audio sidecar
 
 A small C program that captures 16 kHz mono Int16LE PCM from a PulseAudio / PipeWire source and streams it to the daemon over the U3 IPC contract.
 
@@ -17,7 +17,7 @@ make check-deps
 make
 ```
 
-Output: `build/upwell-sidecar-linux`.
+Output: `build/risezome-sidecar-linux`.
 
 The daemon verifies this binary's SHA-256 against its embedded manifest before spawning (per U3), so re-run the daemon's manifest-generation step after any rebuild.
 
@@ -38,7 +38,7 @@ This implementation produces:
 When `--device` is not specified, the sidecar passes `NULL` to `pa_simple_new`, which selects the server's default source. For system-audio capture you typically want the active output's monitor — set `PULSE_SOURCE` to that name when invoking the sidecar:
 
 ```
-PULSE_SOURCE="$(pactl get-default-sink).monitor" ./build/upwell-sidecar-linux --role=system
+PULSE_SOURCE="$(pactl get-default-sink).monitor" ./build/risezome-sidecar-linux --role=system
 ```
 
 The daemon's launcher does this resolution before spawn; you only need it for manual smoke tests.
@@ -49,15 +49,15 @@ In one terminal, run `paplay` against a known tone or your own playback. In anot
 
 ```bash
 echo '{"type":"nonce","nonce":"deadbeef"}' \
-  | PULSE_SOURCE="$(pactl get-default-sink).monitor" ./build/upwell-sidecar-linux --role=system \
-  > /tmp/upwell-capture.pcm 2> /tmp/upwell-capture.log
+  | PULSE_SOURCE="$(pactl get-default-sink).monitor" ./build/risezome-sidecar-linux --role=system \
+  > /tmp/risezome-capture.pcm 2> /tmp/risezome-capture.log
 ```
 
 After a few seconds, kill the sidecar (`Ctrl-C`). Verify:
 
-- `/tmp/upwell-capture.log` contains `{"type":"hello", "sidecarVersion":"0.1.0-linux", "nonceEcho":"deadbeef"}` then `{"type":"started", ...}`.
-- `/tmp/upwell-capture.pcm` is non-empty.
-- Pipe the raw PCM through `sox` (after stripping our framing headers) or use `ffmpeg -f s16le -ar 16000 -ac 1 -i /tmp/upwell-capture-stripped.pcm` to verify audibility.
+- `/tmp/risezome-capture.log` contains `{"type":"hello", "sidecarVersion":"0.1.0-linux", "nonceEcho":"deadbeef"}` then `{"type":"started", ...}`.
+- `/tmp/risezome-capture.pcm` is non-empty.
+- Pipe the raw PCM through `sox` (after stripping our framing headers) or use `ffmpeg -f s16le -ar 16000 -ac 1 -i /tmp/risezome-capture-stripped.pcm` to verify audibility.
 
 ## Constraints
 
