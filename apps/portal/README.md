@@ -52,7 +52,47 @@ Vercel project env vars (prod).
 6. Verify the domain you'll deploy at (`risezome.app`) in Google Cloud Console
    ahead of time so Calendar Push notifications (U6) work in prod.
 
-### 3. (Later units) GitHub App, Recall.ai, Cloudflare Tunnel, Inngest
+### 3. GitHub App (one-time platform registration)
+
+The Risezome GitHub App is a single platform-owned object (owned by the
+`onthecaseapps` GitHub org) that beta testers install on their own orgs to
+let us index their repos. This is a **one-time setup** done by an Upwell
+operator; testers do not run this — they click an Install link served by
+U4b's per-tester install flow.
+
+Run the registration script:
+
+```bash
+node apps/portal/scripts/register-github-app.mjs
+```
+
+The script:
+1. Hosts a tiny local web server at http://localhost:7000
+2. Auto-opens your browser; click "Submit manifest to GitHub"
+3. Review the manifest on GitHub (App name, permissions, webhook URL)
+   under the `onthecaseapps` org, then click "Create GitHub App for me"
+4. GitHub redirects back to localhost; the script exchanges the temp code
+   and prints credentials to both the terminal and the browser tab
+5. Paste the printed `GITHUB_APP_*` env vars into `apps/portal/.env.local`
+   (and later into Vercel project env when deploying)
+
+Configurable via env vars (defaults shown):
+- `RZ_APP_NAME` — display name on GitHub (default: `Risezome`)
+- `RZ_APP_OWNER` — GitHub org/user to own the App (default: `onthecaseapps`)
+- `RZ_APP_HOST` — production hostname for webhook + callback URLs (default: `risezome.app`)
+- `RZ_LOCAL_PORT` — local server port for the callback (default: `7000`)
+
+The credentials printed:
+- `GITHUB_APP_ID` — numeric app id, public
+- `GITHUB_APP_SLUG` — public install-URL slug (e.g. `risezome`)
+- `GITHUB_APP_CLIENT_ID` — for user-OAuth flows (future)
+- `GITHUB_APP_CLIENT_SECRET` — **secret**, server-only
+- `GITHUB_APP_WEBHOOK_SECRET` — **secret**, verifies inbound webhooks
+- `GITHUB_APP_PRIVATE_KEY_BASE64` — **secret**, base64-encoded PEM. Encoded
+  because PEM newlines get mangled by most hosting providers' env-var inputs;
+  `app/_lib/github-app.ts` decodes at load time (lands in U4b).
+
+### 4. (Later units) Recall.ai, Fly.io (bot-worker), Inngest
 
 Documented as each unit lands. See the plan's `Documentation / Operational
 Notes` section for the full inventory.
