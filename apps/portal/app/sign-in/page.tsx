@@ -120,9 +120,11 @@ function RisingSignalsBackdrop(): ReactElement {
         strokeWidth="1.5"
         opacity="0.5"
       />
-      <circle cx="110" cy="250" r="4" fill="#7c83ff" opacity="0.85" />
-      <circle cx="240" cy="200" r="5" fill="#7c83ff" opacity="0.5" />
-      <circle cx="300" cy="270" r="3.5" fill="#7c83ff" opacity="0.85" />
+      {/* The three line-end circles — fully opaque so the curve ends are
+          covered cleanly and don't show through behind the dot. */}
+      <circle cx="110" cy="250" r="4" fill="#7c83ff" />
+      <circle cx="240" cy="200" r="5" fill="#7c83ff" />
+      <circle cx="300" cy="270" r="3.5" fill="#7c83ff" />
       <circle cx="140" cy="330" r="3" fill="#7c83ff" opacity="0.5" />
       <circle cx="210" cy="300" r="2.6" fill="#7c83ff" opacity="0.85" />
       <circle cx="270" cy="360" r="3" fill="#7c83ff" opacity="0.5" />
