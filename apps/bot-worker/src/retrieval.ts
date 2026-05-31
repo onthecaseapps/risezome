@@ -5,7 +5,7 @@ import type {
   SynthesisSource,
   SynthesisUsage,
 } from '@risezome/engine/synthesize';
-import { parseSynthesisOutput } from '@risezome/engine/synthesize';
+import { parseSynthesisOutput, citationsToRanks } from '@risezome/engine/synthesize';
 import {
   classifyRelevanceHeuristic,
   type RelevanceClassifier,
@@ -597,12 +597,27 @@ async function runSynthesisAndBroadcast(args: {
           return;
         }
 
+        // U1→U2 bridge: parser now returns rich per-occurrence citations;
+        // wire shape still expects ranks-only. U2 propagates the rich
+        // shape through; for now we serialize back to number[] so the
+        // existing readers (live page hydration, review page) don't
+        // break across the U1 commit boundary.
+        const ranks = citationsToRanks(parsed.citations);
+        const quoteCount = parsed.citations.reduce(
+          (n, c) => (c.quote !== undefined && c.quote.length > 0 ? n + 1 : n),
+          0,
+        );
+        const quoteCharsTotal = parsed.citations.reduce(
+          (n, c) => n + (c.quote?.length ?? 0),
+          0,
+        );
+
         await args.db
           .from('syntheses')
           .update({
             status: 'done',
             stop_reason: chunk.stopReason,
-            citations: parsed.citations,
+            citations: ranks,
             input_tokens: chunk.usage.inputTokens,
             output_tokens: chunk.usage.outputTokens,
             cache_read_tokens: chunk.usage.cacheReadTokens,
@@ -619,7 +634,7 @@ async function runSynthesisAndBroadcast(args: {
             done: {
               synthesisId,
               stopReason: chunk.stopReason,
-              citations: parsed.citations,
+              citations: ranks,
               usage: chunk.usage,
               ttftMs: 0, // Not currently measured at this layer.
               latencyMs,
@@ -633,7 +648,9 @@ async function runSynthesisAndBroadcast(args: {
             meetingId: args.meetingId,
             latencyMs,
             outputTokens: chunk.usage.outputTokens,
-            citations: parsed.citations.length,
+            citationTotal: parsed.citations.length,
+            citationWithQuote: quoteCount,
+            quoteCharsTotal,
           },
           'synthesis.done',
         );

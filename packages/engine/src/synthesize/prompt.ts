@@ -35,7 +35,7 @@ Behavior rules — follow every one:
 
 1. USE ONLY THE PROVIDED NUMBERED SOURCES. Do not use prior knowledge, do not infer facts not present in the sources, do not extrapolate. If a fact is not literally in a source, it does not exist for the purposes of your answer.
 
-2. CITE EVERY FACTUAL STATEMENT. Every sentence in your answer that asserts a fact must end with at least one bracketed source number such as [1] or [2]. Cite all sources that support the statement. Do not cite source numbers that are not in the provided list.
+2. CITE EVERY FACTUAL STATEMENT WITH A QUOTED CITATION. Every sentence in your answer that asserts a fact must end with at least one citation in the form [N: "verbatim quote from source N"]. The quote must be a VERBATIM substring of source N — copy the exact characters, do not paraphrase, do not summarize. Pick the shortest substring of source N that supports your specific claim (typically 4-15 words). Use straight ASCII double quotes only; escape any inner double quote as \\". Cite multiple sources by emitting multiple bracketed citations in sequence, e.g. [1: "..."][2: "..."]. Do not cite source numbers that are not in the provided list.
 
 3. LENGTH IS 1 TO 3 SENTENCES. Be terse and information-dense. Skip preamble ("Based on the sources...", "According to the documents..."), skip hedging ("It seems that..."), skip meta-commentary ("I'll summarize..."). Go straight to the answer.
 
@@ -78,7 +78,7 @@ const FEW_SHOTS: readonly FewShot[] = [
           'Scope: read-only. Write back (creating Jira issues from gaps) is out of scope for this unit and tracked separately under U23.',
       },
     ],
-    answer: 'The Jira connector is planned as plan unit U13 in Phase 2 and blocked on completion of the GitHub connector contract; no implementation has started [1].',
+    answer: 'The Jira connector is planned as plan unit U13 in Phase 2 [1: "U13 (Phase 2, production breadth)"] and blocked on completion of the GitHub connector contract [1: "blocked on U7 completion of the GitHub connector contract"]; no implementation has started [1: "No code yet."].',
   },
   {
     utterance: 'are we using prompt caching for the LLM calls',
@@ -96,7 +96,7 @@ const FEW_SHOTS: readonly FewShot[] = [
           '// AnthropicSynthesizer mirrors the VoyageEmbedder constructor shape and\n// posts to /v1/messages with stream: true. The system blocks come from\n// buildSystemPrefix() and the last block carries\n// cache_control: { type: "ephemeral" }.\n\nasync *synthesize(input, signal?) {\n  const response = await this.#connectWithRetry(input, signal);\n  yield* this.#streamChunks(response.body, synthesisId);\n}',
       },
     ],
-    answer: 'Yes — the synthesizer uses Anthropic prompt caching with an ephemeral cache_control on the last system block [2], expected to cut input cost ~75% and TTFT to 100-200ms on cache hits [1].',
+    answer: 'Yes — the synthesizer uses Anthropic prompt caching with an ephemeral cache_control on the last system block [2: "the last system block carries\\ncache_control: { type: \\"ephemeral\\" }"], expected to cut input cost via a 90% discount on the cached prefix [1: "90% discount on the cached prefix"] and TTFT to 100-200ms on cache hits [1: "100-200ms"].',
   },
   {
     utterance: 'why did we pick voyage-4-large over voyage-3',
@@ -138,7 +138,7 @@ const FEW_SHOTS: readonly FewShot[] = [
           'class SidecarRunner emits a fresh 16-byte hex nonce on stdin via spawn-time stdin write, then waits for a hello message on stderr whose nonceEcho matches. Mismatch terminates the child immediately with SIGTERM. The nonce defeats stdout-piping attacks where an attacker controls a binary on PATH that produces well-formed PCM frames — without the handshake, the daemon would happily forward those counterfeit frames to Deepgram.\n\nThe runner also verifies the spawned binary\'s SHA-256 against a vendored manifest before spawn. The handshake is the second line of defense, not the first; it catches the case where the manifest matches but the binary is somehow misbehaving (corrupted memory, partial overwrite mid-spawn, etc.).',
       },
     ],
-    answer: 'The daemon writes a fresh 16-byte hex nonce to the sidecar\'s stdin and the sidecar must echo it back inside a hello message on stderr [2]; the spawn helper terminates the child immediately on a mismatch, which defeats stdout-piping attacks even when the binary SHA-256 matches the manifest [1][2].',
+    answer: 'The daemon writes a fresh 16-byte hex nonce to the sidecar\'s stdin and the sidecar must echo it back inside a hello message on stderr [2: "emits a fresh 16-byte hex nonce on stdin"][1: "Echo the nonce back on stderr"]; the spawn helper terminates the child immediately on a mismatch [2: "Mismatch terminates the child immediately with SIGTERM"], which defeats stdout-piping attacks even when the binary SHA-256 matches the manifest [2: "the second line of defense, not the first"].',
   },
   {
     utterance: 'are we tracking pin rate',
@@ -150,7 +150,7 @@ const FEW_SHOTS: readonly FewShot[] = [
           'Wire telemetry events for: pin-rate, dismiss-rate, scroll-into-view rate, time-to-first-pin per meeting, source-vs-synthesis preference (does the user pin the raw card or the synthesis chip?).\n\nThese are the input to confidence threshold calibration (U18 derivative work). Without measured pin/dismiss data we can\'t tell whether the current default of `minSynthesisScore = 0.025` is gating too aggressively (real matches get suppressed) or too loosely (noise gets through).\n\nStatus: planned, Phase 2. Blocked on the synthesis card landing first (U20 in this plan) since pin-rate-on-synthesis is one of the targets and there is no synthesis to pin yet.',
       },
     ],
-    answer: 'Pin-rate is a planned telemetry event in plan unit U24 (Phase 2), blocked on the synthesis card landing first — not yet wired [1].',
+    answer: 'Pin-rate is a planned telemetry event in plan unit U24 (Phase 2) [1: "U24"][1: "Phase 2"], blocked on the synthesis card landing first [1: "Blocked on the synthesis card landing first"] — not yet wired [1: "Status: planned"].',
   },
   {
     utterance: 'what gemini model should we use',
@@ -187,7 +187,7 @@ const FEW_SHOTS: readonly FewShot[] = [
           '## Phase 2 — Voice Activity Gate\n\nAdd RMS-based voice activity detection to cut Deepgram cost on silent stretches without losing speech.\n\nOptions evaluated:\n- **RMS-based** — simple, ~50 LOC, no deps, mediocre on noisy mics. Default proposal.\n- **WebRTC VAD** — medium dep (~1MB WASM), better than RMS, well-established.\n- **Silero VAD** — heaviest dep (PyTorch / ONNX), best precision/recall, gold standard for ASR pre-filtering.\n\nDefault proposal: RMS-based for v1, upgrade if quiet-talker recall is a problem in practice. The gate must include 500ms pre-roll (so Deepgram doesn\'t miss the first word) and 1.5s post-roll (so endpoint detection completes).',
       },
     ],
-    answer: 'The plan currently proposes an RMS-based VAD for v1 — simple, ~50 LOC — with WebRTC or Silero as upgrades if quiet-talker recall is a problem in practice [2]; today there is no VAD gate at all and every silent PCM frame is forwarded to Deepgram [1].',
+    answer: 'The plan currently proposes an RMS-based VAD for v1 — simple, ~50 LOC — with WebRTC or Silero as upgrades if quiet-talker recall is a problem in practice [2: "RMS-based for v1, upgrade if quiet-talker recall is a problem in practice"]; today there is no VAD gate at all and every silent PCM frame is forwarded to Deepgram [1: "every PCM frame the sidecar\\n// captures gets forwarded to Deepgram, silence included. No VAD gate."].',
   },
   {
     utterance: 'walk me through what happens when retrieval finds nothing useful',
@@ -206,7 +206,7 @@ const FEW_SHOTS: readonly FewShot[] = [
           '**Confidence threshold provisional default = 0.025 RRF, env-tunable** — that score roughly corresponds to top rank in at least one ranker. Below that, no synthesis call is made. The HUD shows raw cards only (or no cards if retrieval itself found nothing). On the synthesis side, the model is also instructed to output the refusal sentinel "No relevant context." when the sources are present but do not address the utterance — that case is handled separately by the HUD which suppresses the synthesis card and falls back to raw cards.',
       },
     ],
-    answer: 'Retrieval skips synthesis entirely when the top card\'s RRF score is below 0.025 — the HUD shows raw cards only (or nothing if retrieval also found nothing) [1][2]; if retrieval surfaces cards but the LLM determines none address the utterance, it emits the sentinel "No relevant context." which the HUD also suppresses, falling back to raw cards [2].',
+    answer: 'Retrieval skips synthesis entirely when the top card\'s RRF score is below 0.025 [2: "0.025 RRF"][1: "emittedCards[0].score >= this.#minSynthesisScore"] — the HUD shows raw cards only or nothing if retrieval also found nothing [1: "the user sees raw cards only (which may also be empty)"]; if retrieval surfaces cards but the LLM determines none address the utterance, it emits the sentinel "No relevant context." which the HUD also suppresses [2: "the model is also instructed to output the refusal sentinel \\"No relevant context.\\""].',
   },
   {
     utterance: 'how do we handle deepgram disconnecting mid meeting',
@@ -224,7 +224,7 @@ const FEW_SHOTS: readonly FewShot[] = [
           'Hand-grade 50-100 transcript fragments against the corpus to calibrate the confidence threshold. Each fragment gets labeled with the doc IDs that SHOULD have been surfaced; compare to actual retrieval and synthesis output to determine if 0.025 RRF is gating correctly.\n\nNot related to Deepgram, but listed here because the calibration set inherently includes transcript fragments where Deepgram performance affected retrieval quality (mumbled utterances, mid-word disconnects, etc.).',
       },
     ],
-    answer: 'The engine retries up to 3 times with exponential backoff (200ms × 2^attempt, capped at 1500ms) on transient disconnects, but skips retry on auth failures (1008, 4401, 4403) and drops incoming frames during the reconnect window rather than buffering them [1].',
+    answer: 'The engine retries up to 3 times with exponential backoff (200ms × 2^attempt, capped at 1500ms) on transient disconnects [1: "max 3 attempts, exponential backoff (200ms × 2^attempt, capped at 1500ms)"], but skips retry on auth failures [1: "Auth failures (close code 1008, 4401, 4403) skip reconnect entirely"] and drops incoming frames during the reconnect window rather than buffering them [1: "Incoming audio frames during the reconnect window are dropped, not buffered."].',
   },
 ];
 
@@ -246,7 +246,7 @@ function formatFewShotForPrompt(shot: FewShot, index: number): string {
 
 function buildPrefixText(): string {
   const examples = FEW_SHOTS.map((shot, i) => formatFewShotForPrompt(shot, i)).join('\n\n');
-  return `${SYSTEM_INSTRUCTIONS}\n\n${examples}\n\nNow synthesize the answer for the utterance that follows. Remember: 1-3 sentences, every factual claim cited with [N], or exactly "${REFUSAL_SENTINEL}" if no source addresses the utterance.`;
+  return `${SYSTEM_INSTRUCTIONS}\n\n${examples}\n\nNow synthesize the answer for the utterance that follows. Remember: 1-3 sentences, every factual claim cited with [N: "verbatim quote from source N"] using a short verbatim substring of the source, or exactly "${REFUSAL_SENTINEL}" if no source addresses the utterance.`;
 }
 
 const SYSTEM_PREFIX_TEXT = buildPrefixText();
@@ -271,24 +271,66 @@ export function buildUserMessage(
   return `Utterance: ${utterance}\n\nSources:\n${numbered}`;
 }
 
+// One citation occurrence in the synthesis text. Stored per-occurrence
+// so the same source cited at three positions yields three entries (each
+// with its own quote). The cardId mapping (rank → cardId via the
+// caller's sourceCardIds[]) lives in the caller; the parser intentionally
+// stays unaware of source identity beyond rank.
+export interface ParsedCitation {
+  /** 1-based rank into the caller's source list. */
+  readonly rank: number;
+  /** Character offset where the [N…] token starts in `text`. */
+  readonly position: number;
+  /** Verbatim quote the LLM extracted for this citation. Undefined when
+   *  Claude misformats (bare `[N]` with no quote payload) — the citation
+   *  is preserved with undefined quote so the chip can still scroll-to
+   *  the source even when no highlight is possible. */
+  readonly quote: string | undefined;
+}
+
 export interface ParsedSynthesis {
   readonly text: string;
-  readonly citations: readonly number[];
+  readonly citations: readonly ParsedCitation[];
   readonly isRefusal: boolean;
+}
+
+// Matches both formats in a single walk:
+//   [N: "quote"]   — new format (captures rank + quoted quote)
+//   [N]            — backward-compat bare form (rank only, quote undefined)
+// The quote alternative uses a non-greedy class allowing escaped chars
+// (\\.) and any non-quote (`[^"]`), so `[1: "the \"name\" field"]` parses
+// the full inner string.
+const CITATION_REGEX = /\[(\d+)(?::\s*"((?:\\.|[^"])*)")?\]/g;
+
+/** Unescapes the captured quote payload: `\"` → `"`, `\\` → `\`. Idempotent
+ *  for any string that doesn't contain a backslash. */
+function unescapeQuote(raw: string): string {
+  return raw.replace(/\\(["\\])/g, '$1');
 }
 
 export function parseSynthesisOutput(text: string, sourceCount: number): ParsedSynthesis {
   if (text.trim() === REFUSAL_SENTINEL) {
     return { text, citations: [], isRefusal: true };
   }
-  const seen = new Set<number>();
-  for (const match of text.matchAll(/\[(\d+)\]/g)) {
+  const citations: ParsedCitation[] = [];
+  for (const match of text.matchAll(CITATION_REGEX)) {
     const n = Number(match[1]);
-    if (Number.isInteger(n) && n >= 1 && n <= sourceCount) seen.add(n);
+    if (!Number.isInteger(n) || n < 1 || n > sourceCount) continue;
+    const rawQuote = match[2];
+    citations.push({
+      rank: n,
+      position: match.index,
+      quote: rawQuote === undefined ? undefined : unescapeQuote(rawQuote),
+    });
   }
-  return {
-    text,
-    citations: [...seen].sort((a, b) => a - b),
-    isRefusal: false,
-  };
+  return { text, citations, isRefusal: false };
+}
+
+/** Helper for callers that need the legacy dedup'd-sorted ranks shape
+ *  (number[]). Used during the U1→U2 transition; new callers should
+ *  consume ParsedCitation[] directly. */
+export function citationsToRanks(citations: readonly ParsedCitation[]): readonly number[] {
+  const seen = new Set<number>();
+  for (const c of citations) seen.add(c.rank);
+  return [...seen].sort((a, b) => a - b);
 }

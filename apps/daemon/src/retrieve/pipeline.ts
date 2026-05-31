@@ -12,7 +12,7 @@ import {
   type Synthesizer,
   type SynthesisInput,
 } from '@risezome/engine/synthesize';
-import { parseSynthesisOutput, REFUSAL_SENTINEL } from '@risezome/engine/synthesize';
+import { parseSynthesisOutput, citationsToRanks, REFUSAL_SENTINEL } from '@risezome/engine/synthesize';
 import { log } from '../cli/util.js';
 import { isToolShaped } from '../router/heuristic.js';
 import {
@@ -696,14 +696,15 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
               this.emit('synthesisError', { synthesisId, code: 'refused' });
               this.#session.clearSynthesis(synthesisId);
             } else {
-              const citedCardIds = parsed.citations
+              const ranks = citationsToRanks(parsed.citations);
+              const citedCardIds = ranks
                 .map((n) => sourceCardIds[n - 1])
                 .filter((id): id is string => typeof id === 'string');
               this.#session.setSynthesisCitations(synthesisId, citedCardIds);
               this.emit('synthesisDone', {
                 synthesisId,
                 stopReason: chunk.stopReason,
-                citations: parsed.citations,
+                citations: ranks,
                 usage: {
                   inputTokens: chunk.usage.inputTokens,
                   outputTokens: chunk.usage.outputTokens,
