@@ -240,6 +240,21 @@ function EventRow({
           {event.bot_optin ? <div className="mt-0.5 text-accent">Risezome joining</div> : null}
         </div>
       )}
+      {meeting !== null &&
+      (meeting.status === 'recording' ||
+        meeting.status === 'joining' ||
+        meeting.status === 'awaiting_recall' ||
+        meeting.status === 'launching' ||
+        meeting.status === 'waiting_room' ||
+        meeting.status === 'failed') ? (
+        <a
+          href={`/meetings/${meeting.meeting_id}/live`}
+          className="ml-2 inline-flex h-8 items-center rounded-md border border-border bg-card px-2.5 text-xs font-medium text-fg hover:bg-accent-soft"
+          aria-label={meeting.status === 'recording' ? 'Open live view' : 'Open meeting'}
+        >
+          {meeting.status === 'recording' ? 'Open live view' : 'View meeting'}
+        </a>
+      ) : null}
     </div>
   );
 }

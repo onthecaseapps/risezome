@@ -136,6 +136,9 @@ importers:
       '@risezome/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@risezome/hud-ui':
+        specifier: workspace:*
+        version: link:../../packages/hud-ui
       '@supabase/ssr':
         specifier: ^0.10.3
         version: 0.10.3(@supabase/supabase-js@2.106.2)
