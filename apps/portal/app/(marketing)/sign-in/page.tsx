@@ -31,9 +31,9 @@ export default function SignInPage({
           centered low. The RisingSignalsBackdrop fills the column behind
           the foreground content. */}
       <aside className="relative hidden flex-col overflow-hidden bg-accent/[0.06] p-10 lg:flex">
-        <div className="relative z-10 flex items-center gap-2.5">
-          <Logo size={28} className="text-accent" />
-          <span className="text-base font-semibold tracking-tight">Risezome</span>
+        <div className="relative z-10 flex items-center gap-3">
+          <Logo size={34} className="text-accent" />
+          <span className="text-xl font-semibold tracking-tight">Risezome</span>
         </div>
 
         <RisingSignalsBackdrop />
@@ -57,9 +57,9 @@ export default function SignInPage({
       <section className="flex flex-col items-center justify-center overflow-y-auto px-6 py-12">
         <div className="w-full max-w-sm space-y-8">
           {/* Mobile brand (the aside is hidden < lg). */}
-          <div className="flex items-center justify-center gap-2.5 lg:hidden">
-            <Logo size={28} className="text-accent" />
-            <span className="text-base font-semibold tracking-tight">Risezome</span>
+          <div className="flex items-center justify-center gap-3 lg:hidden">
+            <Logo size={34} className="text-accent" />
+            <span className="text-xl font-semibold tracking-tight">Risezome</span>
           </div>
 
           <header className="space-y-1.5">
