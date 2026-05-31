@@ -197,7 +197,7 @@ function CardRow({ card }: { card: ReviewCard }): ReactElement {
             <span>·</span>
             <span>{card.type}</span>
             {card.pinned ? (
-              <span className="ml-1 inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300">
+              <span className="ml-1 inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-700 dark:text-amber-300">
                 Pinned
               </span>
             ) : null}

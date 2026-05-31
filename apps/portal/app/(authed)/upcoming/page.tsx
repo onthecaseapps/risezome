@@ -111,7 +111,7 @@ export default async function UpcomingPage(): Promise<ReactElement> {
       </header>
 
       {error !== null ? (
-        <div className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+        <div className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
           Failed to load calendar: {error.message}
         </div>
       ) : events.length === 0 ? (
@@ -204,7 +204,7 @@ function EventRow({
   const status = describeRowStatus(event, meeting);
   return (
     <div className="flex items-center gap-4 rounded-xl border border-border bg-card p-4">
-      <div className="flex w-14 flex-shrink-0 flex-col items-end text-xs text-muted">
+      <div className="flex w-20 flex-shrink-0 flex-col items-end whitespace-nowrap text-xs text-muted">
         <span className="text-sm font-medium text-fg">{formatTime(event.start_at)}</span>
         <span>{formatTime(event.end_at)}</span>
       </div>
@@ -237,14 +237,9 @@ function EventRow({
         </div>
       </div>
 
-      {owned ? (
-        <OptInToggle eventId={event.id} initial={event.bot_optin} platform={event.platform} />
-      ) : (
-        <div className="text-right text-[11px] text-muted">
-          Owned by teammate
-          {event.bot_optin ? <div className="mt-0.5 text-accent">Risezome joining</div> : null}
-        </div>
-      )}
+      {/* Open-live-view button sits to the LEFT of the bot toggle so the
+          toggle is always the rightmost control in the row (matches the
+          mockup). */}
       {meeting !== null &&
       (meeting.status === 'recording' ||
         meeting.status === 'joining' ||
@@ -254,12 +249,20 @@ function EventRow({
         meeting.status === 'failed') ? (
         <a
           href={`/meetings/${meeting.meeting_id}/live`}
-          className="ml-2 inline-flex h-8 items-center rounded-md border border-border bg-card px-2.5 text-xs font-medium text-fg hover:bg-accent-soft"
+          className="inline-flex h-8 items-center rounded-md border border-border bg-card px-2.5 text-xs font-medium text-fg hover:bg-accent-soft"
           aria-label={meeting.status === 'recording' ? 'Open live view' : 'Open meeting'}
         >
           {meeting.status === 'recording' ? 'Open live view' : 'View meeting'}
         </a>
       ) : null}
+      {owned ? (
+        <OptInToggle eventId={event.id} initial={event.bot_optin} platform={event.platform} />
+      ) : (
+        <div className="text-right text-[11px] text-muted">
+          Owned by teammate
+          {event.bot_optin ? <div className="mt-0.5 text-accent">Risezome joining</div> : null}
+        </div>
+      )}
     </div>
   );
 }
@@ -273,12 +276,12 @@ interface RowStatus {
 function StatusChip({ status }: { status: RowStatus | null }): ReactElement | null {
   if (status === null) return null;
   const map: Record<RowStatus['tone'], string> = {
-    live: 'bg-rose-500/20 text-rose-300 animate-pulse',
+    live: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 animate-pulse',
     launching: 'bg-accent-soft text-accent',
     joining: 'bg-accent-soft text-accent',
     soon: 'bg-accent-soft text-accent',
     later: 'bg-bg/60 text-muted',
-    failed: 'bg-rose-500/15 text-rose-300',
+    failed: 'bg-rose-500/15 text-rose-700 dark:text-rose-300',
   };
   return (
     <span
@@ -301,8 +304,8 @@ function PlusIcon(): ReactElement {
 function PlatformBadge({ platform }: { platform: 'zoom' | 'meet' | 'other' | null }): ReactElement | null {
   if (platform === null) return null;
   const map: Record<NonNullable<typeof platform>, { label: string; className: string }> = {
-    zoom: { label: 'Zoom', className: 'bg-blue-500/15 text-blue-300' },
-    meet: { label: 'Meet', className: 'bg-emerald-500/15 text-emerald-300' },
+    zoom: { label: 'Zoom', className: 'bg-blue-500/15 text-blue-700 dark:text-blue-300' },
+    meet: { label: 'Meet', className: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' },
     other: { label: 'Other', className: 'bg-bg/60 text-muted' },
   };
   const v = map[platform];

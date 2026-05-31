@@ -89,7 +89,7 @@ export const TIMELINE: readonly TimelineEntry[] = [
     atMs: 250,
     event: {
       kind: 'transcript',
-      line: { id: 't1', speaker: 'Priya', text: 'Okay, standups. Marco, where are we on the auth migration?' },
+      line: { id: 't1', speaker: 'Priya', text: 'Marco, where are we on the auth migration?' },
     },
   },
   {
@@ -103,16 +103,15 @@ export const TIMELINE: readonly TimelineEntry[] = [
       },
     },
   },
-  { atMs: 2300, event: { kind: 'card', card: PR_CARD } },
-  { atMs: 2800, event: { kind: 'card', card: JIRA_CARD } },
-  { atMs: 3300, event: { kind: 'card', card: DOC_CARD } },
-  { atMs: 4100, event: { kind: 'synthesisStart' } },
-  { atMs: 4100, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[0]! } },
-  { atMs: 4900, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[1]! } },
-  { atMs: 5700, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[2]! } },
-  { atMs: 6500, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[3]! } },
+  // No intermediate raw cards — the question goes straight to AI synthesis.
+  // The supporting sources still appear inside the AI Summary's Sources grid.
+  { atMs: 2300, event: { kind: 'synthesisStart' } },
+  { atMs: 2300, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[0]! } },
+  { atMs: 3100, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[1]! } },
+  { atMs: 3900, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[2]! } },
+  { atMs: 4700, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[3]! } },
   {
-    atMs: 7300,
+    atMs: 5500,
     event: { kind: 'synthesisDone', citations: [1, 2, 3], sources: SYNTHESIS_SOURCES },
   },
 ];

@@ -99,7 +99,7 @@ export default async function AskPage(props: {
       </form>
 
       {error !== null ? (
-        <div className="mb-6 rounded-lg border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+        <div className="mb-6 rounded-lg border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
           Search failed: {error}
         </div>
       ) : null}
