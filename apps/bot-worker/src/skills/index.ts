@@ -21,6 +21,10 @@ import { buildIssueAssigneesSkill } from './github/issue_assignees.js';
 import { buildByAssigneeCountSkill } from './github/by_assignee_count.js';
 import { buildByAssigneeListSkill } from './github/by_assignee_list.js';
 import { buildIssueProgressSkill } from './github/issue_progress.js';
+import { countSkill } from './github/count.js';
+import { listSkill } from './github/list.js';
+import { byAuthorSkill } from './github/by_author.js';
+import { recentlyUpdatedSkill } from './github/recently_updated.js';
 
 export interface BuildSkillRegistryOptions {
   readonly logger: {
@@ -64,8 +68,17 @@ export function buildSkillRegistry(options: BuildSkillRegistryOptions): SkillReg
   }
 
   // ── Corpus GitHub skills (U6) ───────────────────────────────────
-  // Registered after the portal-side issue/PR indexer (U5) lands.
-  // Today: not yet wired.
+  // Always register — they're stateless and ctx.db is provided per
+  // call. If the corpus has no issues/PRs indexed yet (U5 hasn't run),
+  // queries return the zero-result summaries cleanly.
+  //
+  // Order matches the daemon's apps/daemon/src/skills/github/index.ts:
+  // count first so the classifier biases toward it for ambiguous
+  // "how many" utterances.
+  registry.register(countSkill);
+  registry.register(listSkill);
+  registry.register(recentlyUpdatedSkill);
+  registry.register(byAuthorSkill);
 
   options.logger.info(
     { registeredSkills: registry.list().map((s) => s.name) },
