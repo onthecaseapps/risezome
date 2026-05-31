@@ -1,12 +1,17 @@
 import type { ReactElement } from 'react';
 import { redirect } from 'next/navigation';
+import { Logo } from '../../_components/logo';
 import { listUserOrgs, requireAuthedUser } from '../../_lib/auth';
 import { createOrg } from './actions';
 
 /**
  * First-time onboarding. Shown when the user has no org memberships yet.
- * Users with at least one membership are redirected to /sources — no
+ * Users with at least one membership redirect to /sources — no
  * second-create-org loop.
+ *
+ * Renders inside the (authed) layout but the sidebar's nav links are mostly
+ * disabled (no org context yet); only the Risezome wordmark + (eventual)
+ * user card are present. Visually the page reads as a centered welcome.
  */
 export default async function OnboardingPage({
   searchParams,
@@ -22,36 +27,40 @@ export default async function OnboardingPage({
   const { error } = await searchParams;
 
   return (
-    <main className="mx-auto max-w-md py-12">
-      <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Welcome to Risezome</h1>
-        <p className="mt-2 text-sm text-[var(--muted)]">
-          Let&apos;s set up your team. You can rename it later in Settings.
-        </p>
-      </header>
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center px-6 py-12">
+      <div className="w-full space-y-8">
+        <header className="flex flex-col items-center gap-3 text-center">
+          <Logo size={40} className="text-accent" />
+          <h1 className="text-2xl font-semibold tracking-tight">Welcome to Risezome</h1>
+          <p className="max-w-sm text-sm text-muted">
+            Let&apos;s name your team. You can rename it later in Settings, and add more
+            teams from the sidebar.
+          </p>
+        </header>
 
-      {error !== undefined && <OnboardingError code={error} />}
+        {error !== undefined && <OnboardingError code={error} />}
 
-      <form action={createOrg} className="space-y-4">
-        <label className="block text-sm">
-          <span className="mb-1 block font-medium">Team name</span>
-          <input
-            name="name"
-            type="text"
-            required
-            maxLength={100}
-            placeholder="e.g. Acme Engineering"
-            className="block w-full rounded-md border border-[var(--border)] bg-[var(--card-bg)] px-3 py-2 text-sm focus:border-[var(--accent)] focus:outline-none"
-            autoFocus
-          />
-        </label>
-        <button
-          type="submit"
-          className="w-full rounded-md bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white hover:opacity-90"
-        >
-          Create team
-        </button>
-      </form>
+        <form action={createOrg} className="space-y-4">
+          <label className="block text-sm">
+            <span className="mb-1.5 block font-medium">Team name</span>
+            <input
+              name="name"
+              type="text"
+              required
+              maxLength={100}
+              placeholder="e.g. Acme Engineering"
+              className="block w-full rounded-lg border border-border bg-card px-3 py-2.5 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+              autoFocus
+            />
+          </label>
+          <button
+            type="submit"
+            className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:bg-accent-press"
+          >
+            Create team
+          </button>
+        </form>
+      </div>
     </main>
   );
 }
@@ -74,7 +83,7 @@ function OnboardingError({ code }: { code: string }): ReactElement {
   return (
     <div
       role="alert"
-      className="mb-6 rounded-md border border-[var(--error,#b30000)] bg-[var(--error,#b30000)]/10 p-3 text-sm"
+      className="rounded-md border border-error bg-error/10 p-3 text-sm text-error"
     >
       {message}
     </div>

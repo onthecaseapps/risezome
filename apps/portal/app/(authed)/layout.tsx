@@ -1,24 +1,29 @@
 import type { ReactElement, ReactNode } from 'react';
-import { AppHeader } from './_components/app-header';
+import { Sidebar } from './_components/sidebar';
 
 /**
- * Layout shared across all `(authed)` routes. Verifies session (via
- * AppHeader's data fetch) and renders the topbar + page body.
+ * Layout shared across all `(authed)` routes. Sidebar on the left
+ * (Risezome wordmark + org switcher + nav + user card), main content
+ * area on the right.
  *
- * Per the U3 design note: this layout does NOT enforce org membership.
- * The onboarding page lives inside this layout but its purpose is to
- * create the user's first org; if we enforced org-membership here, we'd
- * infinite-loop. Page-level requireAuthedUserWithOrg() is the gate for
- * routes that need an org context (sources, meetings, settings, etc.).
+ * Per the U3 design note: this layout does NOT enforce org membership
+ * itself — the Sidebar's data fetch requires only a session. Onboarding
+ * lives inside this layout but its purpose is to create the user's first
+ * org; if we enforced org-membership here we'd infinite-loop. Page-level
+ * requireAuthedUserWithOrg() is the gate for routes that need an org
+ * context (sources, meetings, settings, etc.).
+ *
+ * Mobile responsive: the sidebar collapses to a top-bar on narrow
+ * viewports (deferred — landed as plain side-by-side for MVP).
  */
 export default function AuthedLayout({ children }: { children: ReactNode }): ReactElement {
   return (
-    <div className="min-h-dvh bg-[var(--bg)] text-[var(--fg)]">
+    <div className="flex min-h-dvh bg-bg text-fg">
       {/* @ts-expect-error - Async Server Component child. Next 16 + React 19
-          handles this correctly; the TS lib hasn't caught up to async JSX in
-          all positions yet. Remove once @types/react ships async-JSX support. */}
-      <AppHeader />
-      <div className="mx-auto max-w-6xl px-4 py-6">{children}</div>
+          handle this correctly; the @types/react lib hasn't caught up to
+          async JSX in all positions yet. Remove once it does. */}
+      <Sidebar />
+      <main className="flex-1 overflow-x-hidden">{children}</main>
     </div>
   );
 }

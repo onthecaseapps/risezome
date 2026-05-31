@@ -1,29 +1,28 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { Schibsted_Grotesk } from 'next/font/google';
 import './globals.css';
 
-const inter = Inter({
+const schibstedGrotesk = Schibsted_Grotesk({
   subsets: ['latin'],
   display: 'swap',
-  variable: '--font-inter',
+  variable: '--font-schibsted-grotesk',
 });
 
 export const metadata: Metadata = {
-  title: 'Risezome: answers before you ask',
+  title: 'Risezome — answers, before you ask.',
   description:
     'Risezome is a meeting copilot that surfaces relevant context (pull requests, tickets, and docs) the moment it matters. No querying, no searching, no asking.',
 };
 
 // No-flash theme init: apply the .dark class before paint based on the OS
-// preference, so the ported HUD tokens render in the right mode on first paint.
-// A future toggle can override this (theme switch is deferred - see plan).
+// preference. A future toggle can override this.
 const themeInit = `(function(){try{if(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.classList.add('dark')}}catch(e){}})()`;
 
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>): React.ReactElement {
   return (
-    <html lang="en" className={inter.variable} suppressHydrationWarning>
+    <html lang="en" className={schibstedGrotesk.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />
       </head>

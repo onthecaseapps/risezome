@@ -1,14 +1,13 @@
 import type { ReactElement } from 'react';
+import { Logo } from '../../_components/logo';
 import { GoogleSignInButton } from './google-sign-in-button';
 
 /**
- * Sign-in page. Currently Google-only per R1. Future providers (GitHub
- * for sign-in convenience, Microsoft for Outlook calendar later) hang
- * off here as additional buttons.
+ * Sign-in page. Currently Google-only per R1. Future providers (GitHub,
+ * Microsoft) hang off here as additional buttons.
  *
- * Renders inside the marketing route group (no auth required to view).
- * The page is intentionally minimal — no marketing copy, no testimonials.
- * Get the user to a click and out.
+ * Calm layout: centered card on a soft background. Brand at top so the
+ * sign-in surface reads as Risezome's, not as an anonymous OAuth form.
  */
 export default function SignInPage({
   searchParams,
@@ -17,11 +16,12 @@ export default function SignInPage({
 }): ReactElement {
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center px-6">
-      <div className="w-full space-y-6">
-        <header className="text-center">
+      <div className="w-full space-y-8">
+        <header className="flex flex-col items-center gap-3 text-center">
+          <Logo size={44} className="text-accent" />
           <h1 className="text-2xl font-semibold tracking-tight">Sign in to Risezome</h1>
-          <p className="mt-2 text-sm text-muted">
-            Use your Google account. We&apos;ll ask for calendar access so the bot can join
+          <p className="max-w-sm text-sm text-muted">
+            Answers, before you ask. We&apos;ll request calendar access so the bot can join
             the meetings you opt into.
           </p>
         </header>
@@ -31,8 +31,8 @@ export default function SignInPage({
         <GoogleSignInButton />
 
         <p className="text-center text-xs text-muted">
-          By signing in, you agree to be a beta tester for Risezome. No paid plans yet; provider
-          costs absorbed during beta.
+          By signing in, you agree to be a beta tester. No paid plans yet; provider costs
+          absorbed during beta.
         </p>
       </div>
     </main>
@@ -50,7 +50,7 @@ async function SignInError({
   return (
     <div
       role="alert"
-      className="rounded-md border border-[var(--error,#b30000)] bg-[var(--error,#b30000)]/10 p-3 text-sm"
+      className="rounded-md border border-error bg-error/10 p-3 text-sm text-error"
     >
       {message}
     </div>
