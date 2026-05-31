@@ -1,8 +1,23 @@
 import type { ReactElement } from 'react';
 import { requireAuthedUserWithOrg } from '../../_lib/auth';
-import { createServerClient } from '../../_lib/supabase-server';
+import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
+import { requireTrelloApiKey } from '../../_lib/trello';
+import { listBoards } from '../../_lib/trello-client';
 import { SourcesAutoRefresh } from './_auto-refresh';
 import { SourceActions } from './_source-actions';
+import { TrelloBoardPicker } from './_trello-board-picker';
+import { reindexSourceAction } from './reindex-action';
+
+interface TrelloSourceRow {
+  id: string;
+  display_name: string | null;
+  external_id: string | null;
+  status: string;
+  status_message: string | null;
+  indexed_files: number;
+  total_files: number | null;
+  last_indexed_at: string | null;
+}
 
 /**
  * Sources view. Shows the org's GitHub App installation status + the list of
@@ -67,13 +82,48 @@ export default async function SourcesPage(props: {
     sources = (srcRows ?? []) as SourceRow[];
   }
 
+  // Trello: connection + sources + available boards. The token table is
+  // service-role only, so read it (and list boards) with the service-role
+  // client; trello sources are RLS-readable by org members.
+  const serviceRole = createServiceRoleClient();
+  const { data: trelloConnRow } = await serviceRole
+    .from('trello_connections')
+    .select('id, token, username')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  const trelloConnected = trelloConnRow !== null;
+
+  let trelloSources: TrelloSourceRow[] = [];
+  let trelloBoards: Array<{ id: string; name: string }> = [];
+  if (trelloConnRow !== null) {
+    const { data: tSrc } = await supabase
+      .from('sources')
+      .select('id, display_name, external_id, status, status_message, indexed_files, total_files, last_indexed_at')
+      .eq('org_id', orgId)
+      .eq('kind', 'trello')
+      .neq('status', 'removed')
+      .order('display_name', { ascending: true });
+    trelloSources = (tSrc ?? []) as TrelloSourceRow[];
+    const indexed = new Set(trelloSources.map((s) => s.external_id));
+    try {
+      const boards = await listBoards({
+        token: trelloConnRow.token as string,
+        apiKey: requireTrelloApiKey(),
+      });
+      trelloBoards = boards.filter((b) => !indexed.has(b.id)).map((b) => ({ id: b.id, name: b.name }));
+    } catch {
+      // Board listing failed (e.g. revoked token); leave the picker empty.
+    }
+  }
+
   const banner = readBanner(searchParams);
   const manageUrl = installation !== null
     ? buildManageUrl(installation.account_login, installation.account_type, installation.installation_id)
     : null;
-  // Poll for indexer progress when any source is mid-flight; idle otherwise
-  // (zero requests).
-  const hasInflight = sources.some((s) => s.status === 'pending' || s.status === 'indexing');
+  // Poll for indexer progress when any source (GitHub or Trello) is mid-flight.
+  const hasInflight = [...sources, ...trelloSources].some(
+    (s) => s.status === 'pending' || s.status === 'indexing',
+  );
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
@@ -117,22 +167,42 @@ export default async function SourcesPage(props: {
         </div>
       ) : null}
 
-      {installation === null ? (
+      {installation === null && !trelloConnected ? (
         <EmptyConnectState />
       ) : (
         <>
-          <SectionLabel label="Repositories" count={sources.length} />
-          {sources.length === 0 ? (
-            <NoReposState manageUrl={manageUrl} accountLogin={installation.account_login} />
-          ) : (
-            <ul className="flex flex-col gap-3">
-              {sources.map((s) => (
-                <li key={s.id}>
-                  <SourceCard source={s} />
-                </li>
-              ))}
-            </ul>
-          )}
+          {installation !== null ? (
+            <>
+              <SectionLabel label="Repositories" count={sources.length} />
+              {sources.length === 0 ? (
+                <NoReposState manageUrl={manageUrl} accountLogin={installation.account_login} />
+              ) : (
+                <ul className="flex flex-col gap-3">
+                  {sources.map((s) => (
+                    <li key={s.id}>
+                      <SourceCard source={s} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : null}
+
+          {trelloConnected ? (
+            <div className={installation !== null ? 'mt-10' : ''}>
+              <SectionLabel label="Trello boards" count={trelloSources.length} />
+              {trelloSources.length > 0 ? (
+                <ul className="mb-3 flex flex-col gap-3">
+                  {trelloSources.map((s) => (
+                    <li key={s.id}>
+                      <TrelloSourceCard source={s} />
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <TrelloBoardPicker boards={trelloBoards} />
+            </div>
+          ) : null}
 
           <div className="mt-10">
             <SectionLabel label="Connectors" />
@@ -140,7 +210,14 @@ export default async function SourcesPage(props: {
               <ConnectorCard
                 name="GitHub"
                 icon={<GithubMark className="h-4 w-4 text-fg" />}
-                status="connected"
+                status={installation !== null ? 'connected' : 'connect'}
+                connectHref="/sources/install"
+              />
+              <ConnectorCard
+                name="Trello"
+                icon={<TrelloMark />}
+                status={trelloConnected ? 'connected' : 'connect'}
+                connectHref="/sources/trello/connect"
               />
               <ConnectorCard name="Jira" icon={<JiraMark />} status="coming-soon" />
               <ConnectorCard name="Slack" icon={<SlackMark />} status="coming-soon" />
@@ -339,10 +416,12 @@ function ConnectorCard({
   name,
   icon,
   status,
+  connectHref,
 }: {
   name: string;
   icon: ReactElement;
-  status: 'connected' | 'coming-soon';
+  status: 'connected' | 'coming-soon' | 'connect';
+  connectHref?: string;
 }): ReactElement {
   return (
     <div className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
@@ -352,10 +431,63 @@ function ConnectorCard({
       </div>
       {status === 'connected' ? (
         <span className="text-xs font-medium text-emerald-500 dark:text-emerald-400">Connected</span>
+      ) : status === 'connect' ? (
+        <a
+          href={connectHref ?? '#'}
+          className="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
+        >
+          Connect
+        </a>
       ) : (
         <span className="rounded-md bg-bg px-2 py-1 text-xs font-medium text-muted">Coming soon</span>
       )}
     </div>
+  );
+}
+
+/** Form-action wrapper: a `<form action>` must resolve to void. */
+async function reindexTrelloFormAction(formData: FormData): Promise<void> {
+  'use server';
+  await reindexSourceAction(formData);
+}
+
+/** A connected Trello board with its indexing status + a re-index action. */
+function TrelloSourceCard({ source }: { source: TrelloSourceRow }): ReactElement {
+  const count = source.indexed_files;
+  const total = source.total_files;
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-3">
+      <div className="min-w-0">
+        <div className="truncate text-sm font-medium text-fg">{source.display_name ?? 'Board'}</div>
+        <div className="mt-0.5 text-xs text-muted">
+          {source.status === 'idle'
+            ? `${count} card${count === 1 ? '' : 's'} indexed`
+            : source.status === 'indexing'
+              ? `Indexing… ${count}${total !== null ? ` / ${total}` : ''} cards`
+              : source.status === 'errored'
+                ? (source.status_message ?? 'Indexing failed')
+                : 'Queued'}
+        </div>
+      </div>
+      <form action={reindexTrelloFormAction}>
+        <input type="hidden" name="sourceId" value={source.id} />
+        <button
+          type="submit"
+          disabled={source.status === 'indexing' || source.status === 'pending'}
+          className="rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium text-fg hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Re-index
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function TrelloMark(): ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" style={{ color: 'var(--src-jira)' }}>
+      <path d="M21 0H3C1.343 0 0 1.343 0 3v18c0 1.657 1.343 3 3 3h18c1.657 0 3-1.343 3-3V3c0-1.657-1.343-3-3-3zM10.5 17.25A1.25 1.25 0 0 1 9.25 18.5h-3.5A1.25 1.25 0 0 1 4.5 17.25V5.75A1.25 1.25 0 0 1 5.75 4.5h3.5A1.25 1.25 0 0 1 10.5 5.75v11.5zm9-6A1.25 1.25 0 0 1 18.25 12.5h-3.5A1.25 1.25 0 0 1 13.5 11.25v-5.5A1.25 1.25 0 0 1 14.75 4.5h3.5a1.25 1.25 0 0 1 1.25 1.25v5.5z" />
+    </svg>
   );
 }
 

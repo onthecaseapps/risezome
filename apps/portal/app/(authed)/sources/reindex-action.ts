@@ -29,7 +29,7 @@ export async function reindexSourceAction(
   const service = createServiceRoleClient();
   const { data: source, error } = await service
     .from('sources')
-    .select('id')
+    .select('id, kind')
     .eq('id', sourceId)
     .eq('org_id', orgId)
     .maybeSingle();
@@ -45,10 +45,19 @@ export async function reindexSourceAction(
     .update({ status: 'pending', status_message: null })
     .eq('id', sourceId);
 
-  await inngest.send({
-    name: 'risezome/source.index-requested',
-    data: { orgId, sourceId, reason: 'reindex' },
-  });
+  // Dispatch by kind: each connector has its own indexer + event, so a Trello
+  // source must not trigger the GitHub indexer (and vice versa).
+  if (source.kind === 'trello') {
+    await inngest.send({
+      name: 'risezome/trello.index-requested',
+      data: { orgId, sourceId, reason: 'reindex' },
+    });
+  } else {
+    await inngest.send({
+      name: 'risezome/source.index-requested',
+      data: { orgId, sourceId, reason: 'reindex' },
+    });
+  }
 
   revalidatePath('/sources');
   return { ok: true };
