@@ -52,11 +52,10 @@ export async function Sidebar(): Promise<ReactElement> {
       {/* Nav */}
       <nav className="flex-1 space-y-0.5 px-3 py-4">
         <SidebarNavLink
-          href="/meetings/upcoming"
-          matchPrefix="/meetings/upcoming"
+          href="/upcoming"
+          matchPrefix="/upcoming"
           icon={<CalendarIcon />}
           label="Upcoming"
-          disabled
         />
         <SidebarNavLink
           href="/meetings/live"
