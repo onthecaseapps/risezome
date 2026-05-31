@@ -206,6 +206,58 @@ describe('SynthesisStream', () => {
     ).toBeNull();
   });
 
+  it('U4: synthesisStart → synthesisDelta transitions placeholder → streaming in place (no remount)', async () => {
+    const { act, fireEvent } = await import('@testing-library/react');
+    void fireEvent;
+    const { useAppDispatch } = await import('../src/state/app-state.js');
+    // Harness component that exposes the dispatch fn to the test via a ref.
+    let capturedDispatch: ReturnType<typeof useAppDispatch> | null = null;
+    function DispatchTap(): null {
+      capturedDispatch = useAppDispatch();
+      return null;
+    }
+    const placeholderSyn: SynthesisRecord = mkSyn({
+      synthesisId: 'live',
+      sourceCardIds: ['src1'],
+      streaming: true,
+      accumulatedText: '',
+      citations: [],
+    });
+    const { container } = render(
+      <AppStateProvider
+        initial={stateWith({
+          cards: [mkCard({ cardId: 'src1', title: 'Search target' })],
+          syntheses: [placeholderSyn],
+        })}
+      >
+        <SynthesisStream />
+        <DispatchTap />
+      </AppStateProvider>,
+    );
+    // Placeholder rendered. Capture the article DOM node so we can
+    // assert identity preservation across the dispatch.
+    const articleAtPlaceholder = container.querySelector('article[data-kind="synthesis"]');
+    expect(articleAtPlaceholder?.getAttribute('data-phase')).toBe('placeholder');
+    expect(container.querySelector('.synthesis-skeleton')).not.toBeNull();
+    expect(container.querySelector('.synthesis-placeholder-sources')?.textContent).toContain(
+      'Search target',
+    );
+
+    // Dispatch a synthesisDelta on the SAME provider — useReducer updates
+    // in place; the React tree re-renders without remounting.
+    act(() => {
+      capturedDispatch!({
+        type: 'synthesisDelta',
+        delta: { synthesisId: 'live', delta: 'Hello' },
+      });
+    });
+    const articleAtStreaming = container.querySelector('article[data-kind="synthesis"]');
+    expect(articleAtStreaming).toBe(articleAtPlaceholder); // SAME DOM node — no remount.
+    expect(articleAtStreaming?.getAttribute('data-phase')).toBe('streaming');
+    expect(container.querySelector('.synthesis-skeleton')).toBeNull();
+    expect(container.querySelector('.synthesis-body')?.textContent).toContain('Hello');
+  });
+
   it('U3: per-occurrence quotes — same source, two chips, two different highlights', async () => {
     const { fireEvent } = await import('@testing-library/react');
     const card = mkCard({

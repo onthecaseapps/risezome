@@ -3,7 +3,7 @@
 import { Fragment, type ReactElement, type ReactNode } from 'react';
 import { useAppState, type SynthesisRecord } from '../state/app-state';
 import { CitationChip } from './citation-chip';
-import { SynthesisCard, useSynthesisActivate } from './synthesis-card';
+import { SynthesisCard, useSynthesisActivate, type SynthesisPhase } from './synthesis-card';
 import type { CardEvent, SynthesisCitation } from '../types';
 
 /**
@@ -59,9 +59,19 @@ function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
     if (rec !== undefined) sources.push(rec.card);
   }
 
-  const validCitations: Set<number> | null = syn.streaming
-    ? null
-    : new Set(syn.citations.map((c) => c.rank));
+  // Phase derives from streaming + accumulatedText. Placeholder is the
+  // window between synthesisStart and the first synthesisDelta (D6).
+  // The card is the same React element across all three phases — internal
+  // branching avoids the remount that two separate components at the
+  // same tree slot would trigger (B4 from review).
+  const phase: SynthesisPhase = syn.streaming
+    ? syn.accumulatedText.length === 0
+      ? 'placeholder'
+      : 'streaming'
+    : 'done';
+
+  const validCitations: Set<number> | null =
+    phase === 'done' ? new Set(syn.citations.map((c) => c.rank)) : null;
 
   const answer = renderAnswer(
     syn.accumulatedText,
@@ -69,21 +79,18 @@ function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
     sources,
     validCitations,
     syn.citations,
-    syn.streaming,
+    phase !== 'done',
   );
 
   // Final citations row: one chip per unique source, ordered by rank.
-  const uniqueRanks = !syn.streaming
-    ? [...new Set(syn.citations.map((c) => c.rank))].sort((a, b) => a - b)
-    : [];
+  const uniqueRanks =
+    phase === 'done'
+      ? [...new Set(syn.citations.map((c) => c.rank))].sort((a, b) => a - b)
+      : [];
   const citationNodes: ReactNode[] = uniqueRanks.map((rank) => {
     const cardId = syn.sourceCardIds[rank - 1];
     if (typeof cardId !== 'string') return null;
     const sourceCard = state.cards.get(cardId);
-    // For the consolidated row, the "active quote" we'd flip to on click
-    // is the first per-occurrence quote for this rank (so clicking the
-    // bottom-row chip highlights the same span as the first inline
-    // occurrence). Stays consistent with the inline behavior.
     const firstQuote = syn.citations.find((c) => c.rank === rank)?.quote;
     return (
       <ActivatableCitationChip
@@ -99,11 +106,11 @@ function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
   return (
     <SynthesisCard
       synthesisId={syn.synthesisId}
+      phase={phase}
       answer={answer}
       citations={citationNodes.filter((n): n is ReactElement => n !== null)}
       sources={sources}
       citationRecords={syn.citations}
-      streaming={syn.streaming}
     />
   );
 }
