@@ -68,7 +68,7 @@ export class WsClient {
       this.#attempts = 0;
       this.#setStatus('open');
       // eslint-disable-next-line no-console
-      console.info('[upwell.ws] open');
+      console.info('[risezome.ws] open');
     };
     ws.onmessage = (ev: { data: unknown }): void => {
       if (typeof ev.data !== 'string') return;
@@ -88,7 +88,7 @@ export class WsClient {
       this.#setStatus('disconnected');
       // eslint-disable-next-line no-console
       console.info(
-        `[upwell.ws] close code=${String(ev.code)} reason=${ev.reason || '(none)'} attempt=${String(this.#attempts)}`,
+        `[risezome.ws] close code=${String(ev.code)} reason=${ev.reason || '(none)'} attempt=${String(this.#attempts)}`,
       );
       if (!this.#closed) {
         this.#scheduleReconnect();

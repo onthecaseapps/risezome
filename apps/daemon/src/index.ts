@@ -17,11 +17,11 @@ const commands: CommandTable = {
 
 function usage(): void {
   console.log(`Usage:
-  upwell serve                         Start the daemon (env: DEEPGRAM_API_KEY, VOYAGE_API_KEY, RISEZOME_SIDECAR_PATH, RISEZOME_SIDECAR_SHA, RISEZOME_PORT)
-  upwell index <owner/repo>            Index a GitHub repo into the corpus (env: GITHUB_TOKEN, VOYAGE_API_KEY)
-  upwell consent list                  List recorded consent grants
-  upwell consent grant <provider>      Record consent for a provider (deepgram|voyage|openai|anthropic)
-  upwell consent revoke <provider>     Revoke recorded consent for a provider
+  risezome serve                         Start the daemon (env: DEEPGRAM_API_KEY, VOYAGE_API_KEY, RISEZOME_SIDECAR_PATH, RISEZOME_SIDECAR_SHA, RISEZOME_PORT)
+  risezome index <owner/repo>            Index a GitHub repo into the corpus (env: GITHUB_TOKEN, VOYAGE_API_KEY)
+  risezome consent list                  List recorded consent grants
+  risezome consent grant <provider>      Record consent for a provider (deepgram|voyage|openai|anthropic)
+  risezome consent revoke <provider>     Revoke recorded consent for a provider
 `);
 }
 

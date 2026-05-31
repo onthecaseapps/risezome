@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   // Router classifier + skill registry — process-singleton (no per-
   // meeting state). The classifier and registry are paired: both must
   // be present for the router branch in maybeRetrieveAndEmit to fire.
-  // buildSkillRegistry reads env vars (GITHUB_TOKEN + UPWELL_GITHUB_REPO,
+  // buildSkillRegistry reads env vars (GITHUB_TOKEN + RISEZOME_GITHUB_REPO,
   // etc.) and registers whichever skills are configured.
   const classifier: Classifier | null = anthropicKey !== undefined && anthropicKey.length > 0
     ? new AnthropicClassifier({ apiKey: anthropicKey, model: anthropicModel })

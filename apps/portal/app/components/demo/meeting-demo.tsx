@@ -118,7 +118,7 @@ export function MeetingDemo(): React.ReactElement {
   const typingTranscript = state.synthesis === null && state.transcript.length > 0;
 
   return (
-    <div className="upwell-hud" ref={containerRef} aria-label="Simulated Risezome meeting">
+    <div className="risezome-hud" ref={containerRef} aria-label="Simulated Risezome meeting">
       <DemoHeader meetingLabel={MEETING_LABEL} />
       {/* Stack the layers in one grid cell: an invisible sizer (the finished
           scene) reserves the cell's height while the live scene overlaps it.

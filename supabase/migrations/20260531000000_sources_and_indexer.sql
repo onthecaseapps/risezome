@@ -3,7 +3,7 @@
 -- Three tables:
 --   github_installations  — one row per GitHub App install. Tracked by
 --                           GitHub's numeric installation_id; bound to
---                           an Upwell org via the install-callback
+--                           an Risezome org via the install-callback
 --                           handler. Nullable org_id handles the race
 --                           where the webhook fires before the callback.
 --   sources              — per-repo indexing state. One row per repo

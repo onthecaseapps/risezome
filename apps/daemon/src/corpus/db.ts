@@ -5,7 +5,7 @@ import * as sqliteVec from 'sqlite-vec';
 import { RisezomeError } from '@risezome/shared-types';
 import { getDataDir } from '../util/data-dir.js';
 
-export const DEFAULT_DB_FILENAME = 'upwell.db';
+export const DEFAULT_DB_FILENAME = 'risezome.db';
 export const DEFAULT_EMBEDDING_DIM = 1024;
 
 export class CorpusError extends RisezomeError {

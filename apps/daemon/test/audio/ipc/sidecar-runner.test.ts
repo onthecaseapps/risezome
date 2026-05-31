@@ -132,7 +132,7 @@ describe('SidecarRunner', () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'upwell-runner-'));
+    dir = mkdtempSync(join(tmpdir(), 'risezome-runner-'));
   });
 
   afterEach(() => {

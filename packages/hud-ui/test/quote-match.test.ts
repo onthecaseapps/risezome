@@ -31,10 +31,10 @@ describe('findQuoteInBody — tier 1 raw indexOf', () => {
   });
 
   it('regex-special chars in the quote are matched literally (indexOf, not RegExp)', () => {
-    const out = findQuoteInBody('[package]', 'name = upwell\n[package]\nedition = 2021');
+    const out = findQuoteInBody('[package]', 'name = risezome\n[package]\nedition = 2021');
     expect(out).not.toBeNull();
     expect(out!.length).toBe('[package]'.length);
-    expect('name = upwell\n[package]\nedition = 2021'.slice(out!.index, out!.index + out!.length)).toBe('[package]');
+    expect('name = risezome\n[package]\nedition = 2021'.slice(out!.index, out!.index + out!.length)).toBe('[package]');
   });
 
   it('matches when both quote and body contain whitespace identically (no normalization needed)', () => {

@@ -7,10 +7,10 @@
 #
 # Usage: ./scripts/compute-sha256.sh [path]
 #
-# Default path: ./build/upwell-sidecar-linux
+# Default path: ./build/risezome-sidecar-linux
 set -euo pipefail
 
-bin=${1:-build/upwell-sidecar-linux}
+bin=${1:-build/risezome-sidecar-linux}
 
 if [[ ! -f "$bin" ]]; then
   echo "Binary not found at: $bin"

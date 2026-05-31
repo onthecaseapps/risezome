@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactElement } from 'react';
 
 /**
  * Quirky empty-state messages playing on Risezome's oceanographic theme
- * (upwelling = deep water rising to the surface). 10-second rotation
+ * (risezomeing = deep water rising to the surface). 10-second rotation
  * keeps the HUD feeling alive during quiet stretches without becoming
  * distracting.
  *

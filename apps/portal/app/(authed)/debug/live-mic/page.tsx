@@ -22,7 +22,7 @@ import { LiveMicDebugClient } from './_client';
  * Requirements:
  *   - bot-worker running with LOCAL_DEBUG_ENABLED=true + DEEPGRAM_API_KEY +
  *     VOYAGE_API_KEY + ANTHROPIC_API_KEY
- *   - Linux host (sidecar binary at sidecars/linux/build/upwell-sidecar-linux)
+ *   - Linux host (sidecar binary at sidecars/linux/build/risezome-sidecar-linux)
  *   - BOT_WORKER_HTTP_URL or BOT_WORKER_BASE_URL env in portal
  */
 export default async function LiveMicDebugPage(): Promise<ReactElement> {

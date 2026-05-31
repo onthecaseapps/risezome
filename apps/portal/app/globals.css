@@ -5,7 +5,7 @@
  * hud-next's defaults (indigo branding vs hud-next's blue). */
 @import '@risezome/hud-ui/styles.css';
 
-/* Drive dark mode by a `.dark` class on <html> (matching @upwell/hud) so the
+/* Drive dark mode by a `.dark` class on <html> (matching @risezome/hud) so the
    no-flash script in the root layout can honor prefers-color-scheme and a
    future toggle can override the OS preference. */
 @custom-variant dark (&:where(.dark, .dark *));

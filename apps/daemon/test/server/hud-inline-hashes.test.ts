@@ -62,7 +62,7 @@ describe('loadHudInlineScriptHashes', () => {
   let tmp: string;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'upwell-hud-hashes-'));
+    tmp = mkdtempSync(join(tmpdir(), 'risezome-hud-hashes-'));
   });
 
   afterEach(() => {

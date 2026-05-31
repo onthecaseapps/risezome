@@ -9,7 +9,7 @@
  *
  * Single-repo constraint from the github-live-skills brainstorm
  * (D3): a per-meeting selection UI is deferred work; v1 pins to
- * `UPWELL_GITHUB_REPO=owner/name`.
+ * `RISEZOME_GITHUB_REPO=owner/name`.
  */
 
 import type { AuthResult } from './connector-errors.js';
@@ -25,13 +25,15 @@ export interface GithubEnv {
 }
 
 /**
- * Read GITHUB_TOKEN + UPWELL_GITHUB_REPO from the environment. Returns
+ * Read GITHUB_TOKEN + RISEZOME_GITHUB_REPO from the environment. Returns
  * null when either is absent — the caller (buildSkillRegistry) logs a
- * disabled-reason and skips live-skill registration.
+ * disabled-reason and skips live-skill registration. The legacy
+ * UPWELL_GITHUB_REPO name is still honored as a fallback so already-set
+ * deployment secrets keep working through the rename.
  */
 export function readGithubEnv(env: NodeJS.ProcessEnv = process.env): GithubEnv | null {
   const token = env['GITHUB_TOKEN'];
-  const repoSpec = env['UPWELL_GITHUB_REPO'];
+  const repoSpec = env['RISEZOME_GITHUB_REPO'] ?? env['UPWELL_GITHUB_REPO'];
   if (token === undefined || token.length === 0) return null;
   if (repoSpec === undefined || repoSpec.length === 0) return null;
   const slash = repoSpec.indexOf('/');

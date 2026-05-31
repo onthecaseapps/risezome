@@ -5,7 +5,7 @@ LIBS    := $(shell pkg-config --libs libpulse-simple libpulse 2>/dev/null || ech
 INCLUDES := $(shell pkg-config --cflags libpulse-simple libpulse 2>/dev/null || echo "")
 
 OUT_DIR := build
-BIN     := $(OUT_DIR)/upwell-sidecar-linux
+BIN     := $(OUT_DIR)/risezome-sidecar-linux
 
 .PHONY: all clean check-deps
 

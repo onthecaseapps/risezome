@@ -17,7 +17,7 @@ const DEFAULT_EMBED_BATCH_SIZE = 24;
 export async function runIndexRepo(args: readonly string[]): Promise<number> {
   const ownerRepo = args[0];
   if (ownerRepo === undefined || !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(ownerRepo)) {
-    log('error', 'Usage: upwell index <owner>/<repo>');
+    log('error', 'Usage: risezome index <owner>/<repo>');
     return 2;
   }
 

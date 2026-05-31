@@ -1,5 +1,5 @@
 /*
- * upwell-sidecar-linux
+ * risezome-sidecar-linux
  *
  * Captures 16 kHz mono Int16LE PCM from the local PulseAudio / PipeWire
  * source named by the --device argument (default: server's default source,
@@ -29,12 +29,12 @@
 #include <pulse/simple.h>
 #include <pulse/error.h>
 
-#define UPWELL_SIDECAR_VERSION "0.1.0-linux"
-#define UPWELL_SAMPLE_RATE 16000
-#define UPWELL_FRAME_SAMPLES 320  /* 20 ms @ 16 kHz */
-#define UPWELL_FRAME_BYTES (UPWELL_FRAME_SAMPLES * sizeof(int16_t))
-#define UPWELL_NONCE_MAX 256
-#define UPWELL_INPUT_BUF_MAX 1024
+#define RISEZOME_SIDECAR_VERSION "0.1.0-linux"
+#define RISEZOME_SAMPLE_RATE 16000
+#define RISEZOME_FRAME_SAMPLES 320  /* 20 ms @ 16 kHz */
+#define RISEZOME_FRAME_BYTES (RISEZOME_FRAME_SAMPLES * sizeof(int16_t))
+#define RISEZOME_NONCE_MAX 256
+#define RISEZOME_INPUT_BUF_MAX 1024
 
 #define ROLE_LOCAL_SYSTEM 0x00
 #define ROLE_LOCAL_MIC    0x01
@@ -142,10 +142,10 @@ static void emit_json_control(const char *json) {
 }
 
 static void emit_hello(const char *nonce_echo) {
-    char buf[UPWELL_NONCE_MAX + 128];
+    char buf[RISEZOME_NONCE_MAX + 128];
     snprintf(buf, sizeof(buf),
              "{\"type\":\"hello\",\"sidecarVersion\":\"%s\",\"nonceEcho\":\"%s\"}",
-             UPWELL_SIDECAR_VERSION, nonce_echo);
+             RISEZOME_SIDECAR_VERSION, nonce_echo);
     emit_json_control(buf);
 }
 
@@ -153,7 +153,7 @@ static void emit_started(const char *device) {
     char buf[512];
     snprintf(buf, sizeof(buf),
              "{\"type\":\"started\",\"device\":\"%s\",\"sampleRate\":%d}",
-             device, UPWELL_SAMPLE_RATE);
+             device, RISEZOME_SAMPLE_RATE);
     emit_json_control(buf);
 }
 
@@ -204,7 +204,7 @@ static int write_frame(uint8_t role_tag, const int16_t *samples, size_t sample_c
 
 static void usage(FILE *out) {
     fprintf(out,
-            "Usage: upwell-sidecar-linux [--role=system|mic] [--device=NAME]\n"
+            "Usage: risezome-sidecar-linux [--role=system|mic] [--device=NAME]\n"
             "\n"
             "Reads `{\"type\":\"nonce\",\"nonce\":\"<hex>\"}` from stdin, echoes\n"
             "`{\"type\":\"hello\",\"nonceEcho\":\"<hex>\"}` on stderr, then streams\n"
@@ -253,13 +253,13 @@ int main(int argc, char **argv) {
     install_signal_handlers();
 
     /* Step 1: read the nonce line. */
-    char input_line[UPWELL_INPUT_BUF_MAX];
+    char input_line[RISEZOME_INPUT_BUF_MAX];
     int read_n = read_line(STDIN_FILENO, input_line, sizeof(input_line));
     if (read_n <= 0) {
         emit_error("no-nonce", "stdin closed before nonce was sent");
         return 1;
     }
-    char nonce[UPWELL_NONCE_MAX];
+    char nonce[RISEZOME_NONCE_MAX];
     if (!extract_json_string_field(input_line, "nonce", nonce, sizeof(nonce))) {
         emit_error("bad-nonce", "could not parse nonce from stdin");
         return 1;
@@ -269,16 +269,16 @@ int main(int argc, char **argv) {
     /* Step 2: open the capture stream. */
     pa_sample_spec ss;
     ss.format = PA_SAMPLE_S16LE;
-    ss.rate = UPWELL_SAMPLE_RATE;
+    ss.rate = RISEZOME_SAMPLE_RATE;
     ss.channels = 1;
 
     int pa_err = 0;
     pa_simple *s = pa_simple_new(
         NULL,                       /* default server */
-        "upwell-sidecar",
+        "risezome-sidecar",
         PA_STREAM_RECORD,
         device_name,                /* NULL → default source */
-        role_tag == ROLE_LOCAL_MIC ? "upwell-mic" : "upwell-system",
+        role_tag == ROLE_LOCAL_MIC ? "risezome-mic" : "risezome-system",
         &ss,
         NULL,                       /* default channel map */
         NULL,                       /* default buffering */
@@ -295,14 +295,14 @@ int main(int argc, char **argv) {
     emit_started(device_name != NULL ? device_name : "default");
 
     /* Step 3: capture loop. */
-    int16_t frame[UPWELL_FRAME_SAMPLES];
+    int16_t frame[RISEZOME_FRAME_SAMPLES];
     while (!g_stop_requested) {
         if (pa_simple_read(s, frame, sizeof(frame), &pa_err) < 0) {
             const char *err_str = pa_strerror(pa_err);
             emit_error("pa-read-failed", err_str != NULL ? err_str : "unknown");
             break;
         }
-        if (write_frame(role_tag, frame, UPWELL_FRAME_SAMPLES) != 0) {
+        if (write_frame(role_tag, frame, RISEZOME_FRAME_SAMPLES) != 0) {
             /* Stdout closed (parent gone). Exit quietly. */
             break;
         }

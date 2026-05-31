@@ -20,8 +20,8 @@ interface Harness {
 }
 
 async function setup(): Promise<Harness> {
-  const dir = mkdtempSync(join(tmpdir(), 'upwell-query-'));
-  const dbPath = join(dir, 'upwell.db');
+  const dir = mkdtempSync(join(tmpdir(), 'risezome-query-'));
+  const dbPath = join(dir, 'risezome.db');
   const db = await openCorpusDb({ path: dbPath });
   await migrate(db);
   return { db, dir };

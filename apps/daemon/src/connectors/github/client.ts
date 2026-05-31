@@ -24,7 +24,7 @@ export class GithubClient {
 
   constructor(options: GithubClientOptions = {}) {
     this.#baseUrl = options.baseUrl ?? DEFAULT_GITHUB_BASE_URL;
-    this.#userAgent = options.userAgent ?? 'upwell-daemon';
+    this.#userAgent = options.userAgent ?? 'risezome-daemon';
     this.#fetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.#logger = options.logger;
   }

@@ -32,7 +32,7 @@ function ctxWith(mocks: MockResponses): LiveSkillContext {
   return {
     client: new GithubClient({ fetchImpl }),
     auth: AUTH,
-    repo: { owner: 'Nath5', name: 'upwell' },
+    repo: { owner: 'Nath5', name: 'risezome' },
   };
 }
 
@@ -41,7 +41,7 @@ const BASE_ISSUE = {
   number: 14,
   title: 'Auth refactor',
   state: 'open' as const,
-  html_url: 'https://github.com/Nath5/upwell/issues/14',
+  html_url: 'https://github.com/Nath5/risezome/issues/14',
   body: null,
   user: { login: 'jamie' },
   assignees: [{ login: 'Nath5' }],

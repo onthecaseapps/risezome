@@ -19,7 +19,7 @@
 -- requesting user is a member of the row's org_id. Writes from Inngest
 -- functions and the bot-worker happen via the service-role client (bypasses
 -- RLS); those writers must always explicitly filter by org_id, enforced at
--- the @upwell/db-client wrapper layer (lands later).
+-- the @risezome/db-client wrapper layer (lands later).
 
 ------------------------------------------------------------
 -- pgvector extension

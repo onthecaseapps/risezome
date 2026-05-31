@@ -16,8 +16,8 @@ interface Harness {
 }
 
 async function setup(): Promise<Harness> {
-  const dir = mkdtempSync(join(tmpdir(), 'upwell-window-'));
-  const db = await openCorpusDb({ path: join(dir, 'upwell.db') });
+  const dir = mkdtempSync(join(tmpdir(), 'risezome-window-'));
+  const db = await openCorpusDb({ path: join(dir, 'risezome.db') });
   await migrate(db);
   const store = new TranscriptStore(db);
   store.ensureMeeting('m:1', null, 0);

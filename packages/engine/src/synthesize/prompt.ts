@@ -71,7 +71,7 @@ const FEW_SHOTS: readonly FewShot[] = [
     sources: [
       {
         rank: 1,
-        title: 'gh:Nath5/upwell#issue:1 — U13: Jira connector (issues + comments via /rest/api/3/search/jql)',
+        title: 'gh:Nath5/risezome#issue:1 — U13: Jira connector (issues + comments via /rest/api/3/search/jql)',
         text:
           '**Plan unit:** U13 (Phase 2, production breadth) — `docs/plans/2026-05-28-001-feat-meeting-context-copilot-plan.md`\n\n' +
           'Implement the Jira connector against the post-November-2026 endpoint surface so meetings can also surface ticket context. The connector follows the same pattern as the GitHub connector (U7): a typed REST client, a chunker that produces docs + chunks at the issue / comment level, and a pull-delta function that fetches updates since a watermark.\n\n' +
@@ -86,13 +86,13 @@ const FEW_SHOTS: readonly FewShot[] = [
     sources: [
       {
         rank: 1,
-        title: 'gh:Nath5/upwell#file:docs/brainstorms/llm-synthesis-card-requirements.md',
+        title: 'gh:Nath5/risezome#file:docs/brainstorms/llm-synthesis-card-requirements.md',
         text:
           '## Prompt Caching\n\nThe synthesizer uses Anthropic prompt caching from day one. It maps onto our shape on two axes that both serve the user-facing decisions above.\n\n**Time-to-first-token (D5 in-flight UX).** D5 chose token streaming over a blocking pop-in because the perceived speed lift matters when the call takes 1-2s. Caching reduces TTFT by roughly an order of magnitude on cache hits (typical 700-1000ms → 100-200ms). Streaming on top of a cached prefix is the configuration the in-flight UX was designed around.\n\n**Input-token cost.** 90% discount on the cached prefix\'s input tokens for every call within the 5-minute TTL window. Meeting cadence (a synthesis call every ~10-30s on average) sits comfortably inside that window, so the prefix re-hits cache continuously through the meeting.',
       },
       {
         rank: 2,
-        title: 'gh:Nath5/upwell#file:apps/daemon/src/synthesize/anthropic.ts',
+        title: 'gh:Nath5/risezome#file:apps/daemon/src/synthesize/anthropic.ts',
         text:
           '// AnthropicSynthesizer mirrors the VoyageEmbedder constructor shape and\n// posts to /v1/messages with stream: true. The system blocks come from\n// buildSystemPrefix() and the last block carries\n// cache_control: { type: "ephemeral" }.\n\nasync *synthesize(input, signal?) {\n  const response = await this.#connectWithRetry(input, signal);\n  yield* this.#streamChunks(response.body, synthesisId);\n}',
       },
@@ -104,19 +104,19 @@ const FEW_SHOTS: readonly FewShot[] = [
     sources: [
       {
         rank: 1,
-        title: 'gh:Nath5/upwell#file:.env.example',
+        title: 'gh:Nath5/risezome#file:.env.example',
         text:
           '# Voyage AI API key for embeddings.\n# Sign up: https://dash.voyageai.com/ (free tokens on signup)\nVOYAGE_API_KEY=\n\n# Optional: pick which Voyage model to use. Defaults: voyage-3-large for text,\n# voyage-code-3 for code. See https://docs.voyageai.com/docs/embeddings for\n# the current model list; newer/larger models generally have better recall\n# at the same dimension. Cache invalidates if you change the model.\n# VOYAGE_TEXT_MODEL=voyage-3-large\n# VOYAGE_CODE_MODEL=voyage-code-3',
       },
       {
         rank: 2,
-        title: 'gh:Nath5/upwell#file:apps/daemon/src/embed/voyage.ts',
+        title: 'gh:Nath5/risezome#file:apps/daemon/src/embed/voyage.ts',
         text:
           'export const DEFAULT_VOYAGE_BASE = "https://api.voyageai.com/v1";\nexport const DEFAULT_VOYAGE_TEXT_MODEL = "voyage-3-large";\nexport const DEFAULT_VOYAGE_CODE_MODEL = "voyage-code-3";\nexport const DEFAULT_VOYAGE_DIMENSION = 1024;\n\n// Both voyage-3-large and voyage-4-large share the same 1024-dimensional\n// output, so the corpus schema does not change between them. The choice\n// is purely about recall quality on a given corpus.',
       },
       {
         rank: 3,
-        title: 'gh:Nath5/upwell#file:apps/daemon/src/cli/index-repo.ts',
+        title: 'gh:Nath5/risezome#file:apps/daemon/src/cli/index-repo.ts',
         text:
           'const textModel = optionalEnv("VOYAGE_TEXT_MODEL");\nconst codeModel = optionalEnv("VOYAGE_CODE_MODEL");\n// User selects voyage-3-large or voyage-4-large via env; defaults to voyage-3-large.\n// The same env vars must mirror to serve.ts (the query side) or the query embedding\n// lands in a different semantic space than the corpus and search becomes noise.',
       },
@@ -128,13 +128,13 @@ const FEW_SHOTS: readonly FewShot[] = [
     sources: [
       {
         rank: 1,
-        title: 'gh:Nath5/upwell#file:sidecars/linux/src/main.c',
+        title: 'gh:Nath5/risezome#file:sidecars/linux/src/main.c',
         text:
           '// Read a single line from stdin which must be JSON of the form:\n//   {"type":"nonce","nonce":"<hex>"}\n// where <hex> is exactly 32 hex characters (16 random bytes).\n// Echo the nonce back on stderr inside:\n//   {"type":"hello","sidecarVersion":"...","nonceEcho":"<hex>"}\n// The daemon\'s spawn helper verifies the echoed nonce matches what it\n// sent — only then does it begin reading framed PCM from stdout.\n//\n// The handshake also serves as a liveness check: if the sidecar binary is\n// the wrong architecture or fails to link against libpulse at startup,\n// the daemon detects this immediately (no hello within 250ms) instead of\n// hanging waiting for audio frames that will never arrive.',
       },
       {
         rank: 2,
-        title: 'gh:Nath5/upwell#file:apps/daemon/src/audio/ipc/sidecar-runner.ts',
+        title: 'gh:Nath5/risezome#file:apps/daemon/src/audio/ipc/sidecar-runner.ts',
         text:
           'class SidecarRunner emits a fresh 16-byte hex nonce on stdin via spawn-time stdin write, then waits for a hello message on stderr whose nonceEcho matches. Mismatch terminates the child immediately with SIGTERM. The nonce defeats stdout-piping attacks where an attacker controls a binary on PATH that produces well-formed PCM frames — without the handshake, the daemon would happily forward those counterfeit frames to Deepgram.\n\nThe runner also verifies the spawned binary\'s SHA-256 against a vendored manifest before spawn. The handshake is the second line of defense, not the first; it catches the case where the manifest matches but the binary is somehow misbehaving (corrupted memory, partial overwrite mid-spawn, etc.).',
       },
@@ -146,7 +146,7 @@ const FEW_SHOTS: readonly FewShot[] = [
     sources: [
       {
         rank: 1,
-        title: 'gh:Nath5/upwell#issue:8 — U24: Surfacing-quality telemetry events (pin-rate, dismiss-rate, scroll)',
+        title: 'gh:Nath5/risezome#issue:8 — U24: Surfacing-quality telemetry events (pin-rate, dismiss-rate, scroll)',
         text:
           'Wire telemetry events for: pin-rate, dismiss-rate, scroll-into-view rate, time-to-first-pin per meeting, source-vs-synthesis preference (does the user pin the raw card or the synthesis chip?).\n\nThese are the input to confidence threshold calibration (U18 derivative work). Without measured pin/dismiss data we can\'t tell whether the current default of `minSynthesisScore = 0.025` is gating too aggressively (real matches get suppressed) or too loosely (noise gets through).\n\nStatus: planned, Phase 2. Blocked on the synthesis card landing first (U20 in this plan) since pin-rate-on-synthesis is one of the targets and there is no synthesis to pin yet.',
       },
@@ -158,13 +158,13 @@ const FEW_SHOTS: readonly FewShot[] = [
     sources: [
       {
         rank: 1,
-        title: 'gh:Nath5/upwell#file:docs/brainstorms/llm-synthesis-card-requirements.md',
+        title: 'gh:Nath5/risezome#file:docs/brainstorms/llm-synthesis-card-requirements.md',
         text:
           '### D4. Provider: Claude Haiku 4.5\n\nFirst implementation calls Anthropic\'s `claude-haiku-4-5`. Reasoning:\n\n- Anthropic is already a recognized provider in the existing consent module — no new consent surface to design\n- Strong instruction-following and citation behavior matters for "synthesize without inventing"\n- ~1-2s response time fits the in-flight UX budget\n- Pricing (~$1 / $5 per 1M tokens) is acceptable at our expected call frequency\n\nThe integration goes through a small enough surface that swapping to Gemini Flash or a local model is a future addition rather than a v1 pluggability requirement.\n\n*Considered and rejected:* Gemini 2.5 Flash (cheaper but adds new provider surface), pluggable adapter pattern from day 1 (premature abstraction), local Ollama only (heavy local dep, pushes Phase 2 privacy mode forward into v1).',
       },
       {
         rank: 2,
-        title: 'gh:Nath5/upwell#issue:12 — Local privacy mode: Parakeet streaming ASR + BGE-m3 embeddings',
+        title: 'gh:Nath5/risezome#issue:12 — Local privacy mode: Parakeet streaming ASR + BGE-m3 embeddings',
         text:
           'Future work: support local model providers (Ollama, Llama-3, Mistral) for users who do not want outbound LLM calls. This includes:\n- Local ASR (Parakeet) replacing Deepgram\n- Local embeddings (BGE-m3) replacing Voyage\n- Local synthesis (Llama-3 8B Instruct or similar) replacing Anthropic\n\nNot in scope for v1. The architecture supports adding providers behind the existing Synthesizer / Embedder / TranscriptionEngine interfaces; this issue tracks the actual implementation work and the model-download / installation UX.',
       },
@@ -176,14 +176,14 @@ const FEW_SHOTS: readonly FewShot[] = [
     sources: [
       {
         rank: 1,
-        title: 'gh:Nath5/upwell#file:apps/daemon/src/cli/serve.ts',
+        title: 'gh:Nath5/risezome#file:apps/daemon/src/cli/serve.ts',
         text:
           '// Currently the audio path is continuous — every PCM frame the sidecar\n// captures gets forwarded to Deepgram, silence included. No VAD gate.\n// A meeting with 50% silence costs the same as one with 0% silence on\n// the Deepgram bill (~$0.0077/min Nova-3 streaming).\nrunner.on("frame", (frame) => {\n  engine.sendFrame(frame.samples);\n  // ... heartbeat logging\n});',
       },
       {
         rank: 2,
         title:
-          'gh:Nath5/upwell#file:docs/plans/2026-05-28-001-feat-meeting-context-copilot-plan.md',
+          'gh:Nath5/risezome#file:docs/plans/2026-05-28-001-feat-meeting-context-copilot-plan.md',
         text:
           '## Phase 2 — Voice Activity Gate\n\nAdd RMS-based voice activity detection to cut Deepgram cost on silent stretches without losing speech.\n\nOptions evaluated:\n- **RMS-based** — simple, ~50 LOC, no deps, mediocre on noisy mics. Default proposal.\n- **WebRTC VAD** — medium dep (~1MB WASM), better than RMS, well-established.\n- **Silero VAD** — heaviest dep (PyTorch / ONNX), best precision/recall, gold standard for ASR pre-filtering.\n\nDefault proposal: RMS-based for v1, upgrade if quiet-talker recall is a problem in practice. The gate must include 500ms pre-roll (so Deepgram doesn\'t miss the first word) and 1.5s post-roll (so endpoint detection completes).',
       },
@@ -195,14 +195,14 @@ const FEW_SHOTS: readonly FewShot[] = [
     sources: [
       {
         rank: 1,
-        title: 'gh:Nath5/upwell#file:apps/daemon/src/retrieve/pipeline.ts',
+        title: 'gh:Nath5/risezome#file:apps/daemon/src/retrieve/pipeline.ts',
         text:
           'class RetrievalPipeline extends EventEmitter {\n  // After hybridSearch, iterate results in rank order:\n  for (const r of results) {\n    if (this.#session.hasSurfaced(r.doc.id)) continue;\n    const card: CardEvent = { ... rank, score: r.score, ... };\n    this.emit("card", card);\n  }\n  // Gate for synthesis fires only if at least one card was emitted\n  // AND emittedCards[0].score >= this.#minSynthesisScore\n  // AND the synthesizer is configured AND consent is granted.\n  // Below that, the user sees raw cards only (which may also be empty).\n}',
       },
       {
         rank: 2,
         title:
-          'gh:Nath5/upwell#file:docs/plans/2026-05-29-001-feat-llm-synthesis-card-plan.md',
+          'gh:Nath5/risezome#file:docs/plans/2026-05-29-001-feat-llm-synthesis-card-plan.md',
         text:
           '**Confidence threshold provisional default = 0.025 RRF, env-tunable** — that score roughly corresponds to top rank in at least one ranker. Below that, no synthesis call is made. The HUD shows raw cards only (or no cards if retrieval itself found nothing). On the synthesis side, the model is also instructed to output the refusal sentinel "No relevant context." when the sources are present but do not address the utterance — that case is handled separately by the HUD which suppresses the synthesis card and falls back to raw cards.',
       },
@@ -214,13 +214,13 @@ const FEW_SHOTS: readonly FewShot[] = [
     sources: [
       {
         rank: 1,
-        title: 'gh:Nath5/upwell#file:apps/daemon/src/transcribe/deepgram.ts',
+        title: 'gh:Nath5/risezome#file:apps/daemon/src/transcribe/deepgram.ts',
         text:
           'class DeepgramTranscriptionEngine handles WebSocket disconnection with bounded reconnect: max 3 attempts, exponential backoff (200ms × 2^attempt, capped at 1500ms). After max attempts the engine emits stopped with reason "reconnect-exhausted" and the daemon logs an error.\n\nAuth failures (close code 1008, 4401, 4403) skip reconnect entirely and emit stopped with reason "auth:<code>" — there\'s no point retrying with the same bad key.\n\nIncoming audio frames during the reconnect window are dropped, not buffered. Buffering would let the meeting continue from the user\'s POV but produce stale transcripts that arrive out of order and confuse the retrieval window.',
       },
       {
         rank: 2,
-        title: 'gh:Nath5/upwell#issue:14 — Confidence threshold calibration',
+        title: 'gh:Nath5/risezome#issue:14 — Confidence threshold calibration',
         text:
           'Hand-grade 50-100 transcript fragments against the corpus to calibrate the confidence threshold. Each fragment gets labeled with the doc IDs that SHOULD have been surfaced; compare to actual retrieval and synthesis output to determine if 0.025 RRF is gating correctly.\n\nNot related to Deepgram, but listed here because the calibration set inherently includes transcript fragments where Deepgram performance affected retrieval quality (mumbled utterances, mid-word disconnects, etc.).',
       },
@@ -236,13 +236,13 @@ const FEW_SHOTS: readonly FewShot[] = [
     sources: [
       {
         rank: 1,
-        title: 'gh:Nath5/upwell#file:apps/daemon/src/transcribe/deepgram.ts',
+        title: 'gh:Nath5/risezome#file:apps/daemon/src/transcribe/deepgram.ts',
         text:
           'Deepgram streaming client. Connects to wss://api.deepgram.com/v1/listen with the Nova-3 model and emits per-utterance finalized + interim transcripts on the bus.',
       },
       {
         rank: 2,
-        title: 'gh:Nath5/upwell#file:apps/daemon/src/embed/voyage.ts',
+        title: 'gh:Nath5/risezome#file:apps/daemon/src/embed/voyage.ts',
         text:
           'VoyageEmbedder posts to /v1/embeddings with the configured text or code model. Returns 1024-dim vectors per input chunk.',
       },

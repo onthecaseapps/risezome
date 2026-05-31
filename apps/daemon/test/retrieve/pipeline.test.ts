@@ -52,8 +52,8 @@ function fakeEmbedder(vectorFor: (text: string) => Float32Array): Embedder {
 async function setup(
   options: { vectorFor?: (text: string) => Float32Array; debounceMs?: number } = {},
 ): Promise<Harness> {
-  const dir = mkdtempSync(join(tmpdir(), 'upwell-pipeline-'));
-  const db = await openCorpusDb({ path: join(dir, 'upwell.db') });
+  const dir = mkdtempSync(join(tmpdir(), 'risezome-pipeline-'));
+  const db = await openCorpusDb({ path: join(dir, 'risezome.db') });
   await migrate(db);
   const store = new TranscriptStore(db);
   store.ensureMeeting('m:1', null, 0);
@@ -614,8 +614,8 @@ async function setupWithSynthesizer(opts: {
   consentCheck?: () => boolean;
   minSynthesisScore?: number;
 }): Promise<Harness & { events: SynthesisEvents }> {
-  const dir = mkdtempSync(join(tmpdir(), 'upwell-pipeline-syn-'));
-  const db = await openCorpusDb({ path: join(dir, 'upwell.db') });
+  const dir = mkdtempSync(join(tmpdir(), 'risezome-pipeline-syn-'));
+  const db = await openCorpusDb({ path: join(dir, 'risezome.db') });
   await migrate(db);
   const store = new TranscriptStore(db);
   store.ensureMeeting('m:1', null, 0);
@@ -1201,8 +1201,8 @@ async function setupWithRouter(opts: {
     synthesisEvents: SynthesisEvents;
   }
 > {
-  const dir = mkdtempSync(join(tmpdir(), 'upwell-pipeline-router-'));
-  const db = await openCorpusDb({ path: join(dir, 'upwell.db') });
+  const dir = mkdtempSync(join(tmpdir(), 'risezome-pipeline-router-'));
+  const db = await openCorpusDb({ path: join(dir, 'risezome.db') });
   await migrate(db);
   const store = new TranscriptStore(db);
   store.ensureMeeting('m:1', null, 0);
@@ -1638,8 +1638,8 @@ async function setupWithRelevance(opts: {
   relevanceTimeoutMs?: number;
   consentCheck?: () => boolean;
 }): Promise<Harness & { relevanceEvents: RelevanceEvents; cardEvents: CardEvent[] }> {
-  const dir = mkdtempSync(join(tmpdir(), 'upwell-pipeline-relevance-'));
-  const db = await openCorpusDb({ path: join(dir, 'upwell.db') });
+  const dir = mkdtempSync(join(tmpdir(), 'risezome-pipeline-relevance-'));
+  const db = await openCorpusDb({ path: join(dir, 'risezome.db') });
   await migrate(db);
   const store = new TranscriptStore(db);
   store.ensureMeeting('m:1', null, 0);

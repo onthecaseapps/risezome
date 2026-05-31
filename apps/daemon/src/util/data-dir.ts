@@ -17,9 +17,9 @@ export function getDataDir(override?: string): string {
     default: {
       const xdg = process.env.XDG_DATA_HOME;
       if (typeof xdg === 'string' && xdg.length > 0) {
-        return join(xdg, 'upwell');
+        return join(xdg, 'risezome');
       }
-      return join(home, '.local', 'share', 'upwell');
+      return join(home, '.local', 'share', 'risezome');
     }
   }
 }

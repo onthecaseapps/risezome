@@ -38,7 +38,7 @@ describe('walkRepoFiles', () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'upwell-walk-'));
+    dir = await mkdtemp(join(tmpdir(), 'risezome-walk-'));
   });
 
   afterEach(() => {

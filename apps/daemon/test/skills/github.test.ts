@@ -82,8 +82,8 @@ let db: DatabaseType;
 let dir: string;
 
 beforeEach(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'upwell-skills-'));
-  db = await openCorpusDb({ path: join(dir, 'upwell.db') });
+  dir = mkdtempSync(join(tmpdir(), 'risezome-skills-'));
+  db = await openCorpusDb({ path: join(dir, 'risezome.db') });
   await migrate(db);
   seed(db, FIXTURES);
 });

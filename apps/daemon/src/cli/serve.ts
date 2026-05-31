@@ -76,7 +76,7 @@ export async function runServe(): Promise<number> {
   const port = envInt('RISEZOME_PORT', 0);
   const sidecarPath = resolve(
     optionalEnv('RISEZOME_SIDECAR_PATH') ??
-      join(process.cwd(), 'sidecars', 'linux', 'build', 'upwell-sidecar-linux'),
+      join(process.cwd(), 'sidecars', 'linux', 'build', 'risezome-sidecar-linux'),
   );
   const sidecarSha = optionalEnv('RISEZOME_SIDECAR_SHA');
   const dgKey = requireEnv('DEEPGRAM_API_KEY');

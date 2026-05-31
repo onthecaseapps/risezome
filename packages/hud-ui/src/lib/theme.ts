@@ -2,7 +2,7 @@
  * Theme persistence key. Namespaced so cohabiting HUDs sharing an origin
  * don't clash.
  */
-export const THEME_STORAGE_KEY = 'upwell:theme';
+export const THEME_STORAGE_KEY = 'risezome:theme';
 
 /**
  * Tri-state theme preference. 'system' honors OS prefers-color-scheme
@@ -17,7 +17,7 @@ export type ThemePreference = 'light' | 'dark' | 'system';
  * wrong theme.
  *
  * Resolution order:
- *   1. localStorage[upwell:theme] → 'light' | 'dark' | 'system'
+ *   1. localStorage[risezome:theme] → 'light' | 'dark' | 'system'
  *   2. If 'system' (or absent/invalid): matchMedia('(prefers-color-scheme: dark)')
  *   3. If matchMedia unavailable: default to light
  *

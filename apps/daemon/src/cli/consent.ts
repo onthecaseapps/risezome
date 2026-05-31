@@ -15,7 +15,7 @@ export async function runConsentCommand(args: readonly string[]): Promise<number
   if (action === 'grant' || action === 'revoke') {
     const provider = args[1];
     if (provider === undefined || provider.length === 0) {
-      log('error', `Usage: upwell consent ${action} <provider>`);
+      log('error', `Usage: risezome consent ${action} <provider>`);
       return 2;
     }
     if (!SUPPORTED_PROVIDERS.has(provider)) {
@@ -27,7 +27,7 @@ export async function runConsentCommand(args: readonly string[]): Promise<number
     }
     return action === 'grant' ? grantConsent(provider) : revokeConsent(provider);
   }
-  log('error', 'Usage: upwell consent <list|grant|revoke> [provider]');
+  log('error', 'Usage: risezome consent <list|grant|revoke> [provider]');
   return 2;
 }
 

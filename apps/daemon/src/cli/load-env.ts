@@ -11,7 +11,7 @@ export interface LoadedEnv {
 /**
  * Load env vars from .env files into process.env. Search order:
  *   1. $RISEZOME_ENV_FILE (explicit override)
- *   2. <data dir>/.env       (persistent home, e.g. ~/.local/share/upwell/.env)
+ *   2. <data dir>/.env       (persistent home, e.g. ~/.local/share/risezome/.env)
  *   3. ./.env                (current working directory)
  *   4. <workspace root>/.env (walks up from cwd looking for pnpm-workspace.yaml or .git)
  *

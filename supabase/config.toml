@@ -2,7 +2,7 @@
 # Postgres + Auth + Realtime + Storage in Docker. Link to a remote project
 # via `supabase link --project-ref <ref>`.
 
-project_id = "upwell-portal"
+project_id = "risezome-portal"
 
 [api]
 enabled = true

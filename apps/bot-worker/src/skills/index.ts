@@ -3,7 +3,7 @@
  *
  * The classifier's tool surface is built from whichever skills are
  * configured at startup time. Live-API skills (U4) register when
- * GITHUB_TOKEN + UPWELL_GITHUB_REPO are set; corpus skills (U6)
+ * GITHUB_TOKEN + RISEZOME_GITHUB_REPO are set; corpus skills (U6)
  * register when the Postgres corpus has issues + PRs indexed (U5
  * lands the indexer in production).
  *
@@ -37,7 +37,7 @@ export function buildSkillRegistry(options: BuildSkillRegistryOptions): SkillReg
   const registry = new SkillRegistry();
 
   // ── Live-API GitHub skills (U4) ─────────────────────────────────
-  // Register when both GITHUB_TOKEN and UPWELL_GITHUB_REPO are
+  // Register when both GITHUB_TOKEN and RISEZOME_GITHUB_REPO are
   // configured. Either missing logs a disable-reason and skips
   // registration — the corpus skills (U6) and the rest of the
   // pipeline still work.
@@ -46,7 +46,9 @@ export function buildSkillRegistry(options: BuildSkillRegistryOptions): SkillReg
     options.logger.info(
       {
         hasToken: process.env['GITHUB_TOKEN'] !== undefined,
-        hasRepo: process.env['UPWELL_GITHUB_REPO'] !== undefined,
+        hasRepo:
+          process.env['RISEZOME_GITHUB_REPO'] !== undefined ||
+          process.env['UPWELL_GITHUB_REPO'] !== undefined,
       },
       'github.live.disabled',
     );

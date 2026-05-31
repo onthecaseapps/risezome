@@ -36,7 +36,7 @@ interface Harness {
 }
 
 async function startServer(): Promise<Harness> {
-  const dataDir = mkdtempSync(join(tmpdir(), 'upwell-server-'));
+  const dataDir = mkdtempSync(join(tmpdir(), 'risezome-server-'));
   const server = await buildDaemonServer({
     version: '0.0.0-test',
     port: 0,

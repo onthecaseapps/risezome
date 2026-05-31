@@ -20,7 +20,7 @@ describe('GithubClient', () => {
     await client.get(TEST_AUTH, '/user');
     expect(captured?.get('Authorization')).toBe(`Bearer ${TEST_AUTH.token}`);
     expect(captured?.get('Accept')).toBe('application/vnd.github+json');
-    expect(captured?.get('User-Agent')).toBe('upwell-daemon');
+    expect(captured?.get('User-Agent')).toBe('risezome-daemon');
     expect(captured?.get('X-GitHub-Api-Version')).toBe('2022-11-28');
   });
 

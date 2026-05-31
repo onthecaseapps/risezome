@@ -112,11 +112,11 @@ describe('github_issue_assignees', () => {
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl: fetchImpl as unknown as typeof fetch }),
       auth: AUTH,
-      repo: { owner: 'Nath5', name: 'upwell' },
+      repo: { owner: 'Nath5', name: 'risezome' },
     };
     const skill = buildIssueAssigneesSkill(ctx);
     await skill.handler({ issue_number: 99 }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
-    expect(capturedUrl).toContain('/repos/Nath5/upwell/issues/99');
+    expect(capturedUrl).toContain('/repos/Nath5/risezome/issues/99');
   });
 
   it('404 maps to SkillExecutionError code=not-found', async () => {

@@ -12,8 +12,8 @@ describe('hasConsent', () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = mkdtempSync(join(tmpdir(), 'upwell-consent-'));
-    db = await openCorpusDb({ path: join(dir, 'upwell.db') });
+    dir = mkdtempSync(join(tmpdir(), 'risezome-consent-'));
+    db = await openCorpusDb({ path: join(dir, 'risezome.db') });
     await migrate(db);
   });
 

@@ -794,11 +794,11 @@ function defaultSidecarPath(): string {
   // naive cwd-relative resolution misses by one directory.
   //
   // .../apps/bot-worker/src/debug/local-debug-ws.ts → walk up to
-  // .../upwell/ (5 hops), then sidecars/linux/build/upwell-sidecar-linux.
+  // .../risezome/ (5 hops), then sidecars/linux/build/risezome-sidecar-linux.
   const here = fileURLToPath(import.meta.url);
   let dir = resolve(here, '..');
   for (let i = 0; i < 8; i++) {
-    const candidate = resolve(dir, 'sidecars/linux/build/upwell-sidecar-linux');
+    const candidate = resolve(dir, 'sidecars/linux/build/risezome-sidecar-linux');
     if (existsSync(candidate)) return candidate;
     const parent = resolve(dir, '..');
     if (parent === dir) break;
@@ -808,8 +808,8 @@ function defaultSidecarPath(): string {
   // Last resort: cwd-relative. If we land here the resulting error
   // message ("ENOENT … apps/bot-worker/sidecars/…") is the signal
   // that walk-up found nothing — set RISEZOME_SIDECAR_PATH or build
-  // the sidecar binary at sidecars/linux/build/upwell-sidecar-linux.
-  return resolve(process.cwd(), 'sidecars/linux/build/upwell-sidecar-linux');
+  // the sidecar binary at sidecars/linux/build/risezome-sidecar-linux.
+  return resolve(process.cwd(), 'sidecars/linux/build/risezome-sidecar-linux');
 }
 
 async function computeFileSha256(path: string): Promise<string> {

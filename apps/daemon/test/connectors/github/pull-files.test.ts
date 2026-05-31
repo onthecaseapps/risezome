@@ -33,8 +33,8 @@ describe('pullRepoFiles', () => {
   let fakeRepoDir: string;
 
   beforeEach(async () => {
-    cacheDir = await mkdtemp(join(tmpdir(), 'upwell-pull-cache-'));
-    fakeRepoDir = await mkdtemp(join(tmpdir(), 'upwell-fake-repo-'));
+    cacheDir = await mkdtemp(join(tmpdir(), 'risezome-pull-cache-'));
+    fakeRepoDir = await mkdtemp(join(tmpdir(), 'risezome-fake-repo-'));
   });
 
   afterEach(() => {
