@@ -88,27 +88,95 @@ export async function persistAndBroadcast(
   }
   const eventId = data.event_id as number;
 
-  // Broadcast under the meeting topic. We don't await an ack — Supabase
-  // Realtime is fire-and-forget for our purposes; the DB write is the
-  // durable source of truth and the portal's reconnect-fetch handles
-  // missed broadcasts.
+  // Broadcast under the meeting topic. We pool one channel per meeting
+  // so we pay the subscribe cost once, not per-event. Earlier we did
+  // subscribe + send + unsubscribe per broadcast — `channel.subscribe()`
+  // returns synchronously but the actual server-side subscription is
+  // async; sending immediately after races with the SUBSCRIBED ack and
+  // the message gets dropped server-side. Result: DB writes worked but
+  // broadcasts never reached the browser.
   try {
-    const channel = client.channel(channelName(args.orgId, args.meetingId));
-    await channel.subscribe();
-    await channel.send({
+    const channel = await getOrSubscribeChannel(client, args.orgId, args.meetingId);
+    const sendResult = await channel.send({
       type: 'broadcast',
       event: args.type,
       payload: { ...args.payload, eventId },
     });
-    // Tear down the per-broadcast channel so we don't leak subscriptions
-    // across thousands of events. A pooled-channel optimization can come
-    // later if Realtime overhead becomes measurable.
-    await channel.unsubscribe();
-    return { eventId, broadcasted: true };
+    const broadcasted = sendResult === 'ok';
+    if (!broadcasted) {
+      // eslint-disable-next-line no-console
+      console.warn(`[bot-worker.db] broadcast send returned ${String(sendResult)} (event durable in DB)`);
+    }
+    return { eventId, broadcasted };
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn('[bot-worker.db] broadcast failed (event durable in DB):', err);
     return { eventId, broadcasted: false };
+  }
+}
+
+/**
+ * Per-meeting channel pool. Channels are long-lived for the meeting's
+ * lifetime; the bot-worker process holds them open in memory. On meeting
+ * end (POST /meetings/:id/end), the runtime is torn down and the channel
+ * is removed via teardownChannelForMeeting.
+ */
+const channelPool = new Map<string, Awaited<ReturnType<typeof subscribeChannel>>>();
+
+async function getOrSubscribeChannel(
+  client: SupabaseClient,
+  orgId: string,
+  meetingId: string,
+): Promise<ReturnType<SupabaseClient['channel']>> {
+  const name = channelName(orgId, meetingId);
+  const existing = channelPool.get(name);
+  if (existing !== undefined) return existing;
+  const channel = await subscribeChannel(client, name);
+  channelPool.set(name, channel);
+  return channel;
+}
+
+async function subscribeChannel(
+  client: SupabaseClient,
+  name: string,
+): Promise<ReturnType<SupabaseClient['channel']>> {
+  const channel = client.channel(name);
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`subscribe timeout for ${name}`));
+    }, 5000);
+    channel.subscribe((status, err) => {
+      if (settled) return;
+      if (status === 'SUBSCRIBED') {
+        settled = true;
+        clearTimeout(timeout);
+        resolve();
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        settled = true;
+        clearTimeout(timeout);
+        reject(new Error(`subscribe ${status}${err !== undefined ? `: ${String(err)}` : ''}`));
+      }
+    });
+  });
+  return channel;
+}
+
+export async function teardownChannelForMeeting(
+  client: SupabaseClient,
+  orgId: string,
+  meetingId: string,
+): Promise<void> {
+  const name = channelName(orgId, meetingId);
+  const ch = channelPool.get(name);
+  if (ch === undefined) return;
+  channelPool.delete(name);
+  try {
+    await client.removeChannel(ch);
+  } catch {
+    // best-effort
   }
 }
 

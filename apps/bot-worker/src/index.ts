@@ -15,6 +15,11 @@
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import { VoyageEmbedder } from '@risezome/engine/embed';
+import {
+  AnthropicSynthesizer,
+  DEFAULT_ANTHROPIC_MODEL,
+  type Synthesizer,
+} from '@risezome/engine/synthesize';
 import { adaptRecallMessage } from './recall-adapter.js';
 import { verifyBotWsJwt, type BotWsJwtPayload } from './jwt.js';
 import {
@@ -67,6 +72,18 @@ async function main(): Promise<void> {
     console.warn('[bot-worker] VOYAGE_API_KEY unset — per-utterance retrieval disabled');
   }
 
+  // Anthropic synthesizer (optional). When unset, retrieval still emits
+  // cards but no synthesis runs — the live page's right panel stays
+  // empty. Useful for dev iteration without burning Anthropic tokens.
+  const anthropicKey = process.env['ANTHROPIC_API_KEY'];
+  const anthropicModel = process.env['ANTHROPIC_MODEL'] ?? DEFAULT_ANTHROPIC_MODEL;
+  const synthesizer: Synthesizer | null = anthropicKey !== undefined && anthropicKey.length > 0
+    ? new AnthropicSynthesizer({ apiKey: anthropicKey, model: anthropicModel })
+    : null;
+  if (synthesizer === null) {
+    console.warn('[bot-worker] ANTHROPIC_API_KEY unset — synthesis disabled');
+  }
+
   const fastify = Fastify({ logger: { level: 'info' } });
   await fastify.register(websocket);
 
@@ -84,11 +101,26 @@ async function main(): Promise<void> {
     return reply.send({ ok: true, removed: true });
   });
 
-  fastify.get<{ Params: { meetingId: string; jwt: string } }>(
-    '/recall/:meetingId/:jwt',
-    { websocket: true },
-    async (socket, req) => {
-        const { meetingId, jwt } = req.params;
+  // @fastify/websocket v11 requires the WS route to be registered inside
+  // a child instance returned by fastify.register(...) — the websocket
+  // plugin's decorators only flow to routes registered through that path.
+  // Using fastify.route() with both `handler` and `wsHandler` so plain
+  // HTTP probes get a 200 (some clients do an HTTP GET to check the
+  // endpoint before upgrading).
+  // Use a wildcard for the JWT segment — Fastify's `:param` matcher
+  // doesn't reliably match strings with dots (JWTs have two), so we
+  // catch the rest of the path with `*` and pull the JWT off ourselves.
+  await fastify.register(async (instance) => {
+    instance.route<{ Params: { meetingId: string; '*': string } }>({
+      method: 'GET',
+      url: '/recall/:meetingId/*',
+      handler: (_req, reply) => {
+        reply.code(200).send({ ok: true, kind: 'ws-endpoint' });
+      },
+      wsHandler: async (socket, req) => {
+        const params = req.params as { meetingId: string; '*': string };
+        const meetingId = params.meetingId;
+        const jwt = params['*'];
         let payload: BotWsJwtPayload;
         try {
           payload = await verifyBotWsJwt(jwt, secret);
@@ -126,7 +158,7 @@ async function main(): Promise<void> {
         }
 
         socket.on('message', (raw: Buffer) => {
-          void handleMessage(raw, meetingId, payload.orgId, db, embedder, req.log);
+          void handleMessage(raw, meetingId, payload.orgId, db, embedder, synthesizer, req.log);
         });
 
         socket.on('close', () => {
@@ -139,7 +171,8 @@ async function main(): Promise<void> {
           req.log.error({ err, meetingId }, 'ws.error');
         });
       },
-  );
+    });
+  });
 
   try {
     await fastify.listen({ port, host: '0.0.0.0' });
@@ -164,6 +197,7 @@ async function handleMessage(
   orgId: string,
   db: SupabaseClient,
   embedder: VoyageEmbedder | null,
+  synthesizer: Synthesizer | null,
   logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void },
 ): Promise<void> {
   let parsed: unknown;
@@ -233,6 +267,7 @@ async function handleMessage(
       orgId,
       db,
       embedder,
+      ...(synthesizer !== null ? { synthesizer } : {}),
       logger,
     });
     if (retrievalResult.emitted > 0 || retrievalResult.skipped !== undefined) {

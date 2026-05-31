@@ -1,5 +1,5 @@
 import { RisezomeError } from '@risezome/shared-types';
-import type { SynthesisSource } from '../synthesize/contract.js';
+import type { SynthesisSource } from '@risezome/engine/synthesize';
 
 // JsonSchema subset we actually use for skill input_schema. Kept minimal so
 // the type stays portable across the Anthropic tool definition shape — the

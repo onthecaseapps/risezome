@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { VoyageEmbedder } from '@risezome/engine/embed';
+import type {
+  Synthesizer,
+  SynthesisSource,
+  SynthesisUsage,
+} from '@risezome/engine/synthesize';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { persistAndBroadcast } from './db.js';
 
@@ -67,6 +72,10 @@ export async function maybeRetrieveAndEmit(args: {
   orgId: string;
   db: SupabaseClient;
   embedder: VoyageEmbedder;
+  /** Optional Anthropic synthesizer. When present, after cards are
+   *  emitted we run them through synthesis and stream batched
+   *  synthesisDelta broadcasts to the live page's right panel. */
+  synthesizer?: Synthesizer;
   logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void };
 }): Promise<{ emitted: number; skipped?: string }> {
   args.runtime.recentFinals.push(args.utteranceText);
@@ -161,6 +170,8 @@ export async function maybeRetrieveAndEmit(args: {
 
   const traceId = randomUUID();
   let emitted = 0;
+  const surfacedCardIds: string[] = [];
+  const synthesisSources: SynthesisSource[] = [];
   for (let i = 0; i < hits.length; i += 1) {
     const hit = hits[i]!;
     const chunk = chunkById.get(hit.chunk_id);
@@ -225,7 +236,33 @@ export async function maybeRetrieveAndEmit(args: {
       type: 'card',
       payload: { card: cardPayload },
     });
+    surfacedCardIds.push(cardId);
+    synthesisSources.push({
+      rank: i + 1, // synthesizer expects 1-indexed
+      title: doc.title,
+      text: chunk.text,
+    });
     emitted += 1;
+  }
+
+  // ── Synthesis ─────────────────────────────────────────────────────
+  // After cards are emitted, kick off Anthropic synthesis across them.
+  // Streams the result back as batched synthesisDelta broadcasts so the
+  // live page's right panel populates as tokens arrive. Fire-and-forget
+  // from the caller's perspective — we don't block the retrieval-tick
+  // return on synthesis completion.
+  if (args.synthesizer !== undefined && synthesisSources.length > 0) {
+    void runSynthesisAndBroadcast({
+      synthesizer: args.synthesizer,
+      utterance: queryText,
+      sources: synthesisSources,
+      surfacedCardIds,
+      traceId,
+      meetingId: args.meetingId,
+      orgId: args.orgId,
+      db: args.db,
+      logger: args.logger,
+    });
   }
 
   args.logger.info(
@@ -245,4 +282,193 @@ function clamp01(n: number): number {
   if (n < 0) return 0;
   if (n > 1) return 1;
   return n;
+}
+
+const SYNTHESIS_FLUSH_INTERVAL_MS = 250;
+const SYNTHESIS_MAX_TOKENS = 150;
+
+/**
+ * Drive a single synthesis run end-to-end:
+ *   1. Broadcast `synthesisStart` (synthesisId + source card ids)
+ *   2. Consume the synthesizer's AsyncIterable
+ *   3. Buffer textDelta tokens; flush a batched broadcast every 250ms
+ *      (and once on done) — keeps the broadcast volume sane while still
+ *      feeling streaming
+ *   4. On done: broadcast `synthesisDone` with stop reason + usage
+ *   5. On error: broadcast `synthesisError` with a code + message
+ *
+ * Each event also writes a row to syntheses (for the start) or updates
+ * the row (accumulated_text, status, citations, usage) so reconnect-fetch
+ * can rebuild the synthesis state from DB alone.
+ *
+ * Errors are swallowed at the boundary — synthesis failure is best-effort,
+ * cards on their own are still useful. We log + emit a synthesisError
+ * event and exit.
+ */
+async function runSynthesisAndBroadcast(args: {
+  synthesizer: Synthesizer;
+  utterance: string;
+  sources: SynthesisSource[];
+  surfacedCardIds: string[];
+  traceId: string;
+  meetingId: string;
+  orgId: string;
+  db: SupabaseClient;
+  logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void };
+}): Promise<void> {
+  const synthesisId = `synth_${randomUUID()}`;
+  let accumulated = '';
+  let lastFlushedLength = 0;
+  let flushTimer: NodeJS.Timeout | null = null;
+  let startUsage: SynthesisUsage | null = null;
+  const startedAt = Date.now();
+
+  // syntheses row keyed by synthesis_id; insert once at start, update
+  // accumulated_text + status on each significant event.
+  const insertResult = await args.db.from('syntheses').insert({
+    synthesis_id: synthesisId,
+    meeting_id: args.meetingId,
+    org_id: args.orgId,
+    source_card_ids: args.surfacedCardIds,
+    accumulated_text: '',
+    status: 'running',
+    citations: [],
+    trace_id: args.traceId,
+  });
+  if (insertResult.error !== null) {
+    args.logger.warn({ err: insertResult.error, synthesisId }, 'synthesis.insert.failed');
+    return;
+  }
+
+  // Helper: flush the current buffer as a single synthesisDelta broadcast.
+  const flush = async (): Promise<void> => {
+    if (accumulated.length === lastFlushedLength) return;
+    const delta = accumulated.slice(lastFlushedLength);
+    lastFlushedLength = accumulated.length;
+    // Persist accumulated_text snapshot first (R23a), then broadcast.
+    await args.db
+      .from('syntheses')
+      .update({ accumulated_text: accumulated })
+      .eq('synthesis_id', synthesisId);
+    await persistAndBroadcast(args.db, {
+      meetingId: args.meetingId,
+      orgId: args.orgId,
+      type: 'synthesisDelta',
+      payload: { delta: { synthesisId, delta } },
+    });
+  };
+
+  // Emit synthesisStart before the first token. The reducer uses this
+  // to allocate the synthesis card on the right panel.
+  await persistAndBroadcast(args.db, {
+    meetingId: args.meetingId,
+    orgId: args.orgId,
+    type: 'synthesisStart',
+    payload: {
+      start: {
+        synthesisId,
+        sourceCardIds: args.surfacedCardIds,
+        traceId: args.traceId,
+      },
+    },
+  });
+
+  try {
+    for await (const chunk of args.synthesizer.synthesize({
+      utterance: args.utterance,
+      sources: args.sources,
+      maxTokens: SYNTHESIS_MAX_TOKENS,
+    })) {
+      if (chunk.type === 'start') {
+        startUsage = chunk.usage;
+      } else if (chunk.type === 'textDelta') {
+        accumulated += chunk.delta;
+        // Throttle broadcasts: only fire flush if no timer pending.
+        if (flushTimer === null) {
+          flushTimer = setTimeout(() => {
+            flushTimer = null;
+            void flush();
+          }, SYNTHESIS_FLUSH_INTERVAL_MS);
+        }
+      } else if (chunk.type === 'done') {
+        if (flushTimer !== null) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        await flush(); // final delta with the tail tokens
+
+        const latencyMs = Date.now() - startedAt;
+        await args.db
+          .from('syntheses')
+          .update({
+            status: 'done',
+            stop_reason: chunk.stopReason,
+            input_tokens: chunk.usage.inputTokens,
+            output_tokens: chunk.usage.outputTokens,
+            cache_read_tokens: chunk.usage.cacheReadTokens,
+            cache_creation_tokens: chunk.usage.cacheCreationTokens,
+            latency_ms: latencyMs,
+          })
+          .eq('synthesis_id', synthesisId);
+
+        await persistAndBroadcast(args.db, {
+          meetingId: args.meetingId,
+          orgId: args.orgId,
+          type: 'synthesisDone',
+          payload: {
+            done: {
+              synthesisId,
+              stopReason: chunk.stopReason,
+              citations: [], // Citation extraction lives in the daemon's
+                            // pipeline; not lifted yet (see U9e + the
+                            // parseSynthesisOutput helper in engine).
+              usage: chunk.usage,
+              ttftMs: 0, // Not currently measured at this layer.
+              latencyMs,
+            },
+          },
+        });
+
+        args.logger.info(
+          { synthesisId, meetingId: args.meetingId, latencyMs, outputTokens: chunk.usage.outputTokens },
+          'synthesis.done',
+        );
+        return;
+      }
+    }
+  } catch (err) {
+    if (flushTimer !== null) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorCode = (err as { kind?: string }).kind ?? 'unknown';
+    args.logger.warn({ err, synthesisId, meetingId: args.meetingId }, 'synthesis.failed');
+
+    await args.db
+      .from('syntheses')
+      .update({
+        status: 'errored',
+        error_code: errorCode,
+        error_message: errorMessage,
+      })
+      .eq('synthesis_id', synthesisId);
+
+    await persistAndBroadcast(args.db, {
+      meetingId: args.meetingId,
+      orgId: args.orgId,
+      type: 'synthesisError',
+      payload: {
+        error: {
+          synthesisId,
+          code: errorCode,
+          message: errorMessage,
+        },
+      },
+    });
+  }
+  // Use startUsage to silence "assigned but never used" if synthesis
+  // ended without a done event (shouldn't happen for well-behaved
+  // synthesizers, but keep the lint happy).
+  void startUsage;
 }

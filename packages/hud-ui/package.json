@@ -13,7 +13,8 @@
     "./components/*": {
       "types": "./src/components/*.tsx",
       "default": "./src/components/*.tsx"
-    }
+    },
+    "./styles.css": "./src/styles.css"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -11,8 +11,8 @@ import {
   SynthesisRateLimitError,
   type Synthesizer,
   type SynthesisInput,
-} from '../synthesize/contract.js';
-import { parseSynthesisOutput, REFUSAL_SENTINEL } from '../synthesize/prompt.js';
+} from '@risezome/engine/synthesize';
+import { parseSynthesisOutput, REFUSAL_SENTINEL } from '@risezome/engine/synthesize';
 import { log } from '../cli/util.js';
 import { isToolShaped } from '../router/heuristic.js';
 import {
@@ -27,7 +27,7 @@ import {
 } from '../relevance/contract.js';
 import { type SkillRegistry } from '../skills/registry.js';
 import { type Skill, formatAsSource, SkillExecutionError } from '../skills/contract.js';
-import type { SynthesisSource } from '../synthesize/contract.js';
+import type { SynthesisSource } from '@risezome/engine/synthesize';
 import type {
   CardEvent,
   CardRetracted,

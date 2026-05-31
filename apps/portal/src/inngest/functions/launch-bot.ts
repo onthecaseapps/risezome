@@ -48,12 +48,17 @@ export const launchBotFn = inngest.createFunction(
       data: { calendarEventId: string; scheduledStartAt: string };
     }).data;
 
-    // ── Step 1: sleep until 90s before start ─────────────────────────
+    // ── Step 1: sleep until 90s before start (if there's time to wait) ──
     const launchAt = new Date(new Date(scheduledStartAt).getTime() - 90 * 1000);
-    // Inngest's sleepUntil handles the case where the time is already
-    // past (no-op continue immediately) — useful for testing + for
-    // toggle-on within 90s of start.
-    await step.sleepUntil('wait-until-launch-window', launchAt);
+    // Inngest's sleepUntil is supposed to be a no-op for past targets,
+    // but in practice the function can hang or get stuck queued. Skip
+    // the sleep step entirely when we're already inside the launch
+    // window — the user just toggled bot-on for a meeting starting
+    // very soon (or already in progress), and they want the bot NOW,
+    // not after some queue delay.
+    if (launchAt > new Date()) {
+      await step.sleepUntil('wait-until-launch-window', launchAt);
+    }
 
     // ── Step 2: re-fetch + validate ──────────────────────────────────
     const check = await step.run('reload-event', async () => {

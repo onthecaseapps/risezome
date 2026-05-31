@@ -537,11 +537,11 @@ import type {
   Synthesizer,
   SynthesisChunk,
   SynthesisInput,
-} from '../../src/synthesize/contract.js';
+} from '@risezome/engine/synthesize';
 import {
   SynthesisProviderError,
   SynthesisRateLimitError,
-} from '../../src/synthesize/contract.js';
+} from '@risezome/engine/synthesize';
 import type {
   SynthesisDelta,
   SynthesisDone,
@@ -549,7 +549,7 @@ import type {
   SynthesisRetracted,
   SynthesisStart,
 } from '../../src/retrieve/contract.js';
-import { REFUSAL_SENTINEL } from '../../src/synthesize/prompt.js';
+import { REFUSAL_SENTINEL } from '@risezome/engine/synthesize';
 
 interface SynthesisEvents {
   start: SynthesisStart[];

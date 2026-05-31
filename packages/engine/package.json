@@ -26,6 +26,10 @@
       "types": "./dist/transcribe/index.d.ts",
       "default": "./dist/transcribe/index.js"
     },
+    "./synthesize": {
+      "types": "./dist/synthesize/index.d.ts",
+      "default": "./dist/synthesize/index.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "default": "./dist/types.js"
