@@ -24,7 +24,7 @@ import {
   type RelevanceClassifier,
   type RelevanceResult,
   RelevanceProviderError,
-} from '../relevance/contract.js';
+} from '@risezome/engine/relevance';
 import { type SkillRegistry } from '../skills/registry.js';
 import { type Skill, formatAsSource, SkillExecutionError } from '../skills/contract.js';
 import type { SynthesisSource } from '@risezome/engine/synthesize';

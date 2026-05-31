@@ -6,7 +6,10 @@ import type {
   SynthesisUsage,
 } from '@risezome/engine/synthesize';
 import { parseSynthesisOutput } from '@risezome/engine/synthesize';
-import { classifyRelevanceHeuristic } from '@risezome/engine/relevance';
+import {
+  classifyRelevanceHeuristic,
+  type RelevanceClassifier,
+} from '@risezome/engine/relevance';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { persistAndBroadcast } from './db.js';
 
@@ -39,6 +42,14 @@ export interface RetrievalRuntime {
   recentFinals: string[];
   utteranceCountSinceLastRetrieval: number;
   lastRetrievalAt: number;
+  /**
+   * Most recent cardId surfaced for a given docId in this meeting.
+   * Used by the stale-score retractor: when a new card arrives for a
+   * docId that already has a live (non-retracted, non-pinned) card,
+   * we retract the prior card so the stream doesn't fill with
+   * duplicates of the same source chunk.
+   */
+  liveCardByDocId: Map<string, string>;
 }
 
 export function newRetrievalRuntime(): RetrievalRuntime {
@@ -46,6 +57,7 @@ export function newRetrievalRuntime(): RetrievalRuntime {
     recentFinals: [],
     utteranceCountSinceLastRetrieval: 0,
     lastRetrievalAt: 0,
+    liveCardByDocId: new Map<string, string>(),
   };
 }
 
@@ -78,6 +90,12 @@ export async function maybeRetrieveAndEmit(args: {
    *  emitted we run them through synthesis and stream batched
    *  synthesisDelta broadcasts to the live page's right panel. */
   synthesizer?: Synthesizer;
+  /** Optional LLM relevance classifier. Used ONLY for `ambiguous`
+   *  heuristic results — `clearly_filler` short-circuits without an
+   *  API call, `clearly_substantive` always synthesizes. When unset,
+   *  ambiguous utterances default to synthesizing (same fail-open
+   *  posture as the daemon pipeline). */
+  relevanceClassifier?: RelevanceClassifier;
   logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void };
 }): Promise<{ emitted: number; skipped?: string }> {
   args.runtime.recentFinals.push(args.utteranceText);
@@ -238,6 +256,18 @@ export async function maybeRetrieveAndEmit(args: {
       type: 'card',
       payload: { card: cardPayload },
     });
+
+    // Stale-score retraction: if we already surfaced a card for this
+    // docId, retract the old one so the stream doesn't show the same
+    // chunk twice. Pinned cards are NEVER retracted by this path —
+    // the user explicitly pulled them out of the firehose. We check
+    // the DB row's pinned flag before retracting.
+    const priorCardId = args.runtime.liveCardByDocId.get(chunk.doc_id);
+    if (priorCardId !== undefined && priorCardId !== cardId) {
+      await retractIfNotPinned(args.db, priorCardId, args.orgId, args.meetingId, args.logger);
+    }
+    args.runtime.liveCardByDocId.set(chunk.doc_id, cardId);
+
     surfacedCardIds.push(cardId);
     synthesisSources.push({
       rank: i + 1, // synthesizer expects 1-indexed
@@ -254,29 +284,46 @@ export async function maybeRetrieveAndEmit(args: {
   // from the caller's perspective — we don't block the retrieval-tick
   // return on synthesis completion.
   if (args.synthesizer !== undefined && synthesisSources.length > 0) {
-    // Relevance gate: the cheap regex heuristic looks at the LATEST
-    // final utterance (not the rolling window — per the heuristic's
-    // contract). If the user just said "yeah" or "okay", skip the
-    // Anthropic round-trip — cards still surface but no synthesis
-    // burns tokens on filler. Logged for telemetry.
-    const relevance = classifyRelevanceHeuristic(args.utteranceText);
-    if (relevance === 'clearly_filler') {
+    // Two-stage relevance gate:
+    //   1. Cheap regex heuristic on the latest final utterance.
+    //      clearly_filler short-circuits with zero API cost.
+    //   2. If heuristic returns `ambiguous` and the LLM classifier is
+    //      available, ask the LLM. `skip` with confidence > threshold
+    //      means we don't synthesize (transparent quality + cost
+    //      improvement on stuff like "so anyway, that's where we are").
+    //      `surface` or any classifier error falls through to synthesis
+    //      (fail-open).
+    const heuristic = classifyRelevanceHeuristic(args.utteranceText);
+    if (heuristic === 'clearly_filler') {
       args.logger.info(
-        { meetingId: args.meetingId, utteranceId: args.utteranceId, relevance },
+        { meetingId: args.meetingId, utteranceId: args.utteranceId, relevance: heuristic },
         'synthesis.skipped.filler',
       );
     } else {
-      void runSynthesisAndBroadcast({
-        synthesizer: args.synthesizer,
-        utterance: queryText,
-        sources: synthesisSources,
-        surfacedCardIds,
-        traceId,
-        meetingId: args.meetingId,
-        orgId: args.orgId,
-        db: args.db,
-        logger: args.logger,
-      });
+      const shouldSkip = heuristic === 'ambiguous' && args.relevanceClassifier !== undefined
+        ? await classifyLlmAndDecide({
+            classifier: args.relevanceClassifier,
+            utterance: args.utteranceText,
+            meetingId: args.meetingId,
+            utteranceId: args.utteranceId,
+            logger: args.logger,
+          })
+        : false;
+      if (shouldSkip) {
+        // Already logged inside classifyLlmAndDecide.
+      } else {
+        void runSynthesisAndBroadcast({
+          synthesizer: args.synthesizer,
+          utterance: queryText,
+          sources: synthesisSources,
+          surfacedCardIds,
+          traceId,
+          meetingId: args.meetingId,
+          orgId: args.orgId,
+          db: args.db,
+          logger: args.logger,
+        });
+      }
     }
   }
 
@@ -297,6 +344,102 @@ function clamp01(n: number): number {
   if (n < 0) return 0;
   if (n > 1) return 1;
   return n;
+}
+
+/**
+ * Mark a prior card as retracted (verifier-downgraded) unless it's
+ * been pinned by the user. Broadcasts cardRetracted so live page
+ * subscribers remove it from the stream immediately. Best-effort — a
+ * failed retract leaves the duplicate visible but doesn't break the
+ * new card path.
+ */
+async function retractIfNotPinned(
+  db: SupabaseClient,
+  cardId: string,
+  orgId: string,
+  meetingId: string,
+  logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void },
+): Promise<void> {
+  const { data: priorRow } = await db
+    .from('cards')
+    .select('pinned')
+    .eq('card_id', cardId)
+    .maybeSingle();
+  if (priorRow === null) return;
+  if (priorRow.pinned === true) return; // pinned cards are sacred
+
+  const { error: updateErr } = await db
+    .from('cards')
+    .update({
+      retracted_at: new Date().toISOString(),
+      retracted_reason: 'verifier-downgraded',
+    })
+    .eq('card_id', cardId)
+    .is('retracted_at', null);
+  if (updateErr !== null) {
+    logger.warn({ err: updateErr, cardId }, 'retraction.update.failed');
+    return;
+  }
+
+  await persistAndBroadcast(db, {
+    meetingId,
+    orgId,
+    type: 'cardRetracted',
+    payload: {
+      retracted: { cardId, reason: 'verifier-downgraded' },
+    },
+  });
+  logger.info({ cardId, meetingId }, 'card.retracted.verifier-downgraded');
+}
+
+/**
+ * Threshold a `skip` decision must clear before we honor it. Below this,
+ * we treat the result as `surface` and synthesize anyway. Mirrors the
+ * daemon's RISEZOME_RELEVANCE_SKIP_THRESHOLD default. Configurable via
+ * env later if telemetry shows tuning is needed.
+ */
+const RELEVANCE_SKIP_THRESHOLD = 0.7;
+const RELEVANCE_TIMEOUT_MS = 3000;
+
+/**
+ * Run the LLM classifier on an ambiguous utterance, with a hard timeout
+ * so a slow Anthropic response can't stall the retrieval loop. Returns
+ * true when synthesis should be skipped, false otherwise. Any error
+ * (timeout, auth, 5xx) falls through to false (fail-open).
+ */
+async function classifyLlmAndDecide(args: {
+  classifier: RelevanceClassifier;
+  utterance: string;
+  meetingId: string;
+  utteranceId: string;
+  logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void };
+}): Promise<boolean> {
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), RELEVANCE_TIMEOUT_MS);
+  try {
+    const result = await args.classifier.classify(args.utterance, controller.signal);
+    if (result.decision === 'skip' && result.confidence >= RELEVANCE_SKIP_THRESHOLD) {
+      args.logger.info(
+        {
+          meetingId: args.meetingId,
+          utteranceId: args.utteranceId,
+          confidence: result.confidence,
+          reason: result.reason,
+        },
+        'synthesis.skipped.llm',
+      );
+      return true;
+    }
+    return false;
+  } catch (err) {
+    args.logger.warn(
+      { err, meetingId: args.meetingId, utteranceId: args.utteranceId },
+      'relevance.llm.failed',
+    );
+    return false;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
 
 const SYNTHESIS_FLUSH_INTERVAL_MS = 250;

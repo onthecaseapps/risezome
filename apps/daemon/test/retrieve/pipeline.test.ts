@@ -1583,8 +1583,8 @@ describe('RetrievalPipeline — router outcomes', () => {
 // Utterance-relevance pre-classifier integration tests (U3).
 // =============================================================================
 
-import type { RelevanceClassifier, RelevanceResult } from '../../src/relevance/contract.js';
-import { RelevanceProviderError } from '../../src/relevance/contract.js';
+import type { RelevanceClassifier, RelevanceResult } from '@risezome/engine/relevance';
+import { RelevanceProviderError } from '@risezome/engine/relevance';
 
 interface RelevanceEvents {
   relevanceSkip: Array<{ gate: string; reason: string; utterance: string; confidence?: number }>;

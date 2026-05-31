@@ -20,6 +20,10 @@ import {
   DEFAULT_ANTHROPIC_MODEL,
   type Synthesizer,
 } from '@risezome/engine/synthesize';
+import {
+  AnthropicRelevanceClassifier,
+  type RelevanceClassifier,
+} from '@risezome/engine/relevance';
 import { adaptRecallMessage } from './recall-adapter.js';
 import { verifyBotWsJwt, type BotWsJwtPayload } from './jwt.js';
 import {
@@ -72,16 +76,21 @@ async function main(): Promise<void> {
     console.warn('[bot-worker] VOYAGE_API_KEY unset — per-utterance retrieval disabled');
   }
 
-  // Anthropic synthesizer (optional). When unset, retrieval still emits
-  // cards but no synthesis runs — the live page's right panel stays
-  // empty. Useful for dev iteration without burning Anthropic tokens.
+  // Anthropic synthesizer + relevance classifier (both optional + both
+  // share the same key). When ANTHROPIC_API_KEY is unset, retrieval
+  // still emits cards but no synthesis or LLM-relevance runs — the
+  // cheap regex heuristic alone gates filler. Useful for dev iteration
+  // without burning Anthropic tokens.
   const anthropicKey = process.env['ANTHROPIC_API_KEY'];
   const anthropicModel = process.env['ANTHROPIC_MODEL'] ?? DEFAULT_ANTHROPIC_MODEL;
   const synthesizer: Synthesizer | null = anthropicKey !== undefined && anthropicKey.length > 0
     ? new AnthropicSynthesizer({ apiKey: anthropicKey, model: anthropicModel })
     : null;
+  const relevanceClassifier: RelevanceClassifier | null = anthropicKey !== undefined && anthropicKey.length > 0
+    ? new AnthropicRelevanceClassifier({ apiKey: anthropicKey, model: anthropicModel })
+    : null;
   if (synthesizer === null) {
-    console.warn('[bot-worker] ANTHROPIC_API_KEY unset — synthesis disabled');
+    console.warn('[bot-worker] ANTHROPIC_API_KEY unset — synthesis + LLM relevance disabled');
   }
 
   const fastify = Fastify({ logger: { level: 'info' } });
@@ -158,7 +167,7 @@ async function main(): Promise<void> {
         }
 
         socket.on('message', (raw: Buffer) => {
-          void handleMessage(raw, meetingId, payload.orgId, db, embedder, synthesizer, req.log);
+          void handleMessage(raw, meetingId, payload.orgId, db, embedder, synthesizer, relevanceClassifier, req.log);
         });
 
         socket.on('close', () => {
@@ -198,6 +207,7 @@ async function handleMessage(
   db: SupabaseClient,
   embedder: VoyageEmbedder | null,
   synthesizer: Synthesizer | null,
+  relevanceClassifier: RelevanceClassifier | null,
   logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void },
 ): Promise<void> {
   let parsed: unknown;
@@ -268,6 +278,7 @@ async function handleMessage(
       db,
       embedder,
       ...(synthesizer !== null ? { synthesizer } : {}),
+      ...(relevanceClassifier !== null ? { relevanceClassifier } : {}),
       logger,
     });
     if (retrievalResult.emitted > 0 || retrievalResult.skipped !== undefined) {

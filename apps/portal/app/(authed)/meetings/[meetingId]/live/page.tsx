@@ -53,8 +53,11 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
     | 'failed';
 
   if (status === 'completed') {
-    // U12 ships the review page; until then redirect to upcoming with a notice.
-    redirect(`/upcoming?notice=meeting_completed`);
+    // Meeting wrapped — flip to the post-meeting review surface where
+    // we render cards/syntheses statically (no Realtime). The redirect
+    // is via the same /meetings/[id] path tree so the back button gets
+    // the user out of the in-meeting context cleanly.
+    redirect(`/meetings/${meetingId}/review`);
   }
 
   // Pull the calendar event for context (title, conference URL) if available.

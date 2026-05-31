@@ -1,0 +1,68 @@
+# Fly.io config for the Risezome bot-worker.
+#
+# Production runs ONE machine in iad (closest to Supabase us-east-1).
+# Single-machine = one process-per-meeting in-memory map; multi-instance
+# would require sticky routing on meeting_id. Scale up later when peak
+# concurrent meetings approaches single-machine capacity.
+#
+# auto_stop_machines = false and min_machines_running = 1 keep the
+# machine warm — Recall opens inbound WS to /recall/:meetingId/:jwt and
+# can't tolerate a cold-start delay.
+#
+# Deploy from the repo root (NOT apps/bot-worker) so the Docker build
+# context can see the workspace files:
+#   fly deploy --config apps/bot-worker/fly.toml --dockerfile apps/bot-worker/Dockerfile
+
+app = "risezome-bot-worker"
+primary_region = "iad"
+
+[build]
+  dockerfile = "apps/bot-worker/Dockerfile"
+
+[env]
+  BOT_WORKER_PORT = "8080"
+  # Recall + Supabase + Anthropic + Voyage keys come from `fly secrets
+  # set`. They're listed in apps/bot-worker/.env.example for reference;
+  # don't commit values.
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 100
+
+# Health check is HTTP GET /health → 200 returning {ok: true, runtimes: N}.
+# Liveness only; if the health endpoint is unreachable Fly considers the
+# machine unhealthy and restarts it.
+[[services]]
+  protocol = "tcp"
+  internal_port = 8080
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/health"
+    protocol = "http"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"

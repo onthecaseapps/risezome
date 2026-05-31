@@ -1,5 +1,5 @@
 import type { CardEvent } from '../retrieve/contract.js';
-import type { RelevanceResult } from '../relevance/contract.js';
+import type { RelevanceResult } from '@risezome/engine/relevance';
 import { normalizeForRelevance } from '@risezome/engine/relevance';
 
 export interface ActiveSynthesis {

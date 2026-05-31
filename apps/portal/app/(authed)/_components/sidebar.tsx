@@ -4,7 +4,7 @@ import { CURRENT_ORG_COOKIE, listUserOrgs, requireAuthedUser } from '../../_lib/
 import { cookies } from 'next/headers';
 import { OrgSwitcher } from './org-switcher';
 import { SidebarNavLink } from './sidebar-nav-link';
-import { CalendarIcon, CapturesIcon, LiveIcon, SourcesIcon } from './nav-icons';
+import { CalendarIcon, CapturesIcon, LiveIcon, SettingsIcon, SourcesIcon } from './nav-icons';
 import { UserCard } from './user-card';
 
 /**
@@ -76,6 +76,12 @@ export async function Sidebar(): Promise<ReactElement> {
           icon={<CapturesIcon />}
           label="Captures"
           disabled
+        />
+        <SidebarNavLink
+          href="/settings"
+          matchPrefix="/settings"
+          icon={<SettingsIcon />}
+          label="Settings"
         />
       </nav>
 

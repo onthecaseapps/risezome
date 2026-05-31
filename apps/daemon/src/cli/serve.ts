@@ -31,7 +31,7 @@ import type {
 } from '../retrieve/contract.js';
 import { AnthropicSynthesizer, DEFAULT_ANTHROPIC_MODEL } from '@risezome/engine/synthesize';
 import { AnthropicClassifier } from '../router/anthropic-classifier.js';
-import { AnthropicRelevanceClassifier } from '../relevance/anthropic-classifier.js';
+import { AnthropicRelevanceClassifier } from '@risezome/engine/relevance';
 import { SkillRegistry } from '../skills/registry.js';
 import { skills as githubSkills } from '../skills/github/index.js';
 import { hasConsent } from './consent-store.js';

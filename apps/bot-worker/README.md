@@ -48,11 +48,56 @@ The launcher includes that URL verbatim in
 `recording_config.realtime_endpoints[0].url`. Recall forwards it to the
 bot which connects back over wss.
 
-## Production (later — Fly.io)
+## Production — Fly.io
 
-Single Fly.io machine in `iad` with `min_machines_running = 1` and
-`auto_stop_machines = false`. Stable hostname `bot-worker.risezome.app`
-(CNAME via Fly's certs + DNS). Recall connects inbound over WSS at
+Single machine in `iad` with `min_machines_running = 1` and
+`auto_stop_machines = false`. Recall connects inbound over WSS at
 `/recall/:meetingId/:jwt`. Single-machine means rolling deploys briefly
-interrupt active WS sessions; documented "do not deploy during active
-meetings" policy applies until multi-instance + sticky routing lands.
+interrupt active WS sessions; "do not deploy during active meetings"
+policy applies until multi-instance + sticky routing lands.
+
+### One-time setup
+
+```bash
+# Install the Fly CLI (one-time)
+brew install flyctl
+fly auth login
+
+# Create the app (one-time, run from the repo root)
+fly apps create risezome-bot-worker --org <your-fly-org>
+
+# Set secrets (one-time + on rotation)
+fly secrets set --app risezome-bot-worker \
+  SUPABASE_URL=https://<ref>.supabase.co \
+  SUPABASE_SECRET_KEY=sb_secret_... \
+  BOT_WORKER_SECRET=<same as portal's> \
+  VOYAGE_API_KEY=... \
+  ANTHROPIC_API_KEY=sk-ant-...
+
+# Map your domain to the app (one-time)
+fly certs create bot-worker.risezome.app --app risezome-bot-worker
+# then add the CNAME from `fly certs show` to your DNS provider
+```
+
+### Deploy
+
+```bash
+# From the monorepo root (NOT apps/bot-worker/) so the Docker build
+# context can see workspace files
+fly deploy --config apps/bot-worker/fly.toml --dockerfile apps/bot-worker/Dockerfile
+```
+
+Update portal env after first deploy:
+
+```env
+# apps/portal/.env.local (or Vercel project env)
+BOT_WORKER_BASE_URL=wss://bot-worker.risezome.app
+BOT_WORKER_HTTP_URL=https://bot-worker.risezome.app
+```
+
+### Healthcheck
+
+`fly status` shows the machine state. `GET /health` returns `{ok: true,
+runtimes: N}` where `runtimes` is the count of active per-meeting
+runtimes. If runtimes is unexpectedly high (>10) after meetings should
+have ended, something's leaking state.
