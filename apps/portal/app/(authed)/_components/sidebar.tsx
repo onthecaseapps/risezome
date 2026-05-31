@@ -38,14 +38,19 @@ export async function Sidebar(): Promise<ReactElement> {
   // Count recording meetings in the current org. RLS scopes to org
   // members so users only see their org's count. HEAD + count avoids
   // shipping rows we don't need; the list page does the full select.
+  // Mirrors the 6h freshness window in /meetings/live so the sidebar
+  // dot and the list contents never disagree — a stuck meeting whose
+  // started_at is older than 6h won't surface in either place.
   let activeMeetingCount = 0;
   if (current !== null) {
     const supabase = await createServerClient();
+    const freshnessCutoff = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
     const { count } = await supabase
       .from('meetings')
       .select('meeting_id', { count: 'exact', head: true })
       .eq('org_id', current.id)
-      .eq('status', 'recording');
+      .eq('status', 'recording')
+      .gte('started_at', freshnessCutoff);
     activeMeetingCount = count ?? 0;
   }
 

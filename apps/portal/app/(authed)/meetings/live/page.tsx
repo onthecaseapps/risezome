@@ -1,6 +1,13 @@
 import type { ReactElement } from 'react';
 import { requireAuthedUserWithOrg } from '../../../_lib/auth';
 import { createServerClient } from '../../../_lib/supabase-server';
+import { EndMeetingButton } from './end-button';
+
+/** A meeting older than this stops appearing on Live — it's almost
+ * certainly stuck (webhook never delivered bot.call_ended, e.g.
+ * because the cloudflared tunnel was down). 6h is generous: typical
+ * meetings are an hour or less. */
+const STALE_AFTER_MS = 6 * 60 * 60 * 1000;
 
 /**
  * Live meetings list. Shows every meeting in the org that's currently
@@ -15,6 +22,14 @@ import { createServerClient } from '../../../_lib/supabase-server';
  * mid-flight and a user clicking through would land on a /live page
  * with no transcript yet.
  *
+ * Stale meetings (status=recording but started_at > 6h ago) are hidden
+ * from the listing — the Recall webhook didn't deliver bot.call_ended
+ * so the row never moved to completed. The bot-worker also won't have
+ * an in-memory runtime for them, so opening /meetings/[id]/live would
+ * be misleading. Each visible card carries an "End" button so users
+ * can force-complete any meeting that's actually stuck within the
+ * window.
+ *
  * Refresh cadence: server component on each navigation; the live page
  * itself subscribes to Realtime, so users won't be staring at this
  * list waiting for status to flip.
@@ -23,11 +38,13 @@ export default async function LiveMeetingsListPage(): Promise<ReactElement> {
   const { orgId, orgName } = await requireAuthedUserWithOrg();
   const supabase = await createServerClient();
 
+  const freshnessCutoff = new Date(Date.now() - STALE_AFTER_MS).toISOString();
   const { data: meetingRows } = await supabase
     .from('meetings')
     .select('meeting_id, started_at, calendar_event_id')
     .eq('org_id', orgId)
     .eq('status', 'recording')
+    .gte('started_at', freshnessCutoff)
     .order('started_at', { ascending: false });
 
   const meetings = (meetingRows ?? []) as Array<{
@@ -118,10 +135,7 @@ function LiveMeetingCard({
   title: string;
 }): ReactElement {
   return (
-    <a
-      href={`/meetings/${meetingId}/live`}
-      className="flex items-center gap-4 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-accent-soft/40"
-    >
+    <div className="group flex items-center gap-4 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-accent-soft/40">
       <div className="flex w-16 flex-shrink-0 flex-col items-end text-xs text-muted">
         {startedAt !== null ? (
           <>
@@ -133,7 +147,7 @@ function LiveMeetingCard({
         )}
       </div>
 
-      <div className="min-w-0 flex-1">
+      <a href={`/meetings/${meetingId}/live`} className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-medium text-fg">{title}</span>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-rose-400">
@@ -142,10 +156,10 @@ function LiveMeetingCard({
           </span>
         </div>
         <div className="mt-1 text-xs text-muted">Open the live HUD →</div>
-      </div>
+      </a>
 
-      <span className="text-muted">→</span>
-    </a>
+      <EndMeetingButton meetingId={meetingId} />
+    </div>
   );
 }
 
