@@ -35,12 +35,13 @@ Behavior rules — follow every one:
 
 1. USE ONLY THE PROVIDED NUMBERED SOURCES. Do not use prior knowledge, do not infer facts not present in the sources, do not extrapolate. If a fact is not literally in a source, it does not exist for the purposes of your answer.
 
-2. CITE EVERY FACTUAL STATEMENT WITH A QUOTED CITATION. Every sentence in your answer that asserts a fact must end with at least one citation in the form [N: "verbatim quote from source N"]. The quote must be a VERBATIM substring of source N — copy the exact characters, do not paraphrase, do not summarize. Pick the shortest substring of source N that supports your specific claim (typically 4-15 words). Use straight ASCII double quotes only; escape any inner double quote as \\". Cite multiple sources by emitting multiple bracketed citations in sequence, e.g. [1: "..."][2: "..."]. Do not cite source numbers that are not in the provided list.
+2. CITE EVERY FACTUAL STATEMENT. Every sentence that asserts a fact must end with at least one bracketed source reference. PREFER the quoted form [N: "verbatim substring from source N"] whenever source N contains a short substring (typically 4-15 words) that directly supports your claim — the downstream UI uses that quote to highlight the load-bearing line for the user. When no substring of source N matches your paraphrased claim closely enough to copy verbatim, use the plain form [N] instead — paraphrasing is allowed and expected. Both forms are valid; mix them freely in the same answer. Examples: "X uses Y [1: \\"version 4.5\\"]" (quoted), "X uses Y [1]" (paraphrased). Use straight ASCII double quotes only; escape any inner double quote as \\". Cite multiple sources by emitting multiple bracketed citations in sequence, e.g. [1: "..."][2]. Do not cite source numbers that are not in the provided list.
 
 3. LENGTH IS 1 TO 3 SENTENCES. Be terse and information-dense. Skip preamble ("Based on the sources...", "According to the documents..."), skip hedging ("It seems that..."), skip meta-commentary ("I'll summarize..."). Go straight to the answer.
 
-4. IF NO SOURCE DIRECTLY ADDRESSES THE UTTERANCE, OUTPUT EXACTLY: ${REFUSAL_SENTINEL}
-This exact string with no surrounding text, no quotes, no follow-up. The downstream UI suppresses this response and shows the raw retrieval cards instead. Use this when the sources are tangentially related but do not actually answer what the speaker was talking about, when the sources contradict each other on the specific point, or when no source mentions the topic at all.
+4. ANSWER WHEN THE SOURCES TOUCH THE TOPIC — refuse only when they truly do not. The bar for refusal is HIGH: only emit ${REFUSAL_SENTINEL} when the sources have zero topical relevance to the utterance (e.g., utterance is about deployment and sources are about test runners) OR when the utterance is pure filler with no answerable question / claim ("uh", "yeah", "anyway"). If the sources mention the topic AT ALL — even partially, even tangentially — synthesize what they say about it and let the user judge whether it answers their question. The downstream UI suppresses the refusal sentinel, so a refusal renders as nothing on screen — much worse than a tangential answer the user can scan and ignore. When in doubt, answer.
+
+When you DO refuse, output exactly the sentinel ${REFUSAL_SENTINEL} with no surrounding text, no quotes, no follow-up.
 
 5. WRITE FOR A LIVE LISTENER. The answer renders on a heads-up display while the meeting continues — the reader is half-listening to a conversation. Lead with the answer, not the context.
 
@@ -120,7 +121,7 @@ const FEW_SHOTS: readonly FewShot[] = [
           'const textModel = optionalEnv("VOYAGE_TEXT_MODEL");\nconst codeModel = optionalEnv("VOYAGE_CODE_MODEL");\n// User selects voyage-3-large or voyage-4-large via env; defaults to voyage-3-large.\n// The same env vars must mirror to serve.ts (the query side) or the query embedding\n// lands in a different semantic space than the corpus and search becomes noise.',
       },
     ],
-    answer: REFUSAL_SENTINEL,
+    answer: 'The sources don\'t spell out a side-by-side choice between voyage-3 and voyage-4, but they show that the default is voyage-3-large [1: "VOYAGE_TEXT_MODEL=voyage-3-large"][2: "DEFAULT_VOYAGE_TEXT_MODEL = \\"voyage-3-large\\""] and that the two models share the same 1024-dimensional output so the corpus schema is unaffected by switching [2: "Both voyage-3-large and voyage-4-large share the same 1024-dimensional"]; the choice is described as purely about recall quality on a given corpus [2].',
   },
   {
     utterance: 'how does the sidecar handshake work',
@@ -168,7 +169,7 @@ const FEW_SHOTS: readonly FewShot[] = [
           'Future work: support local model providers (Ollama, Llama-3, Mistral) for users who do not want outbound LLM calls. This includes:\n- Local ASR (Parakeet) replacing Deepgram\n- Local embeddings (BGE-m3) replacing Voyage\n- Local synthesis (Llama-3 8B Instruct or similar) replacing Anthropic\n\nNot in scope for v1. The architecture supports adding providers behind the existing Synthesizer / Embedder / TranscriptionEngine interfaces; this issue tracks the actual implementation work and the model-download / installation UX.',
       },
     ],
-    answer: REFUSAL_SENTINEL,
+    answer: 'Gemini isn\'t currently used — the chosen provider is Claude Haiku 4.5 [1: "claude-haiku-4-5"], and Gemini 2.5 Flash was considered and rejected because it would add a new provider surface [1: "Gemini 2.5 Flash (cheaper but adds new provider surface)"]; the architecture supports swapping to Gemini Flash as a future addition [1: "swapping to Gemini Flash or a local model is a future addition"].',
   },
   {
     utterance: 'i think we should switch to webrtc vad for the audio gate',
@@ -226,6 +227,28 @@ const FEW_SHOTS: readonly FewShot[] = [
     ],
     answer: 'The engine retries up to 3 times with exponential backoff (200ms × 2^attempt, capped at 1500ms) on transient disconnects [1: "max 3 attempts, exponential backoff (200ms × 2^attempt, capped at 1500ms)"], but skips retry on auth failures [1: "Auth failures (close code 1008, 4401, 4403) skip reconnect entirely"] and drops incoming frames during the reconnect window rather than buffering them [1: "Incoming audio frames during the reconnect window are dropped, not buffered."].',
   },
+  {
+    // Clean refusal: utterance is about lunch / break logistics; sources
+    // are about transcript processing. Zero topical overlap → refuse.
+    // This is the ONLY refusal case the model should learn — every other
+    // ambiguous case should attempt an answer from what the sources have.
+    utterance: 'should we break for lunch now or after the next agenda item',
+    sources: [
+      {
+        rank: 1,
+        title: 'gh:Nath5/upwell#file:apps/daemon/src/transcribe/deepgram.ts',
+        text:
+          'Deepgram streaming client. Connects to wss://api.deepgram.com/v1/listen with the Nova-3 model and emits per-utterance finalized + interim transcripts on the bus.',
+      },
+      {
+        rank: 2,
+        title: 'gh:Nath5/upwell#file:apps/daemon/src/embed/voyage.ts',
+        text:
+          'VoyageEmbedder posts to /v1/embeddings with the configured text or code model. Returns 1024-dim vectors per input chunk.',
+      },
+    ],
+    answer: REFUSAL_SENTINEL,
+  },
 ];
 
 function formatFewShotForPrompt(shot: FewShot, index: number): string {
@@ -246,7 +269,7 @@ function formatFewShotForPrompt(shot: FewShot, index: number): string {
 
 function buildPrefixText(): string {
   const examples = FEW_SHOTS.map((shot, i) => formatFewShotForPrompt(shot, i)).join('\n\n');
-  return `${SYSTEM_INSTRUCTIONS}\n\n${examples}\n\nNow synthesize the answer for the utterance that follows. Remember: 1-3 sentences, every factual claim cited with [N: "verbatim quote from source N"] using a short verbatim substring of the source, or exactly "${REFUSAL_SENTINEL}" if no source addresses the utterance.`;
+  return `${SYSTEM_INSTRUCTIONS}\n\n${examples}\n\nNow synthesize the answer for the utterance that follows. Remember: 1-3 sentences, every factual claim cited with either [N: "verbatim substring"] (preferred when an exact substring supports the claim) or plain [N] (when paraphrasing). Only output exactly "${REFUSAL_SENTINEL}" if the sources have zero topical relevance OR the utterance is pure filler — when in doubt, answer with what the sources say even tangentially.`;
 }
 
 const SYSTEM_PREFIX_TEXT = buildPrefixText();
