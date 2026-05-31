@@ -77,10 +77,28 @@ The script:
    (and later into Vercel project env when deploying)
 
 Configurable via env vars (defaults shown):
-- `RZ_APP_NAME` — display name on GitHub (default: `Risezome`)
+- `RZ_APP_NAME` — display name on GitHub (default: `Risezome`, or `Risezome (Dev)` for a local host)
 - `RZ_APP_OWNER` — GitHub org/user to own the App (default: `onthecaseapps`)
-- `RZ_APP_HOST` — production hostname for webhook + callback URLs (default: `risezome.app`)
-- `RZ_LOCAL_PORT` — local server port for the callback (default: `7000`)
+- `RZ_APP_HOST` — hostname for the App's callback/setup/webhook URLs (default: `risezome.app`).
+  If this starts with `localhost` or `127.`, the script switches to `http://` and registers a
+  dev-mode App with the webhook inactive (use `RZ_WEBHOOK_URL` to override).
+- `RZ_WEBHOOK_URL` — override the App's webhook URL (e.g. a smee.io / ngrok tunnel for dev)
+- `RZ_LOCAL_PORT` — local server port for the registration callback (default: `7000`)
+
+**Dev pattern: register TWO Apps.** One `Risezome` (prod) for beta testers, one `Risezome (Dev)`
+(local) for your own development. Each is a separate object in GitHub with its own credentials;
+they never collide.
+
+```bash
+# 1. Prod App (one-time, before first deploy):
+node apps/portal/scripts/register-github-app.mjs
+
+# 2. Dev App (one-time, for local testing):
+RZ_APP_HOST="localhost:3000" node apps/portal/scripts/register-github-app.mjs
+# → registers "Risezome (Dev)" with http://localhost:3000/... URLs, webhook inactive.
+# Paste the resulting credentials into apps/portal/.env.local (overwriting any
+# prod credentials there — prod credentials live in Vercel env, not .env.local).
+```
 
 The credentials printed:
 - `GITHUB_APP_ID` — numeric app id, public
@@ -90,9 +108,39 @@ The credentials printed:
 - `GITHUB_APP_WEBHOOK_SECRET` — **secret**, verifies inbound webhooks
 - `GITHUB_APP_PRIVATE_KEY_BASE64` — **secret**, base64-encoded PEM. Encoded
   because PEM newlines get mangled by most hosting providers' env-var inputs;
-  `app/_lib/github-app.ts` decodes at load time (lands in U4b).
+  `app/_lib/github-app.ts` decodes at load time.
 
-### 4. (Later units) Recall.ai, Fly.io (bot-worker), Inngest
+### 4. Per-tester install + webhook delivery (U4b)
+
+The Risezome GitHub App is one platform-owned object; each beta tester
+installs it on their own org. The flow:
+
+1. Tester signs in and goes to `/sources` → clicks **Connect GitHub**
+2. Browser hits `/sources/install` (server route). We mint a CSRF state
+   token, store it in `pending_installations` (15-min TTL) bound to the
+   user+org, then 302 to `https://github.com/apps/<slug>/installations/new?state=<token>`
+3. Tester picks an org + repos on GitHub
+4. GitHub redirects to `/api/github/install-callback?installation_id=...&state=...`.
+   We verify the state, fetch installation metadata via the App's JWT, and
+   upsert `github_installations` + insert `sources` rows
+5. In parallel, GitHub POSTs webhook events to `/api/github/webhook` —
+   `installation.created`, `installation_repositories.added`, etc. The
+   handler verifies `X-Hub-Signature-256` with HMAC-SHA-256 against
+   `GITHUB_APP_WEBHOOK_SECRET` (constant-time comparison) before any DB write
+
+Additional env var for the install flow:
+
+- `INSTALL_STATE_HMAC_SECRET` — reserved for a future server-side HMAC of
+  the state token if we move off the DB-backed `pending_installations`
+  table. Generate with `openssl rand -base64 32`. Not currently consumed.
+
+**Local webhook testing:** the registration script writes the production
+webhook URL (`https://<RZ_APP_HOST>/api/github/webhook`) into the App.
+For local testing, use `gh webhook forward` or a tunnel (Cloudflare /
+ngrok) and override `Webhook URL` in the App's settings under
+`https://github.com/organizations/onthecaseapps/settings/apps/<slug>`.
+
+### 5. (Later units) Recall.ai, Fly.io (bot-worker), Inngest
 
 Documented as each unit lands. See the plan's `Documentation / Operational
 Notes` section for the full inventory.

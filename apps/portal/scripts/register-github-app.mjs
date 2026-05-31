@@ -26,22 +26,51 @@
  *   # then follow the printed instructions.
  *
  * Env vars (optional, see DEFAULTS below for sane fallbacks):
- *   - RZ_APP_NAME              Display name on GitHub (default: "Risezome")
- *   - RZ_APP_HOST              Production hostname (default: "risezome.app")
+ *   - RZ_APP_NAME              Display name on GitHub
+ *                              (default: "Risezome", or "Risezome (Dev)" if host is local)
+ *   - RZ_APP_HOST              Hostname for the App's callback/setup/webhook URLs
+ *                              (default: "risezome.app"). If this is `localhost`,
+ *                              `localhost:<port>`, or starts with `127.`, the script
+ *                              switches to `http://` and registers a dev-mode App.
  *   - RZ_APP_OWNER             GitHub org/user to own the App (default: "onthecaseapps")
- *   - RZ_LOCAL_PORT            Local server port (default: 7000)
+ *   - RZ_LOCAL_PORT            Local server port for THIS script's callback
+ *                              (default: 7000). Independent of the App's URLs.
+ *   - RZ_WEBHOOK_URL           Override the webhook URL on the App. Useful for dev
+ *                              to point at a smee.io / ngrok tunnel. If unset:
+ *                              prod gets https://<host>/api/github/webhook (active);
+ *                              dev gets https://example.invalid/risezome-dev (inactive).
+ *
+ * Dev-app usage (recommended pattern: one prod App, one dev App):
+ *   RZ_APP_HOST="localhost:3000" node apps/portal/scripts/register-github-app.mjs
+ *   # → registers "Risezome (Dev)" with http://localhost:3000/... URLs and webhook off.
+ *   # Paste the resulting credentials into apps/portal/.env.local.
  */
 
 import { createServer } from 'node:http';
 import { randomBytes, createHash } from 'node:crypto';
 import { exec } from 'node:child_process';
 
+const APP_HOST = process.env.RZ_APP_HOST ?? 'risezome.app';
+const IS_LOCAL = /^(localhost|127\.)/.test(APP_HOST);
+const SCHEME = IS_LOCAL ? 'http' : 'https';
+
 const DEFAULTS = {
-  appName: process.env.RZ_APP_NAME ?? 'Risezome',
-  appHost: process.env.RZ_APP_HOST ?? 'risezome.app',
+  appName: process.env.RZ_APP_NAME ?? (IS_LOCAL ? 'Risezome (Dev)' : 'Risezome'),
+  appHost: APP_HOST,
   appOwner: process.env.RZ_APP_OWNER ?? 'onthecaseapps',
   localPort: parseInt(process.env.RZ_LOCAL_PORT ?? '7000', 10),
 };
+
+// Webhook config:
+//   - User-supplied override always wins (set RZ_WEBHOOK_URL to a smee/ngrok URL).
+//   - For prod we deliver to the App's own host.
+//   - For dev we keep the webhook *inactive* and point at a reserved-invalid TLD
+//     so accidental activation never delivers anywhere real. The user can swap
+//     this URL in the App settings later when they spin up a tunnel.
+const WEBHOOK_URL_OVERRIDE = process.env.RZ_WEBHOOK_URL;
+const WEBHOOK_URL = WEBHOOK_URL_OVERRIDE
+  ?? (IS_LOCAL ? 'https://example.invalid/risezome-dev' : `${SCHEME}://${APP_HOST}/api/github/webhook`);
+const WEBHOOK_ACTIVE = WEBHOOK_URL_OVERRIDE !== undefined ? true : !IS_LOCAL;
 
 // CSRF state token — bound to this run. GitHub echoes it back; we verify.
 const stateToken = randomBytes(16).toString('hex');
@@ -64,20 +93,26 @@ const stateHash = createHash('sha256').update(stateToken).digest('hex').slice(0,
  * App regardless of the events list. (Earlier draft included them and
  * GitHub rejected the manifest with "Default events unsupported".)
  *
- * Production URLs use https://${appHost}. Local-dev install flow is
- * handled separately by U4b's /sources/install route serving a redirect
- * to the public install page at github.com/apps/<slug>/installations/new.
+ * URL scheme is `http://` for local hosts, `https://` for everything else.
+ * Local-dev install flow is handled by U4b's /sources/install route serving a
+ * redirect to github.com/apps/<slug>/installations/new.
+ *
+ * setup_url points at the install-callback API route, not /sources directly.
+ * GitHub redirects there after install completion with installation_id +
+ * setup_action + state; the route binds the installation to the org and
+ * forwards to /sources?installed=true. Earlier draft had setup_url pointing
+ * at /sources, which skipped the binding step.
  */
 const manifest = {
   name: DEFAULTS.appName,
-  url: `https://${DEFAULTS.appHost}`,
+  url: `${SCHEME}://${DEFAULTS.appHost}`,
   hook_attributes: {
-    url: `https://${DEFAULTS.appHost}/api/github/webhook`,
-    active: true,
+    url: WEBHOOK_URL,
+    active: WEBHOOK_ACTIVE,
   },
   redirect_url: `http://localhost:${DEFAULTS.localPort}/callback`,
-  callback_urls: [`https://${DEFAULTS.appHost}/api/github/install-callback`],
-  setup_url: `https://${DEFAULTS.appHost}/sources`,
+  callback_urls: [`${SCHEME}://${DEFAULTS.appHost}/api/github/install-callback`],
+  setup_url: `${SCHEME}://${DEFAULTS.appHost}/api/github/install-callback`,
   setup_on_update: true,
   public: true,
   default_permissions: {
@@ -260,9 +295,11 @@ Risezome GitHub App registration runbook
 ========================================
 
 Configuration:
-  App name:    ${DEFAULTS.appName}
+  App name:    ${DEFAULTS.appName}${IS_LOCAL ? '  (dev mode)' : ''}
   Owner org:   ${DEFAULTS.appOwner}
-  Prod host:   ${DEFAULTS.appHost}
+  App host:    ${SCHEME}://${DEFAULTS.appHost}
+  Callback:    ${SCHEME}://${DEFAULTS.appHost}/api/github/install-callback
+  Webhook:     ${WEBHOOK_URL} (${WEBHOOK_ACTIVE ? 'active' : 'inactive'})
   Local port:  ${DEFAULTS.localPort}
 
 Server listening at ${localUrl}.
