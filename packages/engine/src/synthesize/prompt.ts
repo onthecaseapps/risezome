@@ -287,10 +287,29 @@ export function buildSystemPrefix(): SystemBlock[] {
 export function buildUserMessage(
   utterance: string,
   sources: readonly SynthesisSource[],
+  recentContext?: readonly string[],
 ): string {
   const numbered = sources
     .map((s) => `[${String(s.rank)}] ${s.title}\n${s.text}`)
     .join('\n\n');
+  // When recent context is supplied, prepend it so Claude can resolve
+  // pronouns + fragments. The "Most recent utterance" line marks which
+  // one is the question to answer; the priors are scaffolding. Empty
+  // arrays fall back to the legacy single-utterance shape so callers
+  // that don't track context don't pay a token tax.
+  if (recentContext !== undefined && recentContext.length > 0) {
+    const priors = recentContext
+      .map((u, i) => `  ${String(i + 1)}. "${u}"`)
+      .join('\n');
+    return (
+      `Recent transcript (oldest first; treat the most recent utterance ` +
+      `below as the question to answer — earlier lines are context that ` +
+      `may resolve pronouns or extend fragments):\n` +
+      `${priors}\n\n` +
+      `Most recent utterance: ${utterance}\n\n` +
+      `Sources:\n${numbered}`
+    );
+  }
   return `Utterance: ${utterance}\n\nSources:\n${numbered}`;
 }
 

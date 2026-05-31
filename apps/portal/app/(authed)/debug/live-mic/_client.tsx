@@ -50,6 +50,10 @@ interface SynthesisStartEvent {
   sourceCardIds: string[];
   traceId: string;
   utteranceId: string;
+  /** When present, the page should REPLACE the prior synthesis card
+   *  with this one (same topic, refined question). When absent, the
+   *  new synthesis stands alone as a new card. */
+  replacesSynthesisId?: string;
 }
 
 interface SynthesisDeltaEvent {
@@ -79,12 +83,19 @@ interface OtherEvent {
   [k: string]: unknown;
 }
 
+interface SynthesisAbortedEvent {
+  type: 'synthesisAborted';
+  synthesisId: string;
+  reason: string;
+}
+
 type DebugEvent =
   | UtteranceEvent
   | CardEvent
   | SynthesisStartEvent
   | SynthesisDeltaEvent
   | SynthesisDoneEvent
+  | SynthesisAbortedEvent
   | RetrievalSkipEvent
   | OtherEvent;
 
@@ -94,6 +105,7 @@ interface SynthesisRecord {
   streaming: boolean;
   citations: SynthesisCitation[];
   refused: boolean;
+  aborted: boolean;
   utteranceId: string;
 }
 
@@ -152,18 +164,41 @@ export function LiveMicDebugClient({
       }
       case 'synthesisStart': {
         const s = evt as SynthesisStartEvent;
+        setSyntheses((prev) => {
+          // When the bot-worker signals this synthesis REPLACES a
+          // prior one (same topic, refined question — Jaccard overlap
+          // ≥0.5 on source cardIds + within the replacement window),
+          // swap in place rather than stacking. Keeps the page from
+          // accumulating a card per partial-utterance refinement.
+          const next: SynthesisRecord = {
+            synthesisId: s.synthesisId,
+            text: '',
+            streaming: true,
+            citations: [],
+            refused: false,
+            aborted: false,
+            utteranceId: s.utteranceId,
+          };
+          if (s.replacesSynthesisId !== undefined) {
+            const idx = prev.findIndex((p) => p.synthesisId === s.replacesSynthesisId);
+            if (idx !== -1) {
+              const copy = prev.slice();
+              copy[idx] = next;
+              return copy;
+            }
+          }
+          return [...prev, next].slice(-10);
+        });
+        return;
+      }
+      case 'synthesisAborted': {
+        const a = evt as SynthesisAbortedEvent;
         setSyntheses((prev) =>
-          [
-            ...prev,
-            {
-              synthesisId: s.synthesisId,
-              text: '',
-              streaming: true,
-              citations: [],
-              refused: false,
-              utteranceId: s.utteranceId,
-            },
-          ].slice(-10),
+          prev.map((s) =>
+            s.synthesisId === a.synthesisId
+              ? { ...s, streaming: false, aborted: true }
+              : s,
+          ),
         );
         return;
       }
@@ -382,12 +417,20 @@ export function LiveMicDebugClient({
                   className={
                     s.refused
                       ? 'rounded border border-rose-400/40 bg-rose-500/10 p-3'
-                      : 'rounded border border-border bg-card p-3'
+                      : s.aborted
+                        ? 'rounded border border-dashed border-border bg-card/40 p-3 opacity-60'
+                        : 'rounded border border-border bg-card p-3'
                   }
                 >
                   <div className="text-[10px] uppercase tracking-wider text-muted">
                     {s.synthesisId.slice(-6)}
-                    {s.streaming ? ' · streaming' : s.refused ? ' · refused' : ' · done'}
+                    {s.streaming
+                      ? ' · streaming'
+                      : s.aborted
+                        ? ' · superseded'
+                        : s.refused
+                          ? ' · refused'
+                          : ' · done'}
                   </div>
                   <div className="mt-1 whitespace-pre-wrap text-sm">
                     {s.text || (s.streaming ? '…' : '(empty)')}

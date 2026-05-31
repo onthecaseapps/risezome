@@ -61,6 +61,57 @@ export interface LocalDebugHandlerArgs {
 const TOP_K = 5;
 const SYNTHESIS_MAX_TOKENS = 200;
 
+// Rolling-context tuning. Five utterances or 60 seconds, whichever is
+// hit first — long enough to chain a question across 2-3 splits without
+// dragging in unrelated prior topics.
+const FINALS_BUFFER = 5;
+const FINALS_TTL_MS = 60_000;
+
+// Continuation merge: if the new utterance lands within this window
+// AND looks-like-continuation (lowercase / connective start), it gets
+// concatenated with the prior. Above the window we treat it as a
+// fresh utterance even if it starts lowercase (probably a topic break).
+const CONTINUATION_WINDOW_MS = 6_000;
+
+// Replace-vs-new card heuristic: if a new synthesis cites a source
+// set that overlaps the prior synthesis by this Jaccard threshold AND
+// the prior completed within REPLACE_WINDOW_MS, signal the page to
+// replace the prior card in place.
+const REPLACE_JACCARD_THRESHOLD = 0.5;
+const REPLACE_WINDOW_MS = 30_000;
+
+const CONTINUATION_LEADERS = new Set([
+  'and', 'but', 'or', 'so',
+  'in', 'on', 'at', 'of', 'to', 'for', 'with', 'from',
+  'where', 'when', 'how', 'why', 'which', 'who',
+  'because', 'since', 'while', 'that',
+]);
+
+function looksLikeContinuation(
+  prior: { text: string; at: number },
+  next: { text: string; at: number },
+): boolean {
+  if (next.at - prior.at > CONTINUATION_WINDOW_MS) return false;
+  const firstWord = next.text.trim().split(/\s+/)[0] ?? '';
+  if (firstWord.length === 0) return false;
+  // Lowercase start often signals continuation (ASR rarely capitalizes
+  // the start of a continuation utterance).
+  if (firstWord[0] === firstWord[0]!.toLowerCase() && firstWord[0] !== firstWord[0]!.toUpperCase()) {
+    return true;
+  }
+  return CONTINUATION_LEADERS.has(firstWord.toLowerCase());
+}
+
+function jaccard(a: readonly string[], b: readonly string[]): number {
+  if (a.length === 0 || b.length === 0) return 0;
+  const setA = new Set(a);
+  const setB = new Set(b);
+  let inter = 0;
+  for (const x of setA) if (setB.has(x)) inter += 1;
+  const union = setA.size + setB.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
 export async function handleLocalDebugWs(
   socket: WebSocket,
   args: LocalDebugHandlerArgs,
@@ -94,9 +145,32 @@ export async function handleLocalDebugWs(
     maxTokens: SYNTHESIS_MAX_TOKENS,
   });
 
-  // In-flight synthesis abort controller — a new utterance abandons
-  // the prior synthesis mid-stream so we don't render stale answers.
+  // Per-WS pipeline state.
+  //
+  // currentSynthesisAbort — abort signal for the in-flight synthesis.
+  //   On new utterance, abort the prior so the latest wins. The aborted
+  //   synthesis emits `synthesisAborted` so the page can clear its
+  //   stuck-streaming card (without this the prior card sits forever
+  //   showing "▊").
+  //
+  // recentFinals — rolling buffer of finalized utterances (oldest first).
+  //   Capped at FINALS_BUFFER and aged out after FINALS_TTL_MS so
+  //   long-running sessions don't accumulate stale context. Passed to
+  //   the synthesizer as `recentContext` so Claude can resolve pronouns
+  //   + fragments without an explicit pre-merge step.
+  //
+  // priorSynth — last completed (non-refusal) synthesis. Used to decide
+  //   whether the next synthesis should REPLACE the prior card (same
+  //   topic, refined question) or stand alone (different topic). The
+  //   page consumes the `replacesSynthesisId` field on synthesisStart.
   let currentSynthesisAbort: AbortController | null = null;
+  let currentSynthesisId: string | null = null;
+  const recentFinals: { text: string; at: number }[] = [];
+  let priorSynth: {
+    synthesisId: string;
+    sourceCardIds: readonly string[];
+    completedAt: number;
+  } | null = null;
 
   runner.on('frame', (frame: AudioFrame) => {
     engine.sendFrame(frame.samples);
@@ -118,23 +192,88 @@ export async function handleLocalDebugWs(
     forwardUtterance(socket, t.utterance);
   });
 
-  // Final utterances also flow to the client AND trigger the retrieval
-  // pipeline. Abort any in-flight synthesis so the latest utterance
-  // wins (mirrors the daemon's per-utterance abort contract).
+  // Final utterances flow to the client, get appended to the rolling
+  // context, then trigger the retrieval pipeline.
   engine.on('final', (t) => {
     forwardUtterance(socket, t.utterance);
-    if (t.utterance.text.trim().length === 0) return;
-    if (currentSynthesisAbort !== null) currentSynthesisAbort.abort();
+    const text = t.utterance.text.trim();
+    if (text.length === 0) return;
+
+    // Append to rolling buffer + age out old entries.
+    const now = Date.now();
+    recentFinals.push({ text, at: now });
+    while (
+      recentFinals.length > 0 &&
+      (recentFinals.length > FINALS_BUFFER || now - recentFinals[0]!.at > FINALS_TTL_MS)
+    ) {
+      recentFinals.shift();
+    }
+
+    // Heuristic fragment merge: if the prior final landed within
+    // CONTINUATION_WINDOW_MS and the new utterance looks like a
+    // continuation (lowercase start, or starts with a connective like
+    // "and", "but", "in", "where"), treat the new utterance as
+    // extending the prior one. Effective query = concat. We still pass
+    // the full recent context as a backstop in case the heuristic is
+    // wrong.
+    const isContinuation = recentFinals.length >= 2 && looksLikeContinuation(
+      recentFinals[recentFinals.length - 2]!,
+      recentFinals[recentFinals.length - 1]!,
+    );
+    const effectiveUtterance = isContinuation
+      ? `${recentFinals[recentFinals.length - 2]!.text} ${text}`
+      : text;
+
+    // The recentContext we pass excludes the current utterance itself
+    // (which is the query) but INCLUDES the prior-final-merged-into-it
+    // entry when continuation kicked in, so Claude can see the original
+    // turn boundary if the merge was wrong.
+    const recentContext = recentFinals.slice(0, -1).map((u) => u.text);
+
+    // Abort prior in-flight synthesis. Send an aborted event so the
+    // page clears the stuck-streaming card.
+    if (currentSynthesisAbort !== null && currentSynthesisId !== null) {
+      currentSynthesisAbort.abort();
+      send(socket, {
+        type: 'synthesisAborted',
+        synthesisId: currentSynthesisId,
+        reason: 'superseded-by-new-utterance',
+      });
+    }
     const ac = new AbortController();
     currentSynthesisAbort = ac;
+    const synthesisId = `synth_${randomUUID()}`;
+    currentSynthesisId = synthesisId;
+
+    args.logger.info(
+      {
+        rawUtterance: text,
+        effectiveUtterance,
+        isContinuation,
+        recentContextSize: recentContext.length,
+        bufferSize: recentFinals.length,
+      },
+      'local-debug.utterance.fire',
+    );
+
     void runDebugPipeline({
-      utteranceText: t.utterance.text,
+      synthesisId,
+      utteranceText: effectiveUtterance,
       utteranceId: t.utterance.utteranceId,
+      recentContext,
+      priorSynth,
       socket,
       args,
       embedder,
       synthesizer,
       abortSignal: ac.signal,
+      onComplete: (sourceCardIds) => {
+        priorSynth = { synthesisId, sourceCardIds, completedAt: Date.now() };
+        if (currentSynthesisId === synthesisId) {
+          currentSynthesisId = null;
+          currentSynthesisAbort = null;
+        }
+      },
     }).catch((err: unknown) => {
       args.logger.warn({ err: String(err) }, 'local-debug.pipeline.error');
       send(socket, { type: 'pipeline-error', message: String(err) });
@@ -183,13 +322,28 @@ export async function handleLocalDebugWs(
 }
 
 interface PipelineArgs {
+  readonly synthesisId: string;
   readonly utteranceText: string;
   readonly utteranceId: string;
+  /** Rolling prior-utterance context passed to the synthesizer. */
+  readonly recentContext: readonly string[];
+  /** Last completed synthesis (if any). Used to compute
+   *  replacesSynthesisId on the new synthesisStart so the page can
+   *  replace the prior card in place when the new answer is a
+   *  refinement on the same topic. */
+  readonly priorSynth: {
+    synthesisId: string;
+    sourceCardIds: readonly string[];
+    completedAt: number;
+  } | null;
   readonly socket: WebSocket;
   readonly args: LocalDebugHandlerArgs;
   readonly embedder: VoyageEmbedder;
   readonly synthesizer: AnthropicSynthesizer;
   readonly abortSignal: AbortSignal;
+  /** Called after the pipeline completes successfully (non-refusal)
+   *  so the caller can update `priorSynth`. */
+  readonly onComplete: (sourceCardIds: readonly string[]) => void;
 }
 
 /**
@@ -199,15 +353,28 @@ interface PipelineArgs {
  */
 async function runDebugPipeline(p: PipelineArgs): Promise<void> {
   const traceId = randomUUID();
-  const synthesisId = `synth_${randomUUID()}`;
+  const synthesisId = p.synthesisId;
   const { socket, args, embedder, synthesizer, abortSignal } = p;
+
+  args.logger.info(
+    { traceId, synthesisId, utteranceId: p.utteranceId, text: p.utteranceText },
+    'local-debug.pipeline.start',
+  );
 
   // ── Embed
   send(socket, { type: 'embed-start', utteranceId: p.utteranceId, traceId });
+  const embedStartMs = Date.now();
   const embedResult = await embedder.embed({
     items: [{ text: p.utteranceText, domain: 'text' }],
   });
-  if (abortSignal.aborted) return;
+  args.logger.info(
+    { traceId, latencyMs: Date.now() - embedStartMs },
+    'local-debug.embed.done',
+  );
+  if (abortSignal.aborted) {
+    args.logger.info({ traceId }, 'local-debug.pipeline.aborted.post-embed');
+    return;
+  }
   const vec = embedResult.vectors[0]?.vector;
   if (vec === undefined) {
     send(socket, { type: 'retrieval-skip', reason: 'embed_no_vector', traceId });
@@ -298,28 +465,75 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     return;
   }
 
-  if (abortSignal.aborted) return;
+  if (abortSignal.aborted) {
+    args.logger.info({ traceId }, 'local-debug.pipeline.aborted.post-cards');
+    return;
+  }
+
+  // Decide whether this synthesis REPLACES the prior card or stands
+  // alone. Trigger: high source-set overlap with the prior + within
+  // the replacement window. The page receives `replacesSynthesisId`
+  // on synthesisStart and swaps in place rather than stacking.
+  let replacesSynthesisId: string | null = null;
+  if (
+    p.priorSynth !== null &&
+    Date.now() - p.priorSynth.completedAt < REPLACE_WINDOW_MS &&
+    jaccard(cardIds, p.priorSynth.sourceCardIds) >= REPLACE_JACCARD_THRESHOLD
+  ) {
+    replacesSynthesisId = p.priorSynth.synthesisId;
+  }
 
   // ── Synthesize, stream textDeltas, parse on done
+  args.logger.info(
+    {
+      traceId,
+      synthesisId,
+      sources: sources.length,
+      totalSourceChars: sources.reduce((n, s) => n + s.text.length, 0),
+      recentContextSize: p.recentContext.length,
+      replacesSynthesisId,
+    },
+    'local-debug.synthesis.start',
+  );
   send(socket, {
     type: 'synthesisStart',
     synthesisId,
     sourceCardIds: cardIds,
     traceId,
     utteranceId: p.utteranceId,
+    ...(replacesSynthesisId !== null ? { replacesSynthesisId } : {}),
   });
 
   let accumulated = '';
+  let deltaCount = 0;
+  let sawStart = false;
+  let sawDone = false;
+  const synthStartMs = Date.now();
   try {
     for await (const chunk of synthesizer.synthesize(
-      { utterance: p.utteranceText, sources },
+      {
+        utterance: p.utteranceText,
+        sources,
+        ...(p.recentContext.length > 0 ? { recentContext: p.recentContext } : {}),
+      },
       abortSignal,
     )) {
-      if (abortSignal.aborted) return;
-      if (chunk.type === 'textDelta') {
+      if (abortSignal.aborted) {
+        args.logger.info({ traceId, deltaCount }, 'local-debug.synthesis.aborted');
+        return;
+      }
+      if (chunk.type === 'start') {
+        sawStart = true;
+        args.logger.info(
+          { traceId, model: chunk.model, inputTokens: chunk.usage.inputTokens, cacheRead: chunk.usage.cacheReadTokens },
+          'local-debug.synthesis.upstream-start',
+        );
+      } else if (chunk.type === 'textDelta') {
+        deltaCount += 1;
         accumulated += chunk.delta;
         send(socket, { type: 'synthesisDelta', synthesisId, delta: chunk.delta });
       } else if (chunk.type === 'done') {
+        sawDone = true;
         const parsed = parseSynthesisOutput(accumulated, sources.length);
         const richCitations = parsed.citations.flatMap((c) => {
           const cardId = cardIds[c.rank - 1];
@@ -333,6 +547,20 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
             },
           ];
         });
+        args.logger.info(
+          {
+            traceId,
+            synthesisId,
+            latencyMs: Date.now() - synthStartMs,
+            deltaCount,
+            outputChars: accumulated.length,
+            isRefusal: parsed.isRefusal,
+            citationCount: richCitations.length,
+            stopReason: chunk.stopReason,
+            usage: chunk.usage,
+          },
+          'local-debug.synthesis.done',
+        );
         send(socket, {
           type: parsed.isRefusal ? 'synthesisRefusal' : 'synthesisDone',
           synthesisId,
@@ -341,11 +569,52 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
           citations: richCitations,
           usage: chunk.usage,
         });
+        // Notify caller so it can update its priorSynth tracker. Skip
+        // for refusals — they shouldn't form the basis for "replaces
+        // this card" comparisons on the next synthesis.
+        if (!parsed.isRefusal) {
+          p.onComplete(cardIds);
+        }
         return;
       }
     }
+    // for-await fell through without seeing 'done' — that's a stream
+    // close mid-flight (the most likely cause of the user-reported
+    // "stuck at The" symptom). Surface it loudly so we don't silently
+    // wedge.
+    args.logger.warn(
+      {
+        traceId,
+        synthesisId,
+        sawStart,
+        sawDone,
+        deltaCount,
+        accumulatedSoFar: accumulated.slice(0, 200),
+        latencyMs: Date.now() - synthStartMs,
+      },
+      'local-debug.synthesis.stream-ended-without-done',
+    );
+    send(socket, {
+      type: 'synthesisError',
+      synthesisId,
+      message: `Stream ended after ${String(deltaCount)} delta(s) without a done event`,
+    });
   } catch (err) {
-    if (abortSignal.aborted) return;
+    if (abortSignal.aborted) {
+      args.logger.info({ traceId, deltaCount }, 'local-debug.synthesis.aborted.catch');
+      return;
+    }
+    args.logger.error(
+      {
+        err: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+        traceId,
+        synthesisId,
+        deltaCount,
+        accumulatedSoFar: accumulated.slice(0, 200),
+      },
+      'local-debug.synthesis.error',
+    );
     send(socket, {
       type: 'synthesisError',
       synthesisId,

@@ -9,6 +9,12 @@ export interface SynthesisSource {
 export interface SynthesisInput {
   readonly utterance: string;
   readonly sources: readonly SynthesisSource[];
+  /** Recent prior utterances (oldest first, EXCLUDING the current
+   *  `utterance`). When provided, the user message includes them as
+   *  context so Claude can resolve pronouns and fragments — "in the
+   *  app and where in the code base are they" stops being meaningless
+   *  in isolation when "are any LLMs leveraged" precedes it. */
+  readonly recentContext?: readonly string[];
   readonly maxTokens?: number;
   readonly temperature?: number;
 }

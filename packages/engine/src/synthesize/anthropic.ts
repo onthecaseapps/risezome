@@ -167,7 +167,7 @@ export class AnthropicSynthesizer implements Synthesizer {
   async #postRequest(input: SynthesisInput, signal?: AbortSignal): Promise<Response> {
     const url = `${this.#baseUrl.replace(/\/$/, '')}/v1/messages`;
     const systemBlocks: SystemBlock[] = buildSystemPrefix();
-    const userContent = buildUserMessage(input.utterance, input.sources);
+    const userContent = buildUserMessage(input.utterance, input.sources, input.recentContext);
     const body = {
       model: this.#model,
       max_tokens: input.maxTokens ?? this.#maxTokens,
