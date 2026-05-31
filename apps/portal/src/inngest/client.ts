@@ -29,6 +29,16 @@ export interface CalendarSyncRequestedEvent {
   };
 }
 
+export interface BotScheduledLaunchEvent {
+  name: 'risezome/bot.scheduled-launch';
+  data: {
+    calendarEventId: string;
+    /** ISO 8601. The launcher sleeps until start_at - 90s and verifies
+     *  the row's start_at still matches before launching. */
+    scheduledStartAt: string;
+  };
+}
+
 /**
  * The Inngest client is a singleton per process. Production uses the
  * INNGEST_EVENT_KEY/INNGEST_SIGNING_KEY env vars set by the Vercel-Inngest

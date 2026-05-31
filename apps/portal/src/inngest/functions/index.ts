@@ -3,3 +3,4 @@
 
 export { indexRepoFn } from './index-repo';
 export { syncCalendarFn, syncAllCalendarsCron } from './sync-calendar';
+export { launchBotFn } from './launch-bot';
