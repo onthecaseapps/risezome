@@ -4,12 +4,21 @@ import { GoogleSignInButton } from './google-sign-in-button';
 
 /**
  * Sign-in page. Split-screen: brand + rising-signals SVG on the left,
- * sign-in form on the right. Uses `h-dvh` (not `min-h-dvh`) so the page
- * exactly fills the viewport — the right column scrolls internally if
- * content exceeds height, but the layout shape stays put.
+ * sign-in form on the right. Sign-in is the user's first impression of
+ * Risezome (post-landing-page); the layout is self-contained — the
+ * sibling sign-in/layout.tsx overrides the marketing chrome so there's
+ * no duplicate wordmark / nav competing for attention.
+ *
+ * Layout strategy:
+ *   - Fixed h-dvh on the outer grid (exact viewport height, no scroll).
+ *   - Each column is its own flex container with internal layout.
+ *   - Left aside: brand pinned top-left; tagline + copy block centered
+ *     vertically with safe padding so it never clips against the bottom.
+ *   - Right column: form vertically centered, overflow-y-auto for short
+ *     viewports.
  *
  * Currently Google-only per R1. GitHub SSO + email magic link are tracked
- * as GH issues; both fit in the same form column without restructuring.
+ * as GH issues (#18, #19); both fit in the form column without restructuring.
  */
 export default function SignInPage({
   searchParams,
@@ -18,8 +27,10 @@ export default function SignInPage({
 }): ReactElement {
   return (
     <main className="grid h-dvh grid-cols-1 lg:grid-cols-2 overflow-hidden">
-      {/* Left: brand + tagline over the rising-signals background */}
-      <aside className="relative hidden flex-col justify-between overflow-hidden bg-accent/[0.06] p-12 lg:flex">
+      {/* Left: brand wordmark top-left, tagline + copy block vertically
+          centered low. The RisingSignalsBackdrop fills the column behind
+          the foreground content. */}
+      <aside className="relative hidden flex-col overflow-hidden bg-accent/[0.06] p-10 lg:flex">
         <div className="relative z-10 flex items-center gap-2.5">
           <Logo size={28} className="text-accent" />
           <span className="text-base font-semibold tracking-tight">Risezome</span>
@@ -27,21 +38,25 @@ export default function SignInPage({
 
         <RisingSignalsBackdrop />
 
-        <div className="relative z-10 space-y-4">
+        {/* Anchored block: centered in the lower-half of the column.
+            mt-auto pushes it down from the brand; mb-12 leaves breathing
+            room above the bottom edge so the paragraph never clips. */}
+        <div className="relative z-10 mb-12 mt-auto max-w-md space-y-4">
           <h2 className="text-4xl font-semibold leading-tight tracking-tight">
             Answers, before<br />you ask.
           </h2>
-          <p className="max-w-sm text-sm text-muted">
-            Risezome surfaces the right PR, ticket, and doc from your codebase the moment
-            they come up in a meeting.
+          <p className="text-sm text-muted">
+            Risezome surfaces the right PR, ticket, and doc from your codebase the
+            moment they come up in a meeting.
           </p>
         </div>
       </aside>
 
-      {/* Right: sign-in form. overflow-y-auto so it scrolls internally on short viewports
-          without breaking the split-screen shape. */}
+      {/* Right: sign-in form. overflow-y-auto so it scrolls internally on
+          short viewports without breaking the split-screen shape. */}
       <section className="flex flex-col items-center justify-center overflow-y-auto px-6 py-12">
         <div className="w-full max-w-sm space-y-8">
+          {/* Mobile brand (the aside is hidden < lg). */}
           <div className="flex items-center justify-center gap-2.5 lg:hidden">
             <Logo size={28} className="text-accent" />
             <span className="text-base font-semibold tracking-tight">Risezome</span>
@@ -58,8 +73,8 @@ export default function SignInPage({
 
           <p className="text-center text-sm text-muted">
             New to Risezome?{' '}
-            {/* Sign-in and create-workspace are the same OAuth flow — the post-auth
-                /onboarding page detects zero-orgs and renders the create form. */}
+            {/* Sign-in and create-workspace are the same OAuth flow — post-auth
+                /onboarding detects zero-orgs and renders the create form. */}
             <a href="/sign-in" className="font-medium text-accent hover:text-accent-press">
               Create a workspace
             </a>
@@ -75,14 +90,14 @@ export default function SignInPage({
 }
 
 /**
- * Decorative rising-signals SVG that fills the bottom of the brand aside.
- * Three curving path lines rise from the bottom edge, with scattered
- * filled + outlined dots representing the "context surfacing" feel.
- * Positioned absolute behind the foreground content (z-index 0).
+ * Decorative rising-signals SVG that fills the brand aside. Three
+ * curving gradient-stroked paths rise from the bottom edge, with
+ * scattered filled + outlined dots. Positioned absolute behind
+ * foreground content (z-index 0).
  *
- * Sourced from the Login design mockup; cleaned of the design tool's
- * inline-style noise. preserveAspectRatio="xMidYMax slice" anchors the
- * pattern to the bottom-center so it always reads as rising from below.
+ * Source paths from the Login design mockup, cleaned of inline-style
+ * noise. preserveAspectRatio="xMidYMax slice" anchors the pattern to
+ * bottom-center so it always reads as rising from below.
  */
 function RisingSignalsBackdrop(): ReactElement {
   return (
