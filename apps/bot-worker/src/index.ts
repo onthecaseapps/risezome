@@ -169,7 +169,7 @@ async function handleMessage(
   // we still write the event below, and the live page falls back to
   // its initial DB fetch on next reload.
   if (runtime !== undefined && !runtime.markedRecording) {
-    const flipped = await markRecordingIfFirst(db, meetingId);
+    const flipped = await markRecordingIfFirst(db, { meetingId, orgId });
     if (flipped) {
       runtime.markedRecording = true;
       logger.info({ meetingId }, 'meetings.status → recording');

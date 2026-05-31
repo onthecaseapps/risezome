@@ -9,12 +9,17 @@ import {
   SynthesisAnnounce,
   SynthesisStream,
   initialAppState,
+  useAppDispatch,
   useAppState,
   type AppState,
   type CardEvent,
   type CardRecord,
   type SynthesisRecord,
 } from '@risezome/hud-ui';
+import {
+  useRealtimeMeetingChannel,
+  type BroadcastedStatus,
+} from '../../../../_lib/realtime-meeting-channel';
 import type { InitialSynthesis } from './page';
 
 export type MeetingStatus =
@@ -27,6 +32,7 @@ export type MeetingStatus =
 
 interface Props {
   meetingId: string;
+  orgId: string;
   status: MeetingStatus;
   title: string;
   errorCode: string | null;
@@ -54,6 +60,8 @@ export function LiveMeetingClient(props: Props): ReactElement {
     [props.initialCards, props.initialSyntheses, props.status],
   );
 
+  // Failed meetings don't need Realtime — the bot never connected. Render
+  // statically and bail out.
   if (props.status === 'failed') {
     return (
       <FailureShell
@@ -64,15 +72,48 @@ export function LiveMeetingClient(props: Props): ReactElement {
     );
   }
 
-  if (props.status !== 'recording') {
-    return <JoiningShell status={props.status} title={props.title} />;
-  }
-
+  // For everything else, always mount the provider + subscription so the
+  // shell can swap when the bot dials in (joining → recording) without
+  // a reload.
   return (
     <AppStateProvider initial={seeded}>
-      <RecordingShell title={props.title} startedAtIso={props.startedAtIso} />
+      <RealtimeWrapper
+        meetingId={props.meetingId}
+        orgId={props.orgId}
+        title={props.title}
+        startedAtIso={props.startedAtIso}
+        initialStatus={props.status}
+      />
     </AppStateProvider>
   );
+}
+
+function RealtimeWrapper({
+  meetingId,
+  orgId,
+  title,
+  startedAtIso,
+  initialStatus,
+}: {
+  meetingId: string;
+  orgId: string;
+  title: string;
+  startedAtIso: string | null;
+  initialStatus: MeetingStatus;
+}): ReactElement {
+  const dispatch = useAppDispatch();
+  const channel = useRealtimeMeetingChannel({ meetingId, orgId, dispatch });
+  const effectiveStatus: BroadcastedStatus = channel.liveMeetingStatus ?? initialStatus;
+
+  if (effectiveStatus === 'recording') {
+    return <RecordingShell title={title} startedAtIso={startedAtIso} channelStatus={channel.status} />;
+  }
+  if (effectiveStatus === 'failed') {
+    // Shouldn't happen — we'd have rendered FailureShell above. But
+    // defensive in case a broadcast flips us here later.
+    return <JoiningShell status="failed" title={title} channelStatus={channel.status} />;
+  }
+  return <JoiningShell status={effectiveStatus} title={title} channelStatus={channel.status} />;
 }
 
 function seedState(
@@ -116,9 +157,11 @@ function seedState(
 function RecordingShell({
   title,
   startedAtIso,
+  channelStatus,
 }: {
   title: string;
   startedAtIso: string | null;
+  channelStatus: 'idle' | 'connecting' | 'subscribed' | 'errored';
 }): ReactElement {
   const minutesIn = startedAtIso !== null
     ? Math.max(0, Math.round((Date.now() - new Date(startedAtIso).getTime()) / 60_000))
@@ -135,6 +178,9 @@ function RecordingShell({
           <p className="mt-0.5 text-xs text-muted">
             Live · Risezome in the meeting
             {minutesIn !== null ? <> · {minutesIn}m in</> : null}
+            {channelStatus !== 'subscribed' ? (
+              <span className="ml-2 text-amber-400">· {channelStatus}</span>
+            ) : null}
           </p>
         </div>
       </header>
@@ -164,9 +210,11 @@ function SynthesisAnnouncer(): ReactElement {
 function JoiningShell({
   status,
   title,
+  channelStatus,
 }: {
-  status: MeetingStatus;
+  status: BroadcastedStatus;
   title: string;
+  channelStatus?: 'idle' | 'connecting' | 'subscribed' | 'errored';
 }): ReactElement {
   const heading =
     status === 'launching'
@@ -175,13 +223,20 @@ function JoiningShell({
       ? 'Waiting for Recall.ai to dial in…'
       : status === 'joining'
       ? 'Risezome is joining your meeting…'
-      : 'Risezome is in the waiting room…';
+      : status === 'waiting_room'
+      ? 'Risezome is in the waiting room…'
+      : 'Working on it…';
 
   return (
     <div className="mx-auto flex h-dvh max-w-3xl flex-col px-6 py-12">
       <header className="mb-8">
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-        <p className="mt-1 text-sm text-accent">{heading}</p>
+        <p className="mt-1 text-sm text-accent">
+          {heading}
+          {channelStatus !== undefined && channelStatus !== 'subscribed' ? (
+            <span className="ml-2 text-xs text-muted">· {channelStatus}</span>
+          ) : null}
+        </p>
       </header>
 
       <div className="flex flex-1 items-center justify-center">

@@ -140,6 +140,7 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
   return (
     <LiveMeetingClient
       meetingId={meetingId}
+      orgId={orgId}
       status={status}
       title={title}
       errorCode={meeting.error_code as string | null}

@@ -31,12 +31,12 @@ export function createServiceClient(): SupabaseClient {
  */
 export async function markRecordingIfFirst(
   client: SupabaseClient,
-  meetingId: string,
+  args: { meetingId: string; orgId: string },
 ): Promise<boolean> {
   const { data, error } = await client
     .from('meetings')
     .update({ status: 'recording', started_at: new Date().toISOString() })
-    .eq('meeting_id', meetingId)
+    .eq('meeting_id', args.meetingId)
     .in('status', ['launching', 'awaiting_recall', 'joining', 'waiting_room'])
     .select('meeting_id');
   if (error !== null) {
@@ -44,7 +44,20 @@ export async function markRecordingIfFirst(
     console.error('[bot-worker.db] markRecording failed:', error);
     return false;
   }
-  return (data ?? []).length > 0;
+  const flipped = (data ?? []).length > 0;
+  if (flipped) {
+    // Emit a meetingStatus broadcast + meeting_events row so the
+    // live page can swap from joining-shell to recording HUD without
+    // needing a reload. Best-effort; the page also falls back to
+    // initial DB fetch on reload.
+    await persistAndBroadcast(client, {
+      meetingId: args.meetingId,
+      orgId: args.orgId,
+      type: 'meetingStatus',
+      payload: { status: 'recording', at: new Date().toISOString() },
+    });
+  }
+  return flipped;
 }
 
 /**
