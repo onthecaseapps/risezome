@@ -6,6 +6,7 @@ import type {
   SynthesisUsage,
 } from '@risezome/engine/synthesize';
 import { parseSynthesisOutput } from '@risezome/engine/synthesize';
+import { classifyRelevanceHeuristic } from '@risezome/engine/relevance';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { persistAndBroadcast } from './db.js';
 
@@ -253,17 +254,30 @@ export async function maybeRetrieveAndEmit(args: {
   // from the caller's perspective — we don't block the retrieval-tick
   // return on synthesis completion.
   if (args.synthesizer !== undefined && synthesisSources.length > 0) {
-    void runSynthesisAndBroadcast({
-      synthesizer: args.synthesizer,
-      utterance: queryText,
-      sources: synthesisSources,
-      surfacedCardIds,
-      traceId,
-      meetingId: args.meetingId,
-      orgId: args.orgId,
-      db: args.db,
-      logger: args.logger,
-    });
+    // Relevance gate: the cheap regex heuristic looks at the LATEST
+    // final utterance (not the rolling window — per the heuristic's
+    // contract). If the user just said "yeah" or "okay", skip the
+    // Anthropic round-trip — cards still surface but no synthesis
+    // burns tokens on filler. Logged for telemetry.
+    const relevance = classifyRelevanceHeuristic(args.utteranceText);
+    if (relevance === 'clearly_filler') {
+      args.logger.info(
+        { meetingId: args.meetingId, utteranceId: args.utteranceId, relevance },
+        'synthesis.skipped.filler',
+      );
+    } else {
+      void runSynthesisAndBroadcast({
+        synthesizer: args.synthesizer,
+        utterance: queryText,
+        sources: synthesisSources,
+        surfacedCardIds,
+        traceId,
+        meetingId: args.meetingId,
+        orgId: args.orgId,
+        db: args.db,
+        logger: args.logger,
+      });
+    }
   }
 
   args.logger.info(

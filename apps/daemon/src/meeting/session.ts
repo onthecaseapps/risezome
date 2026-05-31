@@ -1,6 +1,6 @@
 import type { CardEvent } from '../retrieve/contract.js';
 import type { RelevanceResult } from '../relevance/contract.js';
-import { normalizeForRelevance } from '../relevance/heuristic.js';
+import { normalizeForRelevance } from '@risezome/engine/relevance';
 
 export interface ActiveSynthesis {
   readonly synthesisId: string;

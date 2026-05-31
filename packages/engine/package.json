@@ -30,6 +30,10 @@
       "types": "./dist/synthesize/index.d.ts",
       "default": "./dist/synthesize/index.js"
     },
+    "./relevance": {
+      "types": "./dist/relevance/index.d.ts",
+      "default": "./dist/relevance/index.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "default": "./dist/types.js"

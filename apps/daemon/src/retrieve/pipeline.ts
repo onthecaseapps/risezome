@@ -19,7 +19,7 @@ import {
   type Classifier,
   ClassifierProviderError,
 } from '../router/contract.js';
-import { classifyRelevanceHeuristic } from '../relevance/heuristic.js';
+import { classifyRelevanceHeuristic } from '@risezome/engine/relevance';
 import {
   type RelevanceClassifier,
   type RelevanceResult,
