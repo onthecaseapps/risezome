@@ -37,7 +37,7 @@ export default function SignInPage({
         {/* Tagline block: pushed toward the bottom of the aside via mt-auto,
             with backdrop-blur over a faint surface tint so it reads cleanly
             against whichever dots/lines pass behind it. */}
-        <div className="relative z-10 mb-4 mt-auto max-w-md space-y-3 rounded-2xl bg-bg/30 p-5 backdrop-blur-md sm:mb-12 sm:space-y-4 sm:p-6">
+        <div className="relative z-10 mb-4 mt-auto max-w-md space-y-3 rounded-2xl bg-bg/15 p-5 backdrop-blur-md sm:mb-12 sm:space-y-4 sm:p-6">
           <h2 className="text-3xl font-semibold leading-[1.05] tracking-tight sm:text-5xl">
             Answers, before<br />you ask.
           </h2>
@@ -54,7 +54,7 @@ export default function SignInPage({
           scroll on very short desktop viewports without breaking the split. */}
       <section className="flex flex-col items-center justify-start px-6 py-10 sm:py-12 lg:justify-center lg:overflow-y-auto">
         <div className="w-full max-w-sm space-y-8">
-          <header className="space-y-1.5">
+          <header className="space-y-1.5 text-center lg:text-left">
             <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
             <p className="text-sm text-muted">Sign in to your workspace.</p>
           </header>
