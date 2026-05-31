@@ -32,6 +32,7 @@ export {
   useAppState,
   appStateReducer,
   initialAppState,
+  SYNTHESIS_PAUSED_THRESHOLD,
   type AppState,
   type AppAction,
   type CardRecord,

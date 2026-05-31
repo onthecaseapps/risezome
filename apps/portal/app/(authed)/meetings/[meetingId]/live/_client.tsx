@@ -11,6 +11,7 @@ import {
   SynthesisActionsProvider,
   SynthesisAnnounce,
   SynthesisStream,
+  SYNTHESIS_PAUSED_THRESHOLD,
   initialAppState,
   useAppDispatch,
   useAppState,
@@ -253,13 +254,14 @@ function RecordingShell({
   const minutesIn = startedAtIso !== null
     ? Math.max(0, Math.round((Date.now() - new Date(startedAtIso).getTime()) / 60_000))
     : null;
+  const state = useAppState();
+  // U8: synthesis paused pill renders when N consecutive failures
+  // (errors + refusals) have piled up without a successful done. Clears
+  // on the next synthesisDone. Keeps the user from seeing an empty
+  // page in silence when synthesis silently breaks (rate limit, key
+  // rotation, provider incident).
+  const isPaused = state.synthesisFailureStreak >= SYNTHESIS_PAUSED_THRESHOLD;
 
-  // Plan U6 — synthesis-first single-column layout. The old 2-column
-  // grid (pinned + cards left, synthesis right) is replaced with a
-  // centered max-w-3xl stack: pinned syntheses on top, chronological
-  // SynthesisStream below. Raw cards are removed from the live page
-  // entirely (D1) — they only surface as ExpandableSource inside each
-  // SynthesisCard's source list.
   return (
     <div className="mx-auto flex h-dvh max-w-3xl flex-col px-6 py-6">
       <header className="mb-4 flex items-center justify-between gap-4">
@@ -267,6 +269,16 @@ function RecordingShell({
           <div className="flex items-center gap-2">
             <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-rose-400" />
             <h1 className="truncate text-xl font-semibold tracking-tight">{title}</h1>
+            {isPaused && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-300"
+                role="status"
+                aria-live="polite"
+                title="No successful synthesis in the last few retrievals — check the bot worker / Anthropic key."
+              >
+                AI summaries paused
+              </span>
+            )}
           </div>
           <p className="mt-0.5 text-xs text-muted">
             Live · Risezome in the meeting

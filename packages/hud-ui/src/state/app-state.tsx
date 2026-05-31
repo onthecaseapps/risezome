@@ -69,7 +69,20 @@ export interface AppState {
   readonly syntheses: ReadonlyMap<string, SynthesisRecord>;
   /** Updated only on synthesisDone — feeds the sr-only aria-live announce region. */
   readonly lastSynthesisAnnounce: string | null;
+  /** Count of consecutive synthesis errors / refusals since the last
+   *  successful synthesisDone. Drives the "AI summaries paused" header
+   *  pill on the live page (plan U8 / S3). Incremented on
+   *  synthesisError + synthesisRetracted; reset to 0 on synthesisDone. */
+  readonly synthesisFailureStreak: number;
 }
+
+/**
+ * Threshold at which the "AI summaries paused" UI surfaces. Three
+ * consecutive failures distinguishes a one-off glitch (we can stay
+ * quiet) from a sustained problem (the user should know). Exported so
+ * both the reducer test and the header pill consume the same constant.
+ */
+export const SYNTHESIS_PAUSED_THRESHOLD = 3;
 
 export const initialAppState: AppState = {
   status: 'disconnected',
@@ -78,6 +91,7 @@ export const initialAppState: AppState = {
   gaps: new Map(),
   syntheses: new Map(),
   lastSynthesisAnnounce: null,
+  synthesisFailureStreak: 0,
 };
 
 export type AppAction =
@@ -226,21 +240,37 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
         latencyMs: action.done.latencyMs,
       };
       syntheses.set(action.done.synthesisId, updated);
-      return { ...state, syntheses, lastSynthesisAnnounce: updated.accumulatedText };
+      // U8: a successful done resets the paused-pill streak.
+      return {
+        ...state,
+        syntheses,
+        lastSynthesisAnnounce: updated.accumulatedText,
+        synthesisFailureStreak: 0,
+      };
     }
 
     case 'synthesisError': {
       if (!state.syntheses.has(action.error.synthesisId)) return state;
       const syntheses = cloneMap(state.syntheses);
       syntheses.delete(action.error.synthesisId);
-      return { ...state, syntheses };
+      // U8: count toward the paused-pill threshold.
+      return {
+        ...state,
+        syntheses,
+        synthesisFailureStreak: state.synthesisFailureStreak + 1,
+      };
     }
 
     case 'synthesisRetracted': {
       if (!state.syntheses.has(action.retracted.synthesisId)) return state;
       const syntheses = cloneMap(state.syntheses);
       syntheses.delete(action.retracted.synthesisId);
-      return { ...state, syntheses };
+      // U8: refusals also count toward the paused-pill threshold.
+      return {
+        ...state,
+        syntheses,
+        synthesisFailureStreak: state.synthesisFailureStreak + 1,
+      };
     }
 
     case 'synthesisPinned': {

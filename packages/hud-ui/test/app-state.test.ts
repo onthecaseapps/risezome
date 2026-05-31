@@ -289,6 +289,145 @@ describe('appStateReducer', () => {
     });
   });
 
+  describe('synthesisFailureStreak (U8 / S3 — paused-pill signal)', () => {
+    it('initial state has streak === 0', () => {
+      expect(initialAppState.synthesisFailureStreak).toBe(0);
+    });
+
+    it('synthesisError increments the streak (record removed too)', () => {
+      let s = appStateReducer(initialAppState, { type: 'card', card: mkCard() });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' },
+      });
+      s = appStateReducer(s, {
+        type: 'synthesisError',
+        error: { synthesisId: 'syn1', code: 'rate-limited' },
+      });
+      expect(s.synthesisFailureStreak).toBe(1);
+      expect(s.syntheses.has('syn1')).toBe(false);
+    });
+
+    it('synthesisRetracted also increments the streak (refusals count)', () => {
+      let s = appStateReducer(initialAppState, { type: 'card', card: mkCard() });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' },
+      });
+      s = appStateReducer(s, {
+        type: 'synthesisRetracted',
+        retracted: { synthesisId: 'syn1', reason: 'source-retracted' },
+      });
+      expect(s.synthesisFailureStreak).toBe(1);
+    });
+
+    it('three consecutive failures → streak reaches the paused threshold', async () => {
+      const { SYNTHESIS_PAUSED_THRESHOLD } = await import('../src/state/app-state.js');
+      let s = initialAppState;
+      for (let i = 0; i < SYNTHESIS_PAUSED_THRESHOLD; i++) {
+        s = appStateReducer(s, { type: 'card', card: mkCard({ cardId: `c${String(i)}` }) });
+        s = appStateReducer(s, {
+          type: 'synthesisStart',
+          start: { synthesisId: `syn${String(i)}`, sourceCardIds: [`c${String(i)}`], traceId: 't' },
+        });
+        s = appStateReducer(s, {
+          type: 'synthesisError',
+          error: { synthesisId: `syn${String(i)}`, code: 'rate-limited' },
+        });
+      }
+      expect(s.synthesisFailureStreak).toBe(SYNTHESIS_PAUSED_THRESHOLD);
+    });
+
+    it('synthesisDone resets the streak to 0 (single success clears the pill)', () => {
+      // Seed: streak === 2 via two errors.
+      let s = appStateReducer(initialAppState, { type: 'card', card: mkCard({ cardId: 'a' }) });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'sa', sourceCardIds: ['a'], traceId: 't' },
+      });
+      s = appStateReducer(s, {
+        type: 'synthesisError',
+        error: { synthesisId: 'sa', code: 'rate-limited' },
+      });
+      s = appStateReducer(s, { type: 'card', card: mkCard({ cardId: 'b' }) });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'sb', sourceCardIds: ['b'], traceId: 't' },
+      });
+      s = appStateReducer(s, {
+        type: 'synthesisError',
+        error: { synthesisId: 'sb', code: 'rate-limited' },
+      });
+      expect(s.synthesisFailureStreak).toBe(2);
+
+      // A successful done clears the streak.
+      s = appStateReducer(s, { type: 'card', card: mkCard({ cardId: 'c' }) });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'sc', sourceCardIds: ['c'], traceId: 't' },
+      });
+      s = appStateReducer(s, {
+        type: 'synthesisDone',
+        done: {
+          synthesisId: 'sc',
+          stopReason: 'end_turn',
+          citations: [],
+          usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+          ttftMs: 0,
+          latencyMs: 0,
+        },
+      });
+      expect(s.synthesisFailureStreak).toBe(0);
+    });
+
+    it('mixed sequence: err err done err err err → streak ends at 3', () => {
+      let s = initialAppState;
+      // 2 errors.
+      for (const id of ['s1', 's2']) {
+        s = appStateReducer(s, { type: 'card', card: mkCard({ cardId: `c-${id}` }) });
+        s = appStateReducer(s, {
+          type: 'synthesisStart',
+          start: { synthesisId: id, sourceCardIds: [`c-${id}`], traceId: 't' },
+        });
+        s = appStateReducer(s, {
+          type: 'synthesisError',
+          error: { synthesisId: id, code: 'rate-limited' },
+        });
+      }
+      // 1 done (resets).
+      s = appStateReducer(s, { type: 'card', card: mkCard({ cardId: 'c-ok' }) });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'ok', sourceCardIds: ['c-ok'], traceId: 't' },
+      });
+      s = appStateReducer(s, {
+        type: 'synthesisDone',
+        done: {
+          synthesisId: 'ok',
+          stopReason: 'end_turn',
+          citations: [],
+          usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+          ttftMs: 0,
+          latencyMs: 0,
+        },
+      });
+      expect(s.synthesisFailureStreak).toBe(0);
+      // 3 more errors.
+      for (const id of ['s3', 's4', 's5']) {
+        s = appStateReducer(s, { type: 'card', card: mkCard({ cardId: `c-${id}` }) });
+        s = appStateReducer(s, {
+          type: 'synthesisStart',
+          start: { synthesisId: id, sourceCardIds: [`c-${id}`], traceId: 't' },
+        });
+        s = appStateReducer(s, {
+          type: 'synthesisError',
+          error: { synthesisId: id, code: 'rate-limited' },
+        });
+      }
+      expect(s.synthesisFailureStreak).toBe(3);
+    });
+  });
+
   describe('cardRetracted cascade preservation for pinned syntheses (U5 / S2)', () => {
     it('drops unpinned syntheses citing the retracted card but PRESERVES pinned ones', () => {
       // Seed: card c1, two syntheses, only one is pinned.
