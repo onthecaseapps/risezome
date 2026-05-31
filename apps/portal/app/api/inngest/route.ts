@@ -2,6 +2,8 @@ import { serve } from 'inngest/next';
 import { inngest } from '../../../src/inngest/client';
 import { indexRepoFn } from '../../../src/inngest/functions/index-repo';
 import { indexTrelloFn } from '../../../src/inngest/functions/index-trello';
+import { indexJiraFn } from '../../../src/inngest/functions/index-jira';
+import { indexConfluenceFn } from '../../../src/inngest/functions/index-confluence';
 import { syncCalendarFn, syncAllCalendarsCron } from '../../../src/inngest/functions/sync-calendar';
 import { launchBotFn } from '../../../src/inngest/functions/launch-bot';
 
@@ -18,5 +20,13 @@ import { launchBotFn } from '../../../src/inngest/functions/launch-bot';
  */
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [indexRepoFn, indexTrelloFn, syncCalendarFn, syncAllCalendarsCron, launchBotFn],
+  functions: [
+    indexRepoFn,
+    indexTrelloFn,
+    indexJiraFn,
+    indexConfluenceFn,
+    syncCalendarFn,
+    syncAllCalendarsCron,
+    launchBotFn,
+  ],
 });

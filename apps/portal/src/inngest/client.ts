@@ -34,6 +34,17 @@ export interface TrelloIndexRequestedEvent {
   };
 }
 
+/** Atlassian per-kind index requests (own events so each indexer triggers only
+ *  for its kind; the Sources actions emit by source.kind). */
+export interface JiraIndexRequestedEvent {
+  name: 'risezome/jira.index-requested';
+  data: { orgId: string; sourceId: string; reason: 'connect' | 'reindex' };
+}
+export interface ConfluenceIndexRequestedEvent {
+  name: 'risezome/confluence.index-requested';
+  data: { orgId: string; sourceId: string; reason: 'connect' | 'reindex' };
+}
+
 export interface CalendarSyncRequestedEvent {
   name: 'risezome/calendar.sync-requested';
   data: {
