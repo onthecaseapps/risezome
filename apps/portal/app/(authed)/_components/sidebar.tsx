@@ -12,7 +12,7 @@ import { UserCard } from './user-card';
  * Left sidebar shared across all `(authed)` routes. Top→bottom:
  *   1. Logo + Risezome wordmark
  *   2. Current-org chip with built-in switcher (none if user hasn't onboarded)
- *   3. Nav: Upcoming, Live meeting (dynamic), Sources, Captures, Settings
+ *   3. Nav: Upcoming, Live meeting (dynamic), Captures, Sources, Settings
  *      — Live meeting always routes to /meetings/live (the list page).
  *        A pulsing red dot appears next to the label when one or more
  *        meetings are currently recording in the user's current org;
@@ -99,16 +99,16 @@ export async function Sidebar(): Promise<ReactElement> {
             : {})}
         />
         <SidebarNavLink
-          href="/sources"
-          matchPrefix="/sources"
-          icon={<SourcesIcon />}
-          label="Sources"
-        />
-        <SidebarNavLink
           href="/captures"
           matchPrefix="/captures"
           icon={<CapturesIcon />}
           label="Captures"
+        />
+        <SidebarNavLink
+          href="/sources"
+          matchPrefix="/sources"
+          icon={<SourcesIcon />}
+          label="Sources"
         />
         <SidebarNavLink
           href="/settings"

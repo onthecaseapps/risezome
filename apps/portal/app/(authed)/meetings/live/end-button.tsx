@@ -36,7 +36,7 @@ export function EndMeetingButton({ meetingId }: { meetingId: string }): ReactEle
       type="button"
       onClick={onClick}
       disabled={pending}
-      className="rounded-md border border-border bg-card px-2.5 py-1 text-xs text-muted transition-colors hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-50"
+      className="rounded-md border border-border bg-card px-2.5 py-1 text-xs text-muted transition-colors hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:text-rose-300"
       title="Mark this meeting as ended (use if the bot is stuck)"
     >
       {pending ? 'Ending…' : 'End'}

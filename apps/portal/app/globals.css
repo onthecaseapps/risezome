@@ -99,6 +99,23 @@
     var(--font-schibsted-grotesk), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
 }
 
+/* Bump the root font-size above the browser default (16px). Every
+ * rem-based size in Tailwind (text-xs/sm/base/lg/xl, spacing, gap,
+ * line-height) scales proportionally - a one-line change instead of
+ * hunting down individual className tweaks. The HUD-on-meeting page
+ * keeps its own scale via inline overrides where dense compactness
+ * matters more than readability.
+ *
+ * IMPORTANT: this must be a `:root` rule, NOT `html`. @risezome/hud-ui's
+ * styles.css sets `:root { font-size: 14px }`, and a `:root` pseudo-class
+ * (0,1,0) out-specifies an `html` type selector (0,0,1) - so an `html`
+ * rule here silently loses and the whole portal renders at 14px. Matching
+ * the `:root` specificity lets source order win (this block is imported
+ * after hud-ui). */
+:root {
+  font-size: 18px;
+}
+
 html {
   scroll-behavior: smooth;
 }

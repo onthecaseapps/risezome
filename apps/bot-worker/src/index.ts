@@ -28,6 +28,12 @@ import {
   AnthropicSummarizer,
   type Summarizer,
 } from '@risezome/engine/summarize';
+import {
+  AnthropicClassifier,
+  type Classifier,
+} from '@risezome/engine/router';
+import { SkillRegistry } from '@risezome/engine/skills';
+import { buildSkillRegistry } from './skills/index.js';
 import { adaptRecallMessage } from './recall-adapter.js';
 import { verifyBotWsJwt, type BotWsJwtPayload } from './jwt.js';
 import { handleLocalDebugWs } from './debug/local-debug-ws.js';
@@ -103,9 +109,28 @@ async function main(): Promise<void> {
   const summarizer: Summarizer | null = anthropicKey !== undefined && anthropicKey.length > 0
     ? new AnthropicSummarizer({ apiKey: anthropicKey, model: anthropicModel })
     : null;
+  // Router classifier + skill registry — process-singleton (no per-
+  // meeting state). The classifier and registry are paired: both must
+  // be present for the router branch in maybeRetrieveAndEmit to fire.
+  // buildSkillRegistry reads env vars (GITHUB_TOKEN + UPWELL_GITHUB_REPO,
+  // etc.) and registers whichever skills are configured.
+  const classifier: Classifier | null = anthropicKey !== undefined && anthropicKey.length > 0
+    ? new AnthropicClassifier({ apiKey: anthropicKey, model: anthropicModel })
+    : null;
+  const skillRegistry: SkillRegistry = buildSkillRegistry({
+    logger: {
+      info: (obj: object, msg?: string) => {
+        console.log('[bot-worker]', msg ?? '', JSON.stringify(obj));
+      },
+      warn: (obj: object, msg?: string) => {
+        console.warn('[bot-worker]', msg ?? '', JSON.stringify(obj));
+      },
+    },
+  });
   if (synthesizer === null) {
-    console.warn('[bot-worker] ANTHROPIC_API_KEY unset — synthesis + LLM relevance + rolling summary disabled');
+    console.warn('[bot-worker] ANTHROPIC_API_KEY unset — synthesis + LLM relevance + rolling summary + router classifier disabled');
   }
+  console.log(`[bot-worker] skill registry size: ${String(skillRegistry.size())}`);
 
   const fastify = Fastify({ logger: { level: 'info' } });
   await fastify.register(websocket);
@@ -203,7 +228,7 @@ async function main(): Promise<void> {
         }
 
         socket.on('message', (raw: Buffer) => {
-          void handleMessage(raw, meetingId, payload.orgId, db, embedder, synthesizer, relevanceClassifier, req.log);
+          void handleMessage(raw, meetingId, payload.orgId, db, embedder, synthesizer, relevanceClassifier, classifier, skillRegistry, req.log);
         });
 
         socket.on('close', () => {
@@ -301,6 +326,8 @@ async function handleMessage(
   embedder: VoyageEmbedder | null,
   synthesizer: Synthesizer | null,
   relevanceClassifier: RelevanceClassifier | null,
+  classifier: Classifier | null,
+  skillRegistry: SkillRegistry,
   logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void },
 ): Promise<void> {
   let parsed: unknown;
@@ -383,6 +410,8 @@ async function handleMessage(
       embedder,
       ...(synthesizer !== null ? { synthesizer } : {}),
       ...(relevanceClassifier !== null ? { relevanceClassifier } : {}),
+      ...(classifier !== null ? { classifier } : {}),
+      skillRegistry,
       ...(lastSummary !== null ? { lastSummary } : {}),
       logger,
     });

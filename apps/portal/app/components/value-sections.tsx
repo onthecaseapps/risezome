@@ -36,12 +36,12 @@ function LoopIcon(): React.ReactElement {
 const BEATS: readonly Beat[] = [
   {
     title: 'Live, not after the fact',
-    body: 'Context shows up during the meeting, while it can still change the decision, not buried in a summary you read tomorrow. Works the same across Zoom, Meet, Teams, or a huddle.',
+    body: 'Context shows up during the meeting, while it can still change the decision, not buried in a summary you read tomorrow. The bot joins your Zoom and Google Meet calls.',
     icon: <BoltIcon />,
   },
   {
     title: 'Grounded in your tools',
-    body: "Cards pull straight from GitHub, Jira, and Slack: the PR's real status, the ticket's real owner, the doc that actually answers the question. Not a guess.",
+    body: "Answers pull straight from GitHub, Jira, and Slack: the PR's real status, the ticket's real owner, the doc that actually answers the question. Cited, not guessed.",
     icon: <PlugIcon />,
   },
   {
@@ -54,18 +54,18 @@ const BEATS: readonly Beat[] = [
 const STEPS: readonly { readonly n: string; readonly title: string; readonly body: string }[] = [
   {
     n: '01',
-    title: 'Start it before your call',
-    body: 'Risezome runs alongside the meeting and follows the conversation. No meeting link to share, nothing for other attendees to set up.',
+    title: 'Connect your tools',
+    body: 'Link GitHub, Jira, and Slack, then connect your calendar. Risezome indexes what your team already knows.',
   },
   {
     n: '02',
-    title: 'It listens and grounds',
-    body: 'A rolling transcript is matched against your connected sources in real time, and against the questions being asked out loud.',
+    title: 'Flip the bot onto a meeting',
+    body: 'On your upcoming calls, toggle the bot on for the ones that matter. It joins your Zoom or Google Meet for you, with nothing for other attendees to install.',
   },
   {
     n: '03',
-    title: 'Context surfaces, gaps get logged',
-    body: 'Relevant cards appear in a HUD as the meeting moves. Questions nothing can answer are captured to feed back into your docs.',
+    title: 'Get cited answers, live',
+    body: 'As questions come up, Risezome surfaces a synthesized answer with its sources in the live view. Questions nothing can answer are captured to improve your docs.',
   },
 ];
 
@@ -73,6 +73,15 @@ export function ValueSections(): React.ReactElement {
   return (
     <>
       <section className="mx-auto max-w-6xl px-5 py-16 sm:px-8">
+        <div className="mb-10 text-center">
+          <h2 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
+            Built for the live meeting
+          </h2>
+          <p className="mx-auto mt-3 max-w-xl text-muted">
+            Not another post-meeting recap. Risezome works while the conversation is still
+            happening, grounded in the tools you already use.
+          </p>
+        </div>
         <div className="grid gap-6 sm:grid-cols-3">
           {BEATS.map((beat) => (
             <div
@@ -89,24 +98,38 @@ export function ValueSections(): React.ReactElement {
         </div>
       </section>
 
-      <section id="how-it-works" className="mx-auto max-w-6xl px-5 py-16 sm:px-8">
-        <div className="mb-10 text-center">
-          <h2 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
-            How it works
-          </h2>
-          <p className="mx-auto mt-3 max-w-xl text-muted">
-            Three steps, then it stays out of your way until it has something worth showing.
-          </p>
+      {/* Distinct from the bordered value cards above: a numbered stepper on a
+          tinted band reads as a sequential process, not another card grid. */}
+      <section id="how-it-works" className="border-y border-border bg-card/30">
+        <div className="mx-auto max-w-6xl px-5 py-16 sm:px-8">
+          <div className="mb-12 text-center">
+            <h2 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
+              How it works
+            </h2>
+            <p className="mx-auto mt-3 max-w-xl text-muted">
+              Three steps, then it stays out of your way until it has something worth showing.
+            </p>
+          </div>
+          <ol className="relative grid gap-x-8 gap-y-10 text-center sm:grid-cols-3">
+            {/* Connector line behind the centered circles (desktop); the opaque
+                circles cover it, leaving the segments between them visible. */}
+            <span
+              aria-hidden="true"
+              className="absolute left-[16.66%] right-[16.66%] top-5 hidden h-px bg-border sm:block"
+            />
+            {STEPS.map((step) => (
+              <li key={step.n} className="relative">
+                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-accent text-sm font-semibold text-accent-fg">
+                  {step.n}
+                </div>
+                <h3 className="mt-5 text-base font-semibold tracking-tight">{step.title}</h3>
+                <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-muted">
+                  {step.body}
+                </p>
+              </li>
+            ))}
+          </ol>
         </div>
-        <ol className="grid gap-6 sm:grid-cols-3">
-          {STEPS.map((step) => (
-            <li key={step.n} className="rounded-2xl border border-border bg-card/40 p-6">
-              <div className="font-mono text-sm font-semibold text-accent">{step.n}</div>
-              <h3 className="mt-2 text-base font-semibold tracking-tight">{step.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-muted">{step.body}</p>
-            </li>
-          ))}
-        </ol>
       </section>
     </>
   );

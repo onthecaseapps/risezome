@@ -74,7 +74,7 @@ export function SettingsForm({ initial }: { initial: InitialSettings }): ReactEl
         disabled={pending}
       />
       {error !== null ? (
-        <div className="border-t border-border bg-rose-500/10 px-5 py-3 text-sm text-rose-300">
+        <div className="border-t border-border bg-rose-500/10 px-5 py-3 text-sm text-rose-700 dark:text-rose-300">
           {error}
         </div>
       ) : null}

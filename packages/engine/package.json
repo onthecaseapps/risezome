@@ -34,6 +34,10 @@
       "types": "./dist/relevance/index.d.ts",
       "default": "./dist/relevance/index.js"
     },
+    "./router": {
+      "types": "./dist/router/index.d.ts",
+      "default": "./dist/router/index.js"
+    },
     "./summarize": {
       "types": "./dist/summarize/index.d.ts",
       "default": "./dist/summarize/index.js"

@@ -55,21 +55,20 @@ describe('stateAtElapsed (cursor fold)', () => {
     expect(stateAtElapsed(250).transcript).toHaveLength(1);
   });
 
-  it('is monotonic — card count never decreases as time advances', () => {
-    let prev = 0;
+  it('never surfaces intermediate cards at any point in the timeline', () => {
     for (let t = 0; t <= TIMELINE_END_MS; t += 200) {
-      const count = stateAtElapsed(t).cards.length;
-      expect(count).toBeGreaterThanOrEqual(prev);
-      prev = count;
+      expect(stateAtElapsed(t).cards).toHaveLength(0);
     }
   });
 
-  it('reaches the full terminal scene at the end (all 3 cards + finished synthesis)', () => {
+  it('reaches the full terminal scene: no intermediate cards, finished synthesis with sources', () => {
     const end = terminalState();
-    expect(end.cards).toHaveLength(3);
+    // No intermediate raw cards — the demo goes straight to AI synthesis.
+    expect(end.cards).toHaveLength(0);
     expect(end.synthesis?.streaming).toBe(false);
     expect(end.synthesis?.text).toBe(SYNTHESIS_TEXT);
     expect(end.synthesis?.citations).toEqual([1, 2, 3]);
+    // Supporting sources still live inside the AI Summary.
     expect(end.synthesis?.sources).toHaveLength(3);
   });
 
@@ -82,7 +81,7 @@ describe('stateAtElapsed (cursor fold)', () => {
   it('loops cleanly — resetting to t=0 reproduces the first events on re-advance', () => {
     // Simulate a loop: play to the end, then reset (stateAtElapsed(0)) and
     // advance again. The reset is empty and the first step reproduces step one.
-    expect(stateAtElapsed(Number.POSITIVE_INFINITY).cards).toHaveLength(3);
+    expect(stateAtElapsed(Number.POSITIVE_INFINITY).synthesis?.streaming).toBe(false);
     expect(stateAtElapsed(0)).toEqual(INITIAL_STATE);
     expect(stateAtElapsed(300).transcript[0]?.id).toBe('t1');
   });

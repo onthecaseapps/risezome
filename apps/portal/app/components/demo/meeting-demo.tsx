@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import './demo.css';
 import { DemoHeader } from './demo-header';
 import { Transcript } from './transcript';
-import { HudCard } from './hud-card';
 import { SynthesisCard } from './synthesis-card';
 import {
   INITIAL_STATE,
@@ -16,9 +15,10 @@ import {
 
 const MEETING_LABEL = 'Sprint standup · #eng-planning';
 
-// How long the raw cards linger (collapsing/fading) after the answer finalizes
-// before they unmount. Matches the card-collapse animation in demo.css.
-const CARD_EXIT_MS = 460;
+// The fully-played scene. Rendered invisibly as a "sizer" so the demo always
+// reserves the height of its tallest state — otherwise the column grows as the
+// answer streams in and shoves the rest of the hero around.
+const TERMINAL: DemoState = terminalState();
 
 function prefersReducedMotion(): boolean {
   return (
@@ -28,24 +28,42 @@ function prefersReducedMotion(): boolean {
   );
 }
 
+/** The synthesis block (reveal wrapper + card). Shared by the live overlay and
+ *  the invisible sizer so both measure/animate identically. */
+function SynthesisBlock({
+  synthesis,
+  entering,
+}: {
+  synthesis: NonNullable<DemoState['synthesis']>;
+  entering: boolean;
+}): React.ReactElement {
+  return (
+    <SynthesisCard
+      synthesis={{
+        text: synthesis.text,
+        citations: synthesis.citations,
+        sources: synthesis.sources,
+      }}
+      streaming={synthesis.streaming}
+      entering={entering}
+    />
+  );
+}
+
 /**
  * The simulated meeting. Drives the HUD-faithful components from the canned
- * timeline (plan U6):
+ * timeline: a question lands and Risezome goes straight to a cited AI Summary
+ * (no intermediate raw cards — the supporting sources live inside the summary).
  *  - playback runs on mount and loops with an end-hold;
  *  - an IntersectionObserver *pauses* it while scrolled offscreen (it does not
  *    gate the initial start, so flaky/absent IO can't leave it stuck empty);
- *  - prefers-reduced-motion renders the finished scene statically, no loop.
+ *  - prefers-reduced-motion renders the finished scene statically, no loop;
+ *  - an invisible terminal-state sizer reserves height so the column never
+ *    grows/shrinks as the answer streams in (no layout shift).
  */
 export function MeetingDemo(): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<DemoState>(INITIAL_STATE);
-
-  // When the answer finalizes, keep the raw cards mounted briefly so they can
-  // play the collapse-and-fade exit before unmounting (consolidating into the
-  // synthesis Sources grid). Cleared again on the loop reset.
-  const [cardsExiting, setCardsExiting] = useState(false);
-  const wasDoneRef = useRef(false);
-  const exitTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (prefersReducedMotion()) {
@@ -97,67 +115,34 @@ export function MeetingDemo(): React.ReactElement {
     };
   }, []);
 
-  // Once the answer is finalized, the raw cards consolidate into the synthesis
-  // card's Sources grid - mirroring the HUD. Until then they stream above it.
-  const synthDone = state.synthesis !== null && !state.synthesis.streaming;
   const typingTranscript = state.synthesis === null && state.transcript.length > 0;
 
-  // Drive the consolidation: on the streaming→done transition, start the card
-  // exit and schedule the unmount; on the loop reset, cancel and clear.
-  useEffect(() => {
-    if (synthDone && !wasDoneRef.current) {
-      setCardsExiting(true);
-      if (exitTimerRef.current !== null) window.clearTimeout(exitTimerRef.current);
-      exitTimerRef.current = window.setTimeout(() => setCardsExiting(false), CARD_EXIT_MS);
-    } else if (!synthDone && wasDoneRef.current) {
-      if (exitTimerRef.current !== null) window.clearTimeout(exitTimerRef.current);
-      setCardsExiting(false);
-    }
-    wasDoneRef.current = synthDone;
-  }, [synthDone]);
-
-  useEffect(
-    () => (): void => {
-      if (exitTimerRef.current !== null) window.clearTimeout(exitTimerRef.current);
-    },
-    [],
-  );
-
-  const showCards = (!synthDone || cardsExiting) && state.cards.length > 0;
-
-  // Entry animations are mounted via a stable class so they play to completion
-  // (the per-frame re-render keeps the class unchanged) and replay only when an
-  // element unmounts/remounts across a loop reset.
   return (
     <div className="upwell-hud" ref={containerRef} aria-label="Simulated Risezome meeting">
       <DemoHeader meetingLabel={MEETING_LABEL} />
-      <Transcript lines={state.transcript} activeLineTyping={typingTranscript} />
-      <div className="card-stream">
-        {state.synthesis !== null && (
-          <div className="synthesis-reveal is-entering">
-            <div className="synthesis-reveal-inner">
-              <SynthesisCard
-                synthesis={{
-                  text: state.synthesis.text,
-                  citations: state.synthesis.citations,
-                  sources: state.synthesis.sources,
-                }}
-                streaming={state.synthesis.streaming}
-              />
-            </div>
+      {/* Stack the layers in one grid cell: an invisible sizer (the finished
+          scene) reserves the cell's height while the live scene overlaps it.
+          Both use `self-start` so the live layer keeps its natural (auto)
+          height — an absolute/stretched overlay would give the synthesis card
+          a definite height and clip its bottom padding on narrow screens. */}
+      <div className="grid">
+        <div
+          className="invisible col-start-1 row-start-1 self-start"
+          aria-hidden="true"
+        >
+          <Transcript lines={TERMINAL.transcript} />
+          <div className="card-stream">
+            {TERMINAL.synthesis !== null && (
+              <SynthesisBlock synthesis={TERMINAL.synthesis} entering={false} />
+            )}
           </div>
-        )}
-        {showCards &&
-          state.cards.map((card) => (
-            <div
-              key={card.id}
-              className={cardsExiting ? 'card-collapse is-exiting' : 'card-collapse'}
-            >
-              <div className="card-collapse-inner">
-                <HudCard card={card} entering={!cardsExiting} />
-              </div>
-            </div>
-          ))}
+        </div>
+        <div className="col-start-1 row-start-1 self-start" data-testid="demo-live">
+          <Transcript lines={state.transcript} activeLineTyping={typingTranscript} />
+          <div className="card-stream">
+            {state.synthesis !== null && <SynthesisBlock synthesis={state.synthesis} entering />}
+          </div>
+        </div>
       </div>
     </div>
   );

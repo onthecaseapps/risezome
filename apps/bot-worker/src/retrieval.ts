@@ -10,6 +10,18 @@ import {
   classifyRelevanceHeuristic,
   type RelevanceClassifier,
 } from '@risezome/engine/relevance';
+import {
+  type Classifier,
+  ClassifierProviderError,
+  isToolShaped,
+} from '@risezome/engine/router';
+import {
+  type Skill,
+  type SkillContext,
+  SkillExecutionError,
+  formatAsSource,
+} from '@risezome/engine/skills';
+import { SkillRegistry } from '@risezome/engine/skills';
 import type { MeetingSummary } from '@risezome/engine/summarize';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { persistAndBroadcast } from './db.js';
@@ -114,6 +126,15 @@ export async function maybeRetrieveAndEmit(args: {
    *  ambiguous utterances default to synthesizing (same fail-open
    *  posture as the daemon pipeline). */
   relevanceClassifier?: RelevanceClassifier;
+  /** Optional router classifier. When set alongside `skillRegistry`
+   *  with size > 0 AND the utterance is tool-shaped, classify the
+   *  utterance and dispatch the chosen skill in parallel with embed
+   *  + retrieve. The skill's result becomes source[0] in the
+   *  synthesizer's sources array. */
+  classifier?: Classifier;
+  /** Optional skill registry. See `classifier` above — both must be
+   *  present (and registry non-empty) for the router branch to fire. */
+  skillRegistry?: SkillRegistry;
   /** Snapshot of the rolling summary at call-fire time. Provides:
    *   - classifier context (current_topic + open_questions)
    *   - embedding-query key_terms boost (env-gated)
@@ -142,6 +163,57 @@ export async function maybeRetrieveAndEmit(args: {
 
   const queryText = args.runtime.recentFinals.join(' ').trim();
   if (queryText.length === 0) return { emitted: 0, skipped: 'empty_query' };
+
+  // ── Router gate ────────────────────────────────────────────────────
+  // Heuristic-gated classifier. Fire in parallel with embed + retrieve
+  // when (a) the latest utterance is tool-shaped, (b) classifier +
+  // registry are configured, and (c) at least one skill is registered.
+  // The classifier promise is awaited AFTER cards emit so TTFT on the
+  // live page is unchanged regardless of classifier latency.
+  let classifierPromise: ReturnType<Classifier['classify']> | null = null;
+  let classifierController: AbortController | null = null;
+  let classifierTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  let classifierStartedAt = 0;
+  const routerEligible =
+    args.classifier !== undefined &&
+    args.skillRegistry !== undefined &&
+    args.skillRegistry.size() > 0 &&
+    isToolShaped(args.utteranceText);
+  if (routerEligible) {
+    classifierController = new AbortController();
+    classifierTimeoutHandle = setTimeout(
+      () => classifierController?.abort(),
+      RELEVANCE_TIMEOUT_MS,
+    );
+    classifierStartedAt = Date.now();
+    const hasContext =
+      args.lastSummary !== undefined &&
+      ((args.lastSummary.current_topic?.length ?? 0) > 0 ||
+        args.lastSummary.open_questions.length > 0);
+    args.logger.info(
+      {
+        meetingId: args.meetingId,
+        utteranceId: args.utteranceId,
+        hadContext: hasContext,
+      },
+      'classifier.start',
+    );
+    classifierPromise = args.classifier!.classify(
+      {
+        utterance: args.utteranceText,
+        registry: args.skillRegistry!,
+        ...(hasContext && {
+          context: {
+            current_topic: args.lastSummary!.current_topic,
+            open_questions: args.lastSummary!.open_questions,
+          },
+        }),
+      },
+      classifierController.signal,
+    );
+    // Swallow unhandled-rejection noise; the await later collects it.
+    classifierPromise.catch(() => undefined);
+  }
 
   // Optional key_terms boost: append project nouns the rolling summary
   // extracted so short follow-up utterances ("about that auth flow")
@@ -318,13 +390,113 @@ export async function maybeRetrieveAndEmit(args: {
     emitted += 1;
   }
 
+  // ── Collect classifier result + execute skill (if router fired) ────
+  // Cards have already shipped; this can take its time without
+  // blocking TTFT. On `intent: 'tool'`, look up the skill, run its
+  // handler with a SkillContext keyed to this org, and format the
+  // result as a SynthesisSource. The synthesizer call below prepends
+  // this source at sources[0] (cited as [1]) when present.
+  let toolSource: SynthesisSource | null = null;
+  if (classifierPromise !== null) {
+    if (classifierTimeoutHandle !== null) clearTimeout(classifierTimeoutHandle);
+    try {
+      const result = await classifierPromise;
+      args.logger.info(
+        {
+          meetingId: args.meetingId,
+          utteranceId: args.utteranceId,
+          intent: result.intent,
+          ...(result.intent === 'tool' && { skillName: result.skillName }),
+          latencyMs: Date.now() - classifierStartedAt,
+        },
+        'classifier.done',
+      );
+      if (result.intent === 'tool') {
+        const skill: Skill | undefined = args.skillRegistry!.lookup(result.skillName);
+        if (skill === undefined) {
+          args.logger.warn(
+            {
+              meetingId: args.meetingId,
+              utteranceId: args.utteranceId,
+              skillName: result.skillName,
+              code: 'unknown-skill',
+            },
+            'skill.failed',
+          );
+        } else {
+          const skillStartedAt = Date.now();
+          args.logger.info(
+            {
+              meetingId: args.meetingId,
+              utteranceId: args.utteranceId,
+              skillName: result.skillName,
+              args: result.args,
+            },
+            'skill.start',
+          );
+          try {
+            const skillContext: SkillContext = {
+              db: args.db,
+              orgId: args.orgId,
+              ...(classifierController !== null && { signal: classifierController.signal }),
+            };
+            const skillResult = await skill.handler(result.args, skillContext);
+            args.logger.info(
+              {
+                meetingId: args.meetingId,
+                utteranceId: args.utteranceId,
+                skillName: result.skillName,
+                latencyMs: Date.now() - skillStartedAt,
+                resultShape: skillResult.kind,
+              },
+              'skill.done',
+            );
+            toolSource = formatAsSource(skillResult, result.skillName, result.args);
+          } catch (err) {
+            const code =
+              err instanceof SkillExecutionError ? err.executionCode : 'execution-error';
+            args.logger.warn(
+              {
+                meetingId: args.meetingId,
+                utteranceId: args.utteranceId,
+                skillName: result.skillName,
+                code,
+                message: (err as Error).message,
+              },
+              'skill.failed',
+            );
+          }
+        }
+      }
+    } catch (err) {
+      if (err instanceof ClassifierProviderError) {
+        args.logger.warn(
+          { meetingId: args.meetingId, code: err.kind, message: err.message },
+          'classifier.error',
+        );
+      } else if (err instanceof Error && err.name === 'AbortError') {
+        // Aborted by timeout — silent.
+      } else {
+        args.logger.warn(
+          { meetingId: args.meetingId, message: (err as Error).message },
+          'classifier.error',
+        );
+      }
+    }
+  }
+
   // ── Synthesis ─────────────────────────────────────────────────────
   // After cards are emitted, kick off Anthropic synthesis across them.
   // Streams the result back as batched synthesisDelta broadcasts so the
   // live page's right panel populates as tokens arrive. Fire-and-forget
   // from the caller's perspective — we don't block the retrieval-tick
   // return on synthesis completion.
-  if (args.synthesizer !== undefined && synthesisSources.length > 0) {
+  //
+  // Synthesis fires when EITHER we have RAG sources OR we have a tool
+  // source. The tool-only path (no cards but classifier answered)
+  // bypasses the cards-needed gate so a structured question whose
+  // retrieval found nothing still gets framed by the synthesizer.
+  if (args.synthesizer !== undefined && (synthesisSources.length > 0 || toolSource !== null)) {
     // Two-stage relevance gate:
     //   1. Cheap regex heuristic on the latest final utterance.
     //      clearly_filler short-circuits with zero API cost.
@@ -371,10 +543,15 @@ export async function maybeRetrieveAndEmit(args: {
         for (const finalText of args.runtime.recentFinals.slice(0, -1)) {
           recentContext.push(finalText);
         }
+        // Tool result, when present, takes source[0]; cards follow at
+        // [1..N]. The synthesizer's prompt cites by 1-indexed array
+        // position, so [1] is the tool and [2..N] are the cards.
+        const mergedSources =
+          toolSource !== null ? [toolSource, ...synthesisSources] : synthesisSources;
         void runSynthesisAndBroadcast({
           synthesizer: args.synthesizer,
           utterance: queryText,
-          sources: synthesisSources,
+          sources: mergedSources,
           surfacedCardIds,
           traceId,
           meetingId: args.meetingId,
