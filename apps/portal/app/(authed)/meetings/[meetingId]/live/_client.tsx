@@ -6,9 +6,8 @@ import { retryFailedLaunchAction } from './retry-launch-server';
 import {
   AppStateProvider,
   CardActionsProvider,
-  CardStream,
   EmptyState,
-  PinnedSection,
+  PinnedSynthesesSection,
   SynthesisActionsProvider,
   SynthesisAnnounce,
   SynthesisStream,
@@ -255,8 +254,14 @@ function RecordingShell({
     ? Math.max(0, Math.round((Date.now() - new Date(startedAtIso).getTime()) / 60_000))
     : null;
 
+  // Plan U6 — synthesis-first single-column layout. The old 2-column
+  // grid (pinned + cards left, synthesis right) is replaced with a
+  // centered max-w-3xl stack: pinned syntheses on top, chronological
+  // SynthesisStream below. Raw cards are removed from the live page
+  // entirely (D1) — they only surface as ExpandableSource inside each
+  // SynthesisCard's source list.
   return (
-    <div className="mx-auto flex h-dvh max-w-5xl flex-col px-6 py-6">
+    <div className="mx-auto flex h-dvh max-w-3xl flex-col px-6 py-6">
       <header className="mb-4 flex items-center justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -273,14 +278,9 @@ function RecordingShell({
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
-        <div className="min-h-0 overflow-y-auto">
-          <PinnedSection />
-          <CardStream />
-        </div>
-        <aside className="min-h-0 overflow-y-auto rounded-xl border border-border bg-card p-4">
-          <SynthesisStream />
-        </aside>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <PinnedSynthesesSection />
+        <SynthesisStream />
       </div>
 
       <SynthesisAnnouncer />
