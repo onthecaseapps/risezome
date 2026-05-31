@@ -84,11 +84,10 @@ async function main(): Promise<void> {
     return reply.send({ ok: true, removed: true });
   });
 
-  fastify.register(async (instance) => {
-    instance.get<{ Params: { meetingId: string; jwt: string } }>(
-      '/recall/:meetingId/:jwt',
-      { websocket: true },
-      async (socket, req) => {
+  fastify.get<{ Params: { meetingId: string; jwt: string } }>(
+    '/recall/:meetingId/:jwt',
+    { websocket: true },
+    async (socket, req) => {
         const { meetingId, jwt } = req.params;
         let payload: BotWsJwtPayload;
         try {
@@ -140,8 +139,7 @@ async function main(): Promise<void> {
           req.log.error({ err, meetingId }, 'ws.error');
         });
       },
-    );
-  });
+  );
 
   try {
     await fastify.listen({ port, host: '0.0.0.0' });

@@ -65,13 +65,18 @@ export default async function UpcomingPage(): Promise<ReactElement> {
   const now = new Date();
   const horizon = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
+  // Filter on `end_at >= now` so in-progress meetings (start_at < now <
+  // end_at) stay visible — otherwise a meeting disappears the moment it
+  // starts, and the user loses the row they need to (a) click into the
+  // live view, (b) toggle the bot off, or (c) retry a failed launch.
+  // `lte('start_at', horizon)` keeps the 7-day forward window.
   const { data: rows, error } = await supabase
     .from('calendar_events')
     .select(
       'id, user_id, event_id, title, start_at, end_at, conference_url, platform, attendee_count, is_organizer, bot_optin',
     )
     .eq('org_id', orgId)
-    .gte('start_at', now.toISOString())
+    .gte('end_at', now.toISOString())
     .lte('start_at', horizon.toISOString())
     .order('start_at', { ascending: true });
 
