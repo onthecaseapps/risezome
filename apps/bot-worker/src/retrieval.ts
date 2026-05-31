@@ -67,7 +67,10 @@ interface CardPayload {
   source: string;
   type: string;
   title: string;
+  /** Truncated preview (400 chars). */
   snippet: string;
+  /** Full chunk text (substrate for the highlight substring search). */
+  body: string;
   score: number;
   rank: number;
   metadata: Record<string, unknown>;
@@ -202,7 +205,8 @@ export async function maybeRetrieveAndEmit(args: {
     // Persist the card row (RLS-scoped by org_id; insert via service
     // role) BEFORE the broadcast, per R23a.
     const cardId = `card_${randomUUID()}`;
-    const snippet = chunk.text.length > 400 ? chunk.text.slice(0, 400) + '…' : chunk.text;
+    const body = chunk.text;
+    const snippet = body.length > 400 ? body.slice(0, 400) + '…' : body;
     // cosine distance is in [0, 2]; convert to a [0, 1] similarity-ish
     // score so the HUD's score field aligns with what the HUD currently
     // expects (the daemon emits cosine similarity).
@@ -217,6 +221,7 @@ export async function maybeRetrieveAndEmit(args: {
       type: doc.type,
       title: doc.title,
       snippet,
+      body,
       score,
       rank: i,
       metadata: { distance: hit.distance, chunkPosition: chunk.position },
@@ -240,6 +245,7 @@ export async function maybeRetrieveAndEmit(args: {
       type: doc.type,
       title: doc.title,
       snippet,
+      body,
       score,
       rank: i,
       metadata: { distance: hit.distance, chunkPosition: chunk.position },

@@ -13,7 +13,14 @@ export interface CardEvent {
   readonly source: string;
   readonly type: string;
   readonly title: string;
+  /** Truncated preview (400 chars). Used in compact card surfaces and
+   *  the placeholder source-title line. */
   readonly snippet: string;
+  /** Full chunk text the synthesizer saw. Substrate for the click-
+   *  citation → expand → highlight-quote UX. Optional to keep
+   *  backward compat with pre-deploy serialized cards that only carry
+   *  `snippet`; new cards always populate `body`. */
+  readonly body?: string;
   readonly score: number;
   readonly rank: number;
   readonly metadata: Record<string, unknown>;

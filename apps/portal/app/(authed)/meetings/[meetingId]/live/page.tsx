@@ -82,7 +82,7 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
     const { data: cardRows } = await supabase
       .from('cards')
       .select(
-        'card_id, doc_id, source, type, title, snippet, score, rank, metadata, surfaced_at, triggered_by, utterance_id, trace_id, url, pinned, retracted_at',
+        'card_id, doc_id, source, type, title, snippet, body, score, rank, metadata, surfaced_at, triggered_by, utterance_id, trace_id, url, pinned, retracted_at',
       )
       .eq('meeting_id', meetingId)
       .order('surfaced_at', { ascending: false });
@@ -95,6 +95,10 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
         type: c.type as string,
         title: c.title as string,
         snippet: c.snippet as string,
+        // body is non-null in new rows; backfilled to snippet for old
+        // rows. Fall back to snippet at the type boundary too, just
+        // in case a row predates the backfill migration.
+        body: (c.body as string | null) ?? (c.snippet as string),
         score: c.score as number,
         rank: c.rank as number,
         metadata: (c.metadata as Record<string, unknown>) ?? {},
