@@ -1,7 +1,7 @@
 ---
 title: 'feat: Atlassian (Jira + Confluence) source connector'
 type: feat
-status: active
+status: completed
 date: 2026-05-31
 origin: docs/brainstorms/2026-05-31-atlassian-jira-confluence-connector-requirements.md
 ---
