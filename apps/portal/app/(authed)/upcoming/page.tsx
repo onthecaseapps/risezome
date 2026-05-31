@@ -1,8 +1,8 @@
 import type { ReactElement } from 'react';
 import { requireAuthedUserWithOrg } from '../../_lib/auth';
-import { createServerClient } from '../../_lib/supabase-server';
+import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
 import { OptInToggle } from './_opt-in-toggle';
-import { SyncNowButton } from './_sync-now-button';
+import { SyncStatus } from './_sync-status';
 
 /**
  * Upcoming meetings for the current org. Shows the next 7 days of
@@ -60,17 +60,31 @@ export default async function UpcomingPage(): Promise<ReactElement> {
 
   const events = (rows ?? []) as CalendarEventRow[];
   const grouped = groupByDay(events);
+  const todayCount = countToday(events);
+  const lastSyncedAt = await lookupLastSyncedAt(user.id);
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
       <header className="mb-6 flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Upcoming</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Upcoming meetings</h1>
           <p className="mt-1.5 text-sm text-muted">
-            Next 7 days · <span className="text-fg">{orgName}</span>
+            {formatHeaderDate()} {todayCount > 0 ? `· ${todayCount} today` : '· no meetings today'}
+            <span className="ml-1 text-muted/70">· {orgName}</span>
           </p>
         </div>
-        <SyncNowButton />
+        <div className="flex items-center gap-4">
+          <SyncStatus lastSyncedAtIso={lastSyncedAt} />
+          <a
+            href="https://calendar.google.com/calendar/u/0/r/eventedit"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-white shadow-sm hover:bg-accent-press"
+          >
+            <PlusIcon />
+            Add meeting
+          </a>
+        </div>
       </header>
 
       {error !== null ? (
@@ -80,11 +94,16 @@ export default async function UpcomingPage(): Promise<ReactElement> {
       ) : events.length === 0 ? (
         <EmptyState />
       ) : (
-        <div className="flex flex-col gap-6">
-          {grouped.map((group) => (
-            <DayGroup key={group.dayKey} day={group.day} events={group.events} currentUserId={user.id} />
-          ))}
-        </div>
+        <>
+          <div className="flex flex-col gap-6">
+            {grouped.map((group) => (
+              <DayGroup key={group.dayKey} day={group.day} events={group.events} currentUserId={user.id} />
+            ))}
+          </div>
+          <p className="mt-8 text-center text-xs text-muted">
+            Risezome joins only the meetings with the bot toggled on. Toggle off to skip one.
+          </p>
+        </>
       )}
     </div>
   );
@@ -134,6 +153,7 @@ function EventRow({
   currentUserId: string;
 }): ReactElement {
   const owned = event.user_id === currentUserId;
+  const status = describeStatus(event.start_at, event.end_at);
   return (
     <div className="flex items-center gap-4 rounded-xl border border-border bg-card p-4">
       <div className="flex w-14 flex-shrink-0 flex-col items-end text-xs text-muted">
@@ -150,6 +170,7 @@ function EventRow({
               Organizer
             </span>
           ) : null}
+          <StatusChip status={status} />
         </div>
         <div className="mt-1 flex items-center gap-2 text-xs text-muted">
           {event.conference_url !== null ? (
@@ -180,6 +201,29 @@ function EventRow({
   );
 }
 
+function StatusChip({ status }: { status: { label: string; tone: 'live' | 'soon' | 'later' } | null }): ReactElement | null {
+  if (status === null) return null;
+  const toneClass =
+    status.tone === 'live'
+      ? 'bg-emerald-500/15 text-emerald-300'
+      : status.tone === 'soon'
+      ? 'bg-accent-soft text-accent'
+      : 'bg-bg/60 text-muted';
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${toneClass}`}>
+      {status.label}
+    </span>
+  );
+}
+
+function PlusIcon(): ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
 function PlatformBadge({ platform }: { platform: 'zoom' | 'meet' | 'other' | null }): ReactElement | null {
   if (platform === null) return null;
   const map: Record<NonNullable<typeof platform>, { label: string; className: string }> = {
@@ -196,6 +240,63 @@ function PlatformBadge({ platform }: { platform: 'zoom' | 'meet' | 'other' | nul
 }
 
 /* ---------- helpers ---------- */
+
+function formatHeaderDate(): string {
+  return new Date().toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function countToday(events: CalendarEventRow[]): number {
+  const today = new Date().toDateString();
+  return events.filter((e) => new Date(e.start_at).toDateString() === today).length;
+}
+
+function describeStatus(
+  startIso: string,
+  endIso: string,
+): { label: string; tone: 'live' | 'soon' | 'later' } | null {
+  const now = Date.now();
+  const start = new Date(startIso).getTime();
+  const end = new Date(endIso).getTime();
+
+  if (start <= now && end > now) return { label: 'Live now', tone: 'live' };
+
+  const diffMin = Math.round((start - now) / 60_000);
+  if (diffMin <= 0) return null; // already past, shouldn't normally hit
+  if (diffMin <= 15) return { label: `In ${diffMin} min`, tone: 'soon' };
+  if (diffMin <= 60) return { label: `In ${diffMin} min`, tone: 'soon' };
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return { label: `In ${diffHr} h`, tone: 'later' };
+  return null; // > 1 day: row's day-group header tells the user the day
+}
+
+/**
+ * Last calendar-sync timestamp for this user. We use the most recent
+ * `updated_at` on the user's calendar_events rows; if there are none,
+ * fall back to the user_google_tokens row (bumped by the token refresh
+ * inside the sync function). Returns null if neither exists.
+ */
+async function lookupLastSyncedAt(userId: string): Promise<string | null> {
+  const service = createServiceRoleClient();
+  const { data: ev } = await service
+    .from('calendar_events')
+    .select('updated_at')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (ev !== null) return ev.updated_at as string;
+
+  const { data: token } = await service
+    .from('user_google_tokens')
+    .select('updated_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+  return (token?.updated_at as string | undefined) ?? null;
+}
 
 function groupByDay(events: CalendarEventRow[]): Array<{ dayKey: string; day: string; events: CalendarEventRow[] }> {
   const groups = new Map<string, CalendarEventRow[]>();
