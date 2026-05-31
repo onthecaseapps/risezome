@@ -1,13 +1,25 @@
-import type { ReactElement } from 'react';
+'use client';
+
+import { useEffect, useState, type ReactElement } from 'react';
+import {
+  applyTheme,
+  readStoredTheme,
+  writeStoredTheme,
+  type ThemePreference,
+} from '@risezome/hud-ui';
 
 /**
- * Bottom-of-sidebar user identity + sign-out. Avatar shows initials in
- * a colored circle (no Gravatar / Google avatar fetch yet — adds another
- * round-trip per page render and the upstream Google profile picture isn't
- * cached anywhere; defer to a later polish unit).
+ * Bottom-of-sidebar user identity + sign-out + theme cycle. Avatar shows
+ * initials in a colored circle (no Gravatar / Google avatar fetch yet —
+ * adds another round-trip per page render and the upstream Google
+ * profile picture isn't cached anywhere; defer to a later polish unit).
  *
- * Sign-out is a POST form (matches /api/auth/sign-out's POST-only contract;
- * avoids accidental sign-out via link prefetch).
+ * Sign-out is a POST form (matches /api/auth/sign-out's POST-only
+ * contract; avoids accidental sign-out via link prefetch).
+ *
+ * Client component now (was server). The theme toggle's preference is
+ * read on mount from localStorage so SSR/client agree; the surrounding
+ * user info is passed in as props from the server-side Sidebar.
  */
 export function UserCard({
   email,
@@ -29,6 +41,7 @@ export function UserCard({
           <div className="truncate text-sm font-medium">{fullName ?? email.split('@')[0]}</div>
           <div className="truncate text-xs text-muted">{email}</div>
         </div>
+        <ThemeCycleButton />
         <form action="/api/auth/sign-out" method="post">
           <button
             type="submit"
@@ -55,6 +68,90 @@ export function UserCard({
         </form>
       </div>
     </div>
+  );
+}
+
+/**
+ * Cycles Light → Dark → System → Light. Glyph reflects the stored
+ * preference, not the rendered theme — when in 'system' the icon stays
+ * the auto-glyph regardless of OS state. Listens for OS theme changes
+ * only while pref === 'system'.
+ */
+function ThemeCycleButton(): ReactElement {
+  const [pref, setPref] = useState<ThemePreference>('system');
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    setPref(readStoredTheme());
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    if (pref !== 'system' || typeof window === 'undefined') return;
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (): void => applyTheme('system');
+    try {
+      mql.addEventListener('change', handler);
+      return (): void => mql.removeEventListener('change', handler);
+    } catch {
+      mql.addListener(handler);
+      return (): void => mql.removeListener(handler);
+    }
+  }, [pref, mounted]);
+
+  function cycle(): void {
+    const next: ThemePreference =
+      pref === 'light' ? 'dark' : pref === 'dark' ? 'system' : 'light';
+    setPref(next);
+    writeStoredTheme(next);
+    applyTheme(next);
+  }
+
+  const label =
+    pref === 'light' ? 'Light theme · click for dark'
+    : pref === 'dark' ? 'Dark theme · click for system'
+    : 'System theme · click for light';
+
+  return (
+    <button
+      type="button"
+      onClick={cycle}
+      className="rounded-md p-1.5 text-muted transition-colors hover:bg-accent-soft/50 hover:text-fg"
+      title={label}
+      aria-label={label}
+    >
+      {pref === 'light' ? <SunIcon /> : pref === 'dark' ? <MoonIcon /> : <AutoIcon />}
+    </button>
+  );
+}
+
+function SunIcon(): ReactElement {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4.5" />
+      <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5 5l1.4 1.4M17.6 17.6L19 19M5 19l1.4-1.4M17.6 6.4 19 5" />
+    </svg>
+  );
+}
+
+function MoonIcon(): ReactElement {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />
+    </svg>
+  );
+}
+
+function AutoIcon(): ReactElement {
+  // Half-filled circle: left side outline (light), right side filled (dark).
+  // Reads as "auto, could be either depending on OS".
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 3.5v17" />
+      <path d="M12 6a6 6 0 0 1 0 12Z" fill="currentColor" stroke="none" />
+    </svg>
   );
 }
 

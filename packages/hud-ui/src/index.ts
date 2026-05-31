@@ -43,4 +43,12 @@ export {
 } from './state/card-actions';
 
 // Lib
-export { THEME_STORAGE_KEY, THEME_INIT_SCRIPT } from './lib/theme';
+export {
+  THEME_STORAGE_KEY,
+  THEME_INIT_SCRIPT,
+  readStoredTheme,
+  writeStoredTheme,
+  applyTheme,
+  resolveEffectiveTheme,
+  type ThemePreference,
+} from './lib/theme';
