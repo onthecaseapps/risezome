@@ -32,8 +32,8 @@ export default function SignInPage({
           the foreground content. */}
       <aside className="relative hidden flex-col overflow-hidden bg-accent/[0.06] p-10 lg:flex">
         <div className="relative z-10 flex items-center gap-3">
-          <Logo size={34} className="text-accent" />
-          <span className="text-xl font-semibold tracking-tight">Risezome</span>
+          <Logo size={44} className="text-accent" />
+          <span className="text-3xl font-semibold tracking-tight">Risezome</span>
         </div>
 
         <RisingSignalsBackdrop />
