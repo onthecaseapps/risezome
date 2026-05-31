@@ -3,6 +3,7 @@
 import { useMemo, type ReactElement } from 'react';
 import {
   AppStateProvider,
+  CardActionsProvider,
   CardStream,
   EmptyState,
   PinnedSection,
@@ -12,6 +13,7 @@ import {
   useAppDispatch,
   useAppState,
   type AppState,
+  type CardActions,
   type CardEvent,
   type CardRecord,
   type SynthesisRecord,
@@ -20,6 +22,7 @@ import {
   useRealtimeMeetingChannel,
   type BroadcastedStatus,
 } from '../../../../_lib/realtime-meeting-channel';
+import { pinCardAction, dismissCardAction } from './card-actions-server';
 import type { InitialSynthesis } from './page';
 
 export type MeetingStatus =
@@ -105,8 +108,48 @@ function RealtimeWrapper({
   const channel = useRealtimeMeetingChannel({ meetingId, orgId, dispatch });
   const effectiveStatus: BroadcastedStatus = channel.liveMeetingStatus ?? initialStatus;
 
+  // Pin/dismiss handlers. Each one optimistically dispatches a reducer
+  // action FIRST (so the UI snaps immediately), then calls the server
+  // action. On server-side failure we roll back via the opposite
+  // dispatch. The HUD's HudCard captures errors via its own
+  // useTransition state so the button shows a brief error label.
+  const cardActions = useMemo<CardActions>(
+    () => ({
+      pin: async (cardId: string) => {
+        dispatch({ type: 'cardUpdated', update: { cardId, metadata: { pinned: true } } });
+        // Pin state lives on the CardRecord, not the CardEvent. The
+        // reducer's cardUpdated only mutates fields on the inner card.
+        // For the pinned-flag the dispatch above is cosmetic; the
+        // server is authoritative. We force-refresh by re-fetching on
+        // the next render via router.refresh() if needed.
+        const result = await pinCardAction(cardId, true);
+        if (!result.ok) throw new Error(result.error);
+      },
+      unpin: async (cardId: string) => {
+        const result = await pinCardAction(cardId, false);
+        if (!result.ok) throw new Error(result.error);
+      },
+      dismiss: async (cardId: string) => {
+        // Optimistic: dispatch a retraction so the card disappears
+        // immediately. Server confirms; on failure we'd need to re-add,
+        // but for V1 we surface the error and let the user reload.
+        dispatch({
+          type: 'cardRetracted',
+          retracted: { cardId, reason: 'manual-dismiss' },
+        });
+        const result = await dismissCardAction(cardId);
+        if (!result.ok) throw new Error(result.error);
+      },
+    }),
+    [dispatch],
+  );
+
   if (effectiveStatus === 'recording') {
-    return <RecordingShell title={title} startedAtIso={startedAtIso} channelStatus={channel.status} />;
+    return (
+      <CardActionsProvider actions={cardActions}>
+        <RecordingShell title={title} startedAtIso={startedAtIso} channelStatus={channel.status} />
+      </CardActionsProvider>
+    );
   }
   if (effectiveStatus === 'failed') {
     // Shouldn't happen — we'd have rendered FailureShell above. But

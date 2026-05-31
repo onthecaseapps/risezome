@@ -36,6 +36,11 @@ export {
   type SynthesisRecord,
   type MeetingMode,
 } from './state/app-state';
+export {
+  CardActionsProvider,
+  useCardActions,
+  type CardActions,
+} from './state/card-actions';
 
 // Lib
 export { THEME_STORAGE_KEY, THEME_INIT_SCRIPT } from './lib/theme';
