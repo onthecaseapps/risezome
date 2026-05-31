@@ -64,7 +64,7 @@ describe('github_issue_progress', () => {
     const skill = buildIssueProgressSkill(ctxWith({ issue: BASE_ISSUE, timeline: [] }));
     const result = await skill.handler(
       { issue_number: 14 },
-      { db: null as never, now: FAKE_CTX_FN },
+      { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN },
     );
     expect(result.summary).toContain('#14');
     expect(result.summary).toContain('Auth refactor');
@@ -77,7 +77,7 @@ describe('github_issue_progress', () => {
     const skill = buildIssueProgressSkill(ctxWith({ issue: BASE_ISSUE, timeline: [] }));
     const result = await skill.handler(
       { issue_number: 14 },
-      { db: null as never, now: FAKE_CTX_FN },
+      { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN },
     );
     expect(result.summary).toContain('No recent activity');
   });
@@ -101,7 +101,7 @@ describe('github_issue_progress', () => {
     const skill = buildIssueProgressSkill(ctxWith({ issue: BASE_ISSUE, timeline }));
     const result = await skill.handler(
       { issue_number: 14 },
-      { db: null as never, now: FAKE_CTX_FN },
+      { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN },
     );
     expect(result.items).toHaveLength(5);
     // Newest first — the most recent load-bearing event was unlabeled at 07:00
@@ -129,7 +129,7 @@ describe('github_issue_progress', () => {
     const skill = buildIssueProgressSkill(ctxWith({ issue: BASE_ISSUE, timeline }));
     const result = await skill.handler(
       { issue_number: 14 },
-      { db: null as never, now: FAKE_CTX_FN },
+      { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN },
     );
     expect(result.items?.[0]?.title).toContain('bob commented');
     expect(result.items?.[0]?.subtitle?.length).toBeLessThanOrEqual(200);
@@ -145,7 +145,7 @@ describe('github_issue_progress', () => {
     };
     const skill = buildIssueProgressSkill(ctx);
     await expect(
-      skill.handler({ issue_number: 999 }, { db: null as never, now: FAKE_CTX_FN }),
+      skill.handler({ issue_number: 999 }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN }),
     ).rejects.toMatchObject({ executionCode: 'not-found' });
   });
 
@@ -154,7 +154,7 @@ describe('github_issue_progress', () => {
     const skill = buildIssueProgressSkill(ctxWith({ issue, timeline: [] }));
     const result = await skill.handler(
       { issue_number: 14 },
-      { db: null as never, now: FAKE_CTX_FN },
+      { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN },
     );
     expect(result.summary).not.toContain('assigned to');
     expect(result.summary).not.toContain('labeled');

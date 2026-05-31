@@ -45,7 +45,7 @@ describe('github_by_assignee_count', () => {
       repo: { owner: 'o', name: 'r' },
     };
     const skill = buildByAssigneeCountSkill(ctx);
-    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, now: FAKE_CTX_FN });
+    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.kind).toBe('count');
     expect(result.summary).toContain('Nath5 has 5');
     expect(result.summary).toContain('open issues');
@@ -64,7 +64,7 @@ describe('github_by_assignee_count', () => {
       repo: { owner: 'o', name: 'r' },
     };
     const skill = buildByAssigneeCountSkill(ctx);
-    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, now: FAKE_CTX_FN });
+    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.summary).toContain('0');
   });
 
@@ -81,7 +81,7 @@ describe('github_by_assignee_count', () => {
       repo: { owner: 'o', name: 'r' },
     };
     const skill = buildByAssigneeCountSkill(ctx);
-    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, now: FAKE_CTX_FN });
+    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.summary).toContain('30+');
     expect(result.summary).toContain('first-page count');
   });
@@ -100,7 +100,7 @@ describe('github_by_assignee_count', () => {
       repo: { owner: 'o', name: 'r' },
     };
     const skill = buildByAssigneeCountSkill(ctx);
-    const result = await skill.handler({ person: 'ghost' }, { db: null as never, now: FAKE_CTX_FN });
+    const result = await skill.handler({ person: 'ghost' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.summary).toContain("Couldn't find a GitHub user");
     expect(callCount).toBe(2);
   });
@@ -119,7 +119,7 @@ describe('github_by_assignee_count', () => {
       repo: { owner: 'o', name: 'r' },
     };
     const skill = buildByAssigneeCountSkill(ctx);
-    const result = await skill.handler({ person: 'nathan' }, { db: null as never, now: FAKE_CTX_FN });
+    const result = await skill.handler({ person: 'nathan' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.summary).toContain('Resolved "nathan" → "Nath5"');
   });
 

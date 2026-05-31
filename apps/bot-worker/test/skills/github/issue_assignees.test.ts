@@ -55,7 +55,7 @@ describe('github_issue_assignees', () => {
       ),
     );
     const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl as unknown as typeof fetch));
-    const result = await skill.handler({ issue_number: 14 }, { db: null as never, now: FAKE_CTX_FN });
+    const result = await skill.handler({ issue_number: 14 }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.kind).toBe('detail');
     expect(result.summary).toContain('#14');
     expect(result.summary).toContain('Auth refactor');
@@ -84,7 +84,7 @@ describe('github_issue_assignees', () => {
       ),
     );
     const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl as unknown as typeof fetch));
-    const result = await skill.handler({ issue_number: 7 }, { db: null as never, now: FAKE_CTX_FN });
+    const result = await skill.handler({ issue_number: 7 }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.summary).toContain('no current assignees');
     expect(result.items).toBeUndefined();
   });
@@ -115,7 +115,7 @@ describe('github_issue_assignees', () => {
       repo: { owner: 'Nath5', name: 'upwell' },
     };
     const skill = buildIssueAssigneesSkill(ctx);
-    await skill.handler({ issue_number: 99 }, { db: null as never, now: FAKE_CTX_FN });
+    await skill.handler({ issue_number: 99 }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(capturedUrl).toContain('/repos/Nath5/upwell/issues/99');
   });
 
@@ -123,7 +123,7 @@ describe('github_issue_assignees', () => {
     const fetchImpl = vi.fn(() => Promise.resolve(new Response('', { status: 404 })));
     const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl as unknown as typeof fetch));
     await expect(
-      skill.handler({ issue_number: 999 }, { db: null as never, now: FAKE_CTX_FN }),
+      skill.handler({ issue_number: 999 }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN }),
     ).rejects.toMatchObject({
       executionCode: 'not-found',
     });
@@ -135,7 +135,7 @@ describe('github_issue_assignees', () => {
     );
     const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl as unknown as typeof fetch));
     await expect(
-      skill.handler({ issue_number: 14 }, { db: null as never, now: FAKE_CTX_FN }),
+      skill.handler({ issue_number: 14 }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN }),
     ).rejects.toMatchObject({ executionCode: 'rate-limit' });
   });
 
@@ -143,7 +143,7 @@ describe('github_issue_assignees', () => {
     const fetchImpl = vi.fn(() => Promise.resolve(new Response('', { status: 500 })));
     const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl as unknown as typeof fetch));
     await expect(
-      skill.handler({ issue_number: 14 }, { db: null as never, now: FAKE_CTX_FN }),
+      skill.handler({ issue_number: 14 }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN }),
     ).rejects.toBeInstanceOf(SkillExecutionError);
   });
 });

@@ -47,7 +47,7 @@ describe('github_by_assignee_list', () => {
       repo: { owner: 'o', name: 'r' },
     };
     const skill = buildByAssigneeListSkill(ctx);
-    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, now: FAKE_CTX_FN });
+    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.kind).toBe('list');
     expect(result.summary).toContain('Nath5');
     expect(result.summary).toContain('3 open issues');
@@ -70,7 +70,7 @@ describe('github_by_assignee_list', () => {
       repo: { owner: 'o', name: 'r' },
     };
     const skill = buildByAssigneeListSkill(ctx);
-    const result = await skill.handler({ person: 'nathan' }, { db: null as never, now: FAKE_CTX_FN });
+    const result = await skill.handler({ person: 'nathan' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.summary).toContain('Resolved "nathan" → "Nath5"');
     expect(result.summary).toContain('1 open issues');
   });
@@ -89,7 +89,7 @@ describe('github_by_assignee_list', () => {
       repo: { owner: 'o', name: 'r' },
     };
     const skill = buildByAssigneeListSkill(ctx);
-    const result = await skill.handler({ person: 'ghost' }, { db: null as never, now: FAKE_CTX_FN });
+    const result = await skill.handler({ person: 'ghost' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.summary).toContain("Couldn't find a GitHub user matching");
     expect(result.summary).toContain('"ghost"');
     expect(result.items).toBeUndefined();
@@ -108,7 +108,7 @@ describe('github_by_assignee_list', () => {
       repo: { owner: 'o', name: 'r' },
     };
     const skill = buildByAssigneeListSkill(ctx);
-    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, now: FAKE_CTX_FN });
+    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.summary).toContain('0 open issues');
     expect(result.items).toBeUndefined();
   });
@@ -126,7 +126,7 @@ describe('github_by_assignee_list', () => {
       repo: { owner: 'o', name: 'r' },
     };
     const skill = buildByAssigneeListSkill(ctx);
-    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, now: FAKE_CTX_FN });
+    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.summary).toContain('(showing first 30)');
   });
 
@@ -142,7 +142,7 @@ describe('github_by_assignee_list', () => {
     };
     const skill = buildByAssigneeListSkill(ctx);
     await expect(
-      skill.handler({ person: 'Nath5' }, { db: null as never, now: FAKE_CTX_FN }),
+      skill.handler({ person: 'Nath5' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN }),
     ).rejects.toMatchObject({ executionCode: 'rate-limit' });
   });
 
