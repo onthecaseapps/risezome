@@ -1,7 +1,7 @@
 ---
 title: "feat: Lift router/skills framework + GitHub skills into the bot-worker production Recall path"
 type: feat
-status: active
+status: completed
 date: 2026-05-31
 origin: docs/brainstorms/router-skills-framework-requirements.md
 ---

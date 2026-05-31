@@ -1,7 +1,7 @@
 ---
 title: "feat: LLM synthesis card"
 type: feat
-status: active
+status: completed
 date: 2026-05-29
 origin: docs/brainstorms/llm-synthesis-card-requirements.md
 ---

@@ -1,7 +1,7 @@
 ---
 title: feat - Risezome portal & bot worker SaaS shape
 type: feat
-status: active
+status: completed
 date: 2026-05-30
 origin: docs/brainstorms/2026-05-30-upwell-portal-and-cloud-shape-requirements.md
 ---

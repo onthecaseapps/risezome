@@ -1,7 +1,7 @@
 ---
 title: feat: Live page synthesis-first with quoted citations
 type: feat
-status: active
+status: completed
 date: 2026-05-31
 origin: docs/brainstorms/live-page-synthesis-first-requirements.md
 ---

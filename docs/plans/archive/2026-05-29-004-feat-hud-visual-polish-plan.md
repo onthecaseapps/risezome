@@ -1,7 +1,7 @@
 ---
 title: "feat: HUD visual polish — v2 visual language"
 type: feat
-status: active
+status: completed
 date: 2026-05-29
 origin: docs/brainstorms/hud-visual-polish-requirements.md
 ---

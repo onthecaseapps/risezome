@@ -1,7 +1,7 @@
 ---
 title: "feat: Meeting Context Copilot"
 type: feat
-status: active
+status: superseded
 date: 2026-05-28
 deepened: 2026-05-28
 origin: docs/brainstorms/meeting-context-copilot-requirements.md

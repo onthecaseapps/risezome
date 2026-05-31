@@ -1,7 +1,7 @@
 ---
 title: "feat: Utterance-relevance pre-classifier — skip the pipeline on obvious filler"
 type: feat
-status: active
+status: completed
 date: 2026-05-29
 origin: docs/brainstorms/utterance-relevance-classifier-requirements.md
 ---

@@ -1,7 +1,7 @@
 ---
 title: "feat: Live GitHub API skills — assignees + issue progress"
 type: feat
-status: active
+status: completed
 date: 2026-05-29
 origin: docs/brainstorms/github-live-skills-requirements.md
 ---

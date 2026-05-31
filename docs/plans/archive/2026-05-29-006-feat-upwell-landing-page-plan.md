@@ -1,7 +1,7 @@
 ---
 title: 'feat: Upwell landing page (Next.js)'
 type: feat
-status: active
+status: superseded
 date: 2026-05-29
 origin: docs/brainstorms/2026-05-29-upwell-landing-page-requirements.md
 ---

@@ -1,7 +1,7 @@
 ---
 title: 'feat: Trello source connector + general connector foundation'
 type: feat
-status: active
+status: completed
 date: 2026-05-31
 origin: docs/brainstorms/2026-05-31-trello-source-connector-requirements.md
 ---

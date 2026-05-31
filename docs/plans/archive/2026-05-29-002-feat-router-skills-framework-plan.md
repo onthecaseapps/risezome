@@ -1,7 +1,7 @@
 ---
 title: "feat: Router + per-integration skills framework (v1)"
 type: feat
-status: active
+status: superseded
 date: 2026-05-29
 origin: docs/brainstorms/router-skills-framework-requirements.md
 ---

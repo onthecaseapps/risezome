@@ -1,7 +1,7 @@
 ---
 title: "feat: Convert HUD to Next.js (React) for portal embedding + landing-page style parity"
 type: feat
-status: active
+status: completed
 date: 2026-05-30
 ---
 

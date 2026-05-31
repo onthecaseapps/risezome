@@ -1,7 +1,7 @@
 ---
 title: feat: Rolling meeting summary for long-range context + coherence-in-context classification
 type: feat
-status: active
+status: completed
 date: 2026-05-31
 origin: docs/brainstorms/rolling-meeting-summary-requirements.md
 ---
