@@ -16,10 +16,12 @@
     "@risezome/shared-types": "workspace:*",
     "@supabase/supabase-js": "^2.106.2",
     "fastify": "^5.2.1",
-    "jose": "^5.9.6"
+    "jose": "^5.9.6",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
+    "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^2.1.8"

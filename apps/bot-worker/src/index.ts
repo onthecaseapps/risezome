@@ -26,6 +26,7 @@ import {
 } from '@risezome/engine/relevance';
 import { adaptRecallMessage } from './recall-adapter.js';
 import { verifyBotWsJwt, type BotWsJwtPayload } from './jwt.js';
+import { handleLocalDebugWs } from './debug/local-debug-ws.js';
 import {
   createServiceClient,
   markRecordingIfFirst,
@@ -178,6 +179,63 @@ async function main(): Promise<void> {
 
         socket.on('error', (err) => {
           req.log.error({ err, meetingId }, 'ws.error');
+        });
+      },
+    });
+
+    // Debug-only local-mic pipeline (sidecar → Deepgram → retrieval →
+    // synthesis → stream events back over the WS). Auth: short-lived
+    // JWT minted by the portal server-side, same secret as Recall WS.
+    // Linux-only (sidecar binary path is Linux PulseAudio). Gate on
+    // LOCAL_DEBUG_ENABLED=true so production deployments don't expose
+    // this surface accidentally.
+    const localDebugEnabled = process.env['LOCAL_DEBUG_ENABLED'] === 'true';
+    const deepgramKey = process.env['DEEPGRAM_API_KEY'];
+    instance.route<{ Params: { '*': string } }>({
+      method: 'GET',
+      url: '/local-debug/*',
+      handler: (_req, reply) => {
+        reply.code(200).send({ ok: true, kind: 'local-debug-ws', enabled: localDebugEnabled });
+      },
+      wsHandler: async (socket, req) => {
+        if (!localDebugEnabled) {
+          socket.send(JSON.stringify({ type: 'error', message: 'local-debug disabled (set LOCAL_DEBUG_ENABLED=true)' }));
+          socket.close();
+          return;
+        }
+        if (deepgramKey === undefined || deepgramKey.length === 0) {
+          socket.send(JSON.stringify({ type: 'error', message: 'DEEPGRAM_API_KEY unset' }));
+          socket.close();
+          return;
+        }
+        if (voyageKey === undefined || voyageKey.length === 0) {
+          socket.send(JSON.stringify({ type: 'error', message: 'VOYAGE_API_KEY unset' }));
+          socket.close();
+          return;
+        }
+        if (anthropicKey === undefined || anthropicKey.length === 0) {
+          socket.send(JSON.stringify({ type: 'error', message: 'ANTHROPIC_API_KEY unset' }));
+          socket.close();
+          return;
+        }
+        const jwt = (req.params as { '*': string })['*'];
+        let payload: BotWsJwtPayload;
+        try {
+          payload = await verifyBotWsJwt(jwt, secret);
+        } catch (err) {
+          req.log.warn({ err }, 'local-debug.jwt.invalid');
+          socket.send(JSON.stringify({ type: 'error', message: 'jwt-invalid' }));
+          socket.close();
+          return;
+        }
+        await handleLocalDebugWs(socket, {
+          db,
+          orgId: payload.orgId,
+          anthropicKey,
+          anthropicModel,
+          voyageKey,
+          deepgramKey,
+          logger: req.log,
         });
       },
     });

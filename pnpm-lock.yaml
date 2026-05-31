@@ -56,10 +56,16 @@ importers:
       jose:
         specifier: ^5.9.6
         version: 5.10.0
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.5
         version: 22.19.19
+      '@types/ws':
+        specifier: ^8.5.13
+        version: 8.18.1
       tsx:
         specifier: ^4.19.2
         version: 4.22.3
