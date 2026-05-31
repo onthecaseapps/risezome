@@ -20,6 +20,20 @@ export interface SourceIndexRequestedEvent {
   };
 }
 
+/**
+ * Trello-specific index request. Separate from `source.index-requested` (which
+ * the GitHub indexer triggers on) so the two indexers never both fire for one
+ * source — the Sources actions emit by `source.kind`.
+ */
+export interface TrelloIndexRequestedEvent {
+  name: 'risezome/trello.index-requested';
+  data: {
+    orgId: string;
+    sourceId: string;
+    reason: 'connect' | 'reindex';
+  };
+}
+
 export interface CalendarSyncRequestedEvent {
   name: 'risezome/calendar.sync-requested';
   data: {
