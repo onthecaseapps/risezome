@@ -234,6 +234,84 @@ describe('launchRecallBot — request body shape', () => {
   });
 });
 
+describe('launchRecallBot — duration safety cap', () => {
+  it('defaults max call duration to 300s when not passed', async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+    const fakeFetch = makeFetch(async (req) => {
+      capturedBody = (await req.json()) as Record<string, unknown>;
+      return new Response(JSON.stringify({ id: 'bot-1' }), { status: 201 });
+    });
+
+    await launchRecallBot(baseArgs(), {
+      apiKey: 'k',
+      deepgramKey: 'd',
+      botWorkerBaseUrl: 'wss://b.t',
+      region: 'us-east-1',
+      fetch: fakeFetch,
+    });
+
+    const auto = (capturedBody as unknown as {
+      automatic_leave: {
+        in_call_recording_timeout: number;
+        in_call_not_recording_timeout: number;
+      };
+    }).automatic_leave;
+    expect(auto.in_call_recording_timeout).toBe(300);
+    expect(auto.in_call_not_recording_timeout).toBe(300);
+  });
+
+  it('honors a custom maxCallDurationSeconds', async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+    const fakeFetch = makeFetch(async (req) => {
+      capturedBody = (await req.json()) as Record<string, unknown>;
+      return new Response(JSON.stringify({ id: 'bot-1' }), { status: 201 });
+    });
+
+    await launchRecallBot(baseArgs(), {
+      apiKey: 'k',
+      deepgramKey: 'd',
+      botWorkerBaseUrl: 'wss://b.t',
+      region: 'us-east-1',
+      maxCallDurationSeconds: 3600,
+      fetch: fakeFetch,
+    });
+
+    const auto = (capturedBody as unknown as {
+      automatic_leave: {
+        in_call_recording_timeout: number;
+        in_call_not_recording_timeout: number;
+      };
+    }).automatic_leave;
+    expect(auto.in_call_recording_timeout).toBe(3600);
+    expect(auto.in_call_not_recording_timeout).toBe(3600);
+  });
+
+  it('rejects non-positive durations rather than silently sending an unbounded bot', async () => {
+    const fakeFetch = makeFetch(async () => new Response('{}', { status: 200 }));
+    await expect(
+      launchRecallBot(baseArgs(), {
+        apiKey: 'k',
+        deepgramKey: 'd',
+        botWorkerBaseUrl: 'wss://b.t',
+        region: 'us-east-1',
+        maxCallDurationSeconds: 0,
+        fetch: fakeFetch,
+      }),
+    ).rejects.toThrow(/positive/i);
+
+    await expect(
+      launchRecallBot(baseArgs(), {
+        apiKey: 'k',
+        deepgramKey: 'd',
+        botWorkerBaseUrl: 'wss://b.t',
+        region: 'us-east-1',
+        maxCallDurationSeconds: -1,
+        fetch: fakeFetch,
+      }),
+    ).rejects.toThrow(/positive/i);
+  });
+});
+
 describe('launchRecallBot — error paths', () => {
   it('returns errorCode=invalid_url on 4xx with body mentioning meeting_url', async () => {
     const fakeFetch = makeFetch(async () =>

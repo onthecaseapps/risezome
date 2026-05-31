@@ -160,6 +160,13 @@ export const launchBotFn = inngest.createFunction(
           deepgramKey: requireEnv('RECALL_DEEPGRAM_KEY'),
           botWorkerBaseUrl: requireEnv('BOT_WORKER_BASE_URL'),
           region: process.env['RECALL_REGION'] ?? 'us-east-1',
+          // Safety cap on bot duration so a runaway bug can't leave a
+          // bot in indefinitely. Default 300s (5 min) is enforced in
+          // the launcher itself; this env override lifts it for prod.
+          maxCallDurationSeconds: parseDurationEnv(
+            process.env['RECALL_MAX_DURATION_SECONDS'],
+            300,
+          ),
         },
       );
     });
@@ -202,4 +209,11 @@ function requireEnv(name: string): string {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return value;
+}
+
+function parseDurationEnv(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.length === 0) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
 }

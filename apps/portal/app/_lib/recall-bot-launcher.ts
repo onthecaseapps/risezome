@@ -43,6 +43,16 @@ export interface LaunchBotDeps {
   botWorkerBaseUrl: string;
   /** Recall.ai region. Defaults to 'us-east-1'. */
   region?: string;
+  /**
+   * Hard cap on how long the bot stays in the meeting, in seconds.
+   * Applied to BOTH `in_call_recording_timeout` and
+   * `in_call_not_recording_timeout` so the bot leaves regardless of
+   * whether it's actively recording. Default: 300 (5 min) — safe
+   * for dev/test so a runaway bug can't leave a bot in indefinitely.
+   * Lift via env var (e.g. 3600 for production once the surface is
+   * proven). Must be > 0; treated as integer seconds.
+   */
+  maxCallDurationSeconds?: number;
   /** Override for testing. */
   fetch?: typeof fetch;
   /**
@@ -94,6 +104,8 @@ interface RecallBotRequestBody {
     waiting_room_timeout: number;
     noone_joined_timeout: number;
     everyone_left_timeout: number;
+    in_call_recording_timeout: number;
+    in_call_not_recording_timeout: number;
   };
   metadata: {
     org_id: string;
@@ -196,6 +208,19 @@ function buildBody(args: LaunchBotArgs, deps: LaunchBotDeps): RecallBotRequestBo
       waiting_room_timeout: 60 * 20,
       noone_joined_timeout: 60 * 10,
       everyone_left_timeout: 30,
+      // Hard cap on total time in the meeting. Applied to both the
+      // recording and non-recording timeouts so the bot leaves
+      // unconditionally after this many seconds. Dev-safe default
+      // = 300 (5 min); production lifts via env in the caller.
+      // Throws if someone passes a non-positive value.
+      in_call_recording_timeout: assertPositiveSeconds(
+        deps.maxCallDurationSeconds ?? 300,
+        'maxCallDurationSeconds',
+      ),
+      in_call_not_recording_timeout: assertPositiveSeconds(
+        deps.maxCallDurationSeconds ?? 300,
+        'maxCallDurationSeconds',
+      ),
     },
     metadata: {
       org_id: args.orgId,
@@ -252,4 +277,11 @@ async function classifyFailure(resp: Response): Promise<LaunchBotResult> {
 
 function stripTrailingSlash(s: string): string {
   return s.endsWith('/') ? s.slice(0, -1) : s;
+}
+
+function assertPositiveSeconds(value: number, name: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive number of seconds (got ${value})`);
+  }
+  return Math.floor(value);
 }
