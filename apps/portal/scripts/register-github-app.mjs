@@ -55,9 +55,14 @@ const stateHash = createHash('sha256').update(stateToken).digest('hex').slice(0,
  * metadata:read is implicit/required for every app.
  *
  * default_events covers what U4b's webhook needs:
- *   - installation / installation_repositories: per-tester install lifecycle
  *   - push: trigger incremental reindex on commits
  *   - pull_request, issues: corpus freshness events
+ *
+ * Note: `installation` and `installation_repositories` are NOT in
+ * default_events because they're not subscribable webhook events —
+ * they're App-lifecycle events GitHub delivers automatically to every
+ * App regardless of the events list. (Earlier draft included them and
+ * GitHub rejected the manifest with "Default events unsupported".)
  *
  * Production URLs use https://${appHost}. Local-dev install flow is
  * handled separately by U4b's /sources/install route serving a redirect
@@ -81,7 +86,7 @@ const manifest = {
     issues: 'read',
     pull_requests: 'read',
   },
-  default_events: ['installation', 'installation_repositories', 'push', 'pull_request', 'issues'],
+  default_events: ['push', 'pull_request', 'issues'],
 };
 
 function htmlAutoSubmitForm() {
