@@ -3,13 +3,17 @@ import { requireAuthedUserWithOrg } from '../../_lib/auth';
 import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
 import { requireTrelloApiKey } from '../../_lib/trello';
 import { listBoards } from '../../_lib/trello-client';
+import { getValidAtlassianToken } from '../../_lib/atlassian-token';
+import { listConfluenceSpaces, listJiraProjects } from '../../_lib/atlassian-client';
 import { SourcesAutoRefresh } from './_auto-refresh';
 import { SourceActions } from './_source-actions';
 import { TrelloBoardPicker } from './_trello-board-picker';
+import { AtlassianPickers } from './_atlassian-pickers';
 import { reindexSourceAction } from './reindex-action';
 
 interface TrelloSourceRow {
   id: string;
+  kind?: string;
   display_name: string | null;
   external_id: string | null;
   status: string;
@@ -116,12 +120,48 @@ export default async function SourcesPage(props: {
     }
   }
 
+  // Atlassian: connection + jira/confluence sources + available projects/spaces.
+  const { data: atlassianConnRow } = await serviceRole
+    .from('atlassian_connections')
+    .select('id')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  const atlassianConnected = atlassianConnRow !== null;
+
+  let atlassianSources: TrelloSourceRow[] = [];
+  let jiraProjects: Array<{ id: string; name: string }> = [];
+  let confluenceSpaces: Array<{ id: string; name: string }> = [];
+  if (atlassianConnRow !== null) {
+    const { data: aSrc } = await supabase
+      .from('sources')
+      .select('id, kind, display_name, external_id, status, status_message, indexed_files, total_files, last_indexed_at')
+      .eq('org_id', orgId)
+      .in('kind', ['jira', 'confluence'])
+      .neq('status', 'removed')
+      .order('display_name', { ascending: true });
+    atlassianSources = (aSrc ?? []) as TrelloSourceRow[];
+    const indexed = new Set((aSrc ?? []).map((s) => `${s.kind as string}:${s.external_id as string}`));
+    try {
+      const token = await getValidAtlassianToken(orgId, serviceRole);
+      const client = { accessToken: token.accessToken, cloudId: token.cloudId };
+      const [projects, spaces] = await Promise.all([listJiraProjects(client), listConfluenceSpaces(client)]);
+      jiraProjects = projects
+        .filter((p) => !indexed.has(`jira:${p.key}`))
+        .map((p) => ({ id: p.key, name: p.name }));
+      confluenceSpaces = spaces
+        .filter((s) => !indexed.has(`confluence:${s.id}`))
+        .map((s) => ({ id: s.id, name: s.name }));
+    } catch {
+      // Token stale / listing failed — leave the pickers empty (re-connect prompt).
+    }
+  }
+
   const banner = readBanner(searchParams);
   const manageUrl = installation !== null
     ? buildManageUrl(installation.account_login, installation.account_type, installation.installation_id)
     : null;
-  // Poll for indexer progress when any source (GitHub or Trello) is mid-flight.
-  const hasInflight = [...sources, ...trelloSources].some(
+  // Poll for indexer progress when any source is mid-flight.
+  const hasInflight = [...sources, ...trelloSources, ...atlassianSources].some(
     (s) => s.status === 'pending' || s.status === 'indexing',
   );
 
@@ -167,7 +207,7 @@ export default async function SourcesPage(props: {
         </div>
       ) : null}
 
-      {installation === null && !trelloConnected ? (
+      {installation === null && !trelloConnected && !atlassianConnected ? (
         <EmptyConnectState />
       ) : (
         <>
@@ -204,6 +244,22 @@ export default async function SourcesPage(props: {
             </div>
           ) : null}
 
+          {atlassianConnected ? (
+            <div className="mt-10">
+              <SectionLabel label="Jira & Confluence" count={atlassianSources.length} />
+              {atlassianSources.length > 0 ? (
+                <ul className="mb-3 flex flex-col gap-3">
+                  {atlassianSources.map((s) => (
+                    <li key={s.id}>
+                      <TrelloSourceCard source={s} />
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <AtlassianPickers projects={jiraProjects} spaces={confluenceSpaces} />
+            </div>
+          ) : null}
+
           <div className="mt-10">
             <SectionLabel label="Connectors" />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -219,7 +275,18 @@ export default async function SourcesPage(props: {
                 status={trelloConnected ? 'connected' : 'connect'}
                 connectHref="/sources/trello/connect"
               />
-              <ConnectorCard name="Jira" icon={<JiraMark />} status="coming-soon" />
+              <ConnectorCard
+                name="Jira"
+                icon={<JiraMark />}
+                status={atlassianConnected ? 'connected' : 'connect'}
+                connectHref="/sources/atlassian/connect"
+              />
+              <ConnectorCard
+                name="Confluence"
+                icon={<ConfluenceMark />}
+                status={atlassianConnected ? 'connected' : 'connect'}
+                connectHref="/sources/atlassian/connect"
+              />
               <ConnectorCard name="Slack" icon={<SlackMark />} status="coming-soon" />
             </div>
           </div>
@@ -452,18 +519,23 @@ async function reindexTrelloFormAction(formData: FormData): Promise<void> {
 }
 
 /** A connected Trello board with its indexing status + a re-index action. */
+// Per-kind item noun for the connection-backed source status cards.
+const ITEM_NOUN: Record<string, string> = { trello: 'card', jira: 'issue', confluence: 'page' };
+
 function TrelloSourceCard({ source }: { source: TrelloSourceRow }): ReactElement {
   const count = source.indexed_files;
   const total = source.total_files;
+  const noun = ITEM_NOUN[source.kind ?? 'trello'] ?? 'item';
+  const plural = count === 1 ? noun : `${noun}s`;
   return (
     <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-3">
       <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-fg">{source.display_name ?? 'Board'}</div>
+        <div className="truncate text-sm font-medium text-fg">{source.display_name ?? 'Source'}</div>
         <div className="mt-0.5 text-xs text-muted">
           {source.status === 'idle'
-            ? `${count} card${count === 1 ? '' : 's'} indexed`
+            ? `${count} ${plural} indexed`
             : source.status === 'indexing'
-              ? `Indexing… ${count}${total !== null ? ` / ${total}` : ''} cards`
+              ? `Indexing… ${count}${total !== null ? ` / ${total}` : ''} ${noun}s`
               : source.status === 'errored'
                 ? (source.status_message ?? 'Indexing failed')
                 : 'Queued'}
@@ -635,6 +707,14 @@ function JiraMark(): ReactElement {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" style={{ color: 'var(--src-jira)' }}>
       <path d="M12 1.5 1.5 12 12 22.5 22.5 12 12 1.5zm0 4.2 6.3 6.3-6.3 6.3-6.3-6.3 6.3-6.3z" />
+    </svg>
+  );
+}
+
+function ConfluenceMark(): ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" style={{ color: 'var(--src-confluence)' }}>
+      <path d="M3 17.5c3-4 6-6 9-6s5 1.5 8 5c.4.5.2 1-.4 1.3l-3 1.4c-.5.2-1 0-1.3-.4-1.4-2-2.6-2.7-4-2.7-1.7 0-3.2 1.1-5 3.5-.3.4-.9.5-1.3.2L3.4 18.8c-.5-.3-.6-.9-.4-1.3zM21 6.5c-3 4-6 6-9 6s-5-1.5-8-5c-.4-.5-.2-1 .4-1.3l3-1.4c.5-.2 1 0 1.3.4 1.4 2 2.6 2.7 4 2.7 1.7 0 3.2-1.1 5-3.5.3-.4.9-.5 1.3-.2l2.3 1.5c.5.3.6.9.4 1.5z" />
     </svg>
   );
 }

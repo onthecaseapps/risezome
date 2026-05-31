@@ -45,13 +45,16 @@ export async function reindexSourceAction(
     .update({ status: 'pending', status_message: null })
     .eq('id', sourceId);
 
-  // Dispatch by kind: each connector has its own indexer + event, so a Trello
-  // source must not trigger the GitHub indexer (and vice versa).
-  if (source.kind === 'trello') {
-    await inngest.send({
-      name: 'risezome/trello.index-requested',
-      data: { orgId, sourceId, reason: 'reindex' },
-    });
+  // Dispatch by kind: each connector has its own indexer + event, so a source
+  // only triggers its own indexer.
+  const eventByKind: Record<string, 'risezome/trello.index-requested' | 'risezome/jira.index-requested' | 'risezome/confluence.index-requested'> = {
+    trello: 'risezome/trello.index-requested',
+    jira: 'risezome/jira.index-requested',
+    confluence: 'risezome/confluence.index-requested',
+  };
+  const kindEvent = eventByKind[source.kind as string];
+  if (kindEvent !== undefined) {
+    await inngest.send({ name: kindEvent, data: { orgId, sourceId, reason: 'reindex' } });
   } else {
     await inngest.send({
       name: 'risezome/source.index-requested',
