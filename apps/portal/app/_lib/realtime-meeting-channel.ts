@@ -134,11 +134,21 @@ function dispatchBroadcast(
         dispatch({ type: 'card', card: payload['card'] });
       }
       return;
-    case 'cardUpdated':
-      if (isObject(payload['update'])) {
-        dispatch({ type: 'cardUpdated', update: payload['update'] as never });
+    case 'cardUpdated': {
+      const update = payload['update'];
+      if (!isObject(update)) return;
+      // Pin updates from card-actions-server come through cardUpdated
+      // with {cardId, pinned}. Route those to the cardPinned reducer
+      // action since the regular cardUpdated path doesn't mutate the
+      // CardRecord.pinned flag.
+      const u = update as { cardId?: string; pinned?: boolean };
+      if (typeof u.cardId === 'string' && typeof u.pinned === 'boolean') {
+        dispatch({ type: 'cardPinned', cardId: u.cardId, pinned: u.pinned });
+        return;
       }
+      dispatch({ type: 'cardUpdated', update: update as never });
       return;
+    }
     case 'cardRetracted':
       if (isObject(payload['retracted'])) {
         dispatch({ type: 'cardRetracted', retracted: payload['retracted'] as never });

@@ -76,6 +76,7 @@ export type AppAction =
   | { type: 'card'; card: CardEvent }
   | { type: 'cardUpdated'; update: CardUpdated }
   | { type: 'cardRetracted'; retracted: CardRetracted }
+  | { type: 'cardPinned'; cardId: string; pinned: boolean }
   | { type: 'gap'; gap: GapEvent }
   | { type: 'meetingStarted' }
   | { type: 'meetingEnded' }
@@ -114,6 +115,15 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
         metadata: action.update.metadata ?? existing.card.metadata,
       };
       cards.set(action.update.cardId, { ...existing, card: merged });
+      return { ...state, cards };
+    }
+
+    case 'cardPinned': {
+      const existing = state.cards.get(action.cardId);
+      if (existing === undefined) return state;
+      if (existing.pinned === action.pinned) return state;
+      const cards = cloneMap(state.cards);
+      cards.set(action.cardId, { ...existing, pinned: action.pinned });
       return { ...state, cards };
     }
 

@@ -116,18 +116,20 @@ function RealtimeWrapper({
   const cardActions = useMemo<CardActions>(
     () => ({
       pin: async (cardId: string) => {
-        dispatch({ type: 'cardUpdated', update: { cardId, metadata: { pinned: true } } });
-        // Pin state lives on the CardRecord, not the CardEvent. The
-        // reducer's cardUpdated only mutates fields on the inner card.
-        // For the pinned-flag the dispatch above is cosmetic; the
-        // server is authoritative. We force-refresh by re-fetching on
-        // the next render via router.refresh() if needed.
+        dispatch({ type: 'cardPinned', cardId, pinned: true });
         const result = await pinCardAction(cardId, true);
-        if (!result.ok) throw new Error(result.error);
+        if (!result.ok) {
+          dispatch({ type: 'cardPinned', cardId, pinned: false });
+          throw new Error(result.error);
+        }
       },
       unpin: async (cardId: string) => {
+        dispatch({ type: 'cardPinned', cardId, pinned: false });
         const result = await pinCardAction(cardId, false);
-        if (!result.ok) throw new Error(result.error);
+        if (!result.ok) {
+          dispatch({ type: 'cardPinned', cardId, pinned: true });
+          throw new Error(result.error);
+        }
       },
       dismiss: async (cardId: string) => {
         // Optimistic: dispatch a retraction so the card disappears
