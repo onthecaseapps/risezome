@@ -11,7 +11,7 @@ import { migrate } from '../corpus/migrate.js';
 import type { FastifyInstance } from 'fastify';
 import { buildDaemonServer } from '../server/index.js';
 import type { DaemonMode } from '../server/routes/status.js';
-import type { Utterance } from '../transcribe/contract.js';
+import type { Utterance } from '@risezome/engine/transcribe';
 import { SidecarRunner } from '../audio/ipc/sidecar-runner.js';
 import { DeepgramTranscriptionEngine } from '../transcribe/deepgram.js';
 import { TranscriptStore } from '../transcript/store.js';

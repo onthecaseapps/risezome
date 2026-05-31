@@ -1,5 +1,5 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
-import type { Utterance } from '../transcribe/contract.js';
+import type { Utterance } from '@risezome/engine/transcribe';
 import { RisezomeError } from '@risezome/shared-types';
 
 export class TranscriptStoreError extends RisezomeError {

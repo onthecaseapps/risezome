@@ -10,7 +10,7 @@ import {
   type FinalTranscript,
   type PartialTranscript,
   type SpeakerChange,
-} from '../../src/transcribe/contract.js';
+} from '@risezome/engine/transcribe';
 
 const OPEN = 1;
 const CLOSED = 3;

@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { NotImplementedError } from '@risezome/shared-types';
-import type { TranscriptionEngine, TranscriptionEngineEvents } from './contract.js';
+import type { TranscriptionEngine, TranscriptionEngineEvents } from '@risezome/engine/transcribe';
 
 export class ParakeetTranscriptionEngine
   extends EventEmitter<TranscriptionEngineEvents>

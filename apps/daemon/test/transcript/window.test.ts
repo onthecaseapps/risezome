@@ -7,7 +7,7 @@ import { openCorpusDb } from '../../src/corpus/db.js';
 import { migrate } from '../../src/corpus/migrate.js';
 import { TranscriptStore } from '../../src/transcript/store.js';
 import { TranscriptWindow } from '../../src/transcript/window.js';
-import type { Utterance } from '../../src/transcribe/contract.js';
+import type { Utterance } from '@risezome/engine/transcribe';
 
 interface Harness {
   db: DatabaseType;

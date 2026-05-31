@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { Utterance } from '../transcribe/contract.js';
+import type { Utterance } from '@risezome/engine/transcribe';
 import type { StoredUtterance, TranscriptStore } from './store.js';
 
 export interface WindowText {

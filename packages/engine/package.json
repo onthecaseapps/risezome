@@ -25,6 +25,10 @@
     "./transcribe": {
       "types": "./dist/transcribe/index.d.ts",
       "default": "./dist/transcribe/index.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
     }
   },
   "scripts": {

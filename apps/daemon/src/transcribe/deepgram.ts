@@ -7,7 +7,7 @@ import {
   type Utterance,
   TranscriptionAuthError,
   TranscriptionConnectionError,
-} from './contract.js';
+} from '@risezome/engine/transcribe';
 
 export interface DeepgramOptions {
   readonly apiKey: string;
