@@ -1,6 +1,8 @@
 'use client';
 
-import { useMemo, type ReactElement } from 'react';
+import { useMemo, useState, useTransition, type ReactElement } from 'react';
+import { useRouter } from 'next/navigation';
+import { retryFailedLaunchAction } from './retry-launch-server';
 import {
   AppStateProvider,
   CardActionsProvider,
@@ -68,6 +70,7 @@ export function LiveMeetingClient(props: Props): ReactElement {
   if (props.status === 'failed') {
     return (
       <FailureShell
+        meetingId={props.meetingId}
         title={props.title}
         errorCode={props.errorCode}
         errorMessage={props.errorMessage}
@@ -294,10 +297,12 @@ function JoiningShell({
 }
 
 function FailureShell({
+  meetingId,
   title,
   errorCode,
   errorMessage,
 }: {
+  meetingId: string;
   title: string;
   errorCode: string | null;
   errorMessage: string | null;
@@ -318,7 +323,8 @@ function FailureShell({
         ) : null}
       </div>
 
-      <div className="mt-6 text-center">
+      <div className="mt-6 flex items-center justify-center gap-2">
+        <FailureRetryButton meetingId={meetingId} />
         <a
           href="/upcoming"
           className="inline-flex items-center justify-center rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium text-fg hover:bg-accent-soft"
@@ -328,4 +334,62 @@ function FailureShell({
       </div>
     </div>
   );
+}
+
+function FailureRetryButton({ meetingId }: { meetingId: string }): ReactElement {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [fired, setFired] = useState(false);
+
+  function handleRetry(): void {
+    setError(null);
+    startTransition(async () => {
+      const result = await retryFailedLaunchAction(meetingId);
+      if (!result.ok) {
+        setError(humanError(result.error));
+        return;
+      }
+      setFired(true);
+      // The retry fires a new launch which creates a NEW meetings row.
+      // Bounce back to /upcoming where the new row will appear with the
+      // updated status. The old failed row stays in the DB for history
+      // but is no longer the active one for this calendar event.
+      router.push('/upcoming?notice=retry_fired');
+    });
+  }
+
+  if (fired) {
+    return (
+      <span className="rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-300">
+        Retry fired
+      </span>
+    );
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={handleRetry}
+        disabled={pending}
+        className="inline-flex items-center justify-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-accent-press disabled:opacity-60"
+      >
+        {pending ? 'Retrying…' : 'Retry launch'}
+      </button>
+      {error !== null ? (
+        <span className="text-xs text-rose-400">{error}</span>
+      ) : null}
+    </>
+  );
+}
+
+function humanError(code: string): string {
+  const map: Record<string, string> = {
+    meeting_not_found: 'Meeting record not found',
+    not_failed: 'This meeting isn\'t in a failed state',
+    no_calendar_event: 'Calendar event has been deleted',
+    calendar_event_deleted: 'Calendar event was removed in Google Calendar',
+  };
+  return map[code] ?? `Retry failed (${code})`;
 }
