@@ -6,7 +6,6 @@ const SECRET = 'test-secret-' + 'x'.repeat(40); // long enough for HS256
 const PAYLOAD = {
   meetingId: '11111111-1111-1111-1111-111111111111',
   orgId: '22222222-2222-2222-2222-222222222222',
-  botId: 'recall-bot-xyz',
 };
 
 describe('signBotWsJwt + verifyBotWsJwt', () => {
@@ -15,7 +14,6 @@ describe('signBotWsJwt + verifyBotWsJwt', () => {
     const payload = await verifyBotWsJwt(token, SECRET);
     expect(payload.meetingId).toBe(PAYLOAD.meetingId);
     expect(payload.orgId).toBe(PAYLOAD.orgId);
-    expect(payload.botId).toBe(PAYLOAD.botId);
   });
 
   it('rejects a token signed with a different secret', async () => {
@@ -38,25 +36,17 @@ describe('signBotWsJwt + verifyBotWsJwt', () => {
     await expect(verifyBotWsJwt(token, SECRET)).rejects.toThrow();
   });
 
-  it('rejects a token missing required claims', async () => {
-    // Forge a body that's missing botId. We sign + then we expect
-    // verifyBotWsJwt to assert claim presence after signature check.
-    const fake = await signBotWsJwt(
-      { meetingId: 'm', orgId: 'o', botId: 'b' },
-      SECRET,
-    );
-    // Decode + repack the body without botId, then re-sign so signature
-    // verification passes but the claim assertion in verifyBotWsJwt fails.
-    const [header, _body] = fake.split('.');
+  it('rejects a signature-valid token missing required claims', async () => {
+    // Forge a body missing meetingId. Signature verification passes
+    // but the claim assertion in verifyBotWsJwt should fail.
     const { SignJWT } = await import('jose');
-    const reSigned = await new SignJWT({ meetingId: 'm', orgId: 'o' })
+    const reSigned = await new SignJWT({ orgId: 'o' })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuer('risezome-portal')
       .setAudience('risezome-bot-worker')
       .setIssuedAt()
       .setExpirationTime('1h')
       .sign(new TextEncoder().encode(SECRET));
-    expect(header).toBeDefined();
     await expect(verifyBotWsJwt(reSigned, SECRET)).rejects.toThrow(/missing required claims/);
   });
 });

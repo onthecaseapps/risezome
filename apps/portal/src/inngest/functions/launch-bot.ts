@@ -1,6 +1,7 @@
 import { inngest } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
 import { launchRecallBot } from '../../../app/_lib/recall-bot-launcher';
+import { signBotWsJwt } from '../../../app/_lib/bot-ws-jwt';
 
 /**
  * Scheduled launcher: fires a Recall.ai bot just before a meeting starts.
@@ -146,6 +147,16 @@ export const launchBotFn = inngest.createFunction(
     });
 
     // ── Step 5: launch (or fail) ─────────────────────────────────────
+    // Sign the bot-worker JWT BEFORE Create Bot — Recall bakes the
+    // realtime_endpoints URL at create time and never lets us change
+    // it, so we can't include the JWT after the fact. The verifier
+    // (apps/bot-worker/src/jwt.ts) MUST stay in sync with this signer
+    // (apps/portal/app/_lib/bot-ws-jwt.ts).
+    const botWsJwt = await signBotWsJwt(
+      { meetingId, orgId: eventRow.org_id },
+      requireEnv('BOT_WORKER_SECRET'),
+    );
+
     const launchResult = await step.run('create-bot', async () => {
       return await launchRecallBot(
         {
@@ -154,6 +165,7 @@ export const launchBotFn = inngest.createFunction(
           orgId: eventRow.org_id,
           userId: eventRow.user_id,
           userName,
+          botWsJwt,
         },
         {
           apiKey: requireEnv('RECALL_API_KEY'),

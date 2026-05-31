@@ -16,15 +16,23 @@ import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import { adaptRecallMessage } from './recall-adapter.js';
 import { verifyBotWsJwt, type BotWsJwtPayload } from './jwt.js';
+import {
+  createServiceClient,
+  markRecordingIfFirst,
+  persistAndBroadcast,
+  utteranceToEventPayload,
+} from './db.js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 interface PerMeetingRuntime {
   meetingId: string;
   orgId: string;
-  botId: string;
   /** When the first WS connect arrived. */
   connectedAt: number;
   /** Total utterances seen across reconnects. */
   utteranceCount: number;
+  /** Whether we've flipped meetings.status to 'recording' yet. */
+  markedRecording: boolean;
 }
 
 const runtimes = new Map<string, PerMeetingRuntime>();
@@ -36,6 +44,8 @@ async function main(): Promise<void> {
     console.error('[bot-worker] BOT_WORKER_SECRET is required');
     process.exit(1);
   }
+
+  const db = createServiceClient();
 
   const fastify = Fastify({ logger: { level: 'info' } });
   await fastify.register(websocket);
@@ -85,44 +95,18 @@ async function main(): Promise<void> {
           runtime = {
             meetingId,
             orgId: payload.orgId,
-            botId: payload.botId,
             connectedAt: Date.now(),
             utteranceCount: 0,
+            markedRecording: false,
           };
           runtimes.set(meetingId, runtime);
-          req.log.info({ meetingId, orgId: payload.orgId, botId: payload.botId }, 'runtime.created');
+          req.log.info({ meetingId, orgId: payload.orgId }, 'runtime.created');
         } else {
           req.log.info({ meetingId }, 'runtime.reconnected');
         }
 
         socket.on('message', (raw: Buffer) => {
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(raw.toString('utf8'));
-          } catch {
-            req.log.warn({ meetingId }, 'recall.message non-json; dropping');
-            return;
-          }
-
-          const adapted = adaptRecallMessage(parsed);
-          if (adapted.kind !== 'utterance') {
-            // ignored event — silently drop for now; U9d may emit
-            // participant_events.* to update bookkeeping.
-            return;
-          }
-          // U9c: just log. U9d wires this into the engine pipeline.
-          const r = runtimes.get(meetingId);
-          if (r !== undefined) r.utteranceCount += 1;
-          req.log.info(
-            {
-              meetingId,
-              speaker: adapted.utterance.speaker,
-              isFinal: adapted.utterance.isFinal,
-              text: adapted.utterance.text.slice(0, 80),
-              count: r?.utteranceCount,
-            },
-            'utterance',
-          );
+          void handleMessage(raw, meetingId, payload.orgId, db, req.log);
         });
 
         socket.on('close', () => {
@@ -145,6 +129,77 @@ async function main(): Promise<void> {
     fastify.log.error(err, 'failed to start');
     process.exit(1);
   }
+}
+
+/**
+ * Per-message pipeline: parse → adapt → (first-time-only) mark
+ * meetings.status='recording' → write meeting_events + broadcast.
+ *
+ * We swallow + log per-message errors so one bad payload can't take
+ * down the WS for the whole meeting. The DB / broadcast helpers are
+ * already defensive about partial failure (DB-first per R23a).
+ */
+async function handleMessage(
+  raw: Buffer,
+  meetingId: string,
+  orgId: string,
+  db: SupabaseClient,
+  logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void },
+): Promise<void> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.toString('utf8'));
+  } catch {
+    logger.warn({ meetingId }, 'recall.message non-json; dropping');
+    return;
+  }
+
+  const adapted = adaptRecallMessage(parsed);
+  if (adapted.kind !== 'utterance') {
+    // ignored event (participant_events.*, unknown). Could write
+    // participant joins/leaves to meeting_events later for the live
+    // page's speaker bar — skipping for V1.
+    return;
+  }
+
+  const runtime = runtimes.get(meetingId);
+  if (runtime !== undefined) runtime.utteranceCount += 1;
+
+  // First-utterance status flip. Best-effort — if the DB call fails
+  // we still write the event below, and the live page falls back to
+  // its initial DB fetch on next reload.
+  if (runtime !== undefined && !runtime.markedRecording) {
+    const flipped = await markRecordingIfFirst(db, meetingId);
+    if (flipped) {
+      runtime.markedRecording = true;
+      logger.info({ meetingId }, 'meetings.status → recording');
+    } else {
+      // Either the meeting was already past 'recording' (reconnect
+      // case) or the row vanished. Either way, no point retrying
+      // this side of the lifecycle.
+      runtime.markedRecording = true;
+    }
+  }
+
+  const eventType = adapted.utterance.isFinal ? 'transcript.data' : 'transcript.partial_data';
+  const result = await persistAndBroadcast(db, {
+    meetingId,
+    orgId,
+    type: eventType,
+    payload: utteranceToEventPayload(adapted.utterance),
+  });
+
+  logger.info(
+    {
+      meetingId,
+      type: eventType,
+      eventId: result.eventId,
+      broadcasted: result.broadcasted,
+      speaker: adapted.utterance.speaker,
+      text: adapted.utterance.text.slice(0, 60),
+    },
+    'utterance',
+  );
 }
 
 function parsePort(raw: string): number {

@@ -22,6 +22,7 @@ function baseArgs(): LaunchBotArgs {
     orgId: '22222222-2222-2222-2222-222222222222',
     userId: '33333333-3333-3333-3333-333333333333',
     userName: 'Jordan Lee',
+    botWsJwt: 'test.jwt.token',
   };
 }
 
@@ -192,7 +193,7 @@ describe('launchRecallBot — request body shape', () => {
     };
     expect(rt.realtime_endpoints[0]?.type).toBe('websocket');
     expect(rt.realtime_endpoints[0]?.url).toBe(
-      'wss://bot.example/recall/11111111-1111-1111-1111-111111111111',
+      'wss://bot.example/recall/11111111-1111-1111-1111-111111111111/test.jwt.token',
     );
     expect(rt.realtime_endpoints[0]?.events).toContain('transcript.data');
   });

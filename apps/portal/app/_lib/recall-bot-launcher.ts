@@ -34,6 +34,9 @@ export interface LaunchBotArgs {
   userId: string;
   /** Display name to mention in the bot's join-chat message. */
   userName: string;
+  /** Signed JWT for the bot-worker WS upgrade. Appended to the
+   *  realtime_endpoints URL as a path segment. */
+  botWsJwt: string;
 }
 
 export interface LaunchBotDeps {
@@ -188,7 +191,7 @@ function buildBody(args: LaunchBotArgs, deps: LaunchBotDeps): RecallBotRequestBo
       realtime_endpoints: [
         {
           type: 'websocket',
-          url: `${stripTrailingSlash(deps.botWorkerBaseUrl)}/recall/${args.meetingId}`,
+          url: `${stripTrailingSlash(deps.botWorkerBaseUrl)}/recall/${args.meetingId}/${args.botWsJwt}`,
           events: [
             'transcript.data',
             'transcript.partial_data',
