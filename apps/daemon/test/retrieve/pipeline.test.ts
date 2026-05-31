@@ -1626,7 +1626,9 @@ function recordRelevanceEvents(pipeline: RetrievalPipeline): RelevanceEvents {
   return events;
 }
 
-function fakeRelevanceClassifier(impl: (utterance: string, signal?: AbortSignal) => Promise<RelevanceResult>): RelevanceClassifier {
+function fakeRelevanceClassifier(
+  impl: (utterance: string, options?: { signal?: AbortSignal }) => Promise<RelevanceResult>,
+): RelevanceClassifier {
   return { classify: impl };
 }
 
@@ -1795,10 +1797,10 @@ describe('RetrievalPipeline — relevance pre-gate', () => {
 
   it('classifier hangs past the timeout — relevanceLlmError{code:timeout}, pipeline continues as surface', async () => {
     const fake = fakeRelevanceClassifier(
-      (_utterance, signal) =>
+      (_utterance, options) =>
         new Promise<RelevanceResult>((resolve, reject) => {
           // Never resolve naturally; abort handler rejects.
-          signal?.addEventListener('abort', () => {
+          options?.signal?.addEventListener('abort', () => {
             reject(new DOMException('aborted', 'AbortError'));
           });
           // Resolve guard prevents lint warnings about unused resolve.

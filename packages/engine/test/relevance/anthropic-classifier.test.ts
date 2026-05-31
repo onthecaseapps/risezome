@@ -168,7 +168,7 @@ describe('AnthropicRelevanceClassifier.classify', () => {
         }),
     ]);
     const classifier = new AnthropicRelevanceClassifier({ apiKey: 'k', fetchImpl });
-    const p = classifier.classify('yeah', controller.signal);
+    const p = classifier.classify('yeah', { signal: controller.signal });
     controller.abort();
     await expect(p).rejects.toMatchObject({ name: 'AbortError' });
   });
@@ -208,6 +208,49 @@ describe('AnthropicRelevanceClassifier.classify', () => {
     expect(body.tools).toHaveLength(1);
     expect(body.tool_choice).toEqual({ type: 'auto' });
     expect(body.messages[0]!.content).toBe('how does X work');
+  });
+
+  it('sends bare utterance when no context is supplied (cold start / daemon path)', async () => {
+    const { fetchImpl, calls } = captureCalls([
+      () => toolUseResponse('should_surface', { decision: 'surface' }),
+    ]);
+    const classifier = new AnthropicRelevanceClassifier({ apiKey: 'k', fetchImpl });
+    await classifier.classify('and how does it scale');
+    const body = (await calls[0]!.json()) as { messages: Array<{ content: string }> };
+    expect(body.messages[0]!.content).toBe('and how does it scale');
+  });
+
+  it('prepends meeting context (current_topic + open_questions) to the user message when context is provided', async () => {
+    const { fetchImpl, calls } = captureCalls([
+      () => toolUseResponse('should_surface', { decision: 'surface' }),
+    ]);
+    const classifier = new AnthropicRelevanceClassifier({ apiKey: 'k', fetchImpl });
+    await classifier.classify('and where in the code base is that', {
+      context: {
+        current_topic: 'auth flow',
+        open_questions: ['How does SSO work?'],
+      },
+    });
+    const body = (await calls[0]!.json()) as { messages: Array<{ content: string }> };
+    const content = body.messages[0]!.content;
+    expect(content).toContain('Meeting context so far:');
+    expect(content).toContain('Current topic: auth flow');
+    expect(content).toContain('How does SSO work?');
+    expect(content).toContain('Utterance: and where in the code base is that');
+    // Context appears BEFORE the utterance
+    expect(content.indexOf('Meeting context')).toBeLessThan(content.indexOf('Utterance:'));
+  });
+
+  it('falls back to bare utterance when context is empty (no topic, no questions)', async () => {
+    const { fetchImpl, calls } = captureCalls([
+      () => toolUseResponse('should_surface', { decision: 'surface' }),
+    ]);
+    const classifier = new AnthropicRelevanceClassifier({ apiKey: 'k', fetchImpl });
+    await classifier.classify('hello', {
+      context: { current_topic: '', open_questions: [] },
+    });
+    const body = (await calls[0]!.json()) as { messages: Array<{ content: string }> };
+    expect(body.messages[0]!.content).toBe('hello');
   });
 });
 

@@ -634,6 +634,47 @@ export function buildRelevanceSystem(): SystemBlock[] {
   ];
 }
 
+/**
+ * Build the user-message string. When `context` is provided, prepend
+ * the meeting's current topic + open questions so the classifier can
+ * judge coherence-in-context rather than coherence-in-isolation.
+ * Without context (cold start, daemon path, no rolling summary yet),
+ * falls back to the bare utterance — same shape the classifier was
+ * trained against in the few-shot examples above.
+ */
+export interface RelevanceUserContext {
+  readonly current_topic?: string;
+  readonly open_questions?: readonly string[];
+}
+
+export function buildRelevanceUserMessage(
+  utterance: string,
+  context?: RelevanceUserContext,
+): string {
+  if (
+    context === undefined ||
+    ((context.current_topic === undefined || context.current_topic.length === 0) &&
+      (context.open_questions === undefined || context.open_questions.length === 0))
+  ) {
+    return utterance;
+  }
+  const parts: string[] = ['Meeting context so far:'];
+  if (context.current_topic !== undefined && context.current_topic.length > 0) {
+    parts.push(`- Current topic: ${context.current_topic}`);
+  }
+  if (context.open_questions !== undefined && context.open_questions.length > 0) {
+    parts.push('- Open questions:');
+    for (const q of context.open_questions) parts.push(`    "${q}"`);
+  }
+  parts.push('');
+  parts.push(
+    'Given the meeting context above, decide whether the following utterance makes sense as something to surface retrieval context for (a coherent continuation of the discussion, a new substantive question, or a reference to a specific topic) — or whether it is filler/side-chat that should be skipped. A short utterance that looks like filler IN ISOLATION may be a meaningful continuation IN CONTEXT.',
+  );
+  parts.push('');
+  parts.push(`Utterance: ${utterance}`);
+  return parts.join('\n');
+}
+
 // Tool definition for the Messages API request. Single tool; the model must
 // call it. Schema enforces decision union + optional confidence/reason for
 // skip. The classifier validates the response shape before returning.

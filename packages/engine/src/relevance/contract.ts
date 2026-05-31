@@ -19,8 +19,30 @@ export interface RelevanceClassifierUsage {
   readonly cacheCreationTokens: number;
 }
 
+/**
+ * Optional context the classifier can use to judge an utterance in
+ * the meeting's surrounding state rather than in isolation. With
+ * `current_topic` + `open_questions` set, the classifier can
+ * recognize a fragment like "in the app and where in the code base
+ * are they" as a coherent continuation of the prior topic rather
+ * than dismissing it as filler.
+ *
+ * Both fields optional — callers with no rolling summary (cold
+ * start, daemon path) omit them and get the legacy isolated-
+ * utterance behavior.
+ */
+export interface RelevanceContext {
+  readonly current_topic?: string;
+  readonly open_questions?: readonly string[];
+}
+
+export interface ClassifyOptions {
+  readonly signal?: AbortSignal;
+  readonly context?: RelevanceContext;
+}
+
 export interface RelevanceClassifier {
-  classify(utterance: string, signal?: AbortSignal): Promise<RelevanceResult>;
+  classify(utterance: string, options?: ClassifyOptions): Promise<RelevanceResult>;
 }
 
 // Mirrors ClassifierProviderError; same kind taxonomy because both classifiers

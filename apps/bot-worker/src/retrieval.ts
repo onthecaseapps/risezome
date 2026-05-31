@@ -430,7 +430,7 @@ async function classifyLlmAndDecide(args: {
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), RELEVANCE_TIMEOUT_MS);
   try {
-    const result = await args.classifier.classify(args.utterance, controller.signal);
+    const result = await args.classifier.classify(args.utterance, { signal: controller.signal });
     if (result.decision === 'skip' && result.confidence >= RELEVANCE_SKIP_THRESHOLD) {
       args.logger.info(
         {

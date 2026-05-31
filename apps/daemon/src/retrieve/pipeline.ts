@@ -306,7 +306,7 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
             ...(utteranceId !== undefined && { utteranceId }),
           });
           relevancePromise = withTimeout(
-            this.#relevanceClassifier.classify(latestUtterance, relevanceController.signal),
+            this.#relevanceClassifier.classify(latestUtterance, { signal: relevanceController.signal }),
             this.#relevanceTimeoutMs,
             relevanceController,
           );

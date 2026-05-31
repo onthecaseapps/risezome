@@ -1,11 +1,12 @@
 import {
+  type ClassifyOptions,
   type RelevanceClassifier,
   type RelevanceClassifierUsage,
   type RelevanceResult,
   RelevanceProviderError,
   type RelevanceProviderErrorKind,
 } from './contract.js';
-import { buildRelevanceSystem, buildRelevanceTool } from './prompt.js';
+import { buildRelevanceSystem, buildRelevanceTool, buildRelevanceUserMessage } from './prompt.js';
 
 export interface AnthropicRelevanceClassifierOptions {
   readonly apiKey: string;
@@ -84,8 +85,8 @@ export class AnthropicRelevanceClassifier implements RelevanceClassifier {
     this.#maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
   }
 
-  async classify(utterance: string, signal?: AbortSignal): Promise<RelevanceResult> {
-    const response = await this.#postWithRetry(utterance, signal);
+  async classify(utterance: string, options?: ClassifyOptions): Promise<RelevanceResult> {
+    const response = await this.#postWithRetry(utterance, options);
     const json = (await response.json()) as MessagesResponse;
 
     if (json.usage !== undefined) {
@@ -114,12 +115,12 @@ export class AnthropicRelevanceClassifier implements RelevanceClassifier {
     );
   }
 
-  async #postWithRetry(utterance: string, signal: AbortSignal | undefined): Promise<Response> {
+  async #postWithRetry(utterance: string, options: ClassifyOptions | undefined): Promise<Response> {
     let attempt = 0;
     while (true) {
       let response: Response;
       try {
-        response = await this.#postRequest(utterance, signal);
+        response = await this.#postRequest(utterance, options);
       } catch (err) {
         if (isAbortError(err)) throw err;
         if (attempt < this.#maxRetries - 1) {
@@ -198,8 +199,9 @@ export class AnthropicRelevanceClassifier implements RelevanceClassifier {
     }
   }
 
-  async #postRequest(utterance: string, signal: AbortSignal | undefined): Promise<Response> {
+  async #postRequest(utterance: string, options: ClassifyOptions | undefined): Promise<Response> {
     const url = `${this.#baseUrl.replace(/\/$/, '')}/v1/messages`;
+    const userContent = buildRelevanceUserMessage(utterance, options?.context);
     const body = {
       model: this.#model,
       max_tokens: this.#maxTokens,
@@ -208,8 +210,9 @@ export class AnthropicRelevanceClassifier implements RelevanceClassifier {
       system: buildRelevanceSystem(),
       tools: [buildRelevanceTool()],
       tool_choice: { type: 'auto' },
-      messages: [{ role: 'user', content: utterance }],
+      messages: [{ role: 'user', content: userContent }],
     };
+    const signal = options?.signal;
     const init: RequestInit = {
       method: 'POST',
       headers: {
