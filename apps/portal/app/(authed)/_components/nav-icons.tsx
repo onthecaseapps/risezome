@@ -62,3 +62,14 @@ export function CapturesIcon(): ReactElement {
     </svg>
   );
 }
+
+/** Bug-shaped glyph for the dev-only Debug nav section. */
+export function DebugIcon(): ReactElement {
+  return (
+    <svg {...baseProps}>
+      <rect x="8" y="6" width="8" height="12" rx="4" />
+      <path d="M12 6V4M9 4l-2-2M15 4l2-2" />
+      <path d="M8 12H4M16 12h4M8 16l-3 3M16 16l3 3M8 8l-3-3M16 8l3-3" />
+    </svg>
+  );
+}

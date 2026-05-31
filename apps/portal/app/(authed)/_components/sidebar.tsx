@@ -5,7 +5,7 @@ import { createServerClient } from '../../_lib/supabase-server';
 import { cookies } from 'next/headers';
 import { OrgSwitcher } from './org-switcher';
 import { SidebarNavLink } from './sidebar-nav-link';
-import { CalendarIcon, CapturesIcon, LiveIcon, SettingsIcon, SourcesIcon } from './nav-icons';
+import { CalendarIcon, CapturesIcon, DebugIcon, LiveIcon, SettingsIcon, SourcesIcon } from './nav-icons';
 import { UserCard } from './user-card';
 
 /**
@@ -116,6 +116,30 @@ export async function Sidebar(): Promise<ReactElement> {
           icon={<SettingsIcon />}
           label="Settings"
         />
+
+        {/* Dev-only Debug section. Hidden in production builds so
+         *  internal-only surfaces (live-mic, /ask retrieval probe)
+         *  don't ship to end users. NODE_ENV is set by Next.js based
+         *  on `next dev` vs `next build` — no separate flag needed. */}
+        {process.env.NODE_ENV === 'development' && (
+          <>
+            <div className="mt-4 px-3 pb-1 text-[10px] uppercase tracking-wider text-muted">
+              Dev
+            </div>
+            <SidebarNavLink
+              href="/debug/live-mic"
+              matchPrefix="/debug/live-mic"
+              icon={<DebugIcon />}
+              label="Live-mic debug"
+            />
+            <SidebarNavLink
+              href="/debug/ask"
+              matchPrefix="/debug/ask"
+              icon={<DebugIcon />}
+              label="Retrieval probe"
+            />
+          </>
+        )}
       </nav>
 
       <UserCard email={email} fullName={fullName} />
