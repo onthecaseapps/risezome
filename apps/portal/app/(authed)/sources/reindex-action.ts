@@ -1,0 +1,55 @@
+'use server';
+
+import { revalidatePath } from 'next/cache';
+import { requireAuthedUserWithOrg } from '../../_lib/auth';
+import { createServiceRoleClient } from '../../_lib/supabase-server';
+import { inngest } from '../../../src/inngest/client';
+
+/**
+ * User-initiated reindex of a single source. Verifies the user is a member
+ * of the org that owns the source (defense-in-depth — RLS would block the
+ * row lookup anyway), then emits a `risezome/source.index-requested` event
+ * with reason='reindex'. The Inngest function picks it up the same way it
+ * handles install-time events.
+ *
+ * Returns a small status object so the calling client can show a toast or
+ * inline confirmation. We don't wait for the indexer to finish — it could
+ * take minutes; the page polls for status updates instead.
+ */
+export async function reindexSourceAction(
+  formData: FormData,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const sourceId = formData.get('sourceId');
+  if (typeof sourceId !== 'string' || sourceId.length === 0) {
+    return { ok: false, error: 'missing_source_id' };
+  }
+
+  const { orgId } = await requireAuthedUserWithOrg();
+
+  const service = createServiceRoleClient();
+  const { data: source, error } = await service
+    .from('sources')
+    .select('id')
+    .eq('id', sourceId)
+    .eq('org_id', orgId)
+    .maybeSingle();
+
+  if (error !== null || source === null) {
+    return { ok: false, error: 'source_not_found' };
+  }
+
+  // Mark pending immediately so the UI flips before Inngest picks it up;
+  // the function itself transitions to 'indexing' as its first step.
+  await service
+    .from('sources')
+    .update({ status: 'pending', status_message: null })
+    .eq('id', sourceId);
+
+  await inngest.send({
+    name: 'risezome/source.index-requested',
+    data: { orgId, sourceId, reason: 'reindex' },
+  });
+
+  revalidatePath('/sources');
+  return { ok: true };
+}

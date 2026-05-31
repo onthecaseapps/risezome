@@ -1,6 +1,8 @@
 import type { ReactElement } from 'react';
 import { requireAuthedUserWithOrg } from '../../_lib/auth';
 import { createServerClient } from '../../_lib/supabase-server';
+import { SourcesAutoRefresh } from './_auto-refresh';
+import { SourceActions } from './_source-actions';
 
 /**
  * Sources view. Shows the org's GitHub App installation status + the list of
@@ -69,9 +71,13 @@ export default async function SourcesPage(props: {
   const manageUrl = installation !== null
     ? buildManageUrl(installation.account_login, installation.account_type, installation.installation_id)
     : null;
+  // Poll for indexer progress when any source is mid-flight; idle otherwise
+  // (zero requests).
+  const hasInflight = sources.some((s) => s.status === 'pending' || s.status === 'indexing');
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
+      <SourcesAutoRefresh shouldPoll={hasInflight} />
       <header className="mb-6 flex items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Sources</h1>
@@ -230,14 +236,10 @@ function SourceCard({ source }: { source: SourceRow }): ReactElement {
 
       <div className="flex flex-shrink-0 items-center gap-2">
         <StatusRightSlot source={source} />
-        <button
-          type="button"
-          aria-label="Source actions"
-          disabled
-          className="rounded-md p-1.5 text-muted opacity-40"
-        >
-          <KebabIcon />
-        </button>
+        <SourceActions
+          sourceId={source.id}
+          busy={source.status === 'pending' || source.status === 'indexing'}
+        />
       </div>
     </div>
   );
@@ -493,16 +495,6 @@ function RetryIcon(): ReactElement {
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 12a9 9 0 1 1-3-6.7" />
       <path d="M21 4v5h-5" />
-    </svg>
-  );
-}
-
-function KebabIcon(): ReactElement {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <circle cx="12" cy="5" r="1.5" />
-      <circle cx="12" cy="12" r="1.5" />
-      <circle cx="12" cy="19" r="1.5" />
     </svg>
   );
 }
