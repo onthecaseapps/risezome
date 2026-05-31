@@ -79,7 +79,7 @@ describe('SynthesisStream', () => {
     const syn = mkSyn({
       accumulatedText: 'Done answer [1].',
       streaming: false,
-      citations: [1],
+      citations: [{ rank: 1, cardId: 'src1', position: 0 }],
     });
     const { container } = render(
       <AppStateProvider initial={stateWith({ cards: [mkCard()], syntheses: [syn] })}>
@@ -113,7 +113,7 @@ describe('SynthesisStream', () => {
     const syn = mkSyn({
       accumulatedText: 'Answer with bogus [9] and valid [1].',
       streaming: false,
-      citations: [1],
+      citations: [{ rank: 1, cardId: 'src1', position: 0 }],
     });
     const { container } = render(
       <AppStateProvider initial={stateWith({ cards: [mkCard()], syntheses: [syn] })}>

@@ -119,13 +119,19 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
     initialSyntheses = (synthRows ?? [])
       .filter((s) => s.retracted_at === null)
       .map((s): InitialSynthesis => {
+        const sourceCardIds = (s.source_card_ids as string[]) ?? [];
+        const rawCitations = s.citations;
         const out: InitialSynthesis = {
           synthesisId: s.synthesis_id as string,
-          sourceCardIds: (s.source_card_ids as string[]) ?? [],
+          sourceCardIds,
           accumulatedText: s.accumulated_text as string,
           status: s.status as 'running' | 'done' | 'errored' | 'retracted',
           traceId: s.trace_id as string,
-          citations: (s.citations as number[] | null) ?? [],
+          citations: normalizeCitations(
+            rawCitations,
+            sourceCardIds,
+            s.accumulated_text as string,
+          ),
         };
         if (s.stop_reason !== null) out.stopReason = s.stop_reason as string;
         if (s.error_code !== null) out.errorCode = s.error_code as SynthesisErrorCode;
@@ -168,7 +174,7 @@ export interface InitialSynthesis {
   stopReason?: string;
   errorCode?: SynthesisErrorCode;
   errorMessage?: string;
-  citations: number[];
+  citations: NormalizedCitation[];
   usage?: {
     inputTokens: number;
     outputTokens: number;
@@ -177,4 +183,50 @@ export interface InitialSynthesis {
   };
   ttftMs?: number;
   latencyMs?: number;
+}
+
+interface NormalizedCitation {
+  rank: number;
+  cardId: string;
+  position: number;
+  quote?: string;
+}
+
+/**
+ * Normalize the citations jsonb into the post-U2 object shape regardless
+ * of which shape the row was written in. New rows (post-U2) already
+ * have `[{rank, cardId, position, quote?}, ...]` and pass through. Old
+ * rows (pre-U2) have `[1, 2, 3]` — for each rank we look up the cardId
+ * via sourceCardIds[rank-1] and scan accumulated_text for the first
+ * occurrence of `[N]` to get position. Quote stays undefined for old
+ * rows (the LLM didn't emit one). The Supabase migration backfills the
+ * column on disk; this normalizer is the belt-and-suspenders for any
+ * row whose migration hasn't run yet.
+ */
+function normalizeCitations(
+  raw: unknown,
+  sourceCardIds: readonly string[],
+  accumulatedText: string,
+): NormalizedCitation[] {
+  if (!Array.isArray(raw)) return [];
+  if (raw.length === 0) return [];
+  // New shape: array of objects with `rank`.
+  if (typeof raw[0] === 'object' && raw[0] !== null && 'rank' in (raw[0] as object)) {
+    return (raw as Array<Record<string, unknown>>).map((c) => {
+      const rank = Number(c['rank']);
+      const cardId =
+        typeof c['cardId'] === 'string' ? (c['cardId'] as string) : (sourceCardIds[rank - 1] ?? '');
+      const position = Number(c['position'] ?? 0);
+      const quote = typeof c['quote'] === 'string' ? (c['quote'] as string) : undefined;
+      return quote !== undefined ? { rank, cardId, position, quote } : { rank, cardId, position };
+    });
+  }
+  // Old shape: array of numeric ranks.
+  return (raw as number[]).flatMap((rank) => {
+    if (!Number.isInteger(rank) || rank < 1 || rank > sourceCardIds.length) return [];
+    const cardId = sourceCardIds[rank - 1];
+    if (cardId === undefined) return [];
+    const idx = accumulatedText.indexOf(`[${String(rank)}]`);
+    return [{ rank, cardId, position: idx >= 0 ? idx : 0 }];
+  });
 }

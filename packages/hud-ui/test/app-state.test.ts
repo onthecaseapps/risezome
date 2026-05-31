@@ -150,6 +150,21 @@ describe('appStateReducer', () => {
     expect(next).toBe(initialAppState);
   });
 
+  it('synthesisStart is a no-op when the synthesisId already exists (S6 replay guard)', () => {
+    const start: SynthesisStartEvent = {
+      synthesisId: 'syn1',
+      sourceCardIds: ['c1'],
+      traceId: 'tr1',
+    };
+    let s = appStateReducer(initialAppState, { type: 'synthesisStart', start });
+    s = appStateReducer(s, { type: 'synthesisDelta', delta: { synthesisId: 'syn1', delta: 'Hello ' } });
+    // Replayed synthesisStart: must NOT reset accumulatedText or streaming.
+    const next = appStateReducer(s, { type: 'synthesisStart', start });
+    expect(next).toBe(s);
+    expect(next.syntheses.get('syn1')?.accumulatedText).toBe('Hello ');
+    expect(next.syntheses.get('syn1')?.streaming).toBe(true);
+  });
+
   it('synthesisDone marks streaming false and records citations + sets announce text', () => {
     const start: SynthesisStartEvent = {
       synthesisId: 'syn1',
@@ -161,7 +176,7 @@ describe('appStateReducer', () => {
     const done: SynthesisDoneEvent = {
       synthesisId: 'syn1',
       stopReason: 'end_turn',
-      citations: [1],
+      citations: [{ rank: 1, cardId: 'c1', position: 0, quote: 'verbatim' }],
       usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 },
       ttftMs: 200,
       latencyMs: 800,
@@ -169,7 +184,7 @@ describe('appStateReducer', () => {
     s = appStateReducer(s, { type: 'synthesisDone', done });
     const syn = s.syntheses.get('syn1');
     expect(syn?.streaming).toBe(false);
-    expect(syn?.citations).toEqual([1]);
+    expect(syn?.citations).toEqual([{ rank: 1, cardId: 'c1', position: 0, quote: 'verbatim' }]);
     expect(s.lastSynthesisAnnounce).toBe('Body');
   });
 

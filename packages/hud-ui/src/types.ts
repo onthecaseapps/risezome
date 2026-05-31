@@ -80,10 +80,27 @@ export interface SynthesisUsageStats {
   readonly cacheCreationTokens: number;
 }
 
+/**
+ * One citation occurrence in a synthesis answer. Per-occurrence:
+ * the same source cited three times yields three entries, each with
+ * its own quote. cardId is the resolved cardId for `rank` (the
+ * synthesizer-side parser only knows rank; the bot-worker resolves
+ * cardId via sourceCardIds[rank - 1] before persisting).
+ */
+export interface SynthesisCitation {
+  readonly rank: number;
+  readonly cardId: string;
+  /** Character offset of the [N…] token in accumulated_text. */
+  readonly position: number;
+  /** Verbatim quote the LLM emitted for this citation. Undefined when
+   *  Claude misformatted as bare [N] without a quote payload. */
+  readonly quote?: string;
+}
+
 export interface SynthesisDoneEvent {
   readonly synthesisId: string;
   readonly stopReason: string;
-  readonly citations: readonly number[];
+  readonly citations: readonly SynthesisCitation[];
   readonly usage: SynthesisUsageStats;
   readonly ttftMs: number;
   readonly latencyMs: number;

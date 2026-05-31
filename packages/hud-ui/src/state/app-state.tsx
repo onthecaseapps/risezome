@@ -13,6 +13,7 @@ import type {
   CardRetracted,
   CardUpdated,
   GapEvent,
+  SynthesisCitation,
   SynthesisDeltaEvent,
   SynthesisDoneEvent,
   SynthesisErrorEvent,
@@ -41,7 +42,7 @@ export interface SynthesisRecord {
   readonly traceId: string;
   readonly accumulatedText: string;
   readonly streaming: boolean;
-  readonly citations: readonly number[];
+  readonly citations: readonly SynthesisCitation[];
   readonly stopReason?: string;
   readonly ttftMs?: number;
   readonly latencyMs?: number;
@@ -164,6 +165,14 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
       return { ...state, meeting: action.mode };
 
     case 'synthesisStart': {
+      // S6 (replay-on-reconnect): if a record for this synthesisId is
+      // already in state (hydrated from initial DB fetch, or kept from
+      // a prior session), treat the replayed synthesisStart as a no-op
+      // rather than resetting accumulatedText to '' and streaming to
+      // true. Without this guard, the channel's reconnect-replay would
+      // wipe in-flight or completed synthesis text every time the
+      // socket flapped.
+      if (state.syntheses.has(action.start.synthesisId)) return state;
       const syntheses = cloneMap(state.syntheses);
       const rec: SynthesisRecord = {
         synthesisId: action.start.synthesisId,
