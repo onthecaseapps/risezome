@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import { Logo } from '../../_components/logo';
+import { Logo } from '../_components/logo';
 import { GoogleSignInButton } from './google-sign-in-button';
 
 /**

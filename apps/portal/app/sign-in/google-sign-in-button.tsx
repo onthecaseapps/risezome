@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type ReactElement } from 'react';
-import { getBrowserClient } from '../../_lib/supabase-browser';
+import { getBrowserClient } from '../_lib/supabase-browser';
 
 /**
  * "Sign in with Google" button. Initiates the OAuth flow via the browser
