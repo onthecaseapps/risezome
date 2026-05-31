@@ -14,6 +14,7 @@
 
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
+import { VoyageEmbedder } from '@risezome/engine/embed';
 import { adaptRecallMessage } from './recall-adapter.js';
 import { verifyBotWsJwt, type BotWsJwtPayload } from './jwt.js';
 import {
@@ -22,6 +23,11 @@ import {
   persistAndBroadcast,
   utteranceToEventPayload,
 } from './db.js';
+import {
+  maybeRetrieveAndEmit,
+  newRetrievalRuntime,
+  type RetrievalRuntime,
+} from './retrieval.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 interface PerMeetingRuntime {
@@ -33,6 +39,8 @@ interface PerMeetingRuntime {
   utteranceCount: number;
   /** Whether we've flipped meetings.status to 'recording' yet. */
   markedRecording: boolean;
+  /** Retrieval state — rolling window + throttling counters. */
+  retrieval: RetrievalRuntime;
 }
 
 const runtimes = new Map<string, PerMeetingRuntime>();
@@ -46,6 +54,18 @@ async function main(): Promise<void> {
   }
 
   const db = createServiceClient();
+
+  // Voyage embedder for per-utterance retrieval. Optional: if
+  // VOYAGE_API_KEY isn't set, retrieval is silently disabled (the
+  // transcript pipeline still runs). Lets you run the bot-worker in
+  // "transcript-only" dev mode without standing up Voyage.
+  const voyageKey = process.env['VOYAGE_API_KEY'];
+  const embedder = voyageKey !== undefined && voyageKey.length > 0
+    ? new VoyageEmbedder({ apiKey: voyageKey })
+    : null;
+  if (embedder === null) {
+    console.warn('[bot-worker] VOYAGE_API_KEY unset — per-utterance retrieval disabled');
+  }
 
   const fastify = Fastify({ logger: { level: 'info' } });
   await fastify.register(websocket);
@@ -98,6 +118,7 @@ async function main(): Promise<void> {
             connectedAt: Date.now(),
             utteranceCount: 0,
             markedRecording: false,
+            retrieval: newRetrievalRuntime(),
           };
           runtimes.set(meetingId, runtime);
           req.log.info({ meetingId, orgId: payload.orgId }, 'runtime.created');
@@ -106,7 +127,7 @@ async function main(): Promise<void> {
         }
 
         socket.on('message', (raw: Buffer) => {
-          void handleMessage(raw, meetingId, payload.orgId, db, req.log);
+          void handleMessage(raw, meetingId, payload.orgId, db, embedder, req.log);
         });
 
         socket.on('close', () => {
@@ -144,6 +165,7 @@ async function handleMessage(
   meetingId: string,
   orgId: string,
   db: SupabaseClient,
+  embedder: VoyageEmbedder | null,
   logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void },
 ): Promise<void> {
   let parsed: unknown;
@@ -200,6 +222,28 @@ async function handleMessage(
     },
     'utterance',
   );
+
+  // Retrieval only fires on FINAL utterances (we don't want partials
+  // moving the rolling window each time a word changes). Also
+  // requires the embedder to be configured.
+  if (adapted.utterance.isFinal && embedder !== null && runtime !== undefined) {
+    const retrievalResult = await maybeRetrieveAndEmit({
+      runtime: runtime.retrieval,
+      utteranceText: adapted.utterance.text,
+      utteranceId: adapted.utterance.utteranceId,
+      meetingId,
+      orgId,
+      db,
+      embedder,
+      logger,
+    });
+    if (retrievalResult.emitted > 0 || retrievalResult.skipped !== undefined) {
+      logger.info(
+        { meetingId, emitted: retrievalResult.emitted, skipped: retrievalResult.skipped },
+        'retrieval.tick',
+      );
+    }
+  }
 }
 
 function parsePort(raw: string): number {
