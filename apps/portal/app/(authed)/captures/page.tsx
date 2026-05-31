@@ -21,6 +21,7 @@ interface CaptureRow {
   status: 'completed' | 'failed';
   started_at: string | null;
   ended_at: string | null;
+  created_at: string;
   error_code: string | null;
   error_message: string | null;
   calendar_event_id: string | null;
@@ -101,6 +102,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
     status: m.status,
     started_at: m.started_at,
     ended_at: m.ended_at,
+    created_at: m.created_at,
     error_code: m.error_code,
     error_message: m.error_message,
     calendar_event_id: m.calendar_event_id,
@@ -226,9 +228,13 @@ function groupByDay(
 ): Array<{ dayKey: string; day: string; items: CaptureRow[] }> {
   const groups = new Map<string, CaptureRow[]>();
   for (const c of items) {
-    // Use started_at if present, else ended_at, else "Unknown" bucket.
-    const ts = c.started_at ?? c.ended_at;
-    const key = ts !== null ? new Date(ts).toDateString() : 'Unknown';
+    // Failed meetings have started_at AND ended_at = null (the bot
+    // never reached "in_call"). Fall back to created_at, which the
+    // launcher always populates, so they group under the day the user
+    // tried to start the bot rather than landing in an "Unknown date"
+    // bucket.
+    const ts = c.started_at ?? c.ended_at ?? c.created_at;
+    const key = new Date(ts).toDateString();
     const bucket = groups.get(key) ?? [];
     bucket.push(c);
     groups.set(key, bucket);
@@ -240,7 +246,6 @@ function groupByDay(
     let day: string;
     if (dayKey === today) day = 'Today';
     else if (dayKey === yesterday) day = 'Yesterday';
-    else if (dayKey === 'Unknown') day = 'Unknown date';
     else
       day = new Date(dayKey).toLocaleDateString(undefined, {
         weekday: 'long',

@@ -13,13 +13,17 @@ import { UserCard } from './user-card';
  *   1. Logo + Risezome wordmark
  *   2. Current-org chip with built-in switcher (none if user hasn't onboarded)
  *   3. Nav: Upcoming, Live meeting (dynamic), Sources, Captures, Settings
- *      — Live meeting smart-links to the currently-recording meeting in
- *        the user's current org when one exists, with a pulsing red dot;
- *        otherwise it stays disabled.
+ *      — Live meeting always routes to /meetings/live (the list page).
+ *        A pulsing red dot appears next to the label when one or more
+ *        meetings are currently recording in the user's current org;
+ *        the link is disabled only when there are zero active.
+ *        Counting beats smart-linking to a single meeting because a
+ *        team often has multiple concurrent meetings — picking one
+ *        would be wrong half the time.
  *   4. UserCard at the bottom with avatar + email + sign-out
  *
- * Server component: re-evaluates the active-meeting lookup on every
- * render. Cheap query: indexed (org_id, status) on meetings.
+ * Server component: re-evaluates the active count on every render.
+ * Cheap query: indexed (org_id, status) on meetings, COUNT-only.
  */
 export async function Sidebar(): Promise<ReactElement> {
   const user = await requireAuthedUser();
@@ -31,20 +35,18 @@ export async function Sidebar(): Promise<ReactElement> {
   const fullName = (user.user_metadata?.['full_name'] as string | undefined) ?? undefined;
   const email = user.email ?? '';
 
-  // Find the most-recent recording meeting in the current org. RLS
-  // scopes to org members so users only see their org's live meeting.
-  let activeMeetingId: string | null = null;
+  // Count recording meetings in the current org. RLS scopes to org
+  // members so users only see their org's count. HEAD + count avoids
+  // shipping rows we don't need; the list page does the full select.
+  let activeMeetingCount = 0;
   if (current !== null) {
     const supabase = await createServerClient();
-    const { data: live } = await supabase
+    const { count } = await supabase
       .from('meetings')
-      .select('meeting_id')
+      .select('meeting_id', { count: 'exact', head: true })
       .eq('org_id', current.id)
-      .eq('status', 'recording')
-      .order('started_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (live !== null) activeMeetingId = live.meeting_id as string;
+      .eq('status', 'recording');
+    activeMeetingCount = count ?? 0;
   }
 
   return (
@@ -75,16 +77,16 @@ export async function Sidebar(): Promise<ReactElement> {
           label="Upcoming"
         />
         <SidebarNavLink
-          href={activeMeetingId !== null ? `/meetings/${activeMeetingId}/live` : '/meetings/live'}
+          href="/meetings/live"
           matchPrefix="/meetings/"
           icon={<LiveIcon />}
-          label="Live meeting"
-          disabled={activeMeetingId === null}
-          {...(activeMeetingId !== null
+          label={activeMeetingCount > 1 ? `Live meetings (${activeMeetingCount})` : 'Live meeting'}
+          disabled={activeMeetingCount === 0}
+          {...(activeMeetingCount > 0
             ? {
                 dot: (
                   <span
-                    aria-label="Recording"
+                    aria-label={`${activeMeetingCount} recording`}
                     className="inline-block h-2 w-2 animate-pulse rounded-full bg-rose-400"
                   />
                 ),
