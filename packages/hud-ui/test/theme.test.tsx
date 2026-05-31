@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
-import { ThemeToggle } from '../app/components/theme-toggle';
-import { THEME_INIT_SCRIPT, THEME_STORAGE_KEY } from '../app/lib/theme';
+import { ThemeToggle } from '../src/components/theme-toggle.js';
+import { THEME_INIT_SCRIPT, THEME_STORAGE_KEY } from '../src/lib/theme.js';
 
 describe('THEME_INIT_SCRIPT', () => {
   beforeEach(() => {

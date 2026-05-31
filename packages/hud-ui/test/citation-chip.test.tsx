@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
-import { CitationChip } from '../app/components/citation-chip';
+import { CitationChip } from '../src/components/citation-chip.js';
 
 describe('CitationChip', () => {
   it('renders a <button> with [N] text and data-rank', () => {

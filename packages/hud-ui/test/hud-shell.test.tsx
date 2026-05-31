@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
-import { HudShell } from '../app/components/hud-shell';
-import { AppStateProvider, initialAppState } from '../app/state/app-state';
-import type { CardEvent } from '../app/types';
+import { HudShell } from '../src/components/hud-shell.js';
+import { AppStateProvider, initialAppState } from '../src/state/app-state.js';
+import type { CardEvent } from '../src/types.js';
 
 function mkCard(over: Partial<CardEvent> = {}): CardEvent {
   return {

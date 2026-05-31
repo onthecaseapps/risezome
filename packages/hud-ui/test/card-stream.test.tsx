@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
-import { CardStream } from '../app/components/card-stream';
-import { AppStateProvider } from '../app/state/app-state';
-import type { AppState, CardRecord } from '../app/state/app-state';
-import { initialAppState } from '../app/state/app-state';
-import type { CardEvent } from '../app/types';
+import { CardStream } from '../src/components/card-stream.js';
+import { AppStateProvider } from '../src/state/app-state.js';
+import type { AppState, CardRecord } from '../src/state/app-state.js';
+import { initialAppState } from '../src/state/app-state.js';
+import type { CardEvent } from '../src/types.js';
 
 function mkCard(over: Partial<CardEvent> = {}): CardEvent {
   return {

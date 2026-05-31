@@ -3,7 +3,7 @@ import { StrictMode } from 'react';
 import { render } from '@testing-library/react';
 import { useRisezomeSocket } from '../app/hooks/use-risezome-socket';
 import type { MinimalWebSocket, WsStatus } from '../app/lib/ws-client';
-import type { ServerMessage } from '../app/types';
+import type { ServerMessage } from '@risezome/hud-ui';
 
 class FakeWebSocket implements MinimalWebSocket {
   readonly url: string;

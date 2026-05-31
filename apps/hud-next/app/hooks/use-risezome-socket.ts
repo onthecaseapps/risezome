@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { WsClient, type WsFactory, type WsStatus } from '../lib/ws-client';
-import type { ServerMessage } from '../types';
+import type { ServerMessage } from '@risezome/hud-ui';
 
 export interface UseRisezomeSocketOptions {
   readonly url: string;

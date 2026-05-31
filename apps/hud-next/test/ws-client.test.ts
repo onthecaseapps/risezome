@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { WsClient, type MinimalWebSocket, type WsStatus } from '../app/lib/ws-client';
-import type { ServerMessage } from '../app/types';
+import type { ServerMessage } from '@risezome/hud-ui';
 
 class FakeWebSocket implements MinimalWebSocket {
   readonly url: string;

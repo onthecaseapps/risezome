@@ -1,9 +1,8 @@
 'use client';
 
 import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
-import { AppStateProvider, useAppDispatch } from '../state/app-state';
+import { AppStateProvider, useAppDispatch, type ServerMessage } from '@risezome/hud-ui';
 import { useRisezomeSocket } from '../hooks/use-risezome-socket';
-import type { ServerMessage } from '../types';
 
 interface BootstrapConfig {
   readonly wsUrl: string;

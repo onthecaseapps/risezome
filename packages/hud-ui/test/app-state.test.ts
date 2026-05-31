@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { appStateReducer, initialAppState } from '../app/state/app-state';
+import { appStateReducer, initialAppState } from '../src/state/app-state.js';
 import type {
   CardEvent,
   SynthesisDeltaEvent,
   SynthesisDoneEvent,
   SynthesisStartEvent,
-} from '../app/types';
+} from '../src/types.js';
 
 function mkCard(over: Partial<CardEvent> = {}): CardEvent {
   return {

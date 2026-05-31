@@ -1,4 +1,4 @@
-import type { ServerMessage } from '../types';
+import type { ServerMessage } from '@risezome/hud-ui';
 
 export interface WsClientOptions {
   readonly url: string;

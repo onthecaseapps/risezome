@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
-import { SynthesisAnnounce } from '../app/components/synthesis-announce';
+import { SynthesisAnnounce } from '../src/components/synthesis-announce.js';
 
 describe('SynthesisAnnounce', () => {
   it('renders an sr-only aria-live=polite container', () => {

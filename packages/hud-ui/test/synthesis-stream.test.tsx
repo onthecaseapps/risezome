@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
-import { SynthesisStream } from '../app/components/synthesis-stream';
+import { SynthesisStream } from '../src/components/synthesis-stream.js';
 import {
   AppStateProvider,
   initialAppState,
   type CardRecord,
   type SynthesisRecord,
-} from '../app/state/app-state';
-import type { CardEvent } from '../app/types';
+} from '../src/state/app-state.js';
+import type { CardEvent } from '../src/types.js';
 
 function mkCard(over: Partial<CardEvent> = {}): CardEvent {
   return {

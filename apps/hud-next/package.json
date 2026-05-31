@@ -13,6 +13,7 @@
     "bundle:check": "node scripts/bundle-check.mjs"
   },
   "dependencies": {
+    "@risezome/hud-ui": "workspace:*",
     "next": "^16.2.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"

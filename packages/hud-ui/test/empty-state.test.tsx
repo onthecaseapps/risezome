@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render } from '@testing-library/react';
-import { EMPTY_STATE_MESSAGES, EmptyState } from '../app/components/empty-state';
+import { EMPTY_STATE_MESSAGES, EmptyState } from '../src/components/empty-state.js';
 
 describe('EmptyState', () => {
   it('renders a placeholder message from EMPTY_STATE_MESSAGES', () => {

@@ -1,6 +1,6 @@
 import './styles.css';
 import type { ReactElement, ReactNode } from 'react';
-import { THEME_INIT_SCRIPT } from './lib/theme';
+import { THEME_INIT_SCRIPT } from '@risezome/hud-ui';
 
 export const metadata = {
   title: 'Risezome',

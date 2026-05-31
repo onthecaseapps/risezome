@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
-import { PinnedSection } from '../app/components/pinned-section';
-import { AppStateProvider, initialAppState } from '../app/state/app-state';
-import type { CardEvent } from '../app/types';
+import { PinnedSection } from '../src/components/pinned-section.js';
+import { AppStateProvider, initialAppState } from '../src/state/app-state.js';
+import type { CardEvent } from '../src/types.js';
 
 function mkCard(over: Partial<CardEvent> = {}): CardEvent {
   return {

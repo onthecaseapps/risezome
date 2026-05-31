@@ -19,7 +19,16 @@ import type {
   SynthesisRetractedEvent,
   SynthesisStartEvent,
 } from '../types';
-import type { WsStatus } from '../lib/ws-client';
+/**
+ * Connection status reported by the transport layer (daemon WS in
+ * hud-next, Supabase Realtime in the portal). The reducer doesn't
+ * care which transport — only the lifecycle stages it can be in.
+ */
+export type ConnectionStatus = 'connecting' | 'open' | 'disconnected';
+
+// Backwards-compatible alias for hud-next's existing call sites that
+// imported WsStatus from the lifted module.
+export type WsStatus = ConnectionStatus;
 
 export interface CardRecord {
   readonly card: CardEvent;
