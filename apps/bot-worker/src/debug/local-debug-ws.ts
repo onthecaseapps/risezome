@@ -253,11 +253,20 @@ export async function handleLocalDebugWs(
       ? `${recentFinals[recentFinals.length - 2]!.text} ${text}`
       : text;
 
-    // The recentContext we pass excludes the current utterance itself
-    // (which is the query) but INCLUDES the prior-final-merged-into-it
-    // entry when continuation kicked in, so Claude can see the original
-    // turn boundary if the merge was wrong.
-    const recentContext = recentFinals.slice(0, -1).map((u) => u.text);
+    // Build recentContext for the synthesizer. The latest rolling
+    // summary prose (if any) goes at the head as the OLDEST entry
+    // (longest-range context); the recent finals follow in oldest-
+    // first order. Reads lastSummary ONCE here (synchronously, before
+    // the pipeline starts) so a mid-stream summary refresh can't
+    // produce a torn read — the in-flight call keeps the summary it
+    // captured at start; the next call picks up the new one.
+    const lastSummaryAtBuild = summarizerRuntime.getLastSummary();
+    const recentContext = [
+      ...(lastSummaryAtBuild !== null && lastSummaryAtBuild.summary.length > 0
+        ? [lastSummaryAtBuild.summary]
+        : []),
+      ...recentFinals.slice(0, -1).map((u) => u.text),
+    ];
 
     // Abort prior in-flight synthesis. Send an aborted event so the
     // page clears the stuck-streaming card.
