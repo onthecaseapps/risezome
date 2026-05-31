@@ -40,8 +40,10 @@ import {
   parseSynthesisOutput,
   type SynthesisSource,
 } from '@risezome/engine/synthesize';
+import { AnthropicSummarizer } from '@risezome/engine/summarize';
 import type { AudioFrame } from '@risezome/shared-types';
 import type { Utterance } from '@risezome/engine/transcribe';
+import { MeetingSummarizerRuntime } from '../summarizer-runtime.js';
 
 export interface LocalDebugHandlerArgs {
   readonly db: SupabaseClient;
@@ -144,6 +146,28 @@ export async function handleLocalDebugWs(
     model: args.anthropicModel,
     maxTokens: SYNTHESIS_MAX_TOKENS,
   });
+  const summarizer = new AnthropicSummarizer({
+    apiKey: args.anthropicKey,
+    model: args.anthropicModel,
+  });
+  const summarizerRuntime = new MeetingSummarizerRuntime({
+    summarizer,
+    onSummaryUpdated: (summary, at) => {
+      args.logger.info(
+        {
+          currentTopic: summary.current_topic,
+          openQuestions: summary.open_questions.length,
+          keyTerms: summary.key_terms.length,
+          at,
+        },
+        'local-debug.summary.updated',
+      );
+      send(socket, { type: 'summary', summary, at });
+    },
+    onSummarizerError: (err) => {
+      args.logger.warn({ err: String(err) }, 'local-debug.summarizer.error');
+    },
+  });
 
   // Per-WS pipeline state.
   //
@@ -198,6 +222,11 @@ export async function handleLocalDebugWs(
     forwardUtterance(socket, t.utterance);
     const text = t.utterance.text.trim();
     if (text.length === 0) return;
+
+    // Feed the summarizer runtime — fires asynchronously when cadence
+    // + rate-cap conditions hold. Its onSummaryUpdated broadcasts the
+    // new summary as a `summary` WS event.
+    summarizerRuntime.recordUtterance(text);
 
     // Append to rolling buffer + age out old entries.
     const now = Date.now();
@@ -300,6 +329,7 @@ export async function handleLocalDebugWs(
   const cleanup = async (): Promise<void> => {
     args.logger.info({}, 'local-debug.cleanup');
     if (currentSynthesisAbort !== null) currentSynthesisAbort.abort();
+    summarizerRuntime.dispose();
     try {
       await runner.stop();
     } catch (err) {
