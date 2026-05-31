@@ -72,7 +72,7 @@ export function SourceActions({
               onClick={handleReindex}
               disabled={busy || pending}
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-bg disabled:cursor-not-allowed disabled:opacity-50"
-              title={busy ? 'Already indexing — wait for it to finish' : undefined}
+              title={busy ? 'Indexer is already running — wait for it to finish' : undefined}
             >
               {pending ? <Spinner /> : <RetryIcon />}
               {pending ? 'Queuing…' : 'Reindex'}

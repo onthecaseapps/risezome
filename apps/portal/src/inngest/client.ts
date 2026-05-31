@@ -24,9 +24,13 @@ export interface SourceIndexRequestedEvent {
  * The Inngest client is a singleton per process. Production uses the
  * INNGEST_EVENT_KEY/INNGEST_SIGNING_KEY env vars set by the Vercel-Inngest
  * integration. Local dev uses the Inngest dev CLI which discovers functions
- * at http://localhost:3000/api/inngest and needs no env vars — leaving the
- * keys unset is the correct dev posture (the SDK auto-detects dev mode).
+ * at http://localhost:3000/api/inngest and needs no event key — but the
+ * SDK's auto-detection of dev mode is unreliable (it defaults to "cloud"
+ * unless we explicitly opt in). We flip `isDev` on whenever NODE_ENV is
+ * not 'production' so leaving the keys unset in .env.local is the correct
+ * dev posture.
  */
 export const inngest = new Inngest({
   id: 'risezome-portal',
+  isDev: process.env['NODE_ENV'] !== 'production',
 });

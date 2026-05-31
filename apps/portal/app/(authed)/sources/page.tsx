@@ -238,7 +238,7 @@ function SourceCard({ source }: { source: SourceRow }): ReactElement {
         <StatusRightSlot source={source} />
         <SourceActions
           sourceId={source.id}
-          busy={source.status === 'pending' || source.status === 'indexing'}
+          busy={source.status === 'indexing'}
         />
       </div>
     </div>
