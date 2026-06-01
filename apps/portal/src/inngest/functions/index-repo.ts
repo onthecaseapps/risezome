@@ -41,6 +41,23 @@ export const indexRepoFn = inngest.createFunction(
     ],
     retries: 3,
     triggers: [{ event: 'risezome/source.index-requested' }],
+    // Safety net: when all retries are exhausted, flip the source to
+    // `errored` instead of leaving it wedged at `indexing` (which grays
+    // out the Reindex button forever). Any failure cause — deleted
+    // default branch, revoked token, network — self-heals to a
+    // retryable state.
+    onFailure: async ({ event, error }) => {
+      const original = (event as unknown as {
+        data: { event: { data: { sourceId: string } } };
+      }).data.event;
+      const sourceId = original?.data?.sourceId;
+      if (typeof sourceId !== 'string' || sourceId.length === 0) return;
+      const message = error instanceof Error ? error.message : String(error);
+      await createServiceRoleClient()
+        .from('sources')
+        .update({ status: 'errored', status_message: message.slice(0, 500) })
+        .eq('id', sourceId);
+    },
   },
   async ({ event, step }) => {
     const { orgId, sourceId } = (event as unknown as { data: { orgId: string; sourceId: string } }).data;
