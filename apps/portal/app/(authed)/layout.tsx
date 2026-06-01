@@ -18,12 +18,16 @@ import { Sidebar } from './_components/sidebar';
  */
 export default function AuthedLayout({ children }: { children: ReactNode }): ReactElement {
   return (
-    <div className="flex min-h-dvh bg-bg text-fg">
+    <div className="flex h-dvh overflow-hidden bg-bg text-fg">
       {/* @ts-expect-error - Async Server Component child. Next 16 + React 19
           handle this correctly; the @types/react lib hasn't caught up to
           async JSX in all positions yet. Remove once it does. */}
       <Sidebar />
-      <main className="flex-1 overflow-x-hidden">{children}</main>
+      {/* Lock the shell to the viewport and scroll only the main column,
+          so the sidebar stays pinned while long content (a capture's
+          card list, a meeting review) scrolls independently instead of
+          the whole document. */}
+      <main className="flex-1 overflow-y-auto overflow-x-hidden">{children}</main>
     </div>
   );
 }
