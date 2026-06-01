@@ -97,10 +97,11 @@ function SourceRowCard({
   const isErrored = source.status === 'errored';
   const busy = source.status === 'indexing' || source.status === 'pending';
 
-  function handleReindex(): void {
+  function handleReindex(reindexMode: 'delta' | 'full'): void {
     setError(null);
     const fd = new FormData();
     fd.set('sourceId', source.id);
+    fd.set('mode', reindexMode);
     startTransition(async () => {
       const res = await reindexSourceAction(fd);
       if (!res.ok) setError(`Failed (${res.error})`);
@@ -149,18 +150,35 @@ function SourceRowCard({
             />
             <div
               role="menu"
-              className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-lg"
+              className="absolute right-0 top-full z-20 mt-1 w-52 overflow-hidden rounded-lg border border-border bg-card shadow-lg"
             >
               <button
                 type="button"
                 role="menuitem"
-                onClick={handleReindex}
+                onClick={() => handleReindex('delta')}
                 disabled={busy || pending}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-bg disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex w-full items-start gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-bg disabled:cursor-not-allowed disabled:opacity-50"
                 title={busy ? 'Indexer is already running — wait for it to finish' : undefined}
               >
                 {pending ? <Spinner /> : <RetryIcon />}
-                {pending ? 'Queuing…' : 'Re-index'}
+                <span className="flex flex-col">
+                  <span>{pending ? 'Queuing…' : 'Reindex (delta)'}</span>
+                  <span className="text-[11px] text-muted">New &amp; changed only</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => handleReindex('full')}
+                disabled={busy || pending}
+                className="flex w-full items-start gap-2 border-t border-border px-3 py-2 text-left text-sm text-fg hover:bg-bg disabled:cursor-not-allowed disabled:opacity-50"
+                title={busy ? 'Indexer is already running — wait for it to finish' : undefined}
+              >
+                {pending ? <Spinner /> : <RetryIcon />}
+                <span className="flex flex-col">
+                  <span>{pending ? 'Queuing…' : 'Reindex (full)'}</span>
+                  <span className="text-[11px] text-muted">Also removes deleted {noun}s</span>
+                </span>
               </button>
               {onManage !== undefined ? (
                 <button
@@ -170,7 +188,7 @@ function SourceRowCard({
                     onManage();
                     setOpen(false);
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-bg"
+                  className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-sm text-fg hover:bg-bg"
                 >
                   <GearIcon />
                   {manageLabel}
