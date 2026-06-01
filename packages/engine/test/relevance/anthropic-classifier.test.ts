@@ -203,10 +203,12 @@ describe('AnthropicRelevanceClassifier.classify', () => {
     expect(req.method).toBe('POST');
     expect(req.headers.get('x-api-key')).toBe('test-key');
     expect(req.headers.get('anthropic-version')).toBe(ANTHROPIC_VERSION);
-    const body = await req.json() as { model: string; tools: unknown[]; tool_choice: { type: string }; messages: { content: string }[] };
+    const body = await req.json() as { model: string; tools: unknown[]; tool_choice: { type: string; name?: string }; messages: { content: string }[] };
     expect(body.model).toBe(DEFAULT_ANTHROPIC_MODEL);
     expect(body.tools).toHaveLength(1);
-    expect(body.tool_choice).toEqual({ type: 'auto' });
+    // Tool choice is forced to the single relevance tool so the model can't
+    // reply text-only (which the parser treats as a bad-request).
+    expect(body.tool_choice).toEqual({ type: 'tool', name: 'should_surface' });
     expect(body.messages[0]!.content).toBe('how does X work');
   });
 

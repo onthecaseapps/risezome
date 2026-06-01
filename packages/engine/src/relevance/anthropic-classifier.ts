@@ -60,9 +60,10 @@ interface MessagesResponse {
  * call the should_surface tool exactly once. The response is parsed into a
  * RelevanceResult discriminated union and returned.
  *
- * Response parsing scans the FULL content array for any tool_use block
- * (not just content[0]); Anthropic can emit a text preamble + tool_use
- * together under tool_choice: 'auto'.
+ * The request forces `tool_choice: { type: 'tool', name: 'should_surface' }`
+ * so the model can't reply text-only (which we treat as 'bad-request').
+ * Response parsing still scans the FULL content array for the tool_use
+ * block (not just content[0]) as a defensive measure.
  *
  * Retry / abort / error taxonomy mirrors AnthropicClassifier (router).
  */
@@ -99,10 +100,9 @@ export class AnthropicRelevanceClassifier implements RelevanceClassifier {
       });
     }
 
-    // Scan the FULL content array for any tool_use block. tool_choice 'auto'
-    // can emit a preamble text block followed by tool_use; reading only
-    // content[0] would silently misclassify those as the no-tool-found
-    // branch.
+    // Scan the FULL content array for any tool_use block (defensive — tool
+    // choice is forced, but a preamble block before tool_use is still
+    // possible; reading only content[0] would miss it).
     const content = json.content ?? [];
     for (const block of content) {
       if (block.type === 'tool_use' && typeof block.name === 'string') {
@@ -202,14 +202,20 @@ export class AnthropicRelevanceClassifier implements RelevanceClassifier {
   async #postRequest(utterance: string, options: ClassifyOptions | undefined): Promise<Response> {
     const url = `${this.#baseUrl.replace(/\/$/, '')}/v1/messages`;
     const userContent = buildRelevanceUserMessage(utterance, options?.context);
+    const tool = buildRelevanceTool();
     const body = {
       model: this.#model,
       max_tokens: this.#maxTokens,
       temperature: this.#temperature,
       stream: false,
       system: buildRelevanceSystem(),
-      tools: [buildRelevanceTool()],
-      tool_choice: { type: 'auto' },
+      tools: [tool],
+      // FORCE the tool call. With 'auto' the model could emit plain text
+      // instead, which we treat as a 'bad-request' misbehavior; forcing the
+      // single tool guarantees a tool_use block. Unlike the router (where a
+      // text-only reply legitimately means "no skill → RAG"), here there is
+      // no valid text-only outcome — a relevance decision is always required.
+      tool_choice: { type: 'tool', name: tool.name },
       messages: [{ role: 'user', content: userContent }],
     };
     const signal = options?.signal;
