@@ -112,12 +112,15 @@ async function main(): Promise<void> {
   // Router classifier + skill registry — process-singleton (no per-
   // meeting state). The classifier and registry are paired: both must
   // be present for the router branch in maybeRetrieveAndEmit to fire.
-  // buildSkillRegistry reads env vars (GITHUB_TOKEN + RISEZOME_GITHUB_REPO,
-  // etc.) and registers whichever skills are configured.
+  // buildSkillRegistry gates the live GitHub skills on the platform
+  // GitHub App credentials (GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY_BASE64)
+  // and resolves each meeting org's installation token + repos from the
+  // sources table at call time.
   const classifier: Classifier | null = anthropicKey !== undefined && anthropicKey.length > 0
     ? new AnthropicClassifier({ apiKey: anthropicKey, model: anthropicModel })
     : null;
   const skillRegistry: SkillRegistry = buildSkillRegistry({
+    db,
     logger: {
       info: (obj: object, msg?: string) => {
         console.log('[bot-worker]', msg ?? '', JSON.stringify(obj));

@@ -1,20 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildIssueProgressSkill } from '../../../src/skills/github/issue_progress.js';
 import type { LiveSkillContext } from '../../../src/skills/github/live-context.js';
-import { GithubClient } from '../../../src/skills/github/client.js';
-import type { AuthResult } from '../../../src/skills/github/connector-errors.js';
+import { jsonResponse, liveCtx, SKILL_CTX } from './_live-ctx.js';
 
-const AUTH: AuthResult = { kind: 'pat', token: 'gh_pat_test' };
 const FAKE_CTX_FN = (): never => {
   throw new Error('signal should not be invoked in these tests');
 };
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
+void FAKE_CTX_FN;
 
 interface MockResponses {
   issue: unknown;
@@ -28,12 +20,8 @@ function ctxWith(mocks: MockResponses): LiveSkillContext {
       return Promise.resolve(jsonResponse(mocks.timeline));
     }
     return Promise.resolve(jsonResponse(mocks.issue));
-  });
-  return {
-    client: new GithubClient({ fetchImpl }),
-    auth: AUTH,
-    repo: { owner: 'Nath5', name: 'risezome' },
-  };
+  }) as typeof fetch;
+  return liveCtx(fetchImpl, [{ owner: 'Nath5', name: 'risezome' }]);
 }
 
 const BASE_ISSUE = {
@@ -64,7 +52,7 @@ describe('github_issue_progress', () => {
     const skill = buildIssueProgressSkill(ctxWith({ issue: BASE_ISSUE, timeline: [] }));
     const result = await skill.handler(
       { issue_number: 14 },
-      { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN },
+      SKILL_CTX,
     );
     expect(result.summary).toContain('#14');
     expect(result.summary).toContain('Auth refactor');
@@ -77,7 +65,7 @@ describe('github_issue_progress', () => {
     const skill = buildIssueProgressSkill(ctxWith({ issue: BASE_ISSUE, timeline: [] }));
     const result = await skill.handler(
       { issue_number: 14 },
-      { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN },
+      SKILL_CTX,
     );
     expect(result.summary).toContain('No recent activity');
   });
@@ -101,7 +89,7 @@ describe('github_issue_progress', () => {
     const skill = buildIssueProgressSkill(ctxWith({ issue: BASE_ISSUE, timeline }));
     const result = await skill.handler(
       { issue_number: 14 },
-      { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN },
+      SKILL_CTX,
     );
     expect(result.items).toHaveLength(5);
     // Newest first — the most recent load-bearing event was unlabeled at 07:00
@@ -129,7 +117,7 @@ describe('github_issue_progress', () => {
     const skill = buildIssueProgressSkill(ctxWith({ issue: BASE_ISSUE, timeline }));
     const result = await skill.handler(
       { issue_number: 14 },
-      { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN },
+      SKILL_CTX,
     );
     expect(result.items?.[0]?.title).toContain('bob commented');
     expect(result.items?.[0]?.subtitle?.length).toBeLessThanOrEqual(200);
@@ -137,15 +125,10 @@ describe('github_issue_progress', () => {
 
   it('404 on the issue endpoint propagates as SkillExecutionError code=not-found', async () => {
     const fetchImpl: typeof fetch = (() =>
-      Promise.resolve(new Response('', { status: 404 })));
-    const ctx: LiveSkillContext = {
-      client: new GithubClient({ fetchImpl }),
-      auth: AUTH,
-      repo: { owner: 'o', name: 'r' },
-    };
-    const skill = buildIssueProgressSkill(ctx);
+      Promise.resolve(new Response('', { status: 404 }))) as typeof fetch;
+    const skill = buildIssueProgressSkill(liveCtx(fetchImpl));
     await expect(
-      skill.handler({ issue_number: 999 }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN }),
+      skill.handler({ issue_number: 999 }, SKILL_CTX),
     ).rejects.toMatchObject({ executionCode: 'not-found' });
   });
 
@@ -154,7 +137,7 @@ describe('github_issue_progress', () => {
     const skill = buildIssueProgressSkill(ctxWith({ issue, timeline: [] }));
     const result = await skill.handler(
       { issue_number: 14 },
-      { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN },
+      SKILL_CTX,
     );
     expect(result.summary).not.toContain('assigned to');
     expect(result.summary).not.toContain('labeled');

@@ -1,6 +1,7 @@
 import { ConnectorAuthError } from './connector-errors.js';
 import type { GithubUser } from './types.js';
-import type { LiveSkillContext } from './live-context.js';
+import type { GithubClient } from './client.js';
+import { authForToken } from './live-helpers.js';
 
 export interface ResolvedPerson {
   readonly login: string;
@@ -37,15 +38,17 @@ interface GithubUserSearchResponse {
  *   - the literal lookup 404s AND the search returns no matches
  */
 export async function resolvePerson(
+  client: GithubClient,
   token: string,
-  ctx: LiveSkillContext,
+  personToken: string,
 ): Promise<ResolvedPerson | null> {
-  if (typeof token !== 'string') return null;
-  if (!GITHUB_LOGIN_RE.test(token)) return null;
+  if (typeof personToken !== 'string') return null;
+  if (!GITHUB_LOGIN_RE.test(personToken)) return null;
+  const auth = authForToken(token);
 
   // 1. Try as literal login.
   try {
-    const user = await ctx.client.getJson<GithubUser>(ctx.auth, `/users/${token}`);
+    const user = await client.getJson<GithubUser>(auth, `/users/${personToken}`);
     return { login: user.login, resolved: 'literal' };
   } catch (err) {
     // Only suppress 404s. Anything else (rate-limit, auth-error, network)
@@ -58,8 +61,8 @@ export async function resolvePerson(
   // 2. Fall back to user search. The token has already passed the login
   // charset regex above, so by construction it cannot contain `:` or
   // whitespace — qualifier syntax (`org:victim`) is impossible here.
-  const search = await ctx.client.getJson<GithubUserSearchResponse>(ctx.auth, '/search/users', {
-    q: `${token} in:login in:name in:fullname`,
+  const search = await client.getJson<GithubUserSearchResponse>(auth, '/search/users', {
+    q: `${personToken} in:login in:name in:fullname`,
   });
   const top = search.items?.[0]?.login;
   if (typeof top !== 'string' || top.length === 0) return null;

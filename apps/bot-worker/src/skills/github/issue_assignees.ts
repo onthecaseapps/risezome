@@ -1,17 +1,18 @@
-import type { Skill, SkillResult } from '@risezome/engine/skills';
+import type { Skill, SkillContext, SkillResult } from '@risezome/engine/skills';
 import type { GithubIssue } from './types.js';
 import type { LiveSkillContext } from './live-context.js';
 import { mapGithubError } from './error.js';
+import { authForToken, firstRepo, NO_GITHUB_SOURCE_SUMMARY } from './live-helpers.js';
 
 const NAME = 'github_issue_assignees';
 
 /**
- * Factory that returns a Skill closing over the LiveSkillContext built
- * at meeting start in serve.ts. The skill itself is a plain Skill object
- * registered alongside the corpus-backed GitHub skills.
+ * Looks up the current assignees of a GitHub issue/PR by number.
  *
- * Picked by the classifier for utterances like "who is issue 14
- * assigned to" / "who's working on issue 7" / "who owns #42".
+ * An issue number is repo-scoped, so this skill targets ONE repo. Until
+ * repo-routing lands (the classifier picking the target repo from
+ * meeting context) it uses the org's first connected repo. Picked by
+ * the classifier for "who is issue 14 assigned to" / "who owns #42".
  */
 export function buildIssueAssigneesSkill(ctx: LiveSkillContext): Skill {
   return {
@@ -30,12 +31,17 @@ export function buildIssueAssigneesSkill(ctx: LiveSkillContext): Skill {
       },
       required: ['issue_number'],
     },
-    handler: async (args): Promise<SkillResult> => {
+    handler: async (args, skillCtx: SkillContext): Promise<SkillResult> => {
       const issueNumber = Number(args.issue_number);
       try {
+        const access = await ctx.resolve(skillCtx.orgId);
+        const repo = access === null ? null : firstRepo(access);
+        if (repo === null) {
+          return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+        }
         const issue = await ctx.client.getJson<GithubIssue>(
-          ctx.auth,
-          `/repos/${ctx.repo.owner}/${ctx.repo.name}/issues/${issueNumber}`,
+          authForToken(repo.token),
+          `/repos/${repo.owner}/${repo.name}/issues/${String(issueNumber)}`,
         );
         return formatResult(issue);
       } catch (err) {

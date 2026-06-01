@@ -195,7 +195,7 @@ export async function handleLocalDebugWs(
     apiKey: args.anthropicKey,
     model: args.anthropicModel,
   });
-  const skillRegistry = buildSkillRegistry({ logger: args.logger });
+  const skillRegistry = buildSkillRegistry({ db: args.db, logger: args.logger });
   const summarizerRuntime = new MeetingSummarizerRuntime({
     summarizer,
     onSummaryUpdated: (summary, at) => {

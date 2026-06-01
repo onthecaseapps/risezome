@@ -1,16 +1,16 @@
-import type { Skill, SkillResult } from '@risezome/engine/skills';
+import type { Skill, SkillContext, SkillResult } from '@risezome/engine/skills';
 import type { LiveSkillContext } from './live-context.js';
 import { mapGithubError } from './error.js';
 import { resolvePerson } from './person.js';
+import { searchIssuesCount, anyToken, NO_GITHUB_SOURCE_SUMMARY } from './live-helpers.js';
 
 const NAME = 'github_by_assignee_count';
 
 /**
- * Counts open issues currently assigned to a person via the GitHub
- * Search API. Same resolution path as github_by_assignee_list
- * (try-as-login → user-search fallback) but returns an exact count
- * from the Search API's `total_count` — no first-page truncation
- * (the prior /issues?assignee= approach capped at 30).
+ * Counts open issues currently assigned to a person across every repo
+ * the org has connected, via the GitHub Search API's exact
+ * `total_count` (no first-page truncation). Resolution path is
+ * try-as-login → user-search fallback.
  */
 export function buildByAssigneeCountSkill(ctx: LiveSkillContext): Skill {
   return {
@@ -28,23 +28,29 @@ export function buildByAssigneeCountSkill(ctx: LiveSkillContext): Skill {
       },
       required: ['person'],
     },
-    handler: async (args): Promise<SkillResult> => {
+    handler: async (args, skillCtx: SkillContext): Promise<SkillResult> => {
       const person = String(args.person ?? '');
       try {
-        const resolved = await resolvePerson(person, ctx);
+        const access = await ctx.resolve(skillCtx.orgId);
+        if (access === null) {
+          return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+        }
+        const token = anyToken(access);
+        if (token === null) {
+          return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+        }
+        const resolved = await resolvePerson(ctx.client, token, person);
         if (resolved === null) {
           return {
             kind: 'detail',
             summary: `Couldn't find a GitHub user matching "${person}".`,
           };
         }
-        const q = `repo:${ctx.repo.owner}/${ctx.repo.name} type:issue state:open assignee:${resolved.login}`;
-        const result = await ctx.client.getJson<{ total_count: number }>(
-          ctx.auth,
-          '/search/issues',
-          { q, per_page: '1' },
+        const count = await searchIssuesCount(
+          ctx.client,
+          access,
+          `type:issue state:open assignee:${resolved.login}`,
         );
-        const count = typeof result.total_count === 'number' ? result.total_count : 0;
         return formatResult(person, resolved.login, resolved.resolved, count);
       } catch (err) {
         throw mapGithubError(err, NAME);

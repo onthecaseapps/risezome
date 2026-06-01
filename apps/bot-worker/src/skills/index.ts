@@ -1,21 +1,28 @@
 /**
  * Bot-worker skill set assembly.
  *
- * The classifier's tool surface is built from whichever skills are
- * configured at startup time. Live-API skills (U4) register when
- * GITHUB_TOKEN + RISEZOME_GITHUB_REPO are set; corpus skills (U6)
- * register when the Postgres corpus has issues + PRs indexed (U5
- * lands the indexer in production).
+ * The classifier's tool surface is built once at startup from whichever
+ * skills are configured.
  *
- * The registry is a process-singleton; skills themselves are
- * stateless or close over the LiveSkillContext built once at
- * startup. Per-meeting state goes in the SkillContext.db / orgId,
- * not on the registry.
+ * GitHub auth is multi-tenant: the live skills resolve each meeting
+ * org's GitHub App installation token(s) + connected repos from the
+ * `sources` table at call time (keyed by SkillContext.orgId). The
+ * platform sets the GitHub App credentials (GITHUB_APP_ID +
+ * GITHUB_APP_PRIVATE_KEY_BASE64) once; customers connect repos on the
+ * Sources page and set no env vars. When the App credentials are
+ * present the live skills register (and github_count is the live
+ * Search-API variant); when absent they're skipped and github_count
+ * falls back to the indexed corpus.
+ *
+ * The registry is a process-singleton; skills are stateless and resolve
+ * per-org access per call.
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { SkillRegistry } from '@risezome/engine/skills';
 import { GithubClient } from './github/client.js';
-import { readGithubEnv } from './github/auth.js';
+import { buildGithubAppAuth } from './github/app-auth.js';
+import { buildGithubSourceResolver } from './github/source-resolver.js';
 import type { LiveSkillContext } from './github/live-context.js';
 import { buildIssueAssigneesSkill } from './github/issue_assignees.js';
 import { buildByAssigneeCountSkill } from './github/by_assignee_count.js';
@@ -32,62 +39,49 @@ export interface BuildSkillRegistryOptions {
     info: (obj: object, msg?: string) => void;
     warn: (obj: object, msg?: string) => void;
   };
+  /** Service-role Supabase client — the source resolver reads the
+   *  `sources` table to map orgId → installation + repos. */
+  readonly db: SupabaseClient;
 }
 
 export function buildSkillRegistry(options: BuildSkillRegistryOptions): SkillRegistry {
   const registry = new SkillRegistry();
 
-  // ── Live-API GitHub skills (U4) ─────────────────────────────────
-  // Register when both GITHUB_TOKEN and RISEZOME_GITHUB_REPO are
-  // configured. Either missing logs a disable-reason and skips
-  // registration — the corpus skills (U6) and the rest of the
-  // pipeline still work.
-  const githubEnv = readGithubEnv();
-  const githubLive = githubEnv !== null;
-  if (githubEnv === null) {
+  // ── Live-API GitHub skills ──────────────────────────────────────
+  // Gated on the platform GitHub App credentials. With them present the
+  // skills resolve each org's installation token + repos at call time;
+  // an org with no GitHub source connected gets a graceful "connect on
+  // the Sources page" answer.
+  const appAuth = buildGithubAppAuth();
+  const githubLive = appAuth !== null;
+  if (appAuth === null) {
     options.logger.info(
       {
-        // Non-empty checks (a key set to "" reads as present but is
-        // treated as unset by readGithubEnv).
-        hasToken: (process.env.GITHUB_TOKEN ?? '').length > 0,
-        hasRepo:
-          (process.env.RISEZOME_GITHUB_REPO ?? process.env.UPWELL_GITHUB_REPO ?? '').length > 0,
+        hasAppId: (process.env.GITHUB_APP_ID ?? '').length > 0,
+        hasPrivateKey: (process.env.GITHUB_APP_PRIVATE_KEY_BASE64 ?? '').length > 0,
       },
       'github.live.disabled',
     );
   } else {
-    const githubClient = new GithubClient({});
+    const resolve = buildGithubSourceResolver({ db: options.db, appAuth });
     const liveContext: LiveSkillContext = {
-      client: githubClient,
-      auth: githubEnv.auth,
-      repo: githubEnv.repo,
+      client: new GithubClient({}),
+      resolve,
     };
-    // Live github_count via the Search API (total_count in one request)
-    // — registered FIRST so it claims the `github_count` name before
-    // the corpus fallback below. Fresh, no indexer dependency.
+    // Live github_count (Search API) registered FIRST so it claims the
+    // `github_count` name before the corpus fallback below.
     registry.register(buildSearchCountSkill(liveContext));
     registry.register(buildIssueAssigneesSkill(liveContext));
     registry.register(buildByAssigneeCountSkill(liveContext));
     registry.register(buildByAssigneeListSkill(liveContext));
     registry.register(buildIssueProgressSkill(liveContext));
-    options.logger.info(
-      { repo: `${githubEnv.repo.owner}/${githubEnv.repo.name}` },
-      'github.live.enabled',
-    );
+    options.logger.info({}, 'github.live.enabled');
   }
 
   // ── Corpus GitHub skills ────────────────────────────────────────
-  // Stateless; ctx.db is provided per call. When live is enabled the
-  // Search-API count above already owns `github_count`, so the corpus
-  // count is skipped to avoid a duplicate-name registry error — the
-  // live count is strictly fresher. list / by_author / recently_updated
-  // remain corpus-backed (listing all matches live would require
-  // pagination the corpus avoids); they return zero-result summaries
-  // cleanly until the issue indexer has populated the corpus.
-  //
-  // Order matches the daemon's apps/daemon/src/skills/github/index.ts:
-  // count first so the classifier biases toward it for ambiguous
-  // "how many" utterances.
+  // When live is enabled the Search-API count owns `github_count`, so
+  // the corpus count is skipped to avoid a duplicate-name error. list /
+  // by_author / recently_updated remain corpus-backed.
   if (!githubLive) {
     registry.register(countSkill);
   }

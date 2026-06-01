@@ -1,7 +1,8 @@
-import type { Skill, SkillResult, SkillResultItem } from '@risezome/engine/skills';
+import type { Skill, SkillContext, SkillResult, SkillResultItem } from '@risezome/engine/skills';
 import type { GithubIssue } from './types.js';
 import type { LiveSkillContext } from './live-context.js';
 import { mapGithubError } from './error.js';
+import { authForToken, firstRepo, NO_GITHUB_SOURCE_SUMMARY } from './live-helpers.js';
 
 const NAME = 'github_issue_progress';
 
@@ -51,17 +52,23 @@ export function buildIssueProgressSkill(ctx: LiveSkillContext): Skill {
       },
       required: ['issue_number'],
     },
-    handler: async (args): Promise<SkillResult> => {
+    handler: async (args, skillCtx: SkillContext): Promise<SkillResult> => {
       const issueNumber = Number(args.issue_number);
       try {
+        const access = await ctx.resolve(skillCtx.orgId);
+        const repo = access === null ? null : firstRepo(access);
+        if (repo === null) {
+          return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+        }
+        const auth = authForToken(repo.token);
         const [issue, timeline] = await Promise.all([
           ctx.client.getJson<GithubIssue>(
-            ctx.auth,
-            `/repos/${ctx.repo.owner}/${ctx.repo.name}/issues/${issueNumber}`,
+            auth,
+            `/repos/${repo.owner}/${repo.name}/issues/${String(issueNumber)}`,
           ),
           ctx.client.getJson<readonly TimelineEvent[]>(
-            ctx.auth,
-            `/repos/${ctx.repo.owner}/${ctx.repo.name}/issues/${issueNumber}/timeline`,
+            auth,
+            `/repos/${repo.owner}/${repo.name}/issues/${String(issueNumber)}/timeline`,
           ),
         ]);
         return formatResult(issue, timeline);
