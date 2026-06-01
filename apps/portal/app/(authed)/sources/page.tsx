@@ -7,9 +7,7 @@ import { getValidAtlassianToken } from '../../_lib/atlassian-token';
 import { listConfluenceSpaces, listJiraProjects } from '../../_lib/atlassian-client';
 import { SourcesAutoRefresh } from './_auto-refresh';
 import { SourceActions } from './_source-actions';
-import { TrelloBoardPicker } from './_trello-board-picker';
-import { AtlassianPickers } from './_atlassian-pickers';
-import { reindexSourceAction } from './reindex-action';
+import { ConnectionSources } from './_connection-sources';
 
 interface TrelloSourceRow {
   id: string;
@@ -231,35 +229,21 @@ export default async function SourcesPage(props: {
           {trelloConnected ? (
             <div className={installation !== null ? 'mt-10' : ''}>
               <SectionLabel label="Trello boards" count={trelloSources.length} />
-              {trelloSources.length > 0 ? (
-                <ul className="mb-3 flex flex-col gap-3">
-                  {trelloSources.map((s) => (
-                    <li key={s.id}>
-                      <TrelloSourceCard source={s} />
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              <TrelloBoardPicker boards={trelloBoards} startCollapsed={trelloSources.length > 0} />
+              <ConnectionSources
+                sources={trelloSources}
+                manageLabel="Manage boards"
+                picker={{ kind: 'trello', boards: trelloBoards }}
+              />
             </div>
           ) : null}
 
           {atlassianConnected ? (
             <div className="mt-10">
               <SectionLabel label="Jira & Confluence" count={atlassianSources.length} />
-              {atlassianSources.length > 0 ? (
-                <ul className="mb-3 flex flex-col gap-3">
-                  {atlassianSources.map((s) => (
-                    <li key={s.id}>
-                      <TrelloSourceCard source={s} />
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              <AtlassianPickers
-                projects={jiraProjects}
-                spaces={confluenceSpaces}
-                startCollapsed={atlassianSources.length > 0}
+              <ConnectionSources
+                sources={atlassianSources}
+                manageLabel="Manage sources"
+                picker={{ kind: 'atlassian', projects: jiraProjects, spaces: confluenceSpaces }}
               />
             </div>
           ) : null}
@@ -512,49 +496,6 @@ function ConnectorCard({
       ) : (
         <span className="rounded-md bg-bg px-2 py-1 text-xs font-medium text-muted">Coming soon</span>
       )}
-    </div>
-  );
-}
-
-/** Form-action wrapper: a `<form action>` must resolve to void. */
-async function reindexTrelloFormAction(formData: FormData): Promise<void> {
-  'use server';
-  await reindexSourceAction(formData);
-}
-
-/** A connected Trello board with its indexing status + a re-index action. */
-// Per-kind item noun for the connection-backed source status cards.
-const ITEM_NOUN: Record<string, string> = { trello: 'card', jira: 'issue', confluence: 'page' };
-
-function TrelloSourceCard({ source }: { source: TrelloSourceRow }): ReactElement {
-  const count = source.indexed_files;
-  const total = source.total_files;
-  const noun = ITEM_NOUN[source.kind ?? 'trello'] ?? 'item';
-  const plural = count === 1 ? noun : `${noun}s`;
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-3">
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-fg">{source.display_name ?? 'Source'}</div>
-        <div className="mt-0.5 text-xs text-muted">
-          {source.status === 'idle'
-            ? `${count} ${plural} indexed`
-            : source.status === 'indexing'
-              ? `Indexing… ${count}${total !== null ? ` / ${total}` : ''} ${noun}s`
-              : source.status === 'errored'
-                ? (source.status_message ?? 'Indexing failed')
-                : 'Queued'}
-        </div>
-      </div>
-      <form action={reindexTrelloFormAction}>
-        <input type="hidden" name="sourceId" value={source.id} />
-        <button
-          type="submit"
-          disabled={source.status === 'indexing' || source.status === 'pending'}
-          className="rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium text-fg hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Re-index
-        </button>
-      </form>
     </div>
   );
 }

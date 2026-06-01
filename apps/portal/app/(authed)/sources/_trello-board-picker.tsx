@@ -9,89 +9,29 @@ interface Board {
 }
 
 /**
- * Lets a connected org pick which Trello boards to index. Only boards not
- * already indexed are offered.
- *
- * Two modes:
- *   - First-time setup (`startCollapsed=false`): the checkbox picker shows
- *     inline so the user can pick their first boards.
- *   - After boards are indexed (`startCollapsed=true`): the picker is hidden
- *     behind a kebab (⋮) "Manage boards" menu, so the Sources page shows the
- *     indexed boards as rows rather than a perpetual selector. The user can
- *     re-open it any time to add more boards.
- *
- * Submitting upserts a source per board and kicks off indexing (server
- * action), then the page revalidates to show their status.
+ * The Trello board checkbox picker. Only boards not already indexed are
+ * offered. Submitting upserts a source per board and kicks off indexing, then
+ * the page revalidates to show their status. Visibility is owned by the parent
+ * (ConnectionSources): on first-time setup it renders inline; after boards are
+ * indexed it's shown only when the user picks "Manage boards" from a row's ⋮
+ * menu, in which case `onDone` renders a control to collapse it again.
  */
 export function TrelloBoardPicker({
   boards,
-  startCollapsed = false,
+  onDone,
 }: {
   boards: Board[];
-  startCollapsed?: boolean;
-}): ReactElement | null {
+  onDone?: (() => void) | undefined;
+}): ReactElement {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(!startCollapsed);
-  const [menuOpen, setMenuOpen] = useState(false);
 
-  // Nothing left to add. After setup, render nothing; on first run, say so.
   if (boards.length === 0) {
-    if (startCollapsed) return null;
     return (
       <p className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted">
         Every board on this Trello account is already indexed.
       </p>
-    );
-  }
-
-  // Collapsed: a kebab menu whose one item reveals the picker.
-  if (!expanded) {
-    return (
-      <div className="flex justify-end">
-        <div className="relative">
-          <button
-            type="button"
-            aria-label="Manage indexed boards"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((v) => !v)}
-            className="rounded-md p-1.5 text-muted hover:bg-bg"
-          >
-            <KebabIcon />
-          </button>
-          {menuOpen ? (
-            <>
-              {/* Transparent overlay catches outside clicks to close the menu. */}
-              <button
-                type="button"
-                aria-hidden
-                tabIndex={-1}
-                onClick={() => setMenuOpen(false)}
-                className="fixed inset-0 z-10 cursor-default"
-              />
-              <div
-                role="menu"
-                className="absolute right-0 top-full z-20 mt-1 w-48 overflow-hidden rounded-lg border border-border bg-card shadow-lg"
-              >
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setExpanded(true);
-                    setMenuOpen(false);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-bg"
-                >
-                  <GearIcon />
-                  Manage boards
-                </button>
-              </div>
-            </>
-          ) : null}
-        </div>
-      </div>
     );
   }
 
@@ -121,12 +61,8 @@ export function TrelloBoardPicker({
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <p className="text-sm text-muted">Choose boards to index:</p>
-        {startCollapsed ? (
-          <button
-            type="button"
-            onClick={() => setExpanded(false)}
-            className="text-xs text-muted hover:text-fg"
-          >
+        {onDone !== undefined ? (
+          <button type="button" onClick={onDone} className="text-xs text-muted hover:text-fg">
             Done
           </button>
         ) : null}
@@ -156,24 +92,5 @@ export function TrelloBoardPicker({
         {pending ? 'Adding…' : `Index ${selected.size > 0 ? selected.size : ''} board${selected.size === 1 ? '' : 's'}`}
       </button>
     </div>
-  );
-}
-
-function KebabIcon(): ReactElement {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <circle cx="12" cy="5" r="1.5" />
-      <circle cx="12" cy="12" r="1.5" />
-      <circle cx="12" cy="19" r="1.5" />
-    </svg>
-  );
-}
-
-function GearIcon(): ReactElement {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
   );
 }
