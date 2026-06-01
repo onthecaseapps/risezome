@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react';
+import Link from 'next/link';
 import { ChevronBackground } from './_chevron-background';
 
 interface Feature {
@@ -41,9 +42,15 @@ export default function WhatsNewPage(): ReactElement {
     <div className="relative min-h-full overflow-hidden">
       <ChevronBackground />
 
-      <div className="relative z-10 flex min-h-full items-center justify-center px-6 py-16">
-        <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#0e1018]/70 p-8 shadow-2xl backdrop-blur-xl">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-[#7c83ff]">Risezome</p>
+      <div className="relative z-10 min-h-full p-6 sm:p-10">
+        <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0e1018]/70 p-8 shadow-2xl backdrop-blur-xl">
+          {/* Easter egg: the "Risezome" label opens a blank background-only page. */}
+          <Link
+            href="/whats-new/background"
+            className="text-xs font-medium uppercase tracking-[0.18em] text-[#7c83ff] transition-colors hover:text-[#a8acff]"
+          >
+            Risezome
+          </Link>
           <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-white">What&rsquo;s new</h1>
           <p className="mt-1 text-sm text-white/55">The latest improvements to your meeting copilot.</p>
 
