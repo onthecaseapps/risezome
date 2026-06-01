@@ -35,10 +35,10 @@ function makeFakeSummarizer(opts: FakeSummarizerOptions = {}): {
   pendingCount: () => number;
 } {
   const calls: SummarizerInput[] = [];
-  const pending: Array<{
+  const pending: {
     resolve: (s: MeetingSummary) => void;
     reject: (e: unknown) => void;
-  }> = [];
+  }[] = [];
 
   const summarizer: Summarizer = {
     summarize: async (input: SummarizerInput) => {

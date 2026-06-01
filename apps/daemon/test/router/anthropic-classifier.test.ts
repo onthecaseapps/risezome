@@ -34,7 +34,7 @@ function makeRegistry(): SkillRegistry {
 }
 
 function captureCalls(
-  handlers: Array<(req: Request) => Promise<Response> | Response>,
+  handlers: ((req: Request) => Promise<Response> | Response)[],
 ): { calls: Request[]; fetchImpl: typeof fetch } {
   const calls: Request[] = [];
   let i = 0;
@@ -46,7 +46,7 @@ function captureCalls(
     calls.push(req);
     const handler = handlers[i++] ?? handlers[handlers.length - 1]!;
     return handler(req);
-  }) as typeof fetch;
+  });
   return { calls, fetchImpl };
 }
 
@@ -260,7 +260,7 @@ describe('AnthropicClassifier.classify', () => {
   });
 
   it('reports cache_read_input_tokens via onUsage callback when present', async () => {
-    const usage: Array<{ cacheReadTokens: number; cacheCreationTokens: number }> = [];
+    const usage: { cacheReadTokens: number; cacheCreationTokens: number }[] = [];
     const { fetchImpl } = captureCalls([() => textResponse('rag')]);
     const c = new AnthropicClassifier({
       apiKey: 'sk-test',
@@ -288,17 +288,17 @@ describe('AnthropicClassifier.classify', () => {
     expect(req.headers.get('x-api-key')).toBe('sk-test');
     expect(req.headers.get('anthropic-version')).toBe(ANTHROPIC_VERSION);
     const body = (await req.json()) as Record<string, unknown>;
-    expect(body['model']).toBe(DEFAULT_ANTHROPIC_MODEL);
-    expect(body['stream']).toBe(false);
-    expect(body['tool_choice']).toEqual({ type: 'auto' });
-    const tools = body['tools'] as Array<{ name: string }>;
+    expect(body.model).toBe(DEFAULT_ANTHROPIC_MODEL);
+    expect(body.stream).toBe(false);
+    expect(body.tool_choice).toEqual({ type: 'auto' });
+    const tools = body.tools as { name: string }[];
     expect(tools.map((t) => t.name)).toEqual([
       'github_count',
       'github_list',
       'github_recently_updated',
       'github_by_author',
     ]);
-    const system = body['system'] as Array<{ type: string; cache_control?: unknown }>;
+    const system = body.system as { type: string; cache_control?: unknown }[];
     expect(system).toHaveLength(1);
     expect(system[0]!.cache_control).toEqual({ type: 'ephemeral' });
   });

@@ -54,7 +54,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const secret = process.env['GITHUB_APP_WEBHOOK_SECRET'];
   if (secret === undefined || secret.length === 0) {
-    // eslint-disable-next-line no-console
+     
     console.error('[github.webhook] GITHUB_APP_WEBHOOK_SECRET not set');
     return new NextResponse('Server misconfigured', { status: 500 });
   }
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // round-trip through a parse/stringify cycle and break the signature.
   const rawBody = await request.text();
   if (!verifySignature(rawBody, signature, secret)) {
-    // eslint-disable-next-line no-console
+     
     console.warn(`[github.webhook] signature mismatch (delivery=${deliveryId}, event=${event})`);
     return new NextResponse('Invalid signature', { status: 401 });
   }
@@ -130,7 +130,7 @@ async function handleInstallationEvent(
       { onConflict: 'installation_id', ignoreDuplicates: true },
     );
     if (directErr !== null) {
-      // eslint-disable-next-line no-console
+       
       console.error('[github.webhook] installation.created upsert failed:', directErr);
     }
 
@@ -153,7 +153,7 @@ async function handleInstallationEvent(
           .from('sources')
           .upsert(rows, { onConflict: 'installation_id,repo_full_name', ignoreDuplicates: true });
         if (srcErr !== null) {
-          // eslint-disable-next-line no-console
+           
           console.error('[github.webhook] sources backfill failed:', srcErr);
         }
       }
@@ -211,7 +211,7 @@ async function handleInstallationRepositoriesEvent(
       .from('sources')
       .upsert(rows, { onConflict: 'installation_id,repo_full_name', ignoreDuplicates: true });
     if (error !== null) {
-      // eslint-disable-next-line no-console
+       
       console.error('[github.webhook] installation_repositories.added failed:', error);
     }
   }

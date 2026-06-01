@@ -76,7 +76,7 @@ export async function lookupChunkMatchDocIds(
     .select('doc_id')
     .eq('org_id', orgId)
     .textSearch('text_fts', phraseQuery, { type: 'websearch', config: 'english' })) as {
-    data: Array<{ doc_id: string }> | null;
+    data: { doc_id: string }[] | null;
     error: unknown;
   };
   if (error !== null && error !== undefined) {

@@ -32,7 +32,7 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
     // expires_at defaults to now() + 15 min in the migration.
   });
   if (insertErr !== null) {
-    // eslint-disable-next-line no-console
+     
     console.error('[sources.install] pending_installations insert failed:', insertErr);
     return NextResponse.redirect(new URL('/sources?error=install_init_failed', _request.url));
   }

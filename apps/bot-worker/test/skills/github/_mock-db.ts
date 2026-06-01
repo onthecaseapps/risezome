@@ -19,7 +19,7 @@ export interface MockDbOptions {
 
 export interface RecordedCall {
   readonly table: string;
-  readonly chain: ReadonlyArray<readonly [string, unknown]>;
+  readonly chain: readonly (readonly [string, unknown])[];
 }
 
 export function makeMockDb(opts: MockDbOptions): {
@@ -29,7 +29,7 @@ export function makeMockDb(opts: MockDbOptions): {
   const calls: RecordedCall[] = [];
 
   function makeBuilder(table: string, terminal: () => Promise<unknown>) {
-    const chain: Array<[string, unknown]> = [];
+    const chain: [string, unknown][] = [];
     const builder: Record<string, unknown> = {};
     const methods = ['select', 'eq', 'in', 'contains', 'order', 'limit', 'gte', 'textSearch'];
     for (const m of methods) {

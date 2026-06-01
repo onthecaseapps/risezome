@@ -15,11 +15,11 @@ import type { SkillContext, SkillDbClient } from '@risezome/engine/skills';
 function makeMockDb(opts: {
   ftsDocIds?: string[];
   docsCount: number;
-}): { db: SkillDbClient; calls: Array<{ table: string; chain: Array<[string, unknown]> }> } {
-  const calls: Array<{ table: string; chain: Array<[string, unknown]> }> = [];
+}): { db: SkillDbClient; calls: { table: string; chain: [string, unknown][] }[] } {
+  const calls: { table: string; chain: [string, unknown][] }[] = [];
 
   function makeBuilder(table: string, terminal: () => Promise<unknown>) {
-    const chain: Array<[string, unknown]> = [];
+    const chain: [string, unknown][] = [];
     const builder: Record<string, unknown> = {};
     const methods = ['select', 'eq', 'in', 'contains', 'order', 'limit', 'gte', 'textSearch'];
     for (const m of methods) {

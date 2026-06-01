@@ -8,7 +8,7 @@ import { RelevanceProviderError } from '../../src/relevance/contract.js';
 import { buildRelevanceSystem } from '../../src/relevance/prompt.js';
 
 function captureCalls(
-  handlers: Array<(req: Request) => Promise<Response> | Response>,
+  handlers: ((req: Request) => Promise<Response> | Response)[],
 ): { calls: Request[]; fetchImpl: typeof fetch } {
   const calls: Request[] = [];
   let i = 0;
@@ -20,12 +20,12 @@ function captureCalls(
     calls.push(req);
     const handler = handlers[i++] ?? handlers[handlers.length - 1]!;
     return handler(req);
-  }) as typeof fetch;
+  });
   return { calls, fetchImpl };
 }
 
 function toolUseResponse(name: string, input: Record<string, unknown>, opts?: { preambleText?: string }): Response {
-  const content: Array<{ type: string; [k: string]: unknown }> = [];
+  const content: { type: string; [k: string]: unknown }[] = [];
   if (opts?.preambleText !== undefined) {
     content.push({ type: 'text', text: opts.preambleText });
   }
@@ -110,7 +110,7 @@ describe('AnthropicRelevanceClassifier.classify', () => {
           usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 5000, cache_creation_input_tokens: 0 },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
-      )) as typeof fetch;
+      ));
     const classifier = new AnthropicRelevanceClassifier({ apiKey: 'k', fetchImpl });
     const result = await classifier.classify('yeah');
     expect(result).toEqual({ decision: 'skip', confidence: 0.9, reason: 'first' });
@@ -203,7 +203,7 @@ describe('AnthropicRelevanceClassifier.classify', () => {
     expect(req.method).toBe('POST');
     expect(req.headers.get('x-api-key')).toBe('test-key');
     expect(req.headers.get('anthropic-version')).toBe(ANTHROPIC_VERSION);
-    const body = await req.json() as { model: string; tools: unknown[]; tool_choice: { type: string }; messages: Array<{ content: string }> };
+    const body = await req.json() as { model: string; tools: unknown[]; tool_choice: { type: string }; messages: { content: string }[] };
     expect(body.model).toBe(DEFAULT_ANTHROPIC_MODEL);
     expect(body.tools).toHaveLength(1);
     expect(body.tool_choice).toEqual({ type: 'auto' });
@@ -216,7 +216,7 @@ describe('AnthropicRelevanceClassifier.classify', () => {
     ]);
     const classifier = new AnthropicRelevanceClassifier({ apiKey: 'k', fetchImpl });
     await classifier.classify('and how does it scale');
-    const body = (await calls[0]!.json()) as { messages: Array<{ content: string }> };
+    const body = (await calls[0]!.json()) as { messages: { content: string }[] };
     expect(body.messages[0]!.content).toBe('and how does it scale');
   });
 
@@ -231,7 +231,7 @@ describe('AnthropicRelevanceClassifier.classify', () => {
         open_questions: ['How does SSO work?'],
       },
     });
-    const body = (await calls[0]!.json()) as { messages: Array<{ content: string }> };
+    const body = (await calls[0]!.json()) as { messages: { content: string }[] };
     const content = body.messages[0]!.content;
     expect(content).toContain('Meeting context so far:');
     expect(content).toContain('Current topic: auth flow');
@@ -249,7 +249,7 @@ describe('AnthropicRelevanceClassifier.classify', () => {
     await classifier.classify('hello', {
       context: { current_topic: '', open_questions: [] },
     });
-    const body = (await calls[0]!.json()) as { messages: Array<{ content: string }> };
+    const body = (await calls[0]!.json()) as { messages: { content: string }[] };
     expect(body.messages[0]!.content).toBe('hello');
   });
 });

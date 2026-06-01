@@ -90,7 +90,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       // Soft-fail: log + continue. The user still gets signed in; calendar
       // sync just won't work for them until they re-auth. Logged at error
       // level so it's noticed during early beta.
-      // eslint-disable-next-line no-console
+       
       console.error('[auth.callback] encrypt_refresh_token failed:', encryptErr);
     } else {
       const { error: upsertErr } = await service.from('user_google_tokens').upsert(
@@ -105,7 +105,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         { onConflict: 'user_id' },
       );
       if (upsertErr !== null) {
-        // eslint-disable-next-line no-console
+         
         console.error('[auth.callback] user_google_tokens upsert failed:', upsertErr);
       } else {
         // Token stored — kick off an immediate calendar sync so the user

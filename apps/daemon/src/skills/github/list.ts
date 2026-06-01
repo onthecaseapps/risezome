@@ -33,7 +33,7 @@ export const listSkill: Skill = {
       limit: { type: 'integer', minimum: 1, maximum: 25 },
     },
   },
-  handler: async (args, ctx): Promise<SkillResult> => doList(args as ListArgs, ctx),
+  handler: async (args, ctx): Promise<SkillResult> => doList(args, ctx),
 };
 
 interface ListArgs extends GithubFilter {

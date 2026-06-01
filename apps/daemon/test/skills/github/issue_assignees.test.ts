@@ -25,14 +25,14 @@ const FAKE_CTX_FN = (): never => {
 
 describe('github_issue_assignees', () => {
   it('returns skill with the right name, source, and required input', () => {
-    const skill = buildIssueAssigneesSkill(ctxWith(vi.fn() as unknown as typeof fetch));
+    const skill = buildIssueAssigneesSkill(ctxWith(vi.fn()));
     expect(skill.name).toBe('github_issue_assignees');
     expect(skill.source).toBe('github');
     expect(skill.inputSchema.required).toEqual(['issue_number']);
     const props = skill.inputSchema.properties;
-    expect(props['issue_number']?.type).toBe('integer');
-    if (props['issue_number']?.type === 'integer') {
-      expect(props['issue_number'].minimum).toBe(1);
+    expect(props.issue_number?.type).toBe('integer');
+    if (props.issue_number?.type === 'integer') {
+      expect(props.issue_number.minimum).toBe(1);
     }
   });
 
@@ -54,7 +54,7 @@ describe('github_issue_assignees', () => {
         }),
       ),
     );
-    const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl as unknown as typeof fetch));
+    const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl));
     const result = await skill.handler({ issue_number: 14 }, { db: null as never, now: FAKE_CTX_FN });
     expect(result.kind).toBe('detail');
     expect(result.summary).toContain('#14');
@@ -83,7 +83,7 @@ describe('github_issue_assignees', () => {
         }),
       ),
     );
-    const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl as unknown as typeof fetch));
+    const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl));
     const result = await skill.handler({ issue_number: 7 }, { db: null as never, now: FAKE_CTX_FN });
     expect(result.summary).toContain('no current assignees');
     expect(result.items).toBeUndefined();
@@ -121,7 +121,7 @@ describe('github_issue_assignees', () => {
 
   it('404 maps to SkillExecutionError code=not-found', async () => {
     const fetchImpl = vi.fn(() => Promise.resolve(new Response('', { status: 404 })));
-    const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl as unknown as typeof fetch));
+    const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl));
     await expect(
       skill.handler({ issue_number: 999 }, { db: null as never, now: FAKE_CTX_FN }),
     ).rejects.toMatchObject({
@@ -133,7 +133,7 @@ describe('github_issue_assignees', () => {
     const fetchImpl = vi.fn(() =>
       Promise.resolve(new Response('', { status: 429, headers: { 'retry-after': '60' } })),
     );
-    const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl as unknown as typeof fetch));
+    const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl));
     await expect(
       skill.handler({ issue_number: 14 }, { db: null as never, now: FAKE_CTX_FN }),
     ).rejects.toMatchObject({ executionCode: 'rate-limit' });
@@ -141,7 +141,7 @@ describe('github_issue_assignees', () => {
 
   it('handler throws SkillExecutionError instance (not plain Error)', async () => {
     const fetchImpl = vi.fn(() => Promise.resolve(new Response('', { status: 500 })));
-    const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl as unknown as typeof fetch));
+    const skill = buildIssueAssigneesSkill(ctxWith(fetchImpl));
     await expect(
       skill.handler({ issue_number: 14 }, { db: null as never, now: FAKE_CTX_FN }),
     ).rejects.toBeInstanceOf(SkillExecutionError);

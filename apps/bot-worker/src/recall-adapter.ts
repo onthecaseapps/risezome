@@ -38,11 +38,11 @@ export interface RecallMessage {
   event?: string;
   data?: {
     data?: {
-      words?: Array<{
+      words?: {
         text?: string;
         start_timestamp?: { relative?: number };
         end_timestamp?: { relative?: number };
-      }>;
+      }[];
       participant?: {
         id?: number | string;
         name?: string;

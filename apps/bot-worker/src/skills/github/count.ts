@@ -40,7 +40,7 @@ export const countSkill: Skill = {
       },
     },
   },
-  handler: async (args, ctx): Promise<SkillResult> => doCount(args as GithubFilter, ctx),
+  handler: async (args, ctx): Promise<SkillResult> => doCount(args, ctx),
 };
 
 async function doCount(filter: GithubFilter, ctx: SkillContext): Promise<SkillResult> {

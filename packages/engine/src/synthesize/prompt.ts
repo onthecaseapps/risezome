@@ -61,7 +61,7 @@ Below are example transcripts of utterance + sources + correct answer. Follow th
 
 interface FewShot {
   readonly utterance: string;
-  readonly sources: ReadonlyArray<{ readonly rank: number; readonly title: string; readonly text: string }>;
+  readonly sources: readonly { readonly rank: number; readonly title: string; readonly text: string }[];
   readonly answer: string;
 }
 

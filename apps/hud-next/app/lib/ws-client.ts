@@ -67,7 +67,7 @@ export class WsClient {
     ws.onopen = (): void => {
       this.#attempts = 0;
       this.#setStatus('open');
-      // eslint-disable-next-line no-console
+       
       console.info('[risezome.ws] open');
     };
     ws.onmessage = (ev: { data: unknown }): void => {
@@ -86,7 +86,7 @@ export class WsClient {
     ws.onclose = (ev: { code: number; reason: string }): void => {
       this.#ws = null;
       this.#setStatus('disconnected');
-      // eslint-disable-next-line no-console
+       
       console.info(
         `[risezome.ws] close code=${String(ev.code)} reason=${ev.reason || '(none)'} attempt=${String(this.#attempts)}`,
       );

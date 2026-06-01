@@ -6,11 +6,11 @@ import type { SynthesisSource } from '../synthesize/contract.js';
  * type stays portable across the Anthropic tool definition shape — the
  * schema is serialized verbatim into the request body.
  */
-export type JsonSchema = {
+export interface JsonSchema {
   readonly type: 'object';
   readonly properties: Readonly<Record<string, JsonSchemaProperty>>;
   readonly required?: readonly string[];
-};
+}
 
 export type JsonSchemaProperty =
   | { readonly type: 'string'; readonly description?: string; readonly enum?: readonly string[] }

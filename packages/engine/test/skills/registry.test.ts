@@ -63,8 +63,8 @@ describe('SkillRegistry', () => {
     });
     // No leak of source/handler.
     const obj = defs[0] as unknown as Record<string, unknown>;
-    expect(obj['source']).toBeUndefined();
-    expect(obj['handler']).toBeUndefined();
+    expect(obj.source).toBeUndefined();
+    expect(obj.handler).toBeUndefined();
   });
 
   it('size() reflects the number of registered skills', () => {

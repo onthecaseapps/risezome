@@ -45,10 +45,10 @@ describe('buildSummarizerTool', () => {
       required: string[];
     };
     expect(schema.required.sort()).toEqual(['current_topic', 'key_terms', 'open_questions', 'summary']);
-    expect(schema.properties['summary']).toBeDefined();
-    expect(schema.properties['current_topic']).toBeDefined();
-    expect(schema.properties['open_questions']).toBeDefined();
-    expect(schema.properties['key_terms']).toBeDefined();
+    expect(schema.properties.summary).toBeDefined();
+    expect(schema.properties.current_topic).toBeDefined();
+    expect(schema.properties.open_questions).toBeDefined();
+    expect(schema.properties.key_terms).toBeDefined();
   });
 });
 

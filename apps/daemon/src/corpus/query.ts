@@ -73,7 +73,7 @@ export function hasChunkEmbedding(db: DatabaseType, chunkId: string): boolean {
   const row = db
     .prepare('SELECT 1 AS present FROM vec_doc_chunks WHERE chunk_id = ? LIMIT 1')
     .get(chunkId) as { present?: number } | undefined;
-  return row !== undefined && row.present === 1;
+  return row?.present === 1;
 }
 
 export function insertChunk(

@@ -59,7 +59,7 @@ export async function verifyBotWsJwt(
     audience: AUDIENCE,
     algorithms: [ALG],
   });
-  if (typeof payload['meetingId'] !== 'string' || typeof payload['orgId'] !== 'string') {
+  if (typeof payload.meetingId !== 'string' || typeof payload.orgId !== 'string') {
     throw new Error('jwt missing required claims (meetingId, orgId)');
   }
   return payload as BotWsJwtPayload;

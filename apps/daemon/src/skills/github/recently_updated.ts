@@ -27,7 +27,7 @@ export const recentlyUpdatedSkill: Skill = {
       type: { type: 'string', enum: ['issue', 'pull-request'] },
     },
   },
-  handler: async (args, ctx): Promise<SkillResult> => doRecent(args as RecentArgs, ctx),
+  handler: async (args, ctx): Promise<SkillResult> => doRecent(args, ctx),
 };
 
 interface RecentArgs {

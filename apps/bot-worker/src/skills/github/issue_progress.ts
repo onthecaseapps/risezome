@@ -52,7 +52,7 @@ export function buildIssueProgressSkill(ctx: LiveSkillContext): Skill {
       required: ['issue_number'],
     },
     handler: async (args): Promise<SkillResult> => {
-      const issueNumber = Number(args['issue_number']);
+      const issueNumber = Number(args.issue_number);
       try {
         const [issue, timeline] = await Promise.all([
           ctx.client.getJson<GithubIssue>(

@@ -229,11 +229,11 @@ export class AnthropicRelevanceClassifier implements RelevanceClassifier {
 }
 
 function parseRelevanceToolInput(input: Record<string, unknown>): RelevanceResult {
-  const decision = input['decision'];
+  const decision = input.decision;
   if (decision === 'surface') return { decision: 'surface' };
   if (decision === 'skip') {
-    const confidenceRaw = input['confidence'];
-    const reasonRaw = input['reason'];
+    const confidenceRaw = input.confidence;
+    const reasonRaw = input.reason;
     const confidence = typeof confidenceRaw === 'number' ? confidenceRaw : 0;
     const reason = typeof reasonRaw === 'string' ? reasonRaw : 'unspecified';
     return { decision: 'skip', confidence, reason };

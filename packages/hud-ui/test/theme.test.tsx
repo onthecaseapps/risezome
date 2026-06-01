@@ -29,8 +29,8 @@ function stubMatchMedia(prefersDark: boolean): () => void {
       addListener: (): void => {},
       removeListener: (): void => {},
       dispatchEvent: (): boolean => true,
-    } as unknown as MediaQueryList;
-  }) as typeof window.matchMedia;
+    };
+  });
   return (): void => {
     window.matchMedia = original;
   };
@@ -57,14 +57,14 @@ describe('THEME_INIT_SCRIPT', () => {
 
   it('applies .dark when localStorage has "dark"', () => {
     localStorage.setItem(THEME_STORAGE_KEY, 'dark');
-    // eslint-disable-next-line no-new-func
+     
     new Function(THEME_INIT_SCRIPT)();
     expect(document.documentElement.classList.contains('dark')).toBe(true);
   });
 
   it('omits .dark when localStorage has "light"', () => {
     localStorage.setItem(THEME_STORAGE_KEY, 'light');
-    // eslint-disable-next-line no-new-func
+     
     new Function(THEME_INIT_SCRIPT)();
     expect(document.documentElement.classList.contains('dark')).toBe(false);
   });
@@ -73,7 +73,7 @@ describe('THEME_INIT_SCRIPT', () => {
     localStorage.setItem(THEME_STORAGE_KEY, 'system');
     const restore = stubMatchMedia(true);
     try {
-      // eslint-disable-next-line no-new-func
+       
       new Function(THEME_INIT_SCRIPT)();
       expect(document.documentElement.classList.contains('dark')).toBe(true);
     } finally {
@@ -84,7 +84,7 @@ describe('THEME_INIT_SCRIPT', () => {
   it('defaults to OS preference when no preference is stored', () => {
     const restore = stubMatchMedia(true);
     try {
-      // eslint-disable-next-line no-new-func
+       
       new Function(THEME_INIT_SCRIPT)();
       expect(document.documentElement.classList.contains('dark')).toBe(true);
     } finally {
@@ -98,7 +98,7 @@ describe('THEME_INIT_SCRIPT', () => {
       throw new Error('Storage disabled');
     };
     try {
-      // eslint-disable-next-line no-new-func
+       
       expect(() => new Function(THEME_INIT_SCRIPT)()).not.toThrow();
     } finally {
       Storage.prototype.getItem = originalGet;

@@ -40,7 +40,7 @@ describe('github_by_assignee_list', () => {
       return Promise.resolve(
         jsonResponse([makeIssue(1, 'one'), makeIssue(2, 'two'), makeIssue(3, 'three')]),
       );
-    }) as typeof fetch;
+    });
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl }),
       auth: AUTH,
@@ -63,7 +63,7 @@ describe('github_by_assignee_list', () => {
       if (call === 1) return Promise.resolve(new Response('', { status: 404 })); // literal 404
       if (call === 2) return Promise.resolve(jsonResponse({ items: [{ login: 'Nath5' }] })); // search hit
       return Promise.resolve(jsonResponse([makeIssue(1, 'one')])); // issues query
-    }) as typeof fetch;
+    });
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl }),
       auth: AUTH,
@@ -82,7 +82,7 @@ describe('github_by_assignee_list', () => {
       if (callCount === 1) return Promise.resolve(new Response('', { status: 404 })); // literal 404
       if (callCount === 2) return Promise.resolve(jsonResponse({ items: [] })); // search empty
       throw new Error('no further calls should happen');
-    }) as typeof fetch;
+    });
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl }),
       auth: AUTH,
@@ -101,7 +101,7 @@ describe('github_by_assignee_list', () => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.includes('/users/')) return Promise.resolve(jsonResponse({ login: 'Nath5' }));
       return Promise.resolve(jsonResponse([]));
-    }) as typeof fetch;
+    });
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl }),
       auth: AUTH,
@@ -119,7 +119,7 @@ describe('github_by_assignee_list', () => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.includes('/users/')) return Promise.resolve(jsonResponse({ login: 'Nath5' }));
       return Promise.resolve(jsonResponse(issues));
-    }) as typeof fetch;
+    });
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl }),
       auth: AUTH,
@@ -134,7 +134,7 @@ describe('github_by_assignee_list', () => {
     const fetchImpl: typeof fetch = (() =>
       Promise.resolve(
         new Response('', { status: 429, headers: { 'retry-after': '60' } }),
-      )) as typeof fetch;
+      ));
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl }),
       auth: AUTH,

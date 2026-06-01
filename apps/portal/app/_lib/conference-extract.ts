@@ -117,7 +117,7 @@ function findMeetingUrl(text: string): string | null {
   return fallback;
 }
 
-const TRAILING_PUNCT_RE = /[.,;:!?)>\]\}]+$/;
+const TRAILING_PUNCT_RE = /[.,;:!?)>\]}]+$/;
 function trimTrailingPunct(url: string): string {
   return url.replace(TRAILING_PUNCT_RE, '');
 }

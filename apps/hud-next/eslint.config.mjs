@@ -2,13 +2,12 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 
-// Self-contained flat config. The repo-root flat config ignores apps/portal
-// (Next.js owns its own toolchain). We lint
-// with typescript-eslint's recommended set plus react-hooks rules rather than
-// eslint-config-next, which doesn't load cleanly through FlatCompat on ESLint 9.
+// Self-contained flat config. The repo-root flat config ignores apps/hud-next
+// (legacy standalone HUD app — superseded by the portal + @risezome/hud-ui),
+// so it carries its own minimal lint setup mirroring apps/portal.
 export default tseslint.config(
   {
-    ignores: ['.next/**', 'node_modules/**', 'next-env.d.ts'],
+    ignores: ['.next/**', 'node_modules/**', 'out/**', 'next-env.d.ts'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -27,17 +26,15 @@ export default tseslint.config(
     },
   },
   {
-    // Standalone Node scripts (e.g. scripts/register-github-app.mjs) run
-    // under `node`, not the bundler — give them the Node globals.
+    // Standalone Node scripts (e.g. scripts/bundle-check.mjs) run under
+    // `node`, not the bundler — give them the Node globals.
     files: ['scripts/**/*.mjs'],
     languageOptions: {
       globals: {
         process: 'readonly',
         Buffer: 'readonly',
         URL: 'readonly',
-        URLSearchParams: 'readonly',
         console: 'readonly',
-        fetch: 'readonly',
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
         __dirname: 'readonly',

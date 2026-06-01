@@ -163,13 +163,13 @@ export function SynthesisCard({
             <div className="synthesis-sources-list">
               {sources.map((source) => {
                 const isOpen = expansion !== null && expansion.cardId === source.cardId;
-                const passQuote = isOpen && expansion !== null && expansion.quote !== undefined;
+                const passQuote = isOpen && expansion?.quote !== undefined;
                 return (
                   <SourceCardExpanded
                     key={source.cardId}
                     source={source}
                     open={isOpen}
-                    {...(passQuote ? { quote: expansion!.quote as string } : {})}
+                    {...(passQuote ? { quote: expansion.quote } : {})}
                   />
                 );
               })}

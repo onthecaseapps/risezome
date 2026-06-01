@@ -56,7 +56,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     .maybeSingle();
 
   if (pendingErr !== null) {
-    // eslint-disable-next-line no-console
+     
     console.error('[install-callback] pending lookup failed:', pendingErr);
     return NextResponse.redirect(new URL('/sources?error=install_state_lookup_failed', url.origin));
   }
@@ -96,7 +96,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       (r) => ({ id: r.id, full_name: r.full_name, default_branch: r.default_branch }),
     );
   } catch (err) {
-    // eslint-disable-next-line no-console
+     
     console.error('[install-callback] github fetch failed:', err);
     return NextResponse.redirect(new URL('/sources?error=install_github_fetch_failed', url.origin));
   }
@@ -114,7 +114,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     { onConflict: 'installation_id' },
   );
   if (upsertErr !== null) {
-    // eslint-disable-next-line no-console
+     
     console.error('[install-callback] github_installations upsert failed:', upsertErr);
     return NextResponse.redirect(new URL('/sources?error=install_persist_failed', url.origin));
   }
@@ -139,7 +139,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .from('sources')
       .upsert(rows, { onConflict: 'installation_id,repo_full_name', ignoreDuplicates: true });
     if (sourcesErr !== null) {
-      // eslint-disable-next-line no-console
+       
       console.error('[install-callback] sources insert failed:', sourcesErr);
       // Not fatal: the row exists, the user can refresh; webhook fills gaps.
     } else {

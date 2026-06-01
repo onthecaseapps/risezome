@@ -32,7 +32,7 @@ export function buildByAssigneeCountSkill(ctx: LiveSkillContext): Skill {
       required: ['person'],
     },
     handler: async (args): Promise<SkillResult> => {
-      const person = String(args['person'] ?? '');
+      const person = String(args.person ?? '');
       try {
         const resolved = await resolvePerson(person, ctx);
         if (resolved === null) {

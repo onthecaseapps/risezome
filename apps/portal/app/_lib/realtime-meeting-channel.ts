@@ -245,7 +245,7 @@ async function reconnectFetch(args: {
     .gt('event_id', args.afterEventId)
     .order('event_id', { ascending: true });
   if (error !== null) {
-    // eslint-disable-next-line no-console
+     
     console.warn('[realtime-meeting-channel] reconnect-fetch failed:', error);
     return;
   }

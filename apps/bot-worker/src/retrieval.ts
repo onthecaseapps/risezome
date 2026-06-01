@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { VoyageEmbedder } from '@risezome/engine/embed';
+import { type VoyageEmbedder } from '@risezome/engine/embed';
 import type {
   Synthesizer,
   SynthesisSource,
@@ -21,7 +21,7 @@ import {
   SkillExecutionError,
   formatAsSource,
 } from '@risezome/engine/skills';
-import { SkillRegistry } from '@risezome/engine/skills';
+import { type SkillRegistry } from '@risezome/engine/skills';
 import type { MeetingSummary } from '@risezome/engine/summarize';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { persistAndBroadcast } from './db.js';
@@ -62,7 +62,7 @@ const WINDOW_UTTERANCES = 8; // last 8 final utterances form the query
 // utterances OR degrade similarity. Ship gated behind an env flag for
 // the first live test so the behavior can be A/B'd against a recorded
 // session. Default OFF — mirrors the debug-path flag.
-const KEY_TERMS_BOOST_ENABLED = process.env['RISEZOME_KEY_TERMS_BOOST'] === 'true';
+const KEY_TERMS_BOOST_ENABLED = process.env.RISEZOME_KEY_TERMS_BOOST === 'true';
 
 export interface RetrievalRuntime {
   /** Concatenated text of recent final utterances. */
@@ -248,17 +248,17 @@ export async function maybeRetrieveAndEmit(args: {
   }
 
   const queryLiteral = `[${Array.from(queryEmbedding).join(',')}]`;
-  const { data: vectorRows, error: vectorErr } = await args.db.rpc('search_corpus_vector', {
+  const { data: vectorRows, error: vectorErr } = (await args.db.rpc('search_corpus_vector', {
     p_org_id: args.orgId,
     p_query_vector: queryLiteral,
     p_limit: TOP_K,
-  });
+  })) as { data: { chunk_id: string; distance: number }[] | null; error: { message: string } | null };
 
   if (vectorErr !== null) {
     args.logger.warn({ err: vectorErr, meetingId: args.meetingId }, 'retrieval.search.failed');
     return { emitted: 0, skipped: 'search_failed' };
   }
-  const hits = (vectorRows ?? []) as Array<{ chunk_id: string; distance: number }>;
+  const hits = vectorRows ?? [];
   if (hits.length === 0) {
     return { emitted: 0, skipped: 'no_hits' };
   }
@@ -797,12 +797,10 @@ async function runSynthesisAndBroadcast(args: {
       } else if (chunk.type === 'textDelta') {
         accumulated += chunk.delta;
         // Throttle broadcasts: only fire flush if no timer pending.
-        if (flushTimer === null) {
-          flushTimer = setTimeout(() => {
-            flushTimer = null;
-            void flush();
-          }, SYNTHESIS_FLUSH_INTERVAL_MS);
-        }
+        flushTimer ??= setTimeout(() => {
+          flushTimer = null;
+          void flush();
+        }, SYNTHESIS_FLUSH_INTERVAL_MS);
       } else if (chunk.type === 'done') {
         if (flushTimer !== null) {
           clearTimeout(flushTimer);

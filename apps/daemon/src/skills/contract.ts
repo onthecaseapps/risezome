@@ -1,14 +1,15 @@
 import { RisezomeError } from '@risezome/shared-types';
 import type { SynthesisSource } from '@risezome/engine/synthesize';
+import type { Database } from 'better-sqlite3';
 
 // JsonSchema subset we actually use for skill input_schema. Kept minimal so
 // the type stays portable across the Anthropic tool definition shape — the
 // schema is serialized verbatim into the request body.
-export type JsonSchema = {
+export interface JsonSchema {
   readonly type: 'object';
   readonly properties: Readonly<Record<string, JsonSchemaProperty>>;
   readonly required?: readonly string[];
-};
+}
 
 export type JsonSchemaProperty =
   | { readonly type: 'string'; readonly description?: string; readonly enum?: readonly string[] }
@@ -38,7 +39,7 @@ export interface SkillContext {
   // The daemon's corpus DB. Skills run synchronous SQL through this handle —
   // they do not open or close it. The handle is shared with the retrieval
   // pipeline and lives for the full daemon process.
-  readonly db: import('better-sqlite3').Database;
+  readonly db: Database;
   // Forward-compatibility: skills receive an AbortSignal but v1 skills do not
   // poll it mid-query (better-sqlite3 is sync and short-running on the v1
   // corpus). The caller (pipeline) is responsible for discarding the result

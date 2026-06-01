@@ -21,7 +21,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe('resolvePerson', () => {
   it('literal lookup hit returns {login, resolved: literal}', async () => {
     const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse({ login: 'Nath5' })));
-    const result = await resolvePerson('Nath5', ctxWith(fetchImpl as unknown as typeof fetch));
+    const result = await resolvePerson('Nath5', ctxWith(fetchImpl));
     expect(result).toEqual({ login: 'Nath5', resolved: 'literal' });
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
@@ -33,7 +33,7 @@ describe('resolvePerson', () => {
       if (call === 1) return Promise.resolve(new Response('not found', { status: 404 }));
       return Promise.resolve(jsonResponse({ items: [{ login: 'Nath5' }] }));
     });
-    const result = await resolvePerson('nathan', ctxWith(fetchImpl as unknown as typeof fetch));
+    const result = await resolvePerson('nathan', ctxWith(fetchImpl));
     expect(result).toEqual({ login: 'Nath5', resolved: 'search' });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
@@ -45,13 +45,13 @@ describe('resolvePerson', () => {
       if (call === 1) return Promise.resolve(new Response('not found', { status: 404 }));
       return Promise.resolve(jsonResponse({ items: [] }));
     });
-    const result = await resolvePerson('ghost', ctxWith(fetchImpl as unknown as typeof fetch));
+    const result = await resolvePerson('ghost', ctxWith(fetchImpl));
     expect(result).toBeNull();
   });
 
   it('rejects tokens containing slashes WITHOUT making any API call', async () => {
     const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse({ login: 'x' })));
-    const result = await resolvePerson('nathan/secrets', ctxWith(fetchImpl as unknown as typeof fetch));
+    const result = await resolvePerson('nathan/secrets', ctxWith(fetchImpl));
     expect(result).toBeNull();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -72,7 +72,7 @@ describe('resolvePerson', () => {
 
   it('rejects empty and overlong tokens', async () => {
     const fetchImpl = vi.fn();
-    const ctx = ctxWith(fetchImpl as unknown as typeof fetch);
+    const ctx = ctxWith(fetchImpl);
     expect(await resolvePerson('', ctx)).toBeNull();
     expect(await resolvePerson('a'.repeat(40), ctx)).toBeNull();
     expect(fetchImpl).not.toHaveBeenCalled();
@@ -80,7 +80,7 @@ describe('resolvePerson', () => {
 
   it('accepts exactly 39-char login at the boundary', async () => {
     const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse({ login: 'a'.repeat(39) })));
-    const result = await resolvePerson('a'.repeat(39), ctxWith(fetchImpl as unknown as typeof fetch));
+    const result = await resolvePerson('a'.repeat(39), ctxWith(fetchImpl));
     expect(result).toEqual({ login: 'a'.repeat(39), resolved: 'literal' });
   });
 

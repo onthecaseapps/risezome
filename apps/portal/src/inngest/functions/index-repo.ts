@@ -182,7 +182,7 @@ export const indexRepoFn = inngest.createFunction(
         .eq('id', sourceId);
     });
 
-    // eslint-disable-next-line no-console
+     
     console.info(`[index-repo] indexed ${source.repo_full_name}: ${indexedFiles} files, ${chunkCount} chunks`);
     return { sourceId, files: indexedFiles, chunks: chunkCount };
   },

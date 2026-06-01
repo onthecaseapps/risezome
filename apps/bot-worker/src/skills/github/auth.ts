@@ -32,8 +32,8 @@ export interface GithubEnv {
  * deployment secrets keep working through the rename.
  */
 export function readGithubEnv(env: NodeJS.ProcessEnv = process.env): GithubEnv | null {
-  const token = env['GITHUB_TOKEN'];
-  const repoSpec = env['RISEZOME_GITHUB_REPO'] ?? env['UPWELL_GITHUB_REPO'];
+  const token = env.GITHUB_TOKEN;
+  const repoSpec = env.RISEZOME_GITHUB_REPO ?? env.UPWELL_GITHUB_REPO;
   if (token === undefined || token.length === 0) return null;
   if (repoSpec === undefined || repoSpec.length === 0) return null;
   const slash = repoSpec.indexOf('/');

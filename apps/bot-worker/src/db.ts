@@ -16,7 +16,7 @@ export function createServiceClient(): SupabaseClient {
   return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
     realtime: { params: { eventsPerSecond: 10 } },
-  });
+  }) as SupabaseClient;
 }
 
 /**
@@ -40,7 +40,7 @@ export async function markRecordingIfFirst(
     .in('status', ['launching', 'awaiting_recall', 'joining', 'waiting_room'])
     .select('meeting_id');
   if (error !== null) {
-    // eslint-disable-next-line no-console
+     
     console.error('[bot-worker.db] markRecording failed:', error);
     return false;
   }
@@ -82,7 +82,7 @@ export async function persistAndBroadcast(
     .single();
 
   if (error !== null) {
-    // eslint-disable-next-line no-console
+     
     console.error('[bot-worker.db] meeting_events insert failed:', error);
     return { eventId: null, broadcasted: false };
   }
@@ -104,12 +104,12 @@ export async function persistAndBroadcast(
     });
     const broadcasted = sendResult === 'ok';
     if (!broadcasted) {
-      // eslint-disable-next-line no-console
+       
       console.warn(`[bot-worker.db] broadcast send returned ${String(sendResult)} (event durable in DB)`);
     }
     return { eventId, broadcasted };
   } catch (err) {
-    // eslint-disable-next-line no-console
+     
     console.warn('[bot-worker.db] broadcast failed (event durable in DB):', err);
     return { eventId, broadcasted: false };
   }
@@ -148,7 +148,7 @@ async function subscribeChannel(
       settled = true;
       reject(new Error(`subscribe timeout for ${name}`));
     }, 5000);
-    channel.subscribe((status, err) => {
+    channel.subscribe((status: string, err) => {
       if (settled) return;
       if (status === 'SUBSCRIBED') {
         settled = true;

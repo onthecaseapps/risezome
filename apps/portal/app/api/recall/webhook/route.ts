@@ -108,7 +108,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     .eq('recall_bot_id', botId)
     .maybeSingle();
   if (lookupErr !== null) {
-    // eslint-disable-next-line no-console
+     
     console.error('[recall.webhook] meeting lookup failed:', lookupErr);
     return new NextResponse('DB error', { status: 500 });
   }
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     .update(update)
     .eq('meeting_id', meeting.meeting_id);
   if (updateErr !== null) {
-    // eslint-disable-next-line no-console
+     
     console.error('[recall.webhook] meeting update failed:', updateErr);
     return new NextResponse('DB error', { status: 500 });
   }
@@ -188,7 +188,7 @@ async function broadcastStatus(
     .select('event_id')
     .single();
   if (error !== null) {
-    // eslint-disable-next-line no-console
+     
     console.warn('[recall.webhook] meeting_events insert failed:', error);
     return;
   }
@@ -203,7 +203,7 @@ async function broadcastStatus(
     });
     await channel.unsubscribe();
   } catch (err) {
-    // eslint-disable-next-line no-console
+     
     console.warn('[recall.webhook] broadcast failed:', err);
   }
 }
@@ -218,7 +218,7 @@ async function notifyBotWorkerEnd(meetingId: string): Promise<void> {
       body: '{}',
     });
   } catch (err) {
-    // eslint-disable-next-line no-console
+     
     console.warn('[recall.webhook] bot-worker end notify failed:', err);
   }
 }

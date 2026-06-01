@@ -27,6 +27,7 @@ import {
 } from '@risezome/engine/relevance';
 import { type SkillRegistry } from '../skills/registry.js';
 import { type Skill, formatAsSource, SkillExecutionError } from '../skills/contract.js';
+import type { ClassifierDone } from './contract.js';
 import type { SynthesisSource } from '@risezome/engine/synthesize';
 import type {
   CardEvent,
@@ -509,7 +510,7 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
       try {
         const result = await classifierPromise;
         const latencyMs = this.#now() - classifierStartedAt;
-        const doneEvent: import('./contract.js').ClassifierDone = {
+        const doneEvent: ClassifierDone = {
           traceId,
           intent: result.intent,
           latencyMs,
@@ -685,7 +686,7 @@ export class RetrievalPipeline extends EventEmitter<RetrievalPipelineEvents> {
             // No-op; start was emitted to the HUD before the synthesizer call.
             continue;
           case 'textDelta':
-            if (firstDeltaAt === null) firstDeltaAt = this.#now();
+            firstDeltaAt ??= this.#now();
             accumulatedText += chunk.delta;
             this.emit('synthesisDelta', { synthesisId, delta: chunk.delta });
             continue;
@@ -825,7 +826,7 @@ function withTimeout<T>(
     }, ms);
     promise.then(
       (value) => { clearTimeout(timer); resolve(value); },
-      (err) => { clearTimeout(timer); reject(err); },
+      (err: unknown) => { clearTimeout(timer); reject(err instanceof Error ? err : new Error(String(err))); },
     );
   });
 }

@@ -78,7 +78,7 @@ const RELEVANCE_TIMEOUT_MS = 3_000;
 // utterances OR degrade similarity. Ship gated behind an env flag for
 // the first live test so the behavior can be A/B'd against a recorded
 // session. Default OFF.
-const KEY_TERMS_BOOST_ENABLED = process.env['RISEZOME_DEBUG_KEY_TERMS_BOOST'] === 'true';
+const KEY_TERMS_BOOST_ENABLED = process.env.RISEZOME_DEBUG_KEY_TERMS_BOOST === 'true';
 
 // Rolling-context tuning. Five utterances or 60 seconds, whichever is
 // hit first — long enough to chain a question across 2-3 splits without
@@ -115,7 +115,8 @@ function looksLikeContinuation(
   if (firstWord.length === 0) return false;
   // Lowercase start often signals continuation (ASR rarely capitalizes
   // the start of a continuation utterance).
-  if (firstWord[0] === firstWord[0]!.toLowerCase() && firstWord[0] !== firstWord[0]!.toUpperCase()) {
+  const firstChar = firstWord[0]!;
+  if (firstChar === firstChar.toLowerCase() && firstChar !== firstChar.toUpperCase()) {
     return true;
   }
   return CONTINUATION_LEADERS.has(firstWord.toLowerCase());
@@ -527,16 +528,16 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
 
   // ── Hybrid search via the existing RPC
   const queryLiteral = `[${Array.from(vec).join(',')}]`;
-  const { data: vectorRows, error: searchErr } = await args.db.rpc('search_corpus_vector', {
+  const { data: vectorRows, error: searchErr } = (await args.db.rpc('search_corpus_vector', {
     p_org_id: args.orgId,
     p_query_vector: queryLiteral,
     p_limit: TOP_K,
-  });
+  })) as { data: { chunk_id: string; distance: number }[] | null; error: { message: string } | null };
   if (searchErr !== null) {
     send(socket, { type: 'retrieval-skip', reason: 'search_failed', traceId, detail: searchErr.message });
     return;
   }
-  const hits = (vectorRows ?? []) as Array<{ chunk_id: string; distance: number }>;
+  const hits = vectorRows ?? [];
   if (hits.length === 0) {
     send(socket, { type: 'retrieval-skip', reason: 'no_hits', traceId });
     return;
@@ -785,7 +786,7 @@ function send(socket: WebSocket, payload: Record<string, unknown>): void {
 
 function defaultSidecarPath(): string {
   // RISEZOME_SIDECAR_PATH env var wins when set.
-  const fromEnv = process.env['RISEZOME_SIDECAR_PATH'];
+  const fromEnv = process.env.RISEZOME_SIDECAR_PATH;
   if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
 
   // Walk up from this source file's location to find the repo root

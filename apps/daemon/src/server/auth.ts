@@ -28,7 +28,7 @@ export async function loadOrCreateSessionAuth(dataDirOverride?: string): Promise
   let token: string;
   // Dev override: RISEZOME_SESSION_TOKEN lets you pin the bearer to a known
   // hex string for curl/script testing. Must be 64 hex chars (32 bytes).
-  const envToken = process.env['RISEZOME_SESSION_TOKEN']?.trim();
+  const envToken = process.env.RISEZOME_SESSION_TOKEN?.trim();
   if (typeof envToken === 'string' && envToken.length > 0) {
     if (envToken.length !== SESSION_TOKEN_BYTES * 2 || !/^[0-9a-fA-F]+$/.test(envToken)) {
       throw new SessionTokenError(

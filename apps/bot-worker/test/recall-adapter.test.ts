@@ -11,7 +11,7 @@ import { adaptRecallMessage } from '../src/recall-adapter';
 
 function transcriptDataMessage(opts: {
   isPartial?: boolean;
-  words: Array<{ text: string; startRel: number; endRel: number }>;
+  words: { text: string; startRel: number; endRel: number }[];
   participant?: { id?: number | string; name?: string };
 }): unknown {
   return {

@@ -88,7 +88,7 @@ export async function toggleBotOptInAction(
       // The DB flip succeeded; the scheduling failed. Log + return
       // success so the user's UI reflects opt-in, but they'll need to
       // toggle off/on to retry scheduling. Future: surface a retry CTA.
-      // eslint-disable-next-line no-console
+       
       console.error('[toggleBotOptInAction] inngest.send failed:', err);
     }
   }

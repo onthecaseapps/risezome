@@ -124,7 +124,7 @@ export const indexGithubIssuesFn = inngest.createFunction(
       page += 1;
     }
 
-    // eslint-disable-next-line no-console
+     
     console.info(`[index-github-issues] indexed ${source.repo_full_name}: ${String(totalIssues)} issues+PRs, ${String(totalChunks)} chunks`);
     return { sourceId, issues: totalIssues, chunks: totalChunks };
   },

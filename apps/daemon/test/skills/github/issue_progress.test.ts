@@ -28,7 +28,7 @@ function ctxWith(mocks: MockResponses): LiveSkillContext {
       return Promise.resolve(jsonResponse(mocks.timeline));
     }
     return Promise.resolve(jsonResponse(mocks.issue));
-  }) as typeof fetch;
+  });
   return {
     client: new GithubClient({ fetchImpl }),
     auth: AUTH,
@@ -55,8 +55,8 @@ describe('github_issue_progress', () => {
     const skill = buildIssueProgressSkill(ctxWith({ issue: BASE_ISSUE, timeline: [] }));
     expect(skill.name).toBe('github_issue_progress');
     const props = skill.inputSchema.properties;
-    if (props['issue_number']?.type === 'integer') {
-      expect(props['issue_number'].minimum).toBe(1);
+    if (props.issue_number?.type === 'integer') {
+      expect(props.issue_number.minimum).toBe(1);
     }
   });
 
@@ -137,7 +137,7 @@ describe('github_issue_progress', () => {
 
   it('404 on the issue endpoint propagates as SkillExecutionError code=not-found', async () => {
     const fetchImpl: typeof fetch = (() =>
-      Promise.resolve(new Response('', { status: 404 }))) as typeof fetch;
+      Promise.resolve(new Response('', { status: 404 })));
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl }),
       auth: AUTH,

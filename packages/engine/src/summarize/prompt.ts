@@ -185,10 +185,10 @@ export function buildSummarizerTool(): {
  * SummarizerProviderError('bad-request')).
  */
 export function parseSummarizerToolInput(input: Record<string, unknown>): MeetingSummary {
-  const summary = input['summary'];
-  const current_topic = input['current_topic'];
-  const open_questions = input['open_questions'];
-  const key_terms = input['key_terms'];
+  const summary = input.summary;
+  const current_topic = input.current_topic;
+  const open_questions = input.open_questions;
+  const key_terms = input.key_terms;
 
   if (typeof summary !== 'string') {
     throw new Error(`emit_meeting_summary: 'summary' must be a string; got ${typeof summary}`);
@@ -212,7 +212,7 @@ export function parseSummarizerToolInput(input: Record<string, unknown>): Meetin
   return {
     summary,
     current_topic,
-    open_questions: open_questions as readonly string[],
-    key_terms: key_terms as readonly string[],
+    open_questions: open_questions,
+    key_terms: key_terms,
   };
 }

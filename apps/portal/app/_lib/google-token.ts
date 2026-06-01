@@ -150,7 +150,7 @@ export async function getGoogleAccessToken(userId: string): Promise<string> {
     // The token IS valid; we just couldn't cache it. Return it and let
     // the next request refresh again. Soft-fail rather than blocking the
     // call.
-    // eslint-disable-next-line no-console
+     
     console.warn('[google-token] cache update failed:', updateErr);
   }
 

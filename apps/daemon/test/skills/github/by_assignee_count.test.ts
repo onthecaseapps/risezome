@@ -38,7 +38,7 @@ describe('github_by_assignee_count', () => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.includes('/users/')) return Promise.resolve(jsonResponse({ login: 'Nath5' }));
       return Promise.resolve(jsonResponse([makeIssue(1), makeIssue(2), makeIssue(3), makeIssue(4), makeIssue(5)]));
-    }) as typeof fetch;
+    });
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl }),
       auth: AUTH,
@@ -57,7 +57,7 @@ describe('github_by_assignee_count', () => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.includes('/users/')) return Promise.resolve(jsonResponse({ login: 'Nath5' }));
       return Promise.resolve(jsonResponse([]));
-    }) as typeof fetch;
+    });
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl }),
       auth: AUTH,
@@ -74,7 +74,7 @@ describe('github_by_assignee_count', () => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.includes('/users/')) return Promise.resolve(jsonResponse({ login: 'Nath5' }));
       return Promise.resolve(jsonResponse(issues));
-    }) as typeof fetch;
+    });
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl }),
       auth: AUTH,
@@ -93,7 +93,7 @@ describe('github_by_assignee_count', () => {
       if (callCount === 1) return Promise.resolve(new Response('', { status: 404 }));
       if (callCount === 2) return Promise.resolve(jsonResponse({ items: [] }));
       throw new Error('unexpected call');
-    }) as typeof fetch;
+    });
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl }),
       auth: AUTH,
@@ -112,7 +112,7 @@ describe('github_by_assignee_count', () => {
       if (call === 1) return Promise.resolve(new Response('', { status: 404 }));
       if (call === 2) return Promise.resolve(jsonResponse({ items: [{ login: 'Nath5' }] }));
       return Promise.resolve(jsonResponse([makeIssue(1)]));
-    }) as typeof fetch;
+    });
     const ctx: LiveSkillContext = {
       client: new GithubClient({ fetchImpl }),
       auth: AUTH,

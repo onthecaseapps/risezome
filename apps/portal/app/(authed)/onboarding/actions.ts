@@ -40,7 +40,7 @@ export async function createOrg(formData: FormData): Promise<void> {
     .select('id')
     .single();
   if (orgErr !== null || orgRow === null) {
-    // eslint-disable-next-line no-console
+     
     console.error('[onboarding.createOrg] orgs insert failed:', orgErr);
     redirect('/onboarding?error=create_failed');
   }
@@ -52,7 +52,7 @@ export async function createOrg(formData: FormData): Promise<void> {
   if (memberErr !== null) {
     // Compensating delete to avoid an orphan org without an admin.
     await service.from('orgs').delete().eq('id', orgId);
-    // eslint-disable-next-line no-console
+     
     console.error('[onboarding.createOrg] org_members insert failed:', memberErr);
     redirect('/onboarding?error=create_failed');
   }

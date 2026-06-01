@@ -106,7 +106,7 @@ export function chunkFile(
   path: string,
   content: string,
   options: FileChunkerOptions = {},
-): Array<Pick<CanonicalChunk, 'domain' | 'text' | 'position'>> {
+): Pick<CanonicalChunk, 'domain' | 'text' | 'position'>[] {
   const opts = { ...DEFAULTS, ...options };
 
   const domain = classifyFile(path);
@@ -124,7 +124,7 @@ export function chunkFile(
   const overlap = Math.min(opts.overlapLines, Math.max(0, linesPerChunk - 1));
   const stride = Math.max(1, linesPerChunk - overlap);
 
-  const out: Array<Pick<CanonicalChunk, 'domain' | 'text' | 'position'>> = [];
+  const out: Pick<CanonicalChunk, 'domain' | 'text' | 'position'>[] = [];
   let position = 0;
   for (let start = 0; start < lines.length; start += stride) {
     const slice = lines.slice(start, start + linesPerChunk);

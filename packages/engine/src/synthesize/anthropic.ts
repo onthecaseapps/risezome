@@ -208,7 +208,7 @@ export class AnthropicSynthesizer implements Synthesizer {
         case 'ping':
           continue;
         case 'message_start': {
-          const msg = event.data['message'] as
+          const msg = event.data.message as
             | { model?: string; usage?: AnthropicUsage }
             | undefined;
           if (msg?.usage !== undefined) usage = mergeUsage(usage, msg.usage);
@@ -217,7 +217,7 @@ export class AnthropicSynthesizer implements Synthesizer {
           continue;
         }
         case 'content_block_delta': {
-          const delta = event.data['delta'] as
+          const delta = event.data.delta as
             | { type?: string; text?: string }
             | undefined;
           if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
@@ -226,9 +226,9 @@ export class AnthropicSynthesizer implements Synthesizer {
           continue;
         }
         case 'message_delta': {
-          const usageDelta = event.data['usage'] as AnthropicUsage | undefined;
+          const usageDelta = event.data.usage as AnthropicUsage | undefined;
           if (usageDelta !== undefined) usage = mergeUsage(usage, usageDelta);
-          const delta = event.data['delta'] as { stop_reason?: string } | undefined;
+          const delta = event.data.delta as { stop_reason?: string } | undefined;
           if (typeof delta?.stop_reason === 'string') stopReason = delta.stop_reason;
           continue;
         }
@@ -238,7 +238,7 @@ export class AnthropicSynthesizer implements Synthesizer {
           return;
         }
         case 'error': {
-          const errBody = event.data['error'] as
+          const errBody = event.data.error as
             | { type?: string; message?: string }
             | undefined;
           throw new SynthesisProviderError(
@@ -378,6 +378,6 @@ function parseSseBlock(block: string): SseEvent | null {
     return null;
   }
   const resolvedType =
-    eventType ?? (typeof data['type'] === 'string' ? (data['type'] as string) : 'unknown');
+    eventType ?? (typeof data.type === 'string' ? (data.type) : 'unknown');
   return { eventType: resolvedType, data };
 }

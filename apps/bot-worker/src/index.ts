@@ -32,7 +32,7 @@ import {
   AnthropicClassifier,
   type Classifier,
 } from '@risezome/engine/router';
-import { SkillRegistry } from '@risezome/engine/skills';
+import { type SkillRegistry } from '@risezome/engine/skills';
 import { buildSkillRegistry } from './skills/index.js';
 import { adaptRecallMessage } from './recall-adapter.js';
 import { verifyBotWsJwt, type BotWsJwtPayload } from './jwt.js';
@@ -72,8 +72,8 @@ interface PerMeetingRuntime {
 const runtimes = new Map<string, PerMeetingRuntime>();
 
 async function main(): Promise<void> {
-  const port = parsePort(process.env['BOT_WORKER_PORT'] ?? '8787');
-  const secret = process.env['BOT_WORKER_SECRET'];
+  const port = parsePort(process.env.BOT_WORKER_PORT ?? '8787');
+  const secret = process.env.BOT_WORKER_SECRET;
   if (secret === undefined || secret.length === 0) {
     console.error('[bot-worker] BOT_WORKER_SECRET is required');
     process.exit(1);
@@ -85,7 +85,7 @@ async function main(): Promise<void> {
   // VOYAGE_API_KEY isn't set, retrieval is silently disabled (the
   // transcript pipeline still runs). Lets you run the bot-worker in
   // "transcript-only" dev mode without standing up Voyage.
-  const voyageKey = process.env['VOYAGE_API_KEY'];
+  const voyageKey = process.env.VOYAGE_API_KEY;
   const embedder = voyageKey !== undefined && voyageKey.length > 0
     ? new VoyageEmbedder({ apiKey: voyageKey })
     : null;
@@ -98,8 +98,8 @@ async function main(): Promise<void> {
   // still emits cards but no synthesis or LLM-relevance runs — the
   // cheap regex heuristic alone gates filler. Useful for dev iteration
   // without burning Anthropic tokens.
-  const anthropicKey = process.env['ANTHROPIC_API_KEY'];
-  const anthropicModel = process.env['ANTHROPIC_MODEL'] ?? DEFAULT_ANTHROPIC_MODEL;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const anthropicModel = process.env.ANTHROPIC_MODEL ?? DEFAULT_ANTHROPIC_MODEL;
   const synthesizer: Synthesizer | null = anthropicKey !== undefined && anthropicKey.length > 0
     ? new AnthropicSynthesizer({ apiKey: anthropicKey, model: anthropicModel })
     : null;
@@ -135,7 +135,7 @@ async function main(): Promise<void> {
   const fastify = Fastify({ logger: { level: 'info' } });
   await fastify.register(websocket);
 
-  fastify.get('/health', async () => ({ ok: true, runtimes: runtimes.size }));
+  fastify.get('/health', () => ({ ok: true, runtimes: runtimes.size }));
 
   // POST /meetings/:id/end — called by the portal's status webhook
   // (U10) on bot.call_ended. Flushes in-memory state and removes the
@@ -159,7 +159,7 @@ async function main(): Promise<void> {
   // Use a wildcard for the JWT segment — Fastify's `:param` matcher
   // doesn't reliably match strings with dots (JWTs have two), so we
   // catch the rest of the path with `*` and pull the JWT off ourselves.
-  await fastify.register(async (instance) => {
+  await fastify.register((instance) => {
     instance.route<{ Params: { meetingId: string; '*': string } }>({
       method: 'GET',
       url: '/recall/:meetingId/*',
@@ -167,7 +167,7 @@ async function main(): Promise<void> {
         reply.code(200).send({ ok: true, kind: 'ws-endpoint' });
       },
       wsHandler: async (socket, req) => {
-        const params = req.params as { meetingId: string; '*': string };
+        const params = req.params;
         const meetingId = params.meetingId;
         const jwt = params['*'];
         let payload: BotWsJwtPayload;
@@ -249,8 +249,8 @@ async function main(): Promise<void> {
     // Linux-only (sidecar binary path is Linux PulseAudio). Gate on
     // LOCAL_DEBUG_ENABLED=true so production deployments don't expose
     // this surface accidentally.
-    const localDebugEnabled = process.env['LOCAL_DEBUG_ENABLED'] === 'true';
-    const deepgramKey = process.env['DEEPGRAM_API_KEY'];
+    const localDebugEnabled = process.env.LOCAL_DEBUG_ENABLED === 'true';
+    const deepgramKey = process.env.DEEPGRAM_API_KEY;
     instance.route<{ Params: { '*': string } }>({
       method: 'GET',
       url: '/local-debug/*',
@@ -278,7 +278,7 @@ async function main(): Promise<void> {
           socket.close();
           return;
         }
-        const jwt = (req.params as { '*': string })['*'];
+        const jwt = (req.params)['*'];
         let payload: BotWsJwtPayload;
         try {
           payload = await verifyBotWsJwt(jwt, secret);

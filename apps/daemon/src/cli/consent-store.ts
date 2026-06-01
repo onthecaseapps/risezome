@@ -17,5 +17,5 @@ export function hasConsent(db: DatabaseType, provider: ConsentProvider): boolean
   const row = db
     .prepare('SELECT 1 AS present FROM consent WHERE provider_id = ? LIMIT 1')
     .get(provider) as { present?: number } | undefined;
-  return row !== undefined && row.present === 1;
+  return row?.present === 1;
 }

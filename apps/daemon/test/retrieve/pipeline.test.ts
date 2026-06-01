@@ -361,7 +361,7 @@ describe('RetrievalPipeline', () => {
     // Wrap the embedder to count calls — we expect ZERO embed calls when
     // the window contains only partial utterances.
     const origEmbed = h.embedder.embed.bind(h.embedder);
-    h.embedder.embed = ((req) => { embedCalls += 1; return origEmbed(req); }) as typeof h.embedder.embed;
+    h.embedder.embed = ((req) => { embedCalls += 1; return origEmbed(req); });
     const cards: CardEvent[] = [];
     h.pipeline.on('card', (c) => cards.push(c));
     h.window.push({
@@ -388,7 +388,7 @@ describe('RetrievalPipeline', () => {
       vec: unitVectorAt(7),
     });
     const origEmbed = h.embedder.embed.bind(h.embedder);
-    h.embedder.embed = ((req) => { embedCalls += 1; return origEmbed(req); }) as typeof h.embedder.embed;
+    h.embedder.embed = ((req) => { embedCalls += 1; return origEmbed(req); });
     const cards: CardEvent[] = [];
     h.pipeline.on('card', (c) => cards.push(c));
     // Partial first — should NOT fire (no final yet)
@@ -1587,10 +1587,10 @@ import type { RelevanceClassifier, RelevanceResult } from '@risezome/engine/rele
 import { RelevanceProviderError } from '@risezome/engine/relevance';
 
 interface RelevanceEvents {
-  relevanceSkip: Array<{ gate: string; reason: string; utterance: string; confidence?: number }>;
-  relevanceLlmStart: Array<{ utterance: string }>;
-  relevanceClassified: Array<{ decision: string; confidence: number | null; latencyMs: number; utterance: string }>;
-  relevanceLlmError: Array<{ code: string; message?: string }>;
+  relevanceSkip: { gate: string; reason: string; utterance: string; confidence?: number }[];
+  relevanceLlmStart: { utterance: string }[];
+  relevanceClassified: { decision: string; confidence: number | null; latencyMs: number; utterance: string }[];
+  relevanceLlmError: { code: string; message?: string }[];
 }
 
 function recordRelevanceEvents(pipeline: RetrievalPipeline): RelevanceEvents {
@@ -1695,7 +1695,7 @@ describe('RetrievalPipeline — relevance pre-gate', () => {
     h = await setupWithRelevance({});
     // Wrap the embedder to detect any call (which we don't expect).
     const origEmbed = h.embedder.embed.bind(h.embedder);
-    h.embedder.embed = ((req) => { embedCalled = true; return origEmbed(req); }) as typeof h.embedder.embed;
+    h.embedder.embed = ((req) => { embedCalled = true; return origEmbed(req); });
     indexPR(h.db, { id: 'gh:a#pr:1', title: 't', text: 'auth', vec: unitVectorAt(7) });
     await pushAndFlush(h.window, 'yeah');
 

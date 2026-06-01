@@ -79,7 +79,7 @@ export const syncCalendarFn = inngest.createFunction(
       });
     } catch (err) {
       if (err instanceof GoogleTokenMissingError || err instanceof GoogleTokenRefreshError) {
-        // eslint-disable-next-line no-console
+         
         console.warn(`[sync-calendar] user=${userId} ${err.name}: ${err.message}`);
         return { userId, skipped: true, reason: err.name };
       }
