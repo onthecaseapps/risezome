@@ -208,6 +208,44 @@ describe('SynthesisStream', () => {
     ).toBeNull();
   });
 
+  it('clicking the source card header expands/collapses it (no quote highlight)', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    const card = mkCard({ cardId: 'src1', body: 'the full chunk body text' });
+    const syn = mkSyn({
+      accumulatedText: 'See [1].',
+      streaming: false,
+      sourceCardIds: ['src1'],
+      citations: [{ rank: 1, cardId: 'src1', position: 4, quote: 'full chunk' }],
+    });
+    const { container } = render(
+      <AppStateProvider initial={stateWith({ cards: [card], syntheses: [syn] })}>
+        <SynthesisStream />
+      </AppStateProvider>,
+    );
+
+    const toggle = container.querySelector(
+      'article.source-card-expanded[data-card-id="src1"] button.source-card-toggle',
+    );
+    expect(toggle).not.toBeNull();
+    expect(
+      container.querySelector('article.source-card-expanded[data-card-id="src1"] .source-body'),
+    ).toBeNull();
+
+    // Click the card header → expands, body shows, no highlight (no quote).
+    fireEvent.click(toggle!);
+    const body = container.querySelector(
+      'article.source-card-expanded[data-card-id="src1"] .source-body',
+    );
+    expect(body).not.toBeNull();
+    expect(body?.querySelector('mark.quote-highlight')).toBeNull();
+
+    // Click again → collapses.
+    fireEvent.click(toggle!);
+    expect(
+      container.querySelector('article.source-card-expanded[data-card-id="src1"] .source-body'),
+    ).toBeNull();
+  });
+
   it('U4: synthesisStart → synthesisDelta transitions placeholder → streaming in place (no remount)', async () => {
     const { act, fireEvent } = await import('@testing-library/react');
     void fireEvent;

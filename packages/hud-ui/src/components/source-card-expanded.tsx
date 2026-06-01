@@ -37,25 +37,62 @@ export interface SourceCardExpandedProps {
    *  fell back to bare [N] (no quote payload); the source still
    *  expands but no `<mark>` renders. */
   readonly quote?: string;
+  /** Toggle handler — clicking the card header expands/collapses it,
+   *  in addition to the inline `[N]` citation chips. Omitted → inert
+   *  header (SSR / preview embeds). */
+  readonly onToggle?: (() => void) | undefined;
 }
 
 export function SourceCardExpanded({
   source,
   open,
   quote,
+  onToggle,
 }: SourceCardExpandedProps): ReactElement {
+  const header = (
+    <span className="source-card-head">
+      <CardHeaderRow card={source} />
+      <span className="title">
+        <span className="title-link">{source.title}</span>
+      </span>
+    </span>
+  );
+
   return (
     <article
       className={open ? 'source-card-expanded is-open' : 'source-card-expanded'}
       data-card-id={source.cardId}
       data-open={open ? 'true' : 'false'}
     >
-      <CardHeaderRow card={source} />
-      <div className="title">
-        <span className="title-link">{source.title}</span>
-      </div>
+      {onToggle !== undefined ? (
+        <button type="button" className="source-card-toggle" onClick={onToggle} aria-expanded={open}>
+          {header}
+          <ChevronToggle />
+        </button>
+      ) : (
+        header
+      )}
       {open && <ExpandedBody source={source} quote={quote} />}
     </article>
+  );
+}
+
+function ChevronToggle(): ReactElement {
+  return (
+    <svg
+      className="source-card-chevron"
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
   );
 }
 

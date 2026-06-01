@@ -169,6 +169,13 @@ export function SynthesisCard({
                     key={source.cardId}
                     source={source}
                     open={isOpen}
+                    onToggle={() =>
+                      activate({
+                        rank: 0,
+                        cardId: source.cardId,
+                        quote: isOpen ? expansion?.quote : undefined,
+                      })
+                    }
                     {...(passQuote ? { quote: expansion.quote } : {})}
                   />
                 );

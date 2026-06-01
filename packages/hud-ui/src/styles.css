@@ -689,6 +689,41 @@ body {
   line-height: 1.3;
 }
 
+/* Clickable header — expand/collapse the source card by clicking it
+ * (in addition to the inline [N] citation chips). */
+.source-card-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.source-card-head {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+.source-card-chevron {
+  flex: none;
+  color: var(--muted);
+  transition: transform 140ms ease-out;
+}
+.source-card-expanded.is-open .source-card-chevron {
+  transform: rotate(180deg);
+}
+.source-card-toggle:hover .title-link {
+  text-decoration: underline;
+}
+
 .source-body {
   margin-top: 6px;
   padding-top: 8px;
