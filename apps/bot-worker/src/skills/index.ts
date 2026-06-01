@@ -47,10 +47,11 @@ export function buildSkillRegistry(options: BuildSkillRegistryOptions): SkillReg
   if (githubEnv === null) {
     options.logger.info(
       {
-        hasToken: process.env.GITHUB_TOKEN !== undefined,
+        // Non-empty checks (a key set to "" reads as present but is
+        // treated as unset by readGithubEnv).
+        hasToken: (process.env.GITHUB_TOKEN ?? '').length > 0,
         hasRepo:
-          process.env.RISEZOME_GITHUB_REPO !== undefined ||
-          process.env.UPWELL_GITHUB_REPO !== undefined,
+          (process.env.RISEZOME_GITHUB_REPO ?? process.env.UPWELL_GITHUB_REPO ?? '').length > 0,
       },
       'github.live.disabled',
     );
