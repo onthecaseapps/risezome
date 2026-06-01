@@ -358,6 +358,14 @@ describe('buildSystemPrefix', () => {
     expect(/\[\d+:\s*"/.test(combined)).toBe(true);
   });
 
+  it('requires facts to be self-contained in prose, not buried inside the citation quote', () => {
+    // Guards the fix for "name replaced by a citation chip": the quote is
+    // invisible inline, so the fact must be stated in the prose itself.
+    const combined = buildSystemPrefix().map((b) => b.text).join('');
+    expect(combined).toContain('INVISIBLE TO THE READER');
+    expect(combined).toContain('NEVER put a word the sentence depends on ONLY inside the citation quote');
+  });
+
   it('carries the no-em-dash rule', () => {
     const combined = buildSystemPrefix().map((b) => b.text).join('');
     expect(combined).toContain('NO EM-DASHES');
