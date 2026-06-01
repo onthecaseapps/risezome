@@ -8,7 +8,7 @@ import type {
 import { parseSynthesisOutput, stripStatusPrefix, verifyCitations } from '@risezome/engine/synthesize';
 import { hybridSearch } from './corpus-search';
 import { optionalReranker } from './reranker';
-import { expandWinnersToParents, parentDocEnabled, type WinningChunk } from './parent-doc';
+import { expandWinnersToParents, parentDocEnabled, dedupeByDoc, type WinningChunk } from './parent-doc';
 import { optionalQueryExpander } from './query-expand';
 import { augmentQuery } from '@risezome/engine/query-expand';
 import { shouldExpandOnMiss } from '@risezome/engine/query-route';
@@ -345,13 +345,18 @@ export async function maybeRetrieveAndEmit(args: {
     ]),
   );
 
-  // Parent-document expansion (U8): expand each winning child to its
+  // Parent-document retrieval (U8): collapse multiple retrieved chunks of one
+  // document to a single best-ranked source, then expand that survivor to its
   // surrounding parent context. The expanded text becomes BOTH the card body
   // and the synthesis source text, so the verbatim quote the model emits is
   // findable for citation verification AND for the live-page highlight (they
-  // search the same substrate). The card's identity still points at the child
-  // chunk's doc. No-op (child text) when the flag is off.
-  const winners: WinningChunk[] = hits.flatMap((h) => {
+  // search the same substrate). One card per document; the card's identity
+  // still points at the best child's doc. No-op (raw per-chunk hits, child
+  // text) when the flag is off.
+  const sourceHits = parentDocEnabled()
+    ? dedupeByDoc(hits, (h) => chunkById.get(h.chunk_id)?.doc_id)
+    : hits;
+  const winners: WinningChunk[] = sourceHits.flatMap((h) => {
     const c = chunkById.get(h.chunk_id);
     return c === undefined ? [] : [{ chunkId: h.chunk_id, docId: c.doc_id, position: c.position, text: c.text }];
   });
@@ -363,8 +368,8 @@ export async function maybeRetrieveAndEmit(args: {
   let emitted = 0;
   const surfacedCardIds: string[] = [];
   const synthesisSources: SynthesisSource[] = [];
-  for (let i = 0; i < hits.length; i += 1) {
-    const hit = hits[i]!;
+  for (let i = 0; i < sourceHits.length; i += 1) {
+    const hit = sourceHits[i]!;
     const chunk = chunkById.get(hit.chunk_id);
     if (chunk === undefined) continue;
     const doc = docById.get(chunk.doc_id);

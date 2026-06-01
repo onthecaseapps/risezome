@@ -43,7 +43,7 @@ import {
 } from '@risezome/engine/synthesize';
 import { hybridSearch } from '../corpus-search';
 import { optionalReranker } from '../reranker';
-import { expandWinnersToParents, parentDocEnabled, type WinningChunk } from '../parent-doc';
+import { expandWinnersToParents, parentDocEnabled, dedupeByDoc, type WinningChunk } from '../parent-doc';
 import { shouldReplaceSynthesis, type PriorSynthesis } from './synthesis-replace';
 import { optionalQueryExpander } from '../query-expand';
 import { augmentQuery } from '@risezome/engine/query-expand';
@@ -684,11 +684,15 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       ]),
     );
 
-    // Parent-document expansion (U8): expand each winning child to its parent
-    // context for synthesis. Expanded text becomes BOTH card body and source
-    // text so the model's verbatim quote stays findable for citation
-    // verification + highlight. No-op (child text) when the flag is off.
-    const winners: WinningChunk[] = hits.flatMap((h) => {
+    // Parent-document retrieval (U8): collapse multiple retrieved chunks of one
+    // doc to a single best-ranked source, then expand that survivor to its
+    // parent context. Expanded text becomes BOTH card body and source text so
+    // the model's verbatim quote stays findable for citation verification +
+    // highlight. One card per doc. No-op (raw per-chunk hits) when off.
+    const sourceHits = parentDocEnabled()
+      ? dedupeByDoc(hits, (h) => chunkById.get(h.chunk_id)?.doc_id)
+      : hits;
+    const winners: WinningChunk[] = sourceHits.flatMap((h) => {
       const c = chunkById.get(h.chunk_id);
       return c === undefined ? [] : [{ chunkId: h.chunk_id, docId: c.doc_id, position: c.position, text: c.text }];
     });
@@ -696,8 +700,8 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       ? await expandWinnersToParents(args.db, winners)
       : new Map<string, string>();
 
-    for (let i = 0; i < hits.length; i++) {
-      const hit = hits[i]!;
+    for (let i = 0; i < sourceHits.length; i++) {
+      const hit = sourceHits[i]!;
       const chunk = chunkById.get(hit.chunk_id);
       if (chunk === undefined) continue;
       const doc = docById.get(chunk.doc_id);

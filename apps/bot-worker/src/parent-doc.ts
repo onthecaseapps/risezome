@@ -16,6 +16,32 @@ export function parentDocEnabled(): boolean {
   return process.env.RISEZOME_PARENT_DOC_ENABLED === 'true';
 }
 
+/**
+ * Collapse retrieved hits to one per document, keeping the best-ranked
+ * occurrence (input order is best-first). When one document is split across
+ * several retrieved chunks, surfacing them as separate sources both confuses
+ * citation (a verbatim quote lands in a sibling rank) and shows the user the
+ * same doc as multiple cards. Deduping by docId — combined with parent-doc
+ * expansion of the survivor — gives one source/card per document. Hits whose
+ * docId can't be resolved are kept (the caller's loop skips truly-missing
+ * ones). Order is preserved.
+ */
+export function dedupeByDoc<T>(items: readonly T[], docIdOf: (item: T) => string | undefined): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const id = docIdOf(item);
+    if (id === undefined) {
+      out.push(item);
+      continue;
+    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(item);
+  }
+  return out;
+}
+
 function envOptions(): ParentExpandOptions {
   const cap = Number(process.env.RISEZOME_PARENT_DOC_CAP_CHARS);
   const radius = Number(process.env.RISEZOME_PARENT_DOC_WINDOW);
