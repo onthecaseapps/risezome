@@ -534,18 +534,29 @@ export interface CitationVerification {
 
 /**
  * Drop fabricated quoted citations: a `[N: "quote"]` whose quote does not
- * actually appear in source N's text is not grounded, so we strip it (the
+ * actually appear in the cited DOCUMENT is not grounded, so we strip it (the
  * inline chip and the source's "cited" status disappear with it). Bare `[N]`
  * citations can't be quote-checked, so they pass through (their rank is
  * already bounded by the parser); the few-shot neutralization is what guards
  * against bare-citation fabrication.
  *
+ * Document-level (not chunk-level) check: when one document is split across
+ * several retrieved chunks surfaced as separate sources, the model often
+ * attributes a verbatim quote to one rank while the quoted text lives in a
+ * sibling chunk of the SAME document. A quote therefore verifies if it appears
+ * in the cited source's text OR in any other source sharing the cited source's
+ * `docId`. This still catches fabrication (the quote must be verbatim in the
+ * cited document) but stops suppressing a grounded answer over chunk-vs-rank
+ * fragmentation. The rank is left unchanged (re-pointing it would desync the
+ * inline chip from its highlight); the highlight is best-effort across the
+ * doc's cards.
+ *
  * This is the safety net behind grounding: even if the model invents a fact,
- * a quote it attaches that isn't in the source gets caught here.
+ * a quote it attaches that isn't in the cited document gets caught here.
  */
 export function verifyCitations(
   citations: readonly ParsedCitation[],
-  sources: readonly { readonly text: string }[],
+  sources: readonly { readonly text: string; readonly docId?: string }[],
 ): CitationVerification {
   const normalizedSources = sources.map((s) => normalizeForMatch(s.text));
   const verified: ParsedCitation[] = [];
@@ -555,8 +566,19 @@ export function verifyCitations(
       verified.push(c);
       continue;
     }
-    const src = normalizedSources[c.rank - 1];
-    if (src?.includes(normalizeForMatch(c.quote)) === true) {
+    const needle = normalizeForMatch(c.quote);
+    const citedText = normalizedSources[c.rank - 1];
+    if (citedText?.includes(needle) === true) {
+      verified.push(c);
+      continue;
+    }
+    // Same-document fallback: accept if the quote is verbatim in any retrieved
+    // source sharing the cited source's docId (one doc split across ranks).
+    const citedDocId = sources[c.rank - 1]?.docId;
+    const inSameDoc =
+      citedDocId !== undefined &&
+      sources.some((s, i) => s.docId === citedDocId && normalizedSources[i]?.includes(needle) === true);
+    if (inSameDoc) {
       verified.push(c);
     } else {
       droppedQuoted += 1;

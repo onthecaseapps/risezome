@@ -296,6 +296,45 @@ describe('verifyCitations — drops fabricated quoted citations', () => {
     expect(out.verified).toEqual([]);
     expect(out.droppedQuoted).toBe(1);
   });
+
+  describe('same-document fallback (one doc split across ranks)', () => {
+    // docA is surfaced as ranks 1 and 3 (two chunks); docB as rank 2.
+    const docSplit = [
+      { text: 'Intro paragraph about the gap-fill feature.', docId: 'docA' },
+      { text: 'Unrelated content about pricing.', docId: 'docB' },
+      { text: 'When a flagged question yields no source result above the threshold, a gap card appears.', docId: 'docA' },
+    ];
+
+    it('keeps a quote the model cited at rank 1 but which lives in a sibling chunk of the same doc (rank 3)', () => {
+      const out = verifyCitations(
+        [{ rank: 1, position: 0, quote: 'a flagged question yields no source result' }],
+        docSplit,
+      );
+      expect(out.verified).toHaveLength(1);
+      expect(out.droppedQuoted).toBe(0);
+      // Rank is left unchanged (no re-attribution).
+      expect(out.verified[0]!.rank).toBe(1);
+    });
+
+    it('still drops a quote that is in a DIFFERENT document than the cited rank (cross-doc fabrication)', () => {
+      // Cited rank 1 = docA; the quote is verbatim only in docB (rank 2).
+      const out = verifyCitations(
+        [{ rank: 1, position: 0, quote: 'Unrelated content about pricing' }],
+        docSplit,
+      );
+      expect(out.verified).toEqual([]);
+      expect(out.droppedQuoted).toBe(1);
+    });
+
+    it('does not apply the fallback when sources carry no docId (behaves as chunk-level)', () => {
+      const out = verifyCitations(
+        [{ rank: 1, position: 0, quote: 'gap card appears' }],
+        [{ text: 'Intro paragraph.' }, { text: 'a gap card appears here' }],
+      );
+      expect(out.verified).toEqual([]);
+      expect(out.droppedQuoted).toBe(1);
+    });
+  });
 });
 
 describe('citationsToRanks (legacy bridge helper)', () => {

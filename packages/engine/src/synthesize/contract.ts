@@ -15,6 +15,13 @@ export interface SynthesisSource {
    *  back to the plain single-block form. `focus` is always a substring of
    *  `text`, so citation quotes still verify against `text`. */
   readonly focus?: string;
+  /** Source document id. When several retrieved chunks of ONE document are
+   *  surfaced as separate sources, a verbatim quote can land in a sibling
+   *  chunk's text while the model cites a different rank. Citation
+   *  verification uses docId to accept a quote that is verbatim in ANY
+   *  retrieved source of the cited document (still grounded), instead of
+   *  dropping it for being absent from the single cited chunk. */
+  readonly docId?: string;
 }
 
 export interface SynthesisInput {

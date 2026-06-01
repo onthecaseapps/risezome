@@ -708,7 +708,9 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       const body = expandedByChunk.get(hit.chunk_id) ?? chunk.text;
       // U8: judge relevance from the tight child (`focus`), formulate from the
       // expanded parent (`text`). Equal when expansion was a no-op / disabled.
-      sources.push({ rank: i + 1, title: doc.title, text: body, focus: chunk.text });
+      // docId lets citation verification accept a quote that's verbatim in a
+      // sibling chunk of the same doc surfaced at another rank.
+      sources.push({ rank: i + 1, title: doc.title, text: body, focus: chunk.text, docId: chunk.doc_id });
       send(socket, {
         type: 'card',
         traceId,

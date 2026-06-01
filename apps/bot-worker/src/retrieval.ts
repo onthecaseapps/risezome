@@ -451,6 +451,9 @@ export async function maybeRetrieveAndEmit(args: {
       // U8: judge relevance from the tight child that matched; formulate from
       // the expanded `text`. Equal to `text` when expansion was a no-op.
       focus: chunk.text,
+      // docId lets citation verification accept a quote that's verbatim in a
+      // sibling chunk of the same document surfaced at another rank.
+      docId: chunk.doc_id,
       title: doc.title,
     });
     emitted += 1;
