@@ -43,16 +43,20 @@ export default function WhatsNewPage(): ReactElement {
       <ChevronBackground />
 
       <div className="relative z-10 min-h-full p-6 sm:p-10">
-        <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0e1018]/70 p-8 shadow-2xl backdrop-blur-xl">
+        <div className="w-full max-w-md rounded-2xl border border-black/10 bg-white/70 p-8 shadow-2xl backdrop-blur-xl dark:border-white/10 dark:bg-[#0e1018]/70">
           {/* Easter egg: the "Risezome" label opens a blank background-only page. */}
           <Link
             href="/whats-new/background"
-            className="text-xs font-medium uppercase tracking-[0.18em] text-[#7c83ff] transition-colors hover:text-[#a8acff]"
+            className="text-xs font-medium uppercase tracking-[0.18em] text-[#5b61d6] transition-colors hover:text-[#7c83ff] dark:text-[#7c83ff] dark:hover:text-[#a8acff]"
           >
             Risezome
           </Link>
-          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-white">What&rsquo;s new</h1>
-          <p className="mt-1 text-sm text-white/55">The latest improvements to your meeting copilot.</p>
+          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-[#1a1a1c] dark:text-white">
+            What&rsquo;s new
+          </h1>
+          <p className="mt-1 text-sm text-black/55 dark:text-white/55">
+            The latest improvements to your meeting copilot.
+          </p>
 
           <ul className="mt-7 flex flex-col gap-6">
             {FEATURES.map((f) => (
@@ -60,14 +64,14 @@ export default function WhatsNewPage(): ReactElement {
                 <ChevronBullet />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-medium text-white">{f.title}</h2>
+                    <h2 className="text-sm font-medium text-[#1a1a1c] dark:text-white">{f.title}</h2>
                     {f.tag !== undefined ? (
-                      <span className="rounded-full bg-[#7c83ff]/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[#a8acff]">
+                      <span className="rounded-full bg-[#7c83ff]/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[#5b61d6] dark:text-[#a8acff]">
                         {f.tag}
                       </span>
                     ) : null}
                   </div>
-                  <p className="mt-1 text-sm leading-relaxed text-white/60">{f.body}</p>
+                  <p className="mt-1 text-sm leading-relaxed text-black/60 dark:text-white/60">{f.body}</p>
                 </div>
               </li>
             ))}

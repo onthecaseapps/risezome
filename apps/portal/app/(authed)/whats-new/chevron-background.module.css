@@ -1,25 +1,30 @@
 /*
  * Risezome rising-chevron background. Ported from the Claude Design handoff
- * "Risezome Chevron Background.html" — full-bleed periwinkle field on
- * near-black with three rising chevrons, drifting bubbles, and a grain
- * overlay. Scoped as a CSS module so it only styles the What's-new page.
+ * "Risezome Chevron Background.html" — a periwinkle field with three rising
+ * chevrons, drifting bubbles, and a grain overlay. Scoped as a CSS module so
+ * it only styles the What's-new surfaces.
+ *
+ * Theme-aware: the base rules are the LIGHT palette (soft periwinkle on the
+ * app's near-white --bg); the `:global(.dark)` overrides restore the original
+ * near-black handoff look. The app toggles the `.dark` class on <html>, so
+ * these pages follow the system/app theme automatically.
  */
 
 .stage {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: #0a0b0e;
+  background: #f6f7f9;
 }
 
-/* deep periwinkle field */
+/* light periwinkle field on near-white */
 .field {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(120% 95% at 50% 116%, rgba(124, 131, 255, 0.34), transparent 55%),
-    radial-gradient(90% 70% at 50% -10%, rgba(81, 89, 224, 0.2), transparent 60%),
-    #0a0b0e;
+    radial-gradient(120% 95% at 50% 116%, rgba(124, 131, 255, 0.3), transparent 55%),
+    radial-gradient(90% 70% at 50% -10%, rgba(124, 131, 255, 0.14), transparent 60%),
+    #f6f7f9;
 }
 
 /* the big rising mark, centered & bleeding off the bottom */
@@ -80,12 +85,28 @@
   animation: drift linear infinite;
 }
 
+/* dark grain = light dots; light grain = dark dots (overridden below) */
 .grain {
   position: absolute;
   inset: 0;
+  opacity: 0.05;
+  background-image: radial-gradient(circle, #000 1px, transparent 1px);
+  background-size: 4px 4px;
+}
+
+/* ── Dark theme: the original near-black handoff palette ── */
+:global(.dark) .stage {
+  background: #0a0b0e;
+}
+:global(.dark) .field {
+  background:
+    radial-gradient(120% 95% at 50% 116%, rgba(124, 131, 255, 0.34), transparent 55%),
+    radial-gradient(90% 70% at 50% -10%, rgba(81, 89, 224, 0.2), transparent 60%),
+    #0a0b0e;
+}
+:global(.dark) .grain {
   opacity: 0.035;
   background-image: radial-gradient(circle, #fff 1px, transparent 1px);
-  background-size: 4px 4px;
 }
 
 @media (prefers-reduced-motion: reduce) {
