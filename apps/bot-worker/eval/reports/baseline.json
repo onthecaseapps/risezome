@@ -1,0 +1,513 @@
+{
+  "total": 10,
+  "passed": 3,
+  "failed": 7,
+  "passRate": 0.3,
+  "meanRecall": 0.2222222222222222,
+  "results": [
+    {
+      "q": "what ai models are used in the project",
+      "retrieved": [
+        {
+          "chunkId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf::0",
+          "docId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf",
+          "title": "Create Gap Fill Process",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:packages/engine/src/summarize/prompt.ts@651a9123d45690f0991ca27fe04a8693ef12f04c::0",
+          "docId": "github:onthecaseapps/risezome:packages/engine/src/summarize/prompt.ts@651a9123d45690f0991ca27fe04a8693ef12f04c",
+          "title": "packages/engine/src/summarize/prompt.ts",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518::16",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518",
+          "title": "docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md",
+          "score": 0.016129032258064516
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:apps/daemon/test/retrieve/pipeline.test.ts@e23efbc11d8534ca9c3c1199cae82e31d5593633::2",
+          "docId": "github:onthecaseapps/risezome:apps/daemon/test/retrieve/pipeline.test.ts@e23efbc11d8534ca9c3c1199cae82e31d5593633",
+          "title": "apps/daemon/test/retrieve/pipeline.test.ts",
+          "score": 0.016129032258064516
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/router-skills-framework-requirements.md@f741dc47d20effff7f5a8cc982747c8014804d62::2",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/router-skills-framework-requirements.md@f741dc47d20effff7f5a8cc982747c8014804d62",
+          "title": "docs/brainstorms/archive/router-skills-framework-requirements.md",
+          "score": 0.015873015873015872
+        }
+      ],
+      "recall": 0,
+      "surfaced": [],
+      "missed": [
+        "README",
+        "synthesize",
+        "voyage",
+        "deepgram"
+      ],
+      "answer": "",
+      "isRefusal": true,
+      "answerContainsAll": false,
+      "pass": false
+    },
+    {
+      "q": "how does the bot join a meeting",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md@a59b37dad0cfa9f63dbbbcf004242fc3472743fe::13",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md@a59b37dad0cfa9f63dbbbcf004242fc3472743fe",
+          "title": "docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md",
+          "score": 0.032266458495966696
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md@a59b37dad0cfa9f63dbbbcf004242fc3472743fe::12",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md@a59b37dad0cfa9f63dbbbcf004242fc3472743fe",
+          "title": "docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md",
+          "score": 0.03200204813108039
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-30-upwell-portal-and-cloud-shape-requirements.md@608000cd4b2ad6af3167088f547d41dcf6abf0da::1",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-30-upwell-portal-and-cloud-shape-requirements.md@608000cd4b2ad6af3167088f547d41dcf6abf0da",
+          "title": "docs/brainstorms/archive/2026-05-30-upwell-portal-and-cloud-shape-requirements.md",
+          "score": 0.031009615384615385
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-30-upwell-portal-and-cloud-shape-requirements.md@608000cd4b2ad6af3167088f547d41dcf6abf0da::2",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-30-upwell-portal-and-cloud-shape-requirements.md@608000cd4b2ad6af3167088f547d41dcf6abf0da",
+          "title": "docs/brainstorms/archive/2026-05-30-upwell-portal-and-cloud-shape-requirements.md",
+          "score": 0.030834914611005692
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md@a59b37dad0cfa9f63dbbbcf004242fc3472743fe::14",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md@a59b37dad0cfa9f63dbbbcf004242fc3472743fe",
+          "title": "docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md",
+          "score": 0.029437229437229435
+        }
+      ],
+      "recall": 0,
+      "surfaced": [],
+      "missed": [
+        "recall",
+        "launch-bot",
+        "bot-worker"
+      ],
+      "answer": "\nThe bot joins a meeting when an Inngest scheduled event fires at the meeting's start time, triggering a call to Recall.ai's Create Bot API [1: \"When a scheduled meeting's start time arrives (Inngest fires the scheduled event), call Recall.ai Create Bot\"]. The bot is configured with the meeting URL extracted from the calendar event [1: \"meeting_url: from calendar_event.conference_url\"] and joins via Recall.ai's infrastructure using the conference platform's native join mechanism (Zoom or Google Meet for MVP) [1: \"The bot is sent to the conference URL from R7 via Recall.ai\"]. Upon joining, the",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": false
+    },
+    {
+      "q": "how is the corpus searched at query time",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518::2",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518",
+          "title": "docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md",
+          "score": 0.030117753623188408
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518::8",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518",
+          "title": "docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md",
+          "score": 0.028782894736842105
+        },
+        {
+          "chunkId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf::0",
+          "docId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf",
+          "title": "Create Gap Fill Process",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/github-live-skills-requirements.md@f3cffb03984eb4434e5c2b860a298d4edaaf63e3::0",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/github-live-skills-requirements.md@f3cffb03984eb4434e5c2b860a298d4edaaf63e3",
+          "title": "docs/brainstorms/archive/github-live-skills-requirements.md",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/live-page-synthesis-first-requirements.md@654f79087053acb76058172ead606be8e8b47211::5",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/live-page-synthesis-first-requirements.md@654f79087053acb76058172ead606be8e8b47211",
+          "title": "docs/brainstorms/archive/live-page-synthesis-first-requirements.md",
+          "score": 0.016129032258064516
+        }
+      ],
+      "recall": 0,
+      "surfaced": [],
+      "missed": [
+        "corpus-search",
+        "retrieval"
+      ],
+      "answer": "\nAt query time, the corpus is searched using a hybrid retrieval approach combining vector search and BM25 full-text search with reciprocal rank fusion (RRF) [1: \"Hybrid retrieval (vector + BM25 + RRF) is non-negotiable for v1\"]. The search operates on chunks stored in `sqlite-vec` and FTS5 virtual tables within `better-sqlite3`, running parallel vector and BM25 queries over `doc_chunks` and fusing results with RRF (`1 / (60 + rank)`), with duplicate docs across chunks collapsed and the best-matching chunk returned as the card snippet [1",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": false
+    },
+    {
+      "q": "what database does the corpus use",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518::8",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518",
+          "title": "docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md",
+          "score": 0.03125
+        },
+        {
+          "chunkId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf::0",
+          "docId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf",
+          "title": "Create Gap Fill Process",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:packages/engine/src/skills/contract.ts@ecb26d99dff43f26f26a4b78a2269e67762e3ec4::0",
+          "docId": "github:onthecaseapps/risezome:packages/engine/src/skills/contract.ts@ecb26d99dff43f26f26a4b78a2269e67762e3ec4",
+          "title": "packages/engine/src/skills/contract.ts",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-003-feat-skill-routing-bot-worker-plan.md@1e064418033aa708c6dc563eb3cac93bf89526f5::18",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-003-feat-skill-routing-bot-worker-plan.md@1e064418033aa708c6dc563eb3cac93bf89526f5",
+          "title": "docs/plans/archive/2026-05-31-003-feat-skill-routing-bot-worker-plan.md",
+          "score": 0.016129032258064516
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:apps/daemon/src/skills/contract.ts@a5a67352e6e7620b1178f6346bf06f33d65df98d::0",
+          "docId": "github:onthecaseapps/risezome:apps/daemon/src/skills/contract.ts@a5a67352e6e7620b1178f6346bf06f33d65df98d",
+          "title": "apps/daemon/src/skills/contract.ts",
+          "score": 0.016129032258064516
+        }
+      ],
+      "recall": 0,
+      "surfaced": [],
+      "missed": [
+        "pgvector",
+        "corpus",
+        "migration"
+      ],
+      "answer": "",
+      "isRefusal": true,
+      "answerContainsAll": false,
+      "pass": false
+    },
+    {
+      "q": "how do we handle deepgram disconnecting mid meeting",
+      "retrieved": [
+        {
+          "chunkId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf::0",
+          "docId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf",
+          "title": "Create Gap Fill Process",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:packages/engine/src/synthesize/prompt.ts@007ac5d95b0e64b702171bdec84b55cd81bfc31f::2",
+          "docId": "github:onthecaseapps/risezome:packages/engine/src/synthesize/prompt.ts@007ac5d95b0e64b702171bdec84b55cd81bfc31f",
+          "title": "packages/engine/src/synthesize/prompt.ts",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-29-003-feat-utterance-relevance-classifier-plan.md@ad790824c62b1cf39c1c4ea5d2980f6685433fa0::7",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-29-003-feat-utterance-relevance-classifier-plan.md@ad790824c62b1cf39c1c4ea5d2980f6685433fa0",
+          "title": "docs/plans/archive/2026-05-29-003-feat-utterance-relevance-classifier-plan.md",
+          "score": 0.016129032258064516
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:packages/engine/src/synthesize/prompt.ts@007ac5d95b0e64b702171bdec84b55cd81bfc31f::1",
+          "docId": "github:onthecaseapps/risezome:packages/engine/src/synthesize/prompt.ts@007ac5d95b0e64b702171bdec84b55cd81bfc31f",
+          "title": "packages/engine/src/synthesize/prompt.ts",
+          "score": 0.016129032258064516
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md@f1f4af3f34290165f63689064752d93277885078::17",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md@f1f4af3f34290165f63689064752d93277885078",
+          "title": "docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md",
+          "score": 0.015873015873015872
+        }
+      ],
+      "recall": 0,
+      "surfaced": [],
+      "missed": [
+        "deepgram",
+        "reconnect"
+      ],
+      "answer": "\nThe engine retries up to 3 times with exponential backoff (200ms × 2^attempt, capped at 1500ms) on transient disconnects [1: \"max 3 attempts, exponential backoff (200ms × 2^attempt, capped at 1500ms)\"], but skips retry on auth failures [1: \"Auth failures (close code 1008, 4401, 4403) skip reconnect entirely\"] and drops incoming frames during the reconnect window rather than buffering them [1: \"Incoming audio frames during the reconnect window are dropped, not buffered.\"].",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": false
+    },
+    {
+      "q": "how are sources reindexed when files change",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b::3",
+          "docId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b",
+          "title": "docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md",
+          "score": 0.03252247488101534
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b::7",
+          "docId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b",
+          "title": "docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md",
+          "score": 0.03055037313432836
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b::2",
+          "docId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b",
+          "title": "docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md",
+          "score": 0.03021353930031804
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b::4",
+          "docId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b",
+          "title": "docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md",
+          "score": 0.029857397504456328
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b::0",
+          "docId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b",
+          "title": "docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md",
+          "score": 0.02976190476190476
+        }
+      ],
+      "recall": 0,
+      "surfaced": [],
+      "missed": [
+        "reconcile",
+        "index-repo",
+        "content_hash"
+      ],
+      "answer": "\nSources are reindexed by comparing a desired set (fetched from the source) against existing docs using a shared reconcile helper [1: \"reconcile(db, sourceId, ownedTypes, desired, mode)\"]. The helper partitions items into new, changed, and unchanged by checking if the docId exists and comparing content hashes [1: \"for each desired {docId, hash}: docId absent from existing → new; docId present but hash differs → changed; docId present and hash matches → unchanged (skip)\"]. In delta mode, new and changed items are indexed while unchanged items skip re-embedding and no deletions occur [4: \"Delta: index new +",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": false
+    },
+    {
+      "q": "what connectors can a customer connect",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-trello-source-connector-requirements.md@f0cadca3adc1f32061297d5d5f435a757634a210::2",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-trello-source-connector-requirements.md@f0cadca3adc1f32061297d5d5f435a757634a210",
+          "title": "docs/brainstorms/archive/2026-05-31-trello-source-connector-requirements.md",
+          "score": 0.03200204813108039
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-atlassian-jira-confluence-connector-requirements.md@35b6d587e18b196ce26a2e02c82b336d470c750b::2",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-atlassian-jira-confluence-connector-requirements.md@35b6d587e18b196ce26a2e02c82b336d470c750b",
+          "title": "docs/brainstorms/archive/2026-05-31-atlassian-jira-confluence-connector-requirements.md",
+          "score": 0.02976190476190476
+        },
+        {
+          "chunkId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf::0",
+          "docId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf",
+          "title": "Create Gap Fill Process",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-005-feat-atlassian-jira-confluence-connector-plan.md@46607540aac7fa3e38879d7a0908763b6170044b::8",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-005-feat-atlassian-jira-confluence-connector-plan.md@46607540aac7fa3e38879d7a0908763b6170044b",
+          "title": "docs/plans/archive/2026-05-31-005-feat-atlassian-jira-confluence-connector-plan.md",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-trello-source-connector-requirements.md@f0cadca3adc1f32061297d5d5f435a757634a210::1",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-trello-source-connector-requirements.md@f0cadca3adc1f32061297d5d5f435a757634a210",
+          "title": "docs/brainstorms/archive/2026-05-31-trello-source-connector-requirements.md",
+          "score": 0.016129032258064516
+        }
+      ],
+      "recall": 1,
+      "surfaced": [
+        "trello",
+        "jira",
+        "confluence",
+        "github"
+      ],
+      "missed": [],
+      "answer": "\nCustomers can currently connect GitHub sources [1: \"only GitHub is currently implemented\"], with Trello [1: \"Trello connector end to end: connect → pick boards → index cards+comments\"] and Atlassian (Jira and Confluence) [2: \"Two source kinds off it: Jira (projects → issues) and Confluence (spaces → pages)\"] connectors in planned/deferred work. Trello allows selecting which boards to index [1: \"pick boards\"], while Atlassian requires one OAuth connection per org with independent resource selection for Jira projects and Confluence spaces [2: \"One Atlassian OAuth connection (3L",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": true
+    },
+    {
+      "q": "should we order lunch before the next agenda item",
+      "retrieved": [
+        {
+          "chunkId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf::0",
+          "docId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf",
+          "title": "Create Gap Fill Process",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:packages/engine/src/synthesize/prompt.ts@007ac5d95b0e64b702171bdec84b55cd81bfc31f::2",
+          "docId": "github:onthecaseapps/risezome:packages/engine/src/synthesize/prompt.ts@007ac5d95b0e64b702171bdec84b55cd81bfc31f",
+          "title": "packages/engine/src/synthesize/prompt.ts",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md@f1f4af3f34290165f63689064752d93277885078::10",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md@f1f4af3f34290165f63689064752d93277885078",
+          "title": "docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md",
+          "score": 0.016129032258064516
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-29-003-feat-utterance-relevance-classifier-plan.md@ad790824c62b1cf39c1c4ea5d2980f6685433fa0::7",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-29-003-feat-utterance-relevance-classifier-plan.md@ad790824c62b1cf39c1c4ea5d2980f6685433fa0",
+          "title": "docs/plans/archive/2026-05-29-003-feat-utterance-relevance-classifier-plan.md",
+          "score": 0.015873015873015872
+        }
+      ],
+      "recall": null,
+      "surfaced": [],
+      "missed": [],
+      "answer": "",
+      "isRefusal": true,
+      "answerContainsAll": null,
+      "pass": true
+    },
+    {
+      "q": "what is the rolling meeting summary for",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/rolling-meeting-summary-requirements.md@55a6543e7e1cf5dcc4622cba1e45992676e2f27c::0",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/rolling-meeting-summary-requirements.md@55a6543e7e1cf5dcc4622cba1e45992676e2f27c",
+          "title": "docs/brainstorms/archive/rolling-meeting-summary-requirements.md",
+          "score": 0.03252247488101534
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md@f1f4af3f34290165f63689064752d93277885078::0",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md@f1f4af3f34290165f63689064752d93277885078",
+          "title": "docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md",
+          "score": 0.03125763125763126
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/rolling-meeting-summary-requirements.md@55a6543e7e1cf5dcc4622cba1e45992676e2f27c::3",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/rolling-meeting-summary-requirements.md@55a6543e7e1cf5dcc4622cba1e45992676e2f27c",
+          "title": "docs/brainstorms/archive/rolling-meeting-summary-requirements.md",
+          "score": 0.030886196246139225
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/rolling-meeting-summary-requirements.md@55a6543e7e1cf5dcc4622cba1e45992676e2f27c::2",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/rolling-meeting-summary-requirements.md@55a6543e7e1cf5dcc4622cba1e45992676e2f27c",
+          "title": "docs/brainstorms/archive/rolling-meeting-summary-requirements.md",
+          "score": 0.028814262023217248
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md@f1f4af3f34290165f63689064752d93277885078::1",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md@f1f4af3f34290165f63689064752d93277885078",
+          "title": "docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md",
+          "score": 0.028790389395194696
+        }
+      ],
+      "recall": 1,
+      "surfaced": [
+        "summar",
+        "rolling"
+      ],
+      "missed": [],
+      "answer": "\nThe rolling meeting summary is internal infrastructure designed to give the synthesizer and relevance classifier long-range topic context without linear token cost [1: \"A rolling meeting-level summary, generated by a side-call to Claude on a pause-debounced cadence, gives both consumers the long-range context they need without paying the linear-token cost on every retrieval call\"]. It solves two problems: enabling questions about topics discussed 20+ minutes earlier [2: \"By minute 20, 'about that auth flow we were discussing' has no resolution\"] and allowing the classifier to judge whether an utterance is coherent given what's been discussed, rather than in isolation [1: \"the",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": true
+    },
+    {
+      "q": "how are citations verified in synthesis",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/live-page-synthesis-first-requirements.md@654f79087053acb76058172ead606be8e8b47211::1",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/live-page-synthesis-first-requirements.md@654f79087053acb76058172ead606be8e8b47211",
+          "title": "docs/brainstorms/archive/live-page-synthesis-first-requirements.md",
+          "score": 0.03125763125763126
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/live-page-synthesis-first-requirements.md@654f79087053acb76058172ead606be8e8b47211::0",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/live-page-synthesis-first-requirements.md@654f79087053acb76058172ead606be8e8b47211",
+          "title": "docs/brainstorms/archive/live-page-synthesis-first-requirements.md",
+          "score": 0.030090497737556562
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md@852df5af81d00f7fc27445a4b2edc0fb0a10e026::0",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md@852df5af81d00f7fc27445a4b2edc0fb0a10e026",
+          "title": "docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md",
+          "score": 0.029827662395050816
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md@852df5af81d00f7fc27445a4b2edc0fb0a10e026::11",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md@852df5af81d00f7fc27445a4b2edc0fb0a10e026",
+          "title": "docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md",
+          "score": 0.028370221327967807
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md@852df5af81d00f7fc27445a4b2edc0fb0a10e026::4",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md@852df5af81d00f7fc27445a4b2edc0fb0a10e026",
+          "title": "docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md",
+          "score": 0.027598020555767037
+        }
+      ],
+      "recall": 0,
+      "surfaced": [],
+      "missed": [
+        "synthesize",
+        "verifyCitations",
+        "prompt"
+      ],
+      "answer": "\nCitations are verified by having the LLM emit a verbatim substring from each source alongside the citation marker [1: \"The synthesis prompt is extended to require Claude to emit, alongside each `[N]` citation, a short verbatim substring from source N that backs the specific claim being cited\"]. When a user clicks a citation chip on the live page, the system locates the source, expands it inline, and substring-searches the source body for the quote to highlight the matching text [1: \"Clicking a citation chip `[N]` on the live page: 1. Locates source N within the synthesis's source list 2. Expands that source card inline",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": false
+    }
+  ],
+  "ragas": {
+    "mean": {
+      "faithfulness": 1,
+      "answerRelevancy": 0.9499999999999998,
+      "contextPrecision": 0.4,
+      "contextRecall": 1
+    },
+    "perQuestion": [
+      null,
+      {
+        "faithfulness": 1,
+        "answerRelevancy": 0.95,
+        "contextPrecision": 0.4,
+        "contextRecall": 1
+      },
+      {
+        "faithfulness": null,
+        "answerRelevancy": 0.95,
+        "contextPrecision": 0.2,
+        "contextRecall": 1
+      },
+      null,
+      {
+        "faithfulness": null,
+        "answerRelevancy": null,
+        "contextPrecision": null,
+        "contextRecall": null
+      },
+      {
+        "faithfulness": null,
+        "answerRelevancy": null,
+        "contextPrecision": 0.4,
+        "contextRecall": null
+      },
+      {
+        "faithfulness": 1,
+        "answerRelevancy": 0.95,
+        "contextPrecision": 0.6,
+        "contextRecall": null
+      },
+      null,
+      {
+        "faithfulness": 1,
+        "answerRelevancy": null,
+        "contextPrecision": null,
+        "contextRecall": null
+      },
+      {
+        "faithfulness": null,
+        "answerRelevancy": null,
+        "contextPrecision": null,
+        "contextRecall": null
+      }
+    ]
+  }
+}
