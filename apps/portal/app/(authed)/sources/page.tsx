@@ -372,6 +372,7 @@ function SourceCard({ source }: { source: SourceRow }): ReactElement {
         <SourceActions
           sourceId={source.id}
           busy={source.status === 'indexing'}
+          currentBranch={source.default_branch}
         />
       </div>
     </div>
