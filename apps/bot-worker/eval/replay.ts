@@ -21,6 +21,7 @@ import { VoyageEmbedder } from '@risezome/engine/embed';
 import {
   AnthropicSynthesizer,
   parseSynthesisOutput,
+  verifyCitations,
   type SynthesisSource,
 } from '@risezome/engine/synthesize';
 import {
@@ -153,11 +154,20 @@ async function replayOne(
     if (chunk.type === 'textDelta') accumulated += chunk.delta;
   }
   const parsed = parseSynthesisOutput(accumulated, sources.length);
-  const result = scoreQuestion(question, retrieved, parsed.text, parsed.isRefusal);
+  // Mirror production grounded-or-nothing: a non-refusal answer whose citations
+  // all fail verification is suppressed (rendered as nothing), so score it as a
+  // non-answer. Without this the eval would "pass" answers that are invisible
+  // in production. (This is the suppression class the citation-verification
+  // fixes target — keep it exercised so we don't regress.)
+  const { verified } = verifyCitations(parsed.citations, sources);
+  const suppressed = !parsed.isRefusal && verified.length === 0;
+  const effectiveRefusal = parsed.isRefusal || suppressed;
+  const result = scoreQuestion(question, retrieved, parsed.text, effectiveRefusal);
 
-  // 5) optional RAGAS metrics (judge calls; flag-gated)
+  // 5) optional RAGAS metrics (judge calls; flag-gated). Skip when suppressed —
+  // a hidden answer isn't what the user sees, so it shouldn't score.
   let scores: RagasScores | null = null;
-  if (deps.judge !== null && !parsed.isRefusal) {
+  if (deps.judge !== null && !effectiveRefusal) {
     scores = await scoreRagas(
       { question: question.q, answer: parsed.text, contexts: sources.map((s) => s.text) },
       deps.judge,
