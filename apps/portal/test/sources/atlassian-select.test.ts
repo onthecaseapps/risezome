@@ -12,18 +12,27 @@ vi.mock('../../src/inngest/client', () => ({ inngest: { send: (e: unknown) => se
 import { selectAtlassianResourcesAction } from '../../app/(authed)/sources/atlassian-select-action';
 
 function makeSupabase(opts: { connection: { id: string } | null }): unknown {
-  let upserts = 0;
+  let inserts = 0;
   return {
     from(table: string) {
       if (table === 'atlassian_connections') {
         return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: opts.connection, error: null }) }) }) };
       }
+      // sources: existing-lookup select().eq().eq().eq().maybeSingle() (none)
+      //          + insert().select().single()
       return {
-        upsert: () => ({
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
+            }),
+          }),
+        }),
+        insert: () => ({
           select: () => ({
             single: async () => {
-              upserts += 1;
-              return { data: { id: `src_${upserts}` }, error: null };
+              inserts += 1;
+              return { data: { id: `src_${inserts}` }, error: null };
             },
           }),
         }),

@@ -16,9 +16,12 @@ vi.mock('../../src/inngest/client', () => ({ inngest: { send: (e: unknown) => se
 
 import { selectTrelloBoardsAction } from '../../app/(authed)/sources/trello-select-action';
 
-/** Minimal chainable Supabase stub: connection lookup + source upsert. */
-function makeSupabase(opts: { connection: { id: string } | null }): unknown {
-  let upserts = 0;
+/**
+ * Minimal chainable Supabase stub: connection lookup, existing-source lookup
+ * (returns null → new board), and source insert → select → single.
+ */
+function makeSupabase(opts: { connection: { id: string } | null; insertError?: string }): unknown {
+  let inserts = 0;
   return {
     from(table: string) {
       if (table === 'trello_connections') {
@@ -26,13 +29,24 @@ function makeSupabase(opts: { connection: { id: string } | null }): unknown {
           select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: opts.connection, error: null }) }) }),
         };
       }
-      // sources upsert → select → single
+      // sources: select().eq().eq().eq().maybeSingle() (existing lookup → none)
+      //          + insert().select().single() (create)
       return {
-        upsert: () => ({
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
+            }),
+          }),
+        }),
+        insert: () => ({
           select: () => ({
             single: async () => {
-              upserts += 1;
-              return { data: { id: `src_${upserts}` }, error: null };
+              inserts += 1;
+              if (opts.insertError !== undefined) {
+                return { data: null, error: { message: opts.insertError } };
+              }
+              return { data: { id: `src_${inserts}` }, error: null };
             },
           }),
         }),
@@ -82,6 +96,15 @@ describe('selectTrelloBoardsAction', () => {
     createServiceRoleClient.mockReturnValue(makeSupabase({ connection: null }));
     const res = await selectTrelloBoardsAction(form([{ id: 'b1', name: 'Roadmap' }]));
     expect(res).toEqual({ ok: false, error: 'trello_not_connected' });
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the DB error (no silent ok) and emits nothing when the source write fails', async () => {
+    createServiceRoleClient.mockReturnValue(
+      makeSupabase({ connection: { id: 'conn_1' }, insertError: 'no unique or exclusion constraint (42P10)' }),
+    );
+    const res = await selectTrelloBoardsAction(form([{ id: 'b1', name: 'Roadmap' }]));
+    expect(res).toEqual({ ok: false, error: 'no unique or exclusion constraint (42P10)' });
     expect(sendSpy).not.toHaveBeenCalled();
   });
 });

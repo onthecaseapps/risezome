@@ -60,11 +60,44 @@ export async function selectAtlassianResourcesAction(
   const connectionId = conn.id as string;
 
   let count = 0;
+  const errors: string[] = [];
   for (const resource of selection) {
-    const { data: row, error: upsertErr } = await service
+    // The Atlassian uniqueness rule is a PARTIAL unique index
+    // (unique (org_id, kind, external_id) WHERE kind IN ('jira','confluence')),
+    // which PostgREST can't use as an `onConflict` arbiter (42P10). Resolve the
+    // existing row ourselves, then insert-or-update.
+    const { data: existing, error: lookupErr } = await service
       .from('sources')
-      .upsert(
-        {
+      .select('id')
+      .eq('org_id', orgId)
+      .eq('kind', resource.kind)
+      .eq('external_id', resource.id)
+      .maybeSingle();
+    if (lookupErr !== null) {
+      errors.push(lookupErr.message);
+      continue;
+    }
+
+    let sourceId: string;
+    if (existing !== null) {
+      const { error: updateErr } = await service
+        .from('sources')
+        .update({
+          connection_id: connectionId,
+          display_name: resource.name,
+          status: 'pending',
+          status_message: null,
+        })
+        .eq('id', existing.id as string);
+      if (updateErr !== null) {
+        errors.push(updateErr.message);
+        continue;
+      }
+      sourceId = existing.id as string;
+    } else {
+      const { data: row, error: insertErr } = await service
+        .from('sources')
+        .insert({
           org_id: orgId,
           kind: resource.kind,
           connection_id: connectionId,
@@ -72,20 +105,26 @@ export async function selectAtlassianResourcesAction(
           display_name: resource.name,
           status: 'pending',
           status_message: null,
-        },
-        { onConflict: 'org_id,kind,external_id' },
-      )
-      .select('id')
-      .single();
-    if (upsertErr !== null || row === null) continue;
+        })
+        .select('id')
+        .single();
+      if (insertErr !== null || row === null) {
+        errors.push(insertErr?.message ?? 'source insert returned no row');
+        continue;
+      }
+      sourceId = row.id as string;
+    }
 
     await inngest.send({
       name: EVENT_BY_KIND[resource.kind],
-      data: { orgId, sourceId: row.id as string, reason: 'connect' },
+      data: { orgId, sourceId, reason: 'connect' },
     });
     count += 1;
   }
 
   revalidatePath('/sources');
+  if (count === 0) {
+    return { ok: false, error: errors[0] ?? 'No resources were indexed.' };
+  }
   return { ok: true, count };
 }
