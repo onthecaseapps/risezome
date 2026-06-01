@@ -6,7 +6,7 @@ import { listBoards } from '../../_lib/trello-client';
 import { getValidAtlassianToken } from '../../_lib/atlassian-token';
 import { listConfluenceSpaces, listJiraProjects } from '../../_lib/atlassian-client';
 import { SourcesAutoRefresh } from './_auto-refresh';
-import { SourceActions } from './_source-actions';
+import { GithubRepoItem } from './_github-repo-item';
 import { ConnectionSources } from './_connection-sources';
 import { TrelloMark, JiraMark, ConfluenceMark } from './_source-icons';
 
@@ -343,12 +343,13 @@ function NoReposState({
 }
 
 function SourceCard({ source }: { source: SourceRow }): ReactElement {
-  const isErrored = source.status === 'errored';
   return (
-    <div
-      className={`flex items-center gap-4 rounded-xl border bg-card p-4 ${
-        isErrored ? 'border-rose-400/40' : 'border-border'
-      }`}
+    <GithubRepoItem
+      sourceId={source.id}
+      currentBranch={source.default_branch}
+      busy={source.status === 'indexing'}
+      errored={source.status === 'errored'}
+      rightSlot={<StatusRightSlot source={source} />}
     >
       <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-bg">
         <GithubMark className="h-5 w-5 text-fg" />
@@ -366,16 +367,7 @@ function SourceCard({ source }: { source: SourceRow }): ReactElement {
         </div>
         <StatusLine source={source} />
       </div>
-
-      <div className="flex flex-shrink-0 items-center gap-2">
-        <StatusRightSlot source={source} />
-        <SourceActions
-          sourceId={source.id}
-          busy={source.status === 'indexing'}
-          currentBranch={source.default_branch}
-        />
-      </div>
-    </div>
+    </GithubRepoItem>
   );
 }
 
