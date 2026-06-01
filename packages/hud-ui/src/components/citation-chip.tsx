@@ -73,7 +73,7 @@ export function CitationChip({
       tabIndex={disabled ? -1 : 0}
       onClick={handleClick}
     >
-      [{rank}]
+      {rank}
     </button>
   );
 }

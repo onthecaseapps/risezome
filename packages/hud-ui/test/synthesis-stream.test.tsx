@@ -208,7 +208,7 @@ describe('SynthesisStream', () => {
     ).toBeNull();
   });
 
-  it('clicking the source card header expands/collapses it (no quote highlight)', async () => {
+  it('clicking the source card header expands it with the first cited quote highlighted', async () => {
     const { fireEvent } = await import('@testing-library/react');
     const card = mkCard({ cardId: 'src1', body: 'the full chunk body text' });
     const syn = mkSyn({
@@ -231,13 +231,13 @@ describe('SynthesisStream', () => {
       container.querySelector('article.source-card-expanded[data-card-id="src1"] .source-body'),
     ).toBeNull();
 
-    // Click the card header → expands, body shows, no highlight (no quote).
+    // Click the card header → expands, body shows, first cited quote highlighted.
     fireEvent.click(toggle!);
     const body = container.querySelector(
       'article.source-card-expanded[data-card-id="src1"] .source-body',
     );
     expect(body).not.toBeNull();
-    expect(body?.querySelector('mark.quote-highlight')).toBeNull();
+    expect(body?.querySelector('mark.quote-highlight')?.textContent).toBe('full chunk');
 
     // Click again → collapses.
     fireEvent.click(toggle!);

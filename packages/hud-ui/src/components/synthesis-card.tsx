@@ -72,6 +72,7 @@ export function SynthesisCard({
   answer,
   citations,
   sources,
+  citationRecords,
   pinned = false,
   entering = false,
 }: SynthesisCardProps): ReactElement {
@@ -124,7 +125,13 @@ export function SynthesisCard({
         aria-busy={ariaBusy}
       >
         <div className="synthesis-header">
-          <span className="ai-label">AI Summary</span>
+          <span className="ai-label">
+            <SparkleGlyph />
+            AI Summary
+          </span>
+          <span className="synthesis-grounded">
+            grounded in {sources.length} {sources.length === 1 ? 'source' : 'sources'}
+          </span>
           {phase === 'done' && (
             <PinButton
               synthesisId={synthesisId}
@@ -161,19 +168,24 @@ export function SynthesisCard({
               Sources ({String(sources.length)})
             </div>
             <div className="synthesis-sources-list">
-              {sources.map((source) => {
+              {sources.map((source, idx) => {
                 const isOpen = expansion !== null && expansion.cardId === source.cardId;
                 const passQuote = isOpen && expansion?.quote !== undefined;
+                // Clicking the card itself opens it with the card's first
+                // cited quote highlighted (clicking a specific [N] chip routes
+                // its own per-occurrence quote).
+                const firstQuote = citationRecords?.find((c) => c.cardId === source.cardId)?.quote;
                 return (
                   <SourceCardExpanded
                     key={source.cardId}
                     source={source}
+                    index={idx}
                     open={isOpen}
                     onToggle={() =>
                       activate({
                         rank: 0,
                         cardId: source.cardId,
-                        quote: isOpen ? expansion?.quote : undefined,
+                        quote: isOpen ? expansion?.quote : firstQuote,
                       })
                     }
                     {...(passQuote ? { quote: expansion.quote } : {})}
@@ -225,6 +237,15 @@ function PinButton({
     >
       {pinned ? <PinFilledGlyph /> : <PinOutlineGlyph />}
     </button>
+  );
+}
+
+function SparkleGlyph(): ReactElement {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 3l1.7 4.5L18 9l-4.3 1.5L12 15l-1.7-4.5L6 9l4.3-1.5z" />
+      <path d="M18.5 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" opacity=".7" />
+    </svg>
   );
 }
 

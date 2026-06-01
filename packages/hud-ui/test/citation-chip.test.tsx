@@ -14,7 +14,7 @@ describe('CitationChip', () => {
     const { getByRole } = render(<CitationChip rank={2} cardId="c2" sourceTitle="Issue #42" />);
     const btn = getByRole('button');
     expect(btn.tagName).toBe('BUTTON');
-    expect(btn.textContent).toBe('[2]');
+    expect(btn.textContent).toBe('2');
     expect(btn.getAttribute('data-rank')).toBe('2');
     expect(btn.getAttribute('data-card-id')).toBe('c2');
   });

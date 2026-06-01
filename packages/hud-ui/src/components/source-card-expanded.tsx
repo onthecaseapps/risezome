@@ -41,6 +41,9 @@ export interface SourceCardExpandedProps {
    *  in addition to the inline `[N]` citation chips. Omitted → inert
    *  header (SSR / preview embeds). */
   readonly onToggle?: (() => void) | undefined;
+  /** 0-based position in the source list; rendered as the `[N]` badge
+   *  next to the title (matches the inline citation number). */
+  readonly index?: number;
 }
 
 export function SourceCardExpanded({
@@ -48,50 +51,101 @@ export function SourceCardExpanded({
   open,
   quote,
   onToggle,
+  index,
 }: SourceCardExpandedProps): ReactElement {
-  const header = (
-    <span className="source-card-head">
-      <CardHeaderRow card={source} />
-      <span className="title">
+  const cls = ['source-card-expanded', open ? 'is-open' : null, source.rank === 1 ? 'is-top' : null]
+    .filter(Boolean)
+    .join(' ');
+
+  const inner = (
+    <>
+      <span className="source-card-header-row">
+        <CardHeaderRow card={source} />
+        <ChevronToggle />
+      </span>
+      <span className="source-card-title">
+        {index !== undefined ? <span className="source-card-index">{index + 1}</span> : null}
         <span className="title-link">{source.title}</span>
       </span>
-    </span>
+      {!open && source.snippet.length > 0 ? (
+        <span className="source-card-snippet">{source.snippet}</span>
+      ) : null}
+    </>
   );
 
   return (
-    <article
-      className={open ? 'source-card-expanded is-open' : 'source-card-expanded'}
-      data-card-id={source.cardId}
-      data-open={open ? 'true' : 'false'}
-    >
+    <article className={cls} data-card-id={source.cardId} data-open={open ? 'true' : 'false'}>
       {onToggle !== undefined ? (
         <button type="button" className="source-card-toggle" onClick={onToggle} aria-expanded={open}>
-          {header}
-          <ChevronToggle />
+          {inner}
         </button>
       ) : (
-        header
+        inner
       )}
-      {open && <ExpandedBody source={source} quote={quote} />}
+      {open && (
+        <div className="source-card-passage">
+          <div className="source-card-passage-label">
+            <span className="source-card-passage-dot" aria-hidden="true" />
+            Matched passage
+          </div>
+          <ExpandedBody source={source} quote={quote} />
+          {source.url !== undefined && source.url.length > 0 ? (
+            <div className="source-card-footer">
+              <a
+                className="source-card-open"
+                href={source.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Open in {sourceLabel(source.source)}
+                <OpenIcon />
+              </a>
+            </div>
+          ) : null}
+        </div>
+      )}
     </article>
   );
+}
+
+function sourceLabel(source: string): string {
+  return source.length === 0 ? 'source' : source.charAt(0).toUpperCase() + source.slice(1);
 }
 
 function ChevronToggle(): ReactElement {
   return (
     <svg
       className="source-card-chevron"
-      width="12"
-      height="12"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2.4"
+      strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
     >
       <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+function OpenIcon(): ReactElement {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M7 17L17 7M9 7h8v8" />
     </svg>
   );
 }

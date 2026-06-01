@@ -62,8 +62,9 @@
   /* U3 quote highlight: light amber wash. Sits over var(--card-bg)
    * (#ffffff) — yellow #fff3b0 + dark text gives ~8.5:1 contrast vs the
    * surrounding source-body text, AA-pass for small text. */
-  --quote-highlight-bg: #fff3b0;
-  --quote-highlight-fg: #1a1a1c;
+  --quote-highlight-bg: #fff3c4;
+  --quote-highlight-fg: #7a5b00;
+  --quote-highlight-ring: #f4d774;
   /* U4 skeleton shimmer: two-stop gradient between a faint base and a
    * slightly lifted highlight. Both sit on white card backgrounds; the
    * subtle delta is what reads as "shimmering" once the animation moves
@@ -124,8 +125,9 @@
   /* U3 quote highlight (dark): amber tint with light text. Background
    * sits over var(--card-bg) #161a20; #4a3a10 with #f4e29c text gives
    * 8.1:1 — AA-pass for small text. */
-  --quote-highlight-bg: #4a3a10;
-  --quote-highlight-fg: #f4e29c;
+  --quote-highlight-bg: rgba(255, 214, 102, 0.22);
+  --quote-highlight-fg: #ffe08a;
+  --quote-highlight-ring: rgba(255, 214, 102, 0.4);
   /* U4 skeleton shimmer (dark): elevated above the card background, the
    * shimmer stop slightly brighter so the wipe is visible. */
   --skeleton-bg-1: #1f242c;
@@ -485,11 +487,10 @@ body {
 
 .card.synthesis {
   border-color: var(--accent);
-  border-left-width: 3px;
-  /* U4: subtle accent wash so the synthesis card reads as "the answer
-     layer" without being a different size or shape from raw cards.
-     Layer the tint (transparent) on top of the card-bg via background-
-     image so the transparency blends with the underlying card surface. */
+  /* Soft periwinkle halo so the synthesis card reads as "the answer layer"
+     (matches the AI Summary Card design). */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent), var(--card-shadow);
+  /* U4: subtle accent wash on top of the card surface. */
   background-color: var(--card-bg);
   background-image: linear-gradient(var(--synthesis-tint), var(--synthesis-tint));
   /* Arrival animation comes from .is-entering (shared with raw cards).
@@ -498,14 +499,21 @@ body {
 }
 
 .card.synthesis .ai-label {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: var(--accent);
-  color: #ffffff;
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.04em;
   font-weight: 700;
+}
+.synthesis-grounded {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 /* U4: answer text reads one step larger than raw card snippets so the
@@ -539,21 +547,28 @@ body {
 }
 
 .citation-chip {
-  background: transparent;
-  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  margin: 0 1px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent);
-  border-radius: 999px;
-  padding: 2px 10px;
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  vertical-align: 1px;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 150ms ease;
 }
 
 .citation-chip:hover {
-  background: rgba(51, 97, 255, 0.08);
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 /* U5: visible focus ring for keyboard users. WCAG 2.1 SC 2.4.7. The
@@ -693,9 +708,8 @@ body {
  * (in addition to the inline [N] citation chips). */
 .source-card-toggle {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 7px;
   width: 100%;
   margin: 0;
   padding: 0;
@@ -706,21 +720,126 @@ body {
   text-align: left;
   cursor: pointer;
 }
-.source-card-head {
+.source-card-header-row {
   display: flex;
-  min-width: 0;
-  flex-direction: column;
+  align-items: center;
   gap: 6px;
+}
+.source-card-header-row .header {
+  flex: 1;
+  min-width: 0;
 }
 .source-card-chevron {
   flex: none;
   color: var(--muted);
-  transition: transform 140ms ease-out;
+  transition: transform 200ms ease-out;
 }
 .source-card-expanded.is-open .source-card-chevron {
   transform: rotate(180deg);
 }
+.source-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.source-card-title .title-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.3;
+  min-width: 0;
+}
+.source-card-expanded:not(.is-open) .source-card-title .title-link {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .source-card-toggle:hover .title-link {
+  text-decoration: underline;
+}
+.source-card-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  flex: 0 0 auto;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+.source-card-snippet {
+  padding-left: 25px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Top-match accent edge, matching the design. */
+.source-card-expanded.is-top:not(.is-open) {
+  outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: -1px;
+}
+
+/* Expanded "matched passage" box. */
+.source-card-passage {
+  margin-top: 9px;
+  padding: 12px 13px;
+  border-radius: 9px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+}
+.source-card-passage-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 9px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.source-card-passage-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--quote-highlight-bg);
+  box-shadow: 0 0 0 1px var(--quote-highlight-ring);
+}
+/* The body sits directly inside the passage box — drop its own divider. */
+.source-card-passage .source-body {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.source-card-footer {
+  display: flex;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
+}
+.source-card-open {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+.source-card-open:hover {
   text-decoration: underline;
 }
 
@@ -744,9 +863,10 @@ body {
 .quote-highlight {
   background: var(--quote-highlight-bg);
   color: var(--quote-highlight-fg);
-  border-radius: 2px;
-  padding: 0 2px;
-  margin: 0 -2px;
+  border-radius: 3px;
+  padding: 1px 3px;
+  margin: 0 -1px;
+  box-shadow: 0 0 0 1px var(--quote-highlight-ring);
   /* No mark default browser yellow — explicit token. */
 }
 
@@ -814,9 +934,8 @@ body {
 .synthesis-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px; /* S9 dead-zone */
-  margin-bottom: 4px;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 /* Pin button — small icon at top-right of a completed synthesis card.
