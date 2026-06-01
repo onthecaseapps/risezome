@@ -23,21 +23,33 @@ export async function requireAuthedUser(): Promise<User> {
  * Returns the user's org memberships. Used by the topbar to render the org
  * switcher. Returns [] if the user has no memberships yet (pre-onboarding).
  */
-export async function listUserOrgs(): Promise<Array<{ id: string; name: string; role: string }>> {
+export interface UserOrg {
+  id: string;
+  name: string;
+  role: string;
+  canInviteBot: boolean;
+}
+
+export async function listUserOrgs(): Promise<UserOrg[]> {
   const supabase = await createServerClient();
   const { data, error } = await supabase
     .from('org_members')
-    .select('role, org:orgs(id, name)')
+    .select('role, can_invite_bot, org:orgs(id, name)')
     .order('joined_at', { ascending: true });
   if (error !== null || data === null) return [];
-  const out: Array<{ id: string; name: string; role: string }> = [];
+  const out: UserOrg[] = [];
   for (const row of data) {
     // The join surfaces `org` as either an object or array depending on FK
     // multiplicity in the inferred type; normalize to the single object case.
     const orgField = row.org as unknown as { id: string; name: string } | { id: string; name: string }[] | null;
     const org = Array.isArray(orgField) ? orgField[0] : orgField;
     if (org === null || org === undefined) continue;
-    out.push({ id: org.id, name: org.name, role: row.role as string });
+    out.push({
+      id: org.id,
+      name: org.name,
+      role: row.role as string,
+      canInviteBot: (row.can_invite_bot as boolean | null) ?? false,
+    });
   }
   return out;
 }
@@ -57,11 +69,18 @@ export async function listUserOrgs(): Promise<Array<{ id: string; name: string; 
  * doing so requires writing cookies during a Server Component render
  * (illegal); the switcher's server action handles cleanup.
  */
-export async function requireAuthedUserWithOrg(): Promise<{
+export interface AuthedOrgContext {
   user: User;
   orgId: string;
   orgName: string;
-}> {
+  /** The user's role in the resolved org: 'manager' | 'member'. */
+  role: string;
+  /** Whether the user may launch the bot into their own meetings. Managers
+   *  are implicitly allowed; for members this reflects the granted flag. */
+  canInviteBot: boolean;
+}
+
+export async function requireAuthedUserWithOrg(): Promise<AuthedOrgContext> {
   const user = await requireAuthedUser();
   const orgs = await listUserOrgs();
   if (orgs.length === 0) {
@@ -72,5 +91,25 @@ export async function requireAuthedUserWithOrg(): Promise<{
   const cookieValue = cookieStore.get(CURRENT_ORG_COOKIE)?.value;
   const fromCookie = cookieValue !== undefined ? orgs.find((o) => o.id === cookieValue) : undefined;
   const chosen = fromCookie ?? orgs[0]!;
-  return { user, orgId: chosen.id, orgName: chosen.name };
+  return {
+    user,
+    orgId: chosen.id,
+    orgName: chosen.name,
+    role: chosen.role,
+    canInviteBot: chosen.role === 'manager' || chosen.canInviteBot,
+  };
+}
+
+/**
+ * Like {@link requireAuthedUserWithOrg}, but redirects non-managers away.
+ * Use to gate manager-only pages and server actions (Sources, Settings,
+ * member management). RLS is the real authorization boundary; this is the
+ * app-layer defense-in-depth that also keeps members out of the UI.
+ */
+export async function requireManager(): Promise<AuthedOrgContext> {
+  const ctx = await requireAuthedUserWithOrg();
+  if (ctx.role !== 'manager') {
+    redirect('/upcoming');
+  }
+  return ctx;
 }
