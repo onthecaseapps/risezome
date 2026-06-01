@@ -1,9 +1,14 @@
 import { Buffer } from 'node:buffer';
 import { chunkFile } from '@risezome/engine/chunker';
 import { VoyageEmbedder, EmbeddingRateLimitError } from '@risezome/engine/embed';
-import { inngest } from '../client';
+import { inngest, type IndexMode } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
 import { getInstallationOctokit } from '../../../app/_lib/github-app';
+import { reconcile, clearDocChunks } from '../lib/corpus-reconcile';
+
+/** Doc types this indexer owns — reconcile must never touch issue/PR docs
+ *  that share this source_id (see corpus-reconcile R8). */
+const OWNED_TYPES = ['file'];
 
 /**
  * Index a single source (one GitHub repo) end-to-end:
@@ -60,7 +65,10 @@ export const indexRepoFn = inngest.createFunction(
     },
   },
   async ({ event, step }) => {
-    const { orgId, sourceId } = (event as unknown as { data: { orgId: string; sourceId: string } }).data;
+    const { orgId, sourceId, mode } = (event as unknown as {
+      data: { orgId: string; sourceId: string; mode?: IndexMode };
+    }).data;
+    const indexMode: IndexMode = mode === 'full' ? 'full' : 'delta';
 
     // ── Step 1: look up source + installation, mark indexing ─────────
     const source = await step.run('load-source', async () => {
@@ -147,9 +155,12 @@ export const indexRepoFn = inngest.createFunction(
       });
 
       type TreeEntry = { path: string; type: string; size?: number; sha: string };
-      const entries = (treeResp.data as { tree: TreeEntry[]; truncated: boolean }).tree;
-      const blobs = entries.filter((e) => e.type === 'blob');
-      return { branch, treeSha, blobs };
+      const treeData = treeResp.data as { tree: TreeEntry[]; truncated: boolean };
+      const blobs = treeData.tree.filter((e) => e.type === 'blob');
+      // `truncated` (GitHub caps the recursive tree at ~100k entries)
+      // means the desired set is incomplete — reconcile must NOT prune on
+      // a truncated tree or live files get deleted as phantom removals.
+      return { branch, treeSha, blobs, truncated: treeData.truncated === true };
     });
 
     // ── Step 3: filter to indexable files ────────────────────────────
@@ -165,29 +176,69 @@ export const indexRepoFn = inngest.createFunction(
     await step.run('set-total', async () => {
       await createServiceRoleClient().from('sources').update({ total_files: totalFiles }).eq('id', sourceId);
     });
-    if (totalFiles === 0) {
-      await step.run('finalize-empty', async () => {
+
+    // ── Step 4: reconcile — diff the tree against the corpus ─────────
+    // Desired = the current tree's files keyed by content-addressed docId
+    // (the blob SHA is an exact content hash). reconcile skips unchanged
+    // files (already present), returns new/changed to index, and — in
+    // full mode on a complete (non-truncated) tree — prunes files the
+    // repo no longer has. Type-scoped to 'file' so it never touches the
+    // issue/PR docs that share this source_id.
+    const fetchComplete = !tree.truncated;
+    const desired = new Map(
+      targets.map((t) => [`github:${owner}/${repo}:${t.path}@${t.sha}`, { hash: t.sha }] as const),
+    );
+    const recon = await step.run('reconcile', async () => {
+      return await reconcile(createServiceRoleClient(), {
+        sourceId,
+        ownedTypes: OWNED_TYPES,
+        desired,
+        mode: indexMode,
+        fetchComplete,
+        // A genuinely empty repo (no indexable files, tree not truncated)
+        // is a confirmed-empty source → safe to prune to zero.
+        confirmedEmpty: targets.length === 0 && fetchComplete,
+      });
+    });
+
+    if (recon.toIndex.length === 0) {
+      await step.run('finalize-no-index', async () => {
         await createServiceRoleClient()
           .from('sources')
-          .update({ status: 'idle', last_indexed_at: new Date().toISOString() })
+          .update({
+            status: 'idle',
+            last_indexed_at: new Date().toISOString(),
+            indexed_files: totalFiles,
+          })
           .eq('id', sourceId);
       });
-      return { sourceId, files: 0, chunks: 0 };
+      console.info(
+        `[index-repo] ${source.repo_full_name} (${indexMode}): ` +
+          `${String(recon.counts.unchanged)} unchanged, ${String(recon.counts.removed)} removed, 0 to index`,
+      );
+      return { sourceId, files: 0, chunks: 0, ...recon.counts };
     }
 
-    // ── Step 4: batched embed + write ────────────────────────────────
+    // ── Step 5: batched embed + write (only new/changed files) ───────
+    const toIndexKind = new Map(recon.toIndex.map((t) => [t.docId, t.kind]));
+    const indexTargets = targets.filter((t) =>
+      toIndexKind.has(`github:${owner}/${repo}:${t.path}@${t.sha}`),
+    );
     const BATCH_SIZE = 8; // files per Inngest step (keeps each step under ~30s)
     const embedder = new VoyageEmbedder({
       apiKey: requireEnv('VOYAGE_API_KEY'),
     });
 
-    let indexedFiles = 0;
+    let indexedFiles = recon.counts.unchanged; // unchanged already count as covered
     let chunkCount = 0;
-    for (let i = 0; i < targets.length; i += BATCH_SIZE) {
-      const batch = targets.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < indexTargets.length; i += BATCH_SIZE) {
+      const batch = indexTargets.slice(i, i + BATCH_SIZE);
       const result = await step.run(`index-batch-${i}`, async () => {
         return await indexBatch({
-          batch,
+          batch: batch.map((t) => ({
+            ...t,
+            kind: toIndexKind.get(`github:${owner}/${repo}:${t.path}@${t.sha}`) ?? 'new',
+          })),
           orgId,
           sourceId,
           owner,
@@ -208,24 +259,28 @@ export const indexRepoFn = inngest.createFunction(
       });
     }
 
-    // ── Step 5: mark idle ────────────────────────────────────────────
+    // ── Step 6: mark idle ────────────────────────────────────────────
     await step.run('finalize', async () => {
       await createServiceRoleClient()
         .from('sources')
-        .update({ status: 'idle', last_indexed_at: new Date().toISOString() })
+        .update({ status: 'idle', last_indexed_at: new Date().toISOString(), indexed_files: totalFiles })
         .eq('id', sourceId);
     });
 
-     
-    console.info(`[index-repo] indexed ${source.repo_full_name}: ${indexedFiles} files, ${chunkCount} chunks`);
-    return { sourceId, files: indexedFiles, chunks: chunkCount };
+    console.info(
+      `[index-repo] ${source.repo_full_name} (${indexMode}): ` +
+        `new=${String(recon.counts.new)} changed=${String(recon.counts.changed)} ` +
+        `unchanged=${String(recon.counts.unchanged)} removed=${String(recon.counts.removed)} ` +
+        `chunks=${String(chunkCount)}`,
+    );
+    return { sourceId, files: indexedFiles, chunks: chunkCount, ...recon.counts };
   },
 );
 
 // ── Helpers ────────────────────────────────────────────────────────
 
 async function indexBatch(args: {
-  batch: Array<{ path: string; sha: string; size?: number }>;
+  batch: Array<{ path: string; sha: string; size?: number; kind: 'new' | 'changed' }>;
   orgId: string;
   sourceId: string;
   owner: string;
@@ -280,6 +335,12 @@ async function indexBatch(args: {
     }
 
     const docId = `github:${owner}/${repo}:${entry.path}@${entry.sha}`;
+    // A 'changed' file is content-addressed → a brand-new docId, so this
+    // path is effectively dead for files (changes arrive as 'new'). Kept
+    // for correctness if the docId scheme ever becomes path-stable.
+    if (entry.kind === 'changed') {
+      await clearDocChunks(service, docId);
+    }
     const { error: docErr } = await service.from('docs').upsert({
       id: docId,
       org_id: orgId,
@@ -289,6 +350,8 @@ async function indexBatch(args: {
       title: entry.path,
       url: `https://github.com/${owner}/${repo}/blob/${branch}/${entry.path}`,
       provenance: 'trusted',
+      // content_hash = the git blob SHA (exact content fingerprint).
+      content_hash: entry.sha,
       updated_at: new Date().toISOString(),
     });
     if (docErr !== null) continue;
