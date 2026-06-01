@@ -51,6 +51,8 @@ Each app carries its own `.env.example` and per-app README with setup specifics:
 - [`apps/portal/README.md`](apps/portal/README.md) — Supabase, Google OAuth, GitHub App, Inngest, Voyage, the connectors.
 - [`apps/bot-worker/README.md`](apps/bot-worker/README.md) — Recall.ai, Fly.io deploy, local tunnel.
 
+To stand up the three local dev processes (portal, Inngest CLI, bot-worker) after a fresh shell, see [`docs/runbooks/local-dev-processes.md`](docs/runbooks/local-dev-processes.md).
+
 ## Documentation
 
 - [AGENTS.md](AGENTS.md) — conventions and guardrails for agents and humans.
