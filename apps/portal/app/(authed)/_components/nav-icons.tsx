@@ -22,6 +22,16 @@ export function SettingsIcon(): ReactElement {
   );
 }
 
+/** Sparkle — for the What's new nav item. */
+export function WhatsNewIcon(): ReactElement {
+  return (
+    <svg {...baseProps}>
+      <path d="M12 4l1.7 4.6L18 10l-4.3 1.4L12 16l-1.7-4.6L6 10l4.3-1.4L12 4z" />
+      <path d="M19 4.5V7M20.25 5.75h-2.5" />
+    </svg>
+  );
+}
+
 /** Calendar — for the Upcoming meetings nav item. */
 export function CalendarIcon(): ReactElement {
   return (

@@ -1,0 +1,98 @@
+/*
+ * Risezome rising-chevron background. Ported from the Claude Design handoff
+ * "Risezome Chevron Background.html" — full-bleed periwinkle field on
+ * near-black with three rising chevrons, drifting bubbles, and a grain
+ * overlay. Scoped as a CSS module so it only styles the What's-new page.
+ */
+
+.stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #0a0b0e;
+}
+
+/* deep periwinkle field */
+.field {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 95% at 50% 116%, rgba(124, 131, 255, 0.34), transparent 55%),
+    radial-gradient(90% 70% at 50% -10%, rgba(81, 89, 224, 0.2), transparent 60%),
+    #0a0b0e;
+}
+
+/* the big rising mark, centered & bleeding off the bottom */
+.markWrap {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  height: min(80vh, 86vw);
+  width: auto;
+  aspect-ratio: 22 / 21;
+  max-width: 92vw;
+  transform: translate(-50%, -50%);
+}
+
+.chev {
+  stroke: #7c83ff;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@keyframes rise {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1.4%);
+  }
+}
+.c1 {
+  animation: rise 7s ease-in-out infinite;
+}
+.c2 {
+  animation: rise 7s ease-in-out 0.5s infinite;
+}
+.c3 {
+  animation: rise 7s ease-in-out 1s infinite;
+}
+
+@keyframes drift {
+  from {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-78vh);
+    opacity: 0;
+  }
+}
+.bub {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px solid rgba(124, 131, 255, 0.5);
+  animation: drift linear infinite;
+}
+
+.grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.035;
+  background-image: radial-gradient(circle, #fff 1px, transparent 1px);
+  background-size: 4px 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .c1,
+  .c2,
+  .c3,
+  .bub {
+    animation: none;
+  }
+}

@@ -5,7 +5,7 @@ import { createServerClient } from '../../_lib/supabase-server';
 import { cookies } from 'next/headers';
 import { OrgSwitcher } from './org-switcher';
 import { SidebarNavLink } from './sidebar-nav-link';
-import { CalendarIcon, CapturesIcon, DebugIcon, LiveIcon, SettingsIcon, SourcesIcon } from './nav-icons';
+import { CalendarIcon, CapturesIcon, DebugIcon, LiveIcon, SettingsIcon, SourcesIcon, WhatsNewIcon } from './nav-icons';
 import { UserCard } from './user-card';
 
 /**
@@ -115,6 +115,12 @@ export async function Sidebar(): Promise<ReactElement> {
           matchPrefix="/settings"
           icon={<SettingsIcon />}
           label="Settings"
+        />
+        <SidebarNavLink
+          href="/whats-new"
+          matchPrefix="/whats-new"
+          icon={<WhatsNewIcon />}
+          label="What's new"
         />
 
         {/* Dev-only Debug section. Hidden in production builds so
