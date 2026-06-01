@@ -33,16 +33,17 @@ export function UserCard({
 
   return (
     <div className="border-t border-border p-3">
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2.5 group-data-[collapsed=true]/sb:justify-center">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-fg">
           {initials}
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 group-data-[collapsed=true]/sb:hidden">
           <div className="truncate text-sm font-medium">{fullName ?? email.split('@')[0]}</div>
           <div className="truncate text-xs text-muted">{email}</div>
         </div>
-        <ThemeCycleButton />
-        <form action="/api/auth/sign-out" method="post">
+        <div className="flex items-center gap-1 group-data-[collapsed=true]/sb:hidden">
+          <ThemeCycleButton />
+          <form action="/api/auth/sign-out" method="post">
           <button
             type="submit"
             className="rounded-md p-1.5 text-muted transition-colors hover:bg-accent-soft/50 hover:text-fg"
@@ -65,7 +66,8 @@ export function UserCard({
               <line x1="21" y1="12" x2="9" y2="12" />
             </svg>
           </button>
-        </form>
+          </form>
+        </div>
       </div>
     </div>
   );

@@ -43,7 +43,7 @@ export function SidebarNavLink({
   const isActive = !disabled && pathname.startsWith(matchPrefix);
 
   const baseClasses =
-    'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors';
+    'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors group-data-[collapsed=true]/sb:justify-center group-data-[collapsed=true]/sb:px-2';
   const stateClasses = disabled
     ? 'cursor-not-allowed text-muted opacity-50'
     : isActive
@@ -52,22 +52,22 @@ export function SidebarNavLink({
 
   const inner = (
     <>
-      <span className="flex h-5 w-5 items-center justify-center">{icon}</span>
-      <span className="flex-1">{label}</span>
-      {dot}
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center">{icon}</span>
+      <span className="flex-1 group-data-[collapsed=true]/sb:hidden">{label}</span>
+      <span className="group-data-[collapsed=true]/sb:hidden">{dot}</span>
     </>
   );
 
   if (disabled) {
     return (
-      <span className={`${baseClasses} ${stateClasses}`} aria-disabled="true">
+      <span className={`${baseClasses} ${stateClasses}`} aria-disabled="true" title={label}>
         {inner}
       </span>
     );
   }
 
   return (
-    <Link href={href} className={`${baseClasses} ${stateClasses}`}>
+    <Link href={href} className={`${baseClasses} ${stateClasses}`} title={label}>
       {inner}
     </Link>
   );

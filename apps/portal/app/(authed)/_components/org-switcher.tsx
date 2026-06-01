@@ -28,9 +28,10 @@ export function OrgSwitcher({
       onToggle={(e) => setOpen(e.currentTarget.open)}
       className="relative"
     >
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted hover:bg-accent-soft/50 hover:text-fg">
-        <span className="truncate font-medium">{currentOrgName}</span>
-        <span aria-hidden="true" className="text-[10px] opacity-60">▼</span>
+      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg border border-border bg-bg px-2.5 py-2 text-sm text-fg transition-colors hover:border-accent/60">
+        <WorkspaceGlyph />
+        <span className="flex-1 truncate font-medium">{currentOrgName}</span>
+        <ChevronDown />
       </summary>
       <div
         role="menu"
@@ -67,5 +68,44 @@ export function OrgSwitcher({
         </div>
       </div>
     </details>
+  );
+}
+
+function WorkspaceGlyph(): ReactElement {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="shrink-0 text-accent"
+    >
+      <path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z" />
+      <path d="m3 7 9 5 9-5M12 12v10" />
+    </svg>
+  );
+}
+
+function ChevronDown(): ReactElement {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="shrink-0 opacity-60"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
   );
 }

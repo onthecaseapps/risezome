@@ -1,9 +1,9 @@
 import type { ReactElement } from 'react';
-import { Logo } from '../../_components/logo';
 import { CURRENT_ORG_COOKIE, listUserOrgs, requireAuthedUser } from '../../_lib/auth';
 import { createServerClient } from '../../_lib/supabase-server';
 import { cookies } from 'next/headers';
 import { OrgSwitcher } from './org-switcher';
+import { SidebarFrame } from './sidebar-frame';
 import { SidebarNavLink } from './sidebar-nav-link';
 import { CalendarIcon, CapturesIcon, DebugIcon, LiveIcon, MembersIcon, SettingsIcon, SourcesIcon, WhatsNewIcon } from './nav-icons';
 import { UserCard } from './user-card';
@@ -58,26 +58,15 @@ export async function Sidebar(): Promise<ReactElement> {
   }
 
   return (
-    <aside className="flex h-dvh w-60 shrink-0 flex-col border-r border-border bg-card">
-      {/* Brand */}
-      <div className="px-4 pb-3 pt-5">
-        <div className="flex items-center gap-2.5">
-          <Logo size={28} className="text-accent" />
-          <span className="text-base font-semibold tracking-tight">Risezome</span>
-        </div>
-        {current !== null && (
-          <div className="mt-3">
-            <OrgSwitcher
-              currentOrgId={current.id}
-              currentOrgName={current.name}
-              orgs={orgs}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Nav */}
-      <nav className="flex-1 space-y-0.5 px-3 py-4">
+    <SidebarFrame
+      switcher={
+        current !== null ? (
+          <OrgSwitcher currentOrgId={current.id} currentOrgName={current.name} orgs={orgs} />
+        ) : null
+      }
+      footer={<UserCard email={email} fullName={fullName} />}
+      nav={
+        <>
         <SidebarNavLink
           href="/upcoming"
           matchPrefix="/upcoming"
@@ -142,7 +131,7 @@ export async function Sidebar(): Promise<ReactElement> {
          *  on `next dev` vs `next build` — no separate flag needed. */}
         {process.env.NODE_ENV === 'development' && (
           <>
-            <div className="mt-4 px-3 pb-1 text-[10px] uppercase tracking-wider text-muted">
+            <div className="mt-4 px-3 pb-1 text-[10px] uppercase tracking-wider text-muted group-data-[collapsed=true]/sb:hidden">
               Dev
             </div>
             <SidebarNavLink
@@ -159,9 +148,8 @@ export async function Sidebar(): Promise<ReactElement> {
             />
           </>
         )}
-      </nav>
-
-      <UserCard email={email} fullName={fullName} />
-    </aside>
+        </>
+      }
+    />
   );
 }
