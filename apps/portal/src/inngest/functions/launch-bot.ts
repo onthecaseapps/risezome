@@ -2,6 +2,10 @@ import { inngest } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
 import { launchRecallBot } from '../../../app/_lib/recall-bot-launcher';
 import { signBotWsJwt } from '../../../app/_lib/bot-ws-jwt';
+import { normalizeConferenceUrl } from '../../../app/_lib/conference-url';
+
+/** Meeting statuses that count as a live bot already serving the meeting. */
+const LIVE_STATUSES = ['launching', 'awaiting_recall', 'joining', 'waiting_room', 'recording'];
 
 /**
  * Scheduled launcher: fires a Recall.ai bot just before a meeting starts.
@@ -107,35 +111,100 @@ export const launchBotFn = inngest.createFunction(
       return { skipped: check.exit, calendarEventId };
     }
     const eventRow = check.event;
+    const conferenceUrl = normalizeConferenceUrl(eventRow.conference_url);
 
-    // ── Step 3: insert meetings row ──────────────────────────────────
-    const meetingRow = await step.run('insert-meeting', async () => {
+    // ── Step 3: resolve-or-create the meeting ────────────────────────
+    // One bot per meeting (R12/R13): look up a live meeting for this
+    // conference URL in the org. If one exists, this attendee joins it (no
+    // second bot). Otherwise create it. The (org_id, conference_url) live
+    // unique index is the race backstop — a launch that loses the insert race
+    // resolves to the winner and joins it.
+    const meetingRow = await step.run('resolve-or-create-meeting', async () => {
       const service = createServiceRoleClient();
-      const { data, error } = await service
+
+      const existing = await service
+        .from('meetings')
+        .select('meeting_id')
+        .eq('org_id', eventRow.org_id)
+        .eq('conference_url', conferenceUrl)
+        .in('status', LIVE_STATUSES)
+        .limit(1)
+        .maybeSingle();
+      if (existing.error !== null) {
+        throw new Error(`find-meeting failed: ${existing.error.message}`);
+      }
+      if (existing.data !== null) {
+        return { meetingId: existing.data.meeting_id as string, created: false };
+      }
+
+      const inserted = await service
         .from('meetings')
         .insert({
           org_id: eventRow.org_id,
           user_id: eventRow.user_id,
           calendar_event_id: eventRow.id,
+          conference_url: conferenceUrl,
+          title: eventRow.title,
           status: 'launching',
         })
         .select('meeting_id')
         .single();
-      if (error !== null) {
-        // 23505 = unique_violation — the partial index caught a
-        // duplicate concurrent launch. The other run owns it; exit.
-        if (error.code === '23505') {
-          return { exit: 'duplicate' as const };
+      if (inserted.error !== null) {
+        // 23505 = unique_violation — another launch created the live meeting
+        // first (or the same calendar event already has a live meeting).
+        // Resolve to the winner and join it instead of launching a 2nd bot.
+        if (inserted.error.code === '23505') {
+          const winner = await service
+            .from('meetings')
+            .select('meeting_id')
+            .eq('org_id', eventRow.org_id)
+            .eq('conference_url', conferenceUrl)
+            .in('status', LIVE_STATUSES)
+            .limit(1)
+            .maybeSingle();
+          if (winner.error !== null || winner.data === null) {
+            throw new Error(
+              `resolve-after-conflict failed: ${winner.error?.message ?? 'no winner row'}`,
+            );
+          }
+          return { meetingId: winner.data.meeting_id as string, created: false };
         }
-        throw new Error(`insert-meeting failed: ${error.message}`);
+        throw new Error(`insert-meeting failed: ${inserted.error.message}`);
       }
-      return { exit: null, meetingId: data.meeting_id as string };
+      return { meetingId: inserted.data.meeting_id as string, created: true };
     });
 
-    if (meetingRow.exit === 'duplicate') {
-      return { skipped: 'duplicate_active_meeting', calendarEventId };
-    }
     const meetingId = meetingRow.meetingId;
+
+    // ── Step 3b: associate participants ──────────────────────────────
+    // Always associate the requester. On create, also sweep every org
+    // attendee whose calendar event carries this conference URL, so a
+    // non-launcher attendee can see the capture (R13/R14).
+    await step.run('associate-participants', async () => {
+      const service = createServiceRoleClient();
+      const userIds = new Set<string>([eventRow.user_id]);
+      if (meetingRow.created) {
+        const attendees = await service
+          .from('calendar_events')
+          .select('user_id, conference_url')
+          .eq('org_id', eventRow.org_id);
+        for (const row of attendees.data ?? []) {
+          const cu = row.conference_url as string | null;
+          if (cu !== null && normalizeConferenceUrl(cu) === conferenceUrl) {
+            userIds.add(row.user_id as string);
+          }
+        }
+      }
+      const rows = [...userIds].map((uid) => ({ meeting_id: meetingId, user_id: uid }));
+      await service
+        .from('meeting_participants')
+        .upsert(rows, { onConflict: 'meeting_id,user_id', ignoreDuplicates: true });
+    });
+
+    // Joined an existing live meeting — a bot is already serving it.
+    if (!meetingRow.created) {
+      return { skipped: 'joined_existing_meeting', calendarEventId, meetingId };
+    }
 
     // ── Step 4: lookup user name for join-chat ───────────────────────
     const userName = await step.run('lookup-user-name', async () => {

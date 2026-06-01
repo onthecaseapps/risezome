@@ -21,7 +21,15 @@ import { inngest } from '../../../../../src/inngest/client';
 export async function retryFailedLaunchAction(
   meetingId: string,
 ): Promise<{ ok: true; calendarEventId: string } | { ok: false; error: string }> {
-  const { orgId } = await requireAuthedUserWithOrg();
+  const { orgId, canInviteBot } = await requireAuthedUserWithOrg();
+
+  // R7: relaunching the bot requires the manager role or the can_invite_bot
+  // grant. Gated on role, not participation — a failed meeting has no
+  // participant set to check against.
+  if (!canInviteBot) {
+    return { ok: false, error: 'bot_invite_not_permitted' };
+  }
+
   const service = createServiceRoleClient();
 
   const { data: meeting, error: lookupErr } = await service

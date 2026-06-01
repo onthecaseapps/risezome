@@ -37,7 +37,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
   const { data: meetingRows } = await supabase
     .from('meetings')
     .select(
-      'meeting_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, created_at',
+      'meeting_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, created_at',
     )
     .eq('org_id', orgId)
     .in('status', ['completed', 'failed'])
@@ -52,6 +52,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
     error_code: string | null;
     error_message: string | null;
     calendar_event_id: string | null;
+    title: string;
     created_at: string;
   }>;
 
@@ -109,9 +110,11 @@ export default async function CapturesPage(): Promise<ReactElement> {
     card_count: cardCountByMeeting.get(m.meeting_id) ?? 0,
     synthesis_count: synthCountByMeeting.get(m.meeting_id) ?? 0,
     title:
-      m.calendar_event_id !== null && titleByEventId.has(m.calendar_event_id)
-        ? titleByEventId.get(m.calendar_event_id)!
-        : 'Meeting',
+      m.title.length > 0
+        ? m.title
+        : m.calendar_event_id !== null && titleByEventId.has(m.calendar_event_id)
+          ? titleByEventId.get(m.calendar_event_id)!
+          : 'Meeting',
   }));
 
   const grouped = groupByDay(captures);

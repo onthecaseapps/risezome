@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { requireAuthedUser } from '../../_lib/auth';
+import { requireAuthedUserWithOrg } from '../../_lib/auth';
 import { createServerClient } from '../../_lib/supabase-server';
 import { inngest } from '../../../src/inngest/client';
 
@@ -35,7 +35,14 @@ export async function toggleBotOptInAction(
   }
   const desired = desiredRaw === 'true';
 
-  const user = await requireAuthedUser();
+  const { user, canInviteBot } = await requireAuthedUserWithOrg();
+
+  // R7: launching the bot requires the manager role or the can_invite_bot
+  // grant (both fold into canInviteBot). Opting OUT is always allowed.
+  if (desired && !canInviteBot) {
+    return { ok: false, error: 'bot_invite_not_permitted' };
+  }
+
   const supabase = await createServerClient();
 
   // Read the row first so we can validate platform / URL / time before

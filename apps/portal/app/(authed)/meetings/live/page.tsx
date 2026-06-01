@@ -41,7 +41,7 @@ export default async function LiveMeetingsListPage(): Promise<ReactElement> {
   const freshnessCutoff = new Date(Date.now() - STALE_AFTER_MS).toISOString();
   const { data: meetingRows } = await supabase
     .from('meetings')
-    .select('meeting_id, started_at, calendar_event_id')
+    .select('meeting_id, started_at, calendar_event_id, title')
     .eq('org_id', orgId)
     .eq('status', 'recording')
     .gte('started_at', freshnessCutoff)
@@ -51,6 +51,7 @@ export default async function LiveMeetingsListPage(): Promise<ReactElement> {
     meeting_id: string;
     started_at: string | null;
     calendar_event_id: string | null;
+    title: string;
   }>;
 
   const calendarEventIds = meetings
@@ -97,9 +98,11 @@ export default async function LiveMeetingsListPage(): Promise<ReactElement> {
                 meetingId={m.meeting_id}
                 startedAt={m.started_at}
                 title={
-                  m.calendar_event_id !== null && titleByEventId.has(m.calendar_event_id)
-                    ? titleByEventId.get(m.calendar_event_id)!
-                    : 'Meeting'
+                  m.title.length > 0
+                    ? m.title
+                    : m.calendar_event_id !== null && titleByEventId.has(m.calendar_event_id)
+                      ? titleByEventId.get(m.calendar_event_id)!
+                      : 'Meeting'
                 }
               />
             </li>
