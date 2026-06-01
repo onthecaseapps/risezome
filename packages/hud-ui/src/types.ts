@@ -23,6 +23,10 @@ export interface CardEvent {
   readonly body?: string;
   readonly score: number;
   readonly rank: number;
+  /** True when the matched chunk is the doc's generated summary (U6): the body
+   *  leads with the summary excerpt and the UI flags it as a condensed view of
+   *  the original source. */
+  readonly isSummary?: boolean;
   readonly metadata: Record<string, unknown>;
   readonly surfacedAt: number;
   readonly triggeredBy: CardTrigger;

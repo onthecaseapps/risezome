@@ -43,6 +43,11 @@ export function CardHeaderRow({ card }: { card: CardEvent }): ReactElement {
           {isKnownType(card.type) ? <TypeGlyph type={card.type} label={typeLabel} /> : null}
           {typeLabel}
         </span>
+        {card.isSummary === true ? (
+          <span className="chip-summary" title="Cited content is from a generated summary of the original source, not verbatim source text.">
+            summary
+          </span>
+        ) : null}
       </span>
       <span className={card.rank === 1 ? 'score top' : 'score'}>{rankLabel(card.rank)}</span>
     </div>

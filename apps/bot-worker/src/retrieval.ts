@@ -106,6 +106,9 @@ interface CardPayload {
   body: string;
   score: number;
   rank: number;
+  /** True when the matched chunk is the doc's generated summary (U6) — the
+   *  card body leads with the summary excerpt; UI flags it as a summary view. */
+  isSummary?: boolean;
   metadata: Record<string, unknown>;
   surfacedAt: number;
   triggeredBy: 'window';
@@ -315,7 +318,7 @@ export async function maybeRetrieveAndEmit(args: {
   const chunkIds = hits.map((h) => h.chunk_id);
   const { data: chunkRows } = await args.db
     .from('doc_chunks')
-    .select('chunk_id, doc_id, domain, text, position')
+    .select('chunk_id, doc_id, domain, text, position, is_summary')
     .in('chunk_id', chunkIds);
   const chunkById = new Map(
     (chunkRows ?? []).map((c) => [
@@ -325,6 +328,7 @@ export async function maybeRetrieveAndEmit(args: {
         domain: c.domain as string,
         text: c.text as string,
         position: c.position as number,
+        isSummary: c.is_summary === true,
       },
     ]),
   );
@@ -378,7 +382,13 @@ export async function maybeRetrieveAndEmit(args: {
     // Persist the card row (RLS-scoped by org_id; insert via service
     // role) BEFORE the broadcast, per R23a.
     const cardId = `card_${randomUUID()}`;
-    const body = expandedByChunk.get(hit.chunk_id) ?? chunk.text;
+    // The matched excerpt (focus). When U8 expanded a SUMMARY chunk to body
+    // chunks, the summary isn't in `expanded`; prepend it so the card body
+    // contains what the model quoted (citation highlights land) and flag the
+    // card as a summary so the reader knows it's a condensed view of the doc.
+    const expanded = expandedByChunk.get(hit.chunk_id) ?? chunk.text;
+    const body = expanded.includes(chunk.text) ? expanded : `${chunk.text}\n\n${expanded}`;
+    const isSummary = chunk.isSummary;
     const snippet = body.length > 400 ? body.slice(0, 400) + '…' : body;
     // cosine distance is in [0, 2]; convert to a [0, 1] similarity-ish
     // score so the HUD's score field aligns with what the HUD currently
@@ -399,7 +409,7 @@ export async function maybeRetrieveAndEmit(args: {
       body,
       score,
       rank: i,
-      metadata: { distance: hit.distance, chunkPosition: chunk.position },
+      metadata: { distance: hit.distance, chunkPosition: chunk.position, isSummary },
       surfaced_at: new Date().toISOString(),
       triggered_by: 'window',
       utterance_id: args.utteranceId,
@@ -423,7 +433,8 @@ export async function maybeRetrieveAndEmit(args: {
       body,
       score,
       rank: i,
-      metadata: { distance: hit.distance, chunkPosition: chunk.position },
+      isSummary,
+      metadata: { distance: hit.distance, chunkPosition: chunk.position, isSummary },
       surfacedAt: Date.now(),
       triggeredBy: 'window',
       utteranceId: args.utteranceId,
@@ -452,7 +463,7 @@ export async function maybeRetrieveAndEmit(args: {
     surfacedCardIds.push(cardId);
     synthesisSources.push({
       rank: i + 1, // synthesizer expects 1-indexed
-      text: body, // U8: expanded parent context (== card body, so quotes verify + highlight)
+      text: expanded, // U8 expanded parent context (the summary excerpt is `focus`)
       // U8: judge relevance from the tight child that matched; formulate from
       // the expanded `text`. Equal to `text` when expansion was a no-op.
       focus: chunk.text,

@@ -177,6 +177,8 @@ export interface EvalSourceView {
   readonly focus: string;
   /** The (possibly expanded) text the synthesizer formulated from. */
   readonly text: string;
+  /** Matched chunk is the doc's generated summary (U6). */
+  readonly isSummary: boolean;
 }
 
 export interface EvalCitationView {
@@ -248,12 +250,17 @@ export async function evaluateQuestion(
   const chunkIds = hits.map((h) => h.chunk_id);
   const { data: chunkRows } = await deps.db
     .from('doc_chunks')
-    .select('chunk_id, doc_id, text, position')
+    .select('chunk_id, doc_id, text, position, is_summary')
     .in('chunk_id', chunkIds);
   const chunkById = new Map(
     (chunkRows ?? []).map((c) => [
       c.chunk_id as string,
-      { docId: c.doc_id as string, text: c.text as string, position: c.position as number },
+      {
+        docId: c.doc_id as string,
+        text: c.text as string,
+        position: c.position as number,
+        isSummary: c.is_summary === true,
+      },
     ]),
   );
   const docIds = [...new Set([...chunkById.values()].map((c) => c.docId))];
@@ -292,6 +299,7 @@ export async function evaluateQuestion(
       position: chunk.position,
       focus: chunk.text,
       text,
+      isSummary: chunk.isSummary,
     });
   });
 

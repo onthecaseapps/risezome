@@ -654,7 +654,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     const chunkIds = hits.map((h) => h.chunk_id);
     const { data: chunkRows } = await args.db
       .from('doc_chunks')
-      .select('chunk_id, doc_id, domain, text, position')
+      .select('chunk_id, doc_id, domain, text, position, is_summary')
       .in('chunk_id', chunkIds);
     const chunkById = new Map(
       (chunkRows ?? []).map((c) => [
@@ -664,6 +664,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
           domain: c.domain as string,
           text: c.text as string,
           position: c.position as number,
+          isSummary: c.is_summary === true,
         },
       ]),
     );
@@ -709,12 +710,16 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       const cardId = `dbg_${randomUUID()}`;
       cardIds.push(cardId);
       sourceDocIds.push(chunk.doc_id);
-      const body = expandedByChunk.get(hit.chunk_id) ?? chunk.text;
+      const expanded = expandedByChunk.get(hit.chunk_id) ?? chunk.text;
+      // Card body leads with the matched excerpt (focus) when U8 expanded a
+      // SUMMARY chunk to body chunks (so the summary the model quoted is in the
+      // displayed body and highlights land); synthesis text stays the expanded
+      // parent (the summary is passed separately as `focus`).
+      const cardBody = expanded.includes(chunk.text) ? expanded : `${chunk.text}\n\n${expanded}`;
       // U8: judge relevance from the tight child (`focus`), formulate from the
-      // expanded parent (`text`). Equal when expansion was a no-op / disabled.
-      // docId lets citation verification accept a quote that's verbatim in a
-      // sibling chunk of the same doc surfaced at another rank.
-      sources.push({ rank: i + 1, title: doc.title, text: body, focus: chunk.text, docId: chunk.doc_id });
+      // expanded parent (`text`). docId lets citation verification accept a
+      // quote verbatim in a sibling chunk of the same doc at another rank.
+      sources.push({ rank: i + 1, title: doc.title, text: expanded, focus: chunk.text, docId: chunk.doc_id });
       send(socket, {
         type: 'card',
         traceId,
@@ -726,8 +731,10 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
         source: doc.source,
         docType: doc.type,
         url: doc.url,
-        snippet: body.slice(0, 400),
-        body,
+        snippet: cardBody.slice(0, 400),
+        body: cardBody,
+        // True when the matched chunk is the doc's generated summary (U6).
+        isSummary: chunk.isSummary,
         // FTS-only hits have no cosine distance; surface the fused RRF score
         // instead so the debug panel still shows a relevance signal.
         distance: hit.distance ?? undefined,

@@ -321,6 +321,21 @@ body {
   display: none;
 }
 
+/* Flags a card whose match is the doc's generated summary (U6) — the cited
+   content is a condensed view of the original, not verbatim source text. */
+.chip-summary {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .card .header .score {
   font-variant-numeric: tabular-nums;
 }

@@ -53,6 +53,8 @@ interface CardEvent {
   score?: number;
   /** Whether the chunk matched the lexical (full-text) query. */
   ftsMatched?: boolean;
+  /** Matched chunk is the doc's generated summary (U6). */
+  isSummary?: boolean;
 }
 
 interface SynthesisCitation {
@@ -695,6 +697,7 @@ function toHudCard(c: CardEvent): HudCardEvent {
     body: c.body,
     score: c.distance !== undefined ? 1 - c.distance : (c.score ?? 0.5),
     rank: c.rank,
+    ...(c.isSummary === true ? { isSummary: true } : {}),
     metadata: {},
     surfacedAt: Date.now(),
     triggeredBy: 'window',

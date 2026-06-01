@@ -20,6 +20,7 @@ interface SourceView {
   position: number;
   focus: string;
   text: string;
+  isSummary: boolean;
 }
 type CitationStatus = 'verified' | 'downgraded' | 'dropped';
 interface CitationView {
@@ -289,6 +290,11 @@ function ViewBody({ view }: { view: QuestionView }): ReactElement {
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="font-mono text-accent">[{String(s.rank)}]</span>
                 <span className="font-medium">{s.title}</span>
+                {s.isSummary && (
+                  <span className="rounded border border-accent/40 bg-accent/10 px-1 text-[9px] font-semibold uppercase tracking-wider text-accent">
+                    summary
+                  </span>
+                )}
                 <span className="text-muted">
                   score {s.score.toFixed(3)}
                   {s.distance !== null ? ` · dist ${s.distance.toFixed(3)}` : ''}
