@@ -240,7 +240,7 @@ export default async function SourcesPage(props: {
                   ))}
                 </ul>
               ) : null}
-              <TrelloBoardPicker boards={trelloBoards} />
+              <TrelloBoardPicker boards={trelloBoards} startCollapsed={trelloSources.length > 0} />
             </div>
           ) : null}
 
