@@ -44,6 +44,7 @@ import {
 import { hybridSearch } from '../corpus-search';
 import { optionalReranker } from '../reranker';
 import { expandWinnersToParents, parentDocEnabled, type WinningChunk } from '../parent-doc';
+import { shouldReplaceSynthesis, type PriorSynthesis } from './synthesis-replace';
 import { optionalQueryExpander } from '../query-expand';
 import { augmentQuery } from '@risezome/engine/query-expand';
 import { shouldExpandOnMiss } from '@risezome/engine/query-route';
@@ -113,13 +114,6 @@ const FINALS_TTL_MS = 60_000;
 // fresh utterance even if it starts lowercase (probably a topic break).
 const CONTINUATION_WINDOW_MS = 6_000;
 
-// Replace-vs-new card heuristic: if a new synthesis cites a source
-// set that overlaps the prior synthesis by this Jaccard threshold AND
-// the prior completed within REPLACE_WINDOW_MS, signal the page to
-// replace the prior card in place.
-const REPLACE_JACCARD_THRESHOLD = 0.5;
-const REPLACE_WINDOW_MS = 30_000;
-
 const CONTINUATION_LEADERS = new Set([
   'and', 'but', 'or', 'so',
   'in', 'on', 'at', 'of', 'to', 'for', 'with', 'from',
@@ -143,15 +137,6 @@ function looksLikeContinuation(
   return CONTINUATION_LEADERS.has(firstWord.toLowerCase());
 }
 
-function jaccard(a: readonly string[], b: readonly string[]): number {
-  if (a.length === 0 || b.length === 0) return 0;
-  const setA = new Set(a);
-  const setB = new Set(b);
-  let inter = 0;
-  for (const x of setA) if (setB.has(x)) inter += 1;
-  const union = setA.size + setB.size - inter;
-  return union === 0 ? 0 : inter / union;
-}
 
 export async function handleLocalDebugWs(
   socket: WebSocket,
@@ -243,11 +228,7 @@ export async function handleLocalDebugWs(
   let currentSynthesisAbort: AbortController | null = null;
   let currentSynthesisId: string | null = null;
   const recentFinals: { text: string; at: number }[] = [];
-  let priorSynth: {
-    synthesisId: string;
-    sourceCardIds: readonly string[];
-    completedAt: number;
-  } | null = null;
+  let priorSynth: PriorSynthesis | null = null;
 
   runner.on('frame', (frame: AudioFrame) => {
     engine.sendFrame(frame.samples);
@@ -362,8 +343,8 @@ export async function handleLocalDebugWs(
       routerClassifier,
       skillRegistry,
       abortSignal: ac.signal,
-      onComplete: (sourceCardIds) => {
-        priorSynth = { synthesisId, sourceCardIds, completedAt: Date.now() };
+      onComplete: (sourceDocIds) => {
+        priorSynth = { synthesisId, sourceDocIds, completedAt: Date.now() };
         if (currentSynthesisId === synthesisId) {
           currentSynthesisId = null;
           currentSynthesisAbort = null;
@@ -434,11 +415,7 @@ interface PipelineArgs {
    *  replacesSynthesisId on the new synthesisStart so the page can
    *  replace the prior card in place when the new answer is a
    *  refinement on the same topic. */
-  readonly priorSynth: {
-    synthesisId: string;
-    sourceCardIds: readonly string[];
-    completedAt: number;
-  } | null;
+  readonly priorSynth: PriorSynthesis | null;
   readonly socket: WebSocket;
   readonly args: LocalDebugHandlerArgs;
   readonly embedder: VoyageEmbedder;
@@ -450,9 +427,9 @@ interface PipelineArgs {
   readonly routerClassifier: Classifier;
   readonly skillRegistry: SkillRegistry;
   readonly abortSignal: AbortSignal;
-  /** Called after the pipeline completes successfully (non-refusal)
-   *  so the caller can update `priorSynth`. */
-  readonly onComplete: (sourceCardIds: readonly string[]) => void;
+  /** Called after the pipeline completes successfully (non-refusal) with the
+   *  stable source DOC ids, so the caller can update `priorSynth`. */
+  readonly onComplete: (sourceDocIds: readonly string[]) => void;
 }
 
 /**
@@ -664,6 +641,9 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
   // entirely when retrieval found nothing but a tool answered).
   const sources: SynthesisSource[] = [];
   const cardIds: string[] = [];
+  // Stable doc ids of the cited sources — the basis for the replace-vs-new
+  // decision (card ids are fresh per retrieval and never overlap).
+  const sourceDocIds: string[] = [];
   if (hits.length > 0) {
     // ── Enrich with chunk + doc metadata
     const chunkIds = hits.map((h) => h.chunk_id);
@@ -719,6 +699,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       if (doc === undefined) continue;
       const cardId = `dbg_${randomUUID()}`;
       cardIds.push(cardId);
+      sourceDocIds.push(chunk.doc_id);
       const body = expandedByChunk.get(hit.chunk_id) ?? chunk.text;
       // U8: judge relevance from the tight child (`focus`), formulate from the
       // expanded parent (`text`). Equal when expansion was a no-op / disabled.
@@ -759,18 +740,17 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
   const synthesisSources = toolSource !== null ? [toolSource, ...sources] : sources;
   const cardRankOffset = toolSource !== null ? 1 : 0;
 
-  // Decide whether this synthesis REPLACES the prior card or stands
-  // alone. Trigger: high source-set overlap with the prior + within
-  // the replacement window. The page receives `replacesSynthesisId`
-  // on synthesisStart and swaps in place rather than stacking.
-  let replacesSynthesisId: string | null = null;
-  if (
-    p.priorSynth !== null &&
-    Date.now() - p.priorSynth.completedAt < REPLACE_WINDOW_MS &&
-    jaccard(cardIds, p.priorSynth.sourceCardIds) >= REPLACE_JACCARD_THRESHOLD
-  ) {
-    replacesSynthesisId = p.priorSynth.synthesisId;
-  }
+  // Decide whether this synthesis REPLACES the prior card or stands alone:
+  // high overlap with the prior's source DOCS (not card ids) + within the
+  // replacement window. The page receives `replacesSynthesisId` on
+  // synthesisStart and swaps in place rather than stacking.
+  const replacesSynthesisId = shouldReplaceSynthesis({
+    currentDocIds: sourceDocIds,
+    prior: p.priorSynth,
+    now: Date.now(),
+  })
+    ? p.priorSynth!.synthesisId
+    : null;
 
   // ── Synthesize, stream textDeltas, parse on done
   args.logger.info(
@@ -908,7 +888,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
         });
         // Notify caller so it can update its priorSynth tracker (grounded only —
         // a declined answer shouldn't anchor the next "replaces" comparison).
-        p.onComplete(cardIds);
+        p.onComplete(sourceDocIds);
         return;
       }
     }
