@@ -22,9 +22,11 @@ import {
  * fields), and the user-message builder which includes the prior
  * summary as carry-forward context.
  *
- * Output parsing scans the FULL content array (not just content[0])
- * because tool_choice 'auto' can emit a preamble text block followed
- * by the tool_use block.
+ * The request forces `tool_choice: { type: 'tool', name:
+ * 'emit_meeting_summary' }` so the model can't take the text-only
+ * "refusal pathway". Output parsing still scans the FULL content array
+ * (not just content[0]) as a defensive measure — cheap, and robust to any
+ * preamble block.
  */
 
 export interface AnthropicSummarizerOptions {
@@ -217,14 +219,22 @@ export class AnthropicSummarizer implements Summarizer {
     const url = `${this.#baseUrl.replace(/\/$/, '')}/v1/messages`;
     const systemBlocks: SystemBlock[] = buildSummarizerSystem();
     const userContent = buildSummarizerUserMessage(input);
+    const tool = buildSummarizerTool();
     const body = {
       model: this.#model,
       max_tokens: this.#maxTokens,
       temperature: this.#temperature,
       stream: false,
       system: systemBlocks,
-      tools: [buildSummarizerTool()],
-      tool_choice: { type: 'auto' },
+      tools: [tool],
+      // FORCE the tool call. With tool_choice 'auto' the model could emit
+      // plain text instead — the "refusal pathway" that throws downstream —
+      // which happened intermittently on sparse/ambiguous transcript
+      // windows despite the system prompt's "you MUST call the tool".
+      // Forcing the specific tool guarantees a tool_use block; the prompt's
+      // REFUSAL clause already yields minimal-content fields for an empty
+      // window, which is the behavior we want over a thrown refusal.
+      tool_choice: { type: 'tool', name: tool.name },
       messages: [{ role: 'user', content: userContent }],
     };
     const init: RequestInit = {
