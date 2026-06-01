@@ -73,6 +73,17 @@ export function CapturesIcon(): ReactElement {
   );
 }
 
+/** Two-people glyph — for the manager-only Members nav item. */
+export function MembersIcon(): ReactElement {
+  return (
+    <svg {...baseProps}>
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+      <path d="M16 6.5a3 3 0 0 1 0 5.8M17 19a5.5 5.5 0 0 0-2.5-4.6" />
+    </svg>
+  );
+}
+
 /** Bug-shaped glyph for the dev-only Debug nav section. */
 export function DebugIcon(): ReactElement {
   return (

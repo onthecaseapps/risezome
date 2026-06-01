@@ -5,7 +5,7 @@ import { createServerClient } from '../../_lib/supabase-server';
 import { cookies } from 'next/headers';
 import { OrgSwitcher } from './org-switcher';
 import { SidebarNavLink } from './sidebar-nav-link';
-import { CalendarIcon, CapturesIcon, DebugIcon, LiveIcon, SettingsIcon, SourcesIcon, WhatsNewIcon } from './nav-icons';
+import { CalendarIcon, CapturesIcon, DebugIcon, LiveIcon, MembersIcon, SettingsIcon, SourcesIcon, WhatsNewIcon } from './nav-icons';
 import { UserCard } from './user-card';
 
 /**
@@ -31,6 +31,9 @@ export async function Sidebar(): Promise<ReactElement> {
   const cookieStore = await cookies();
   const cookieValue = cookieStore.get(CURRENT_ORG_COOKIE)?.value;
   const current = orgs.find((o) => o.id === cookieValue) ?? orgs[0] ?? null;
+  // Manager-only surfaces (Sources, Settings, Members) are hidden for members.
+  // Nav hiding is UX only — the pages themselves enforce requireManager().
+  const isManager = current?.role === 'manager';
 
   const fullName = (user.user_metadata?.['full_name'] as string | undefined) ?? undefined;
   const email = user.email ?? '';
@@ -104,6 +107,14 @@ export async function Sidebar(): Promise<ReactElement> {
           icon={<CapturesIcon />}
           label="Captures"
         />
+        {isManager && (
+          <SidebarNavLink
+            href="/members"
+            matchPrefix="/members"
+            icon={<MembersIcon />}
+            label="Members"
+          />
+        )}
         <SidebarNavLink
           href="/sources"
           matchPrefix="/sources"
