@@ -11,7 +11,8 @@ import {
   contextualizedText,
   type ContextGenerator,
 } from '@risezome/engine/contextualize';
-import { optionalContextGenerator } from '../lib/contextualizer';
+import { summarizeDoc, type DocSummarizer } from '@risezome/engine/summarize-doc';
+import { optionalContextGenerator, optionalDocSummarizer } from '../lib/contextualizer';
 
 /** Doc types this indexer owns — reconcile must never touch the
  *  type='file' docs that share this source_id (corpus-reconcile R8). */
@@ -166,12 +167,13 @@ export const indexGithubIssuesFn = inngest.createFunction(
 
     const embedder = new VoyageEmbedder({ apiKey: requireEnv('VOYAGE_API_KEY') });
     const contextGenerator = optionalContextGenerator();
+    const docSummarizer = optionalDocSummarizer();
     const BATCH_SIZE = 20;
     let totalChunks = 0;
     for (let i = 0; i < toIndexIssues.length; i += BATCH_SIZE) {
       const batch = toIndexIssues.slice(i, i + BATCH_SIZE);
       const result = await step.run(`index-issues-batch-${String(i)}`, async () => {
-        return await indexBatch({ batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator });
+        return await indexBatch({ batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator, docSummarizer });
       });
       totalChunks += result.chunks;
     }
@@ -211,8 +213,9 @@ async function indexBatch(args: {
   embedder: VoyageEmbedder;
   kindByDocId: ReadonlyMap<string, 'new' | 'changed'>;
   contextGenerator: ContextGenerator | undefined;
+  docSummarizer: DocSummarizer | undefined;
 }): Promise<{ issues: number; chunks: number }> {
-  const { batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator } = args;
+  const { batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator, docSummarizer } = args;
   const service = createServiceRoleClient();
 
   let indexedIssues = 0;
@@ -227,20 +230,27 @@ async function indexBatch(args: {
     // Contextual Retrieval (U3): per-chunk context prepended to the embedded
     // text; verbatim body stays in `text`, context folded into text_fts.
     const bodies = chunks.map((c) => c.text);
+    const docFullText = bodies.join('\n\n');
     const contexts =
       contextGenerator !== undefined
-        ? await contextualizeChunks(bodies.join('\n\n'), bodies, contextGenerator)
+        ? await contextualizeChunks(docFullText, bodies, contextGenerator)
         : bodies.map(() => '');
+    // Per-document summary chunk (U6), excluded from content_hash.
+    const summary =
+      docSummarizer !== undefined ? await summarizeDoc(docFullText, doc.title, docSummarizer) : '';
+
+    const embedItems = chunks.map((c, i) => ({
+      id: c.chunkId,
+      text: contextualizedText(contexts[i] ?? '', c.text),
+      domain: c.domain,
+    }));
+    if (summary.length > 0) {
+      embedItems.push({ id: `${doc.docId}::summary`, text: summary, domain: 'text' });
+    }
 
     let embeddings;
     try {
-      embeddings = await embedder.embed({
-        items: chunks.map((c, i) => ({
-          id: c.chunkId,
-          text: contextualizedText(contexts[i] ?? '', c.text),
-          domain: c.domain,
-        })),
-      });
+      embeddings = await embedder.embed({ items: embedItems });
     } catch (err) {
       if (err instanceof EmbeddingRateLimitError) throw err;
       // A changed issue hasn't been cleared yet (we clear below, after a
@@ -276,15 +286,37 @@ async function indexBatch(args: {
       throw new Error(`docs upsert failed for ${doc.docId}: ${docErr.message}`);
     }
 
-    const chunkRows = chunks.map((c, i) => ({
+    const chunkRows: Array<{
+      chunk_id: string;
+      org_id: string;
+      doc_id: string;
+      domain: string;
+      text: string;
+      context: string;
+      is_summary: boolean;
+      position: number;
+    }> = chunks.map((c, i) => ({
       chunk_id: c.chunkId,
       org_id: orgId,
       doc_id: c.docId,
       domain: c.domain,
       text: c.text,
       context: contexts[i] ?? '',
+      is_summary: false,
       position: c.position,
     }));
+    if (summary.length > 0) {
+      chunkRows.push({
+        chunk_id: `${doc.docId}::summary`,
+        org_id: orgId,
+        doc_id: doc.docId,
+        domain: 'text',
+        text: summary,
+        context: '',
+        is_summary: true,
+        position: chunks.length,
+      });
+    }
     const { error: chunkErr } = await service
       .from('doc_chunks')
       .upsert(chunkRows, { onConflict: 'chunk_id' });
@@ -292,8 +324,8 @@ async function indexBatch(args: {
       throw new Error(`doc_chunks upsert failed for ${doc.docId}: ${chunkErr.message}`);
     }
 
-    const embedRows = chunks.map((c, i) => ({
-      chunk_id: c.chunkId,
+    const embedRows = embedItems.map((it, i) => ({
+      chunk_id: it.id,
       org_id: orgId,
       embedding: arrayToVectorLiteral(embeddings.vectors[i]!.vector),
     }));

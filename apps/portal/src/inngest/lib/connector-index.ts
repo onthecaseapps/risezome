@@ -4,6 +4,7 @@ import {
   contextualizedText,
   type ContextGenerator,
 } from '@risezome/engine/contextualize';
+import { summarizeDoc, type DocSummarizer } from '@risezome/engine/summarize-doc';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
 import type { IndexMode } from '../client';
 import {
@@ -83,6 +84,9 @@ export interface ConnectorIndexConfig<E> {
    *  an LLM context prepended to its embedded + lexically-indexed text. When
    *  omitted, chunks index body-only (prior behavior). */
   readonly contextGenerator?: ContextGenerator | undefined;
+  /** Optional per-document summarizer (U6). When set, each doc gets an
+   *  is_summary chunk (embedded + searchable, excluded from content_hash). */
+  readonly docSummarizer?: DocSummarizer | undefined;
 }
 
 export interface ConnectorIndexResult {
@@ -176,20 +180,33 @@ export async function runConnectorIndex<E>(
         // display + citation matching, and the context is folded into
         // text_fts via the doc_chunks.context column.
         const bodies = doc.chunks.map((c) => c.text);
+        const docFullText = doc.docText ?? bodies.join('\n\n');
         const contexts =
           config.contextGenerator !== undefined
-            ? await contextualizeChunks(doc.docText ?? bodies.join('\n\n'), bodies, config.contextGenerator)
+            ? await contextualizeChunks(docFullText, bodies, config.contextGenerator)
             : bodies.map(() => '');
+
+        // Per-document summary (U6): an extra is_summary chunk, embedded +
+        // searchable, EXCLUDED from content_hash (its LLM text mustn't
+        // destabilize change detection).
+        const summary =
+          config.docSummarizer !== undefined
+            ? await summarizeDoc(docFullText, doc.title, config.docSummarizer)
+            : '';
+
+        // Embed body chunks (contextualized) + the summary in one request.
+        const embedItems = doc.chunks.map((c, idx) => ({
+          id: `${doc.docId}::${String(idx)}`,
+          text: contextualizedText(contexts[idx] ?? '', c.text),
+          domain: c.domain,
+        }));
+        if (summary.length > 0) {
+          embedItems.push({ id: `${doc.docId}::summary`, text: summary, domain: 'text' });
+        }
 
         let embeddings;
         try {
-          embeddings = await embedder.embed({
-            items: doc.chunks.map((c, idx) => ({
-              id: `${doc.docId}::${String(idx)}`,
-              text: contextualizedText(contexts[idx] ?? '', c.text),
-              domain: c.domain,
-            })),
-          });
+          embeddings = await embedder.embed({ items: embedItems });
         } catch (err) {
           if (err instanceof EmbeddingRateLimitError) throw err;
           // Changed docs haven't been cleared yet (writeReconciledDoc clears
@@ -202,10 +219,36 @@ export async function runConnectorIndex<E>(
           continue;
         }
 
+        const writeChunks: Array<{
+          chunkId: string;
+          domain: EmbeddingDomain;
+          text: string;
+          context: string;
+          isSummary?: boolean;
+          position: number;
+        }> = doc.chunks.map((c, idx) => ({
+          chunkId: `${doc.docId}::${String(idx)}`,
+          domain: c.domain,
+          text: c.text,
+          context: contexts[idx] ?? '',
+          position: idx,
+        }));
+        if (summary.length > 0) {
+          writeChunks.push({
+            chunkId: `${doc.docId}::summary`,
+            domain: 'text',
+            text: summary,
+            context: '',
+            isSummary: true,
+            position: doc.chunks.length,
+          });
+        }
+
         await writeReconciledDoc(db, {
           docId: doc.docId,
           kind,
-          hash: contentHashFromTexts(doc.chunks.map((c) => c.text)),
+          // Body-only hash: the summary chunk must not affect change detection.
+          hash: contentHashFromTexts(bodies),
           doc: {
             orgId,
             sourceId,
@@ -216,14 +259,8 @@ export async function runConnectorIndex<E>(
             provenance,
             updatedAt: doc.updatedAt,
           },
-          chunks: doc.chunks.map((c, idx) => ({
-            chunkId: `${doc.docId}::${String(idx)}`,
-            domain: c.domain,
-            text: c.text,
-            context: contexts[idx] ?? '',
-            position: idx,
-          })),
-          embeddings: doc.chunks.map((_, idx) => arrayToVectorLiteral(embeddings.vectors[idx]!.vector)),
+          chunks: writeChunks,
+          embeddings: embedItems.map((_, idx) => arrayToVectorLiteral(embeddings.vectors[idx]!.vector)),
         });
       }
     });

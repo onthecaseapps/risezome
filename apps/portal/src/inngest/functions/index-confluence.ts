@@ -6,7 +6,7 @@ import { getValidAtlassianToken } from '../../../app/_lib/atlassian-token';
 import { listConfluencePages, type AtlassianContext, type ConfluencePage } from '../../../app/_lib/atlassian-client';
 import { buildPageDocText, confluencePageDocId } from '../../../app/_lib/atlassian-doc';
 import { runConnectorIndex, type PreparedDoc } from '../lib/connector-index';
-import { optionalContextGenerator } from '../lib/contextualizer';
+import { optionalContextGenerator, optionalDocSummarizer } from '../lib/contextualizer';
 
 const RECONNECT_MSG = 'Atlassian access was revoked or expired. Reconnect Atlassian to re-index.';
 
@@ -75,6 +75,7 @@ export const indexConfluenceFn = inngest.createFunction(
       provenance: 'trusted',
       reconnectMessage: RECONNECT_MSG,
       contextGenerator: optionalContextGenerator(),
+      docSummarizer: optionalDocSummarizer(),
       isAuthError: (err) => err instanceof AtlassianAuthError,
       fetchEntities: () => listConfluencePages(ctx.spaceId, client),
       prepare: async (page): Promise<PreparedDoc | null> => {

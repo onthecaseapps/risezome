@@ -5,7 +5,8 @@ import {
   contextualizedText,
   type ContextGenerator,
 } from '@risezome/engine/contextualize';
-import { optionalContextGenerator } from '../lib/contextualizer';
+import { summarizeDoc, type DocSummarizer } from '@risezome/engine/summarize-doc';
+import { optionalContextGenerator, optionalDocSummarizer } from '../lib/contextualizer';
 import { VoyageEmbedder, EmbeddingRateLimitError } from '@risezome/engine/embed';
 import { inngest, type IndexMode } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
@@ -235,6 +236,7 @@ export const indexRepoFn = inngest.createFunction(
       apiKey: requireEnv('VOYAGE_API_KEY'),
     });
     const contextGenerator = optionalContextGenerator();
+    const docSummarizer = optionalDocSummarizer();
 
     let indexedFiles = recon.counts.unchanged; // unchanged already count as covered
     let chunkCount = 0;
@@ -254,6 +256,7 @@ export const indexRepoFn = inngest.createFunction(
           installationId: source.installation_id,
           embedder,
           contextGenerator,
+          docSummarizer,
         });
       });
       indexedFiles += result.files;
@@ -297,8 +300,9 @@ async function indexBatch(args: {
   installationId: number;
   embedder: VoyageEmbedder;
   contextGenerator: ContextGenerator | undefined;
+  docSummarizer: DocSummarizer | undefined;
 }): Promise<{ files: number; chunks: number }> {
-  const { batch, orgId, sourceId, owner, repo, branch, installationId, embedder, contextGenerator } = args;
+  const { batch, orgId, sourceId, owner, repo, branch, installationId, embedder, contextGenerator, docSummarizer } = args;
   const octokit = await getInstallationOctokit(installationId);
   const service = createServiceRoleClient();
 
@@ -334,17 +338,24 @@ async function indexBatch(args: {
       contextGenerator !== undefined
         ? await contextualizeChunks(content, chunkInputs.map((c) => c.text), contextGenerator)
         : chunkInputs.map(() => '');
+    // Per-document (per-file) summary chunk (U6), excluded from content_hash
+    // (the file's blob SHA stays the change fingerprint).
+    const summary =
+      docSummarizer !== undefined ? await summarizeDoc(content, entry.path, docSummarizer) : '';
+
+    const embedItems = chunkInputs.map((c, i) => ({
+      id: `${entry.sha}::${i}`,
+      text: contextualizedText(contexts[i] ?? '', c.text),
+      domain: c.domain,
+    }));
+    if (summary.length > 0) {
+      embedItems.push({ id: `${entry.sha}::summary`, text: summary, domain: 'text' });
+    }
 
     // Embed all chunks for this file in one request to amortize HTTP overhead.
     let embeddings;
     try {
-      embeddings = await embedder.embed({
-        items: chunkInputs.map((c, i) => ({
-          id: `${entry.sha}::${i}`,
-          text: contextualizedText(contexts[i] ?? '', c.text),
-          domain: c.domain,
-        })),
-      });
+      embeddings = await embedder.embed({ items: embedItems });
     } catch (err) {
       if (err instanceof EmbeddingRateLimitError) throw err; // let Inngest retry
       // Other embed errors: skip the file, keep going.
@@ -373,24 +384,47 @@ async function indexBatch(args: {
     });
     if (docErr !== null) continue;
 
-    const chunkRows = chunkInputs.map((c, i) => ({
+    const chunkRows: Array<{
+      chunk_id: string;
+      org_id: string;
+      doc_id: string;
+      domain: string;
+      text: string;
+      context: string;
+      is_summary: boolean;
+      position: number;
+    }> = chunkInputs.map((c, i) => ({
       chunk_id: `${docId}::${i}`,
       org_id: orgId,
       doc_id: docId,
       domain: c.domain,
       text: c.text,
       context: contexts[i] ?? '',
+      is_summary: false,
       position: i,
     }));
+    if (summary.length > 0) {
+      chunkRows.push({
+        chunk_id: `${docId}::summary`,
+        org_id: orgId,
+        doc_id: docId,
+        domain: 'text',
+        text: summary,
+        context: '',
+        is_summary: true,
+        position: chunkInputs.length,
+      });
+    }
     const { error: chunkErr } = await service
       .from('doc_chunks')
       .upsert(chunkRows, { onConflict: 'chunk_id' });
     if (chunkErr !== null) continue;
 
-    const embedRows = chunkInputs.map((_, i) => ({
-      chunk_id: `${docId}::${i}`,
+    // chunkRows and embedItems are in the same order (body chunks, then the
+    // optional summary), so vectors[i] aligns with chunkRows[i].
+    const embedRows = chunkRows.map((row, i) => ({
+      chunk_id: row.chunk_id,
       org_id: orgId,
-      // VoyageEmbedder returns { vectors: [{ index, vector }] } ordered to match input
       embedding: arrayToVectorLiteral(embeddings.vectors[i]!.vector),
     }));
     const { error: embErr } = await service

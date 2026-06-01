@@ -217,6 +217,8 @@ export interface ReconciledDocWrite {
     /** Contextual-retrieval context for this chunk, '' when none. Folded
      *  into text_fts (and the embedding input) but kept out of `text`. */
     readonly context?: string;
+    /** Marks a per-document summary chunk (U6); excluded from content_hash. */
+    readonly isSummary?: boolean;
     readonly position: number;
   }>;
   /** pgvector literals, index-aligned with `chunks`. */
@@ -271,6 +273,7 @@ export async function writeReconciledDoc(db: SupabaseClient, w: ReconciledDocWri
     domain: c.domain,
     text: c.text,
     context: c.context ?? null,
+    is_summary: c.isSummary ?? false,
     position: c.position,
   }));
   const { error: chunkErr } = await db.from('doc_chunks').upsert(chunkRows, { onConflict: 'chunk_id' });
