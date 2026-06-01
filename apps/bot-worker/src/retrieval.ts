@@ -5,7 +5,7 @@ import type {
   SynthesisSource,
   SynthesisUsage,
 } from '@risezome/engine/synthesize';
-import { parseSynthesisOutput, stripStatusPrefix, verifyCitations } from '@risezome/engine/synthesize';
+import { parseSynthesisOutput, verifyCitations } from '@risezome/engine/synthesize';
 import { hybridSearch } from './corpus-search';
 import { optionalReranker } from './reranker';
 import { expandWinnersToParents, parentDocEnabled, dedupeByDoc, type WinningChunk } from './parent-doc';
@@ -776,7 +776,6 @@ async function classifyLlmAndDecide(args: {
   }
 }
 
-const SYNTHESIS_FLUSH_INTERVAL_MS = 250;
 const SYNTHESIS_MAX_TOKENS = 150;
 
 /**
@@ -816,15 +815,17 @@ async function runSynthesisAndBroadcast(args: {
 }): Promise<void> {
   const synthesisId = `synth_${randomUUID()}`;
   let accumulated = '';
-  // Length of the answer BODY already flushed (the body excludes the leading
-  // STATUS line, which is control metadata and never streamed to the UI).
-  let lastFlushedBodyLength = 0;
-  let flushTimer: NodeJS.Timeout | null = null;
   let startUsage: SynthesisUsage | null = null;
   const startedAt = Date.now();
 
-  // syntheses row keyed by synthesis_id; insert once at start, update
-  // accumulated_text + status on each significant event.
+  // syntheses row keyed by synthesis_id; inserted as `running` so a reconnect
+  // can rebuild from the DB. Flash fix: we do NOT broadcast synthesisStart or
+  // synthesisDelta while streaming. grounded-or-nothing can't be decided until
+  // `done`, and streaming a body that's then retracted on an ungrounded/refused
+  // answer flashes text that vanishes on the live page. Buffer here; reveal the
+  // whole answer at once on `done`, and only when it grounds. (Mirrors the
+  // debug path. A prior grounded answer therefore survives subsequent filler
+  // instead of being wiped by a start-then-retract.)
   const insertResult = await args.db.from('syntheses').insert({
     synthesis_id: synthesisId,
     meeting_id: args.meetingId,
@@ -840,44 +841,6 @@ async function runSynthesisAndBroadcast(args: {
     return;
   }
 
-  // Helper: flush newly-arrived BODY text as a single synthesisDelta.
-  // The STATUS line is gated out: while it's still arriving we hold (so the
-  // control token never flashes on screen), and on a refusal we never stream
-  // a body at all (the done handler retracts the card instead).
-  const flush = async (): Promise<void> => {
-    const gate = stripStatusPrefix(accumulated);
-    if (!gate.complete || gate.status === 'no_relevant_context') return;
-    if (gate.body.length === lastFlushedBodyLength) return;
-    const delta = gate.body.slice(lastFlushedBodyLength);
-    lastFlushedBodyLength = gate.body.length;
-    // Persist accumulated body snapshot first (R23a), then broadcast.
-    await args.db
-      .from('syntheses')
-      .update({ accumulated_text: gate.body })
-      .eq('synthesis_id', synthesisId);
-    await persistAndBroadcast(args.db, {
-      meetingId: args.meetingId,
-      orgId: args.orgId,
-      type: 'synthesisDelta',
-      payload: { delta: { synthesisId, delta } },
-    });
-  };
-
-  // Emit synthesisStart before the first token. The reducer uses this
-  // to allocate the synthesis card on the right panel.
-  await persistAndBroadcast(args.db, {
-    meetingId: args.meetingId,
-    orgId: args.orgId,
-    type: 'synthesisStart',
-    payload: {
-      start: {
-        synthesisId,
-        sourceCardIds: args.surfacedCardIds,
-        traceId: args.traceId,
-      },
-    },
-  });
-
   try {
     for await (const chunk of args.synthesizer.synthesize({
       utterance: args.utterance,
@@ -890,19 +853,10 @@ async function runSynthesisAndBroadcast(args: {
       if (chunk.type === 'start') {
         startUsage = chunk.usage;
       } else if (chunk.type === 'textDelta') {
+        // Buffer only (see the flash-fix note above): accumulate so we can
+        // parse + verify citations on `done`; nothing is streamed mid-flight.
         accumulated += chunk.delta;
-        // Throttle broadcasts: only fire flush if no timer pending.
-        flushTimer ??= setTimeout(() => {
-          flushTimer = null;
-          void flush();
-        }, SYNTHESIS_FLUSH_INTERVAL_MS);
       } else if (chunk.type === 'done') {
-        if (flushTimer !== null) {
-          clearTimeout(flushTimer);
-          flushTimer = null;
-        }
-        await flush(); // final delta with the tail tokens
-
         const latencyMs = Date.now() - startedAt;
         const parsed = parseSynthesisOutput(accumulated, args.sources.length);
 
@@ -1016,6 +970,7 @@ async function runSynthesisAndBroadcast(args: {
           .from('syntheses')
           .update({
             status: 'done',
+            accumulated_text: parsed.text,
             stop_reason: chunk.stopReason,
             citations: richCitations,
             input_tokens: chunk.usage.inputTokens,
@@ -1026,6 +981,21 @@ async function runSynthesisAndBroadcast(args: {
           })
           .eq('synthesis_id', synthesisId);
 
+        // Grounded: reveal the whole answer in one shot — start, a single full
+        // delta, then done — so a complete, cited synthesis appears at once
+        // with no optimistic-then-retracted flash.
+        await persistAndBroadcast(args.db, {
+          meetingId: args.meetingId,
+          orgId: args.orgId,
+          type: 'synthesisStart',
+          payload: { start: { synthesisId, sourceCardIds: args.surfacedCardIds, traceId: args.traceId } },
+        });
+        await persistAndBroadcast(args.db, {
+          meetingId: args.meetingId,
+          orgId: args.orgId,
+          type: 'synthesisDelta',
+          payload: { delta: { synthesisId, delta: parsed.text } },
+        });
         await persistAndBroadcast(args.db, {
           meetingId: args.meetingId,
           orgId: args.orgId,
@@ -1063,10 +1033,6 @@ async function runSynthesisAndBroadcast(args: {
       }
     }
   } catch (err) {
-    if (flushTimer !== null) {
-      clearTimeout(flushTimer);
-      flushTimer = null;
-    }
     const errorMessage = err instanceof Error ? err.message : String(err);
     const errorCode = (err as { kind?: string }).kind ?? 'unknown';
     args.logger.warn({ err, synthesisId, meetingId: args.meetingId }, 'synthesis.failed');
