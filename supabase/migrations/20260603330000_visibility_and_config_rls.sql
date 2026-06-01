@@ -78,7 +78,7 @@ create policy "participants read meeting events"
 -- calendar_events: owner-scoped (your own calendar only)
 ------------------------------------------------------------
 
-drop policy if exists "members read their org's events" on public.calendar_events;
+drop policy if exists "members read their org's calendar events" on public.calendar_events;
 create policy "users read their own calendar events"
   on public.calendar_events for select
   to authenticated
