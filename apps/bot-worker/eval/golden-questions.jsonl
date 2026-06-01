@@ -1,0 +1,10 @@
+{"q": "what ai models are used in the project", "must_surface": ["README", "synthesize", "voyage", "deepgram"], "expect_answer_contains": ["Haiku", "Voyage", "Deepgram"], "note": "ANCHOR FAILURE: model stack is scattered; expected to fail at baseline, target for Phase 1."}
+{"q": "how does the bot join a meeting", "must_surface": ["recall", "launch-bot", "bot-worker"], "expect_answer_contains": ["Recall"], "note": "Recall.ai bot join path."}
+{"q": "how is the corpus searched at query time", "must_surface": ["corpus-search", "retrieval"], "expect_answer_contains": ["vector"], "note": "hybrid search; should surface corpus-search.ts."}
+{"q": "what database does the corpus use", "must_surface": ["pgvector", "corpus", "migration"], "expect_answer_contains": ["Postgres", "pgvector"], "note": "pgvector / Supabase Postgres."}
+{"q": "how do we handle deepgram disconnecting mid meeting", "must_surface": ["deepgram", "reconnect"], "expect_answer_contains": ["reconnect"], "note": "reconnect/backoff logic."}
+{"q": "how are sources reindexed when files change", "must_surface": ["reconcile", "index-repo", "content_hash"], "expect_answer_contains": ["reindex"], "note": "corpus reconciliation."}
+{"q": "what connectors can a customer connect", "must_surface": ["trello", "jira", "confluence", "github"], "expect_answer_contains": ["Trello", "Jira"], "note": "connector breadth."}
+{"q": "should we order lunch before the next agenda item", "must_surface": [], "expect_refusal": true, "note": "off-topic; corpus should refuse, not fabricate."}
+{"q": "what is the rolling meeting summary for", "must_surface": ["summar", "rolling"], "expect_answer_contains": ["summary"], "note": "summarizer purpose."}
+{"q": "how are citations verified in synthesis", "must_surface": ["synthesize", "verifyCitations", "prompt"], "expect_answer_contains": ["cite"], "note": "citation verification (recent work)."}
