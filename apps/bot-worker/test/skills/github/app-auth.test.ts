@@ -69,11 +69,11 @@ describe('GithubAppAuth.installationToken', () => {
 
 describe('buildGithubAppAuth', () => {
   it('returns null when GITHUB_APP_ID is missing', () => {
-    expect(buildGithubAppAuth({ GITHUB_APP_PRIVATE_KEY_BASE64: 'x' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(buildGithubAppAuth({ GITHUB_APP_PRIVATE_KEY_BASE64: 'x' })).toBeNull();
   });
 
   it('returns null when GITHUB_APP_PRIVATE_KEY_BASE64 is missing', () => {
-    expect(buildGithubAppAuth({ GITHUB_APP_ID: '123' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(buildGithubAppAuth({ GITHUB_APP_ID: '123' })).toBeNull();
   });
 
   it('decodes the base64 PEM and builds an instance when both are present', () => {

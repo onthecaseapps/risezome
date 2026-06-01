@@ -20,7 +20,7 @@ function ctxWith(mocks: MockResponses): LiveSkillContext {
       return Promise.resolve(jsonResponse(mocks.timeline));
     }
     return Promise.resolve(jsonResponse(mocks.issue));
-  }) as typeof fetch;
+  });
   return liveCtx(fetchImpl, [{ owner: 'Nath5', name: 'risezome' }]);
 }
 
@@ -125,7 +125,7 @@ describe('github_issue_progress', () => {
 
   it('404 on the issue endpoint propagates as SkillExecutionError code=not-found', async () => {
     const fetchImpl: typeof fetch = (() =>
-      Promise.resolve(new Response('', { status: 404 }))) as typeof fetch;
+      Promise.resolve(new Response('', { status: 404 })));
     const skill = buildIssueProgressSkill(liveCtx(fetchImpl));
     await expect(
       skill.handler({ issue_number: 999 }, SKILL_CTX),

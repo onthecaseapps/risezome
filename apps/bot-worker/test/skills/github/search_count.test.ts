@@ -66,7 +66,7 @@ function ctxReturning(
         headers: { 'content-type': 'application/json' },
       }),
     );
-  }) as typeof fetch;
+  });
   return { ctx: { client: new GithubClient({ fetchImpl }), resolve: async () => access }, access };
 }
 
@@ -132,7 +132,7 @@ describe('github_count (live Search API)', () => {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),
-      )) as typeof fetch;
+      ));
     const ctx: LiveSkillContext = { client: new GithubClient({ fetchImpl }), resolve: async () => access };
     // One installation → one query covering both repos → total_count = 4.
     const result = await buildSearchCountSkill(ctx).handler({ type: 'issue', state: 'open' }, SKILL_CTX);

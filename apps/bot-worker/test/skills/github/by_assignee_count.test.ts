@@ -32,7 +32,7 @@ function routedCtx(routes: {
       return Promise.resolve(jsonResponse({ login: u.login }));
     }
     throw new Error(`unexpected url: ${url}`);
-  }) as typeof fetch;
+  });
   return { client: new GithubClient({ fetchImpl }), resolve: async () => ACCESS };
 }
 

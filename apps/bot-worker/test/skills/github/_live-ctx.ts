@@ -43,9 +43,9 @@ export function liveCtxMultiInstall(
 }
 
 /** Resolver returns null — the org has no GitHub source connected. */
-export function liveCtxNoSource(fetchImpl: typeof fetch = (() => {
+export function liveCtxNoSource(fetchImpl: typeof fetch = () => {
   throw new Error('fetch should not be called when no source is connected');
-}) as unknown as typeof fetch): LiveSkillContext {
+}): LiveSkillContext {
   const client = new GithubClient({ fetchImpl });
   return { client, resolve: async () => null };
 }

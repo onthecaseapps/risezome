@@ -548,8 +548,8 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
         registry: skillRegistry,
         ...(hasContext && {
           context: {
-            current_topic: p.lastSummary!.current_topic,
-            open_questions: p.lastSummary!.open_questions,
+            current_topic: p.lastSummary.current_topic,
+            open_questions: p.lastSummary.open_questions,
           },
         }),
       },

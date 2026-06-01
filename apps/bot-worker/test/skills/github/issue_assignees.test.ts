@@ -22,7 +22,7 @@ function issueResponse(over: Record<string, unknown> = {}): Response {
 
 describe('github_issue_assignees', () => {
   it('returns skill with the right name, source, and required input', () => {
-    const skill = buildIssueAssigneesSkill(liveCtx(vi.fn() as unknown as typeof fetch));
+    const skill = buildIssueAssigneesSkill(liveCtx(vi.fn()));
     expect(skill.name).toBe('github_issue_assignees');
     expect(skill.source).toBe('github');
     expect(skill.inputSchema.required).toEqual(['issue_number']);
