@@ -8,6 +8,9 @@ import type {
 import { parseSynthesisOutput, stripStatusPrefix, verifyCitations } from '@risezome/engine/synthesize';
 import { hybridSearch } from './corpus-search';
 import { optionalReranker } from './reranker';
+import { optionalQueryExpander } from './query-expand';
+import { augmentQuery } from '@risezome/engine/query-expand';
+import { shouldExpandOnMiss } from '@risezome/engine/query-route';
 import {
   classifyRelevanceHeuristic,
   type RelevanceClassifier,
@@ -254,14 +257,50 @@ export async function maybeRetrieveAndEmit(args: {
   // relevance floor. The lexical leg anchors specific-noun queries ("what
   // ai models") on the chunks that literally mention them, which pure
   // vector search missed; the floor drops weak-tail noise.
-  const hits = await hybridSearch(args.db, {
+  const reranker = optionalReranker();
+  let hits = await hybridSearch(args.db, {
     orgId: args.orgId,
     queryVectorLiteral: queryLiteral,
     queryText: queryText,
     limit: TOP_K,
-    reranker: optionalReranker(),
+    reranker,
     logger: args.logger,
   });
+
+  // CRAG on-miss expansion (U9), gated by adaptive routing (U10): when the
+  // first pass finds nothing and the query is substantive enough to be worth
+  // it, ask Claude for candidate terms, augment the query, and re-retrieve
+  // once. Bounded to a single retry.
+  if (hits.length === 0) {
+    const expander = optionalQueryExpander();
+    if (expander !== undefined && shouldExpandOnMiss(queryText)) {
+      try {
+        const terms = await expander(queryText);
+        const augmented = augmentQuery(queryText, terms);
+        if (augmented !== queryText) {
+          const expandedEmbed = await args.embedder.embed({ items: [{ text: augmented, domain: 'text' }] });
+          const expandedVec = expandedEmbed.vectors[0]?.vector;
+          if (expandedVec !== undefined) {
+            hits = await hybridSearch(args.db, {
+              orgId: args.orgId,
+              queryVectorLiteral: `[${Array.from(expandedVec).join(',')}]`,
+              queryText: augmented,
+              limit: TOP_K,
+              reranker,
+              logger: args.logger,
+            });
+            args.logger.info(
+              { meetingId: args.meetingId, termCount: terms.length, hits: hits.length },
+              'retrieval.crag.expanded',
+            );
+          }
+        }
+      } catch (err) {
+        args.logger.warn({ err, meetingId: args.meetingId }, 'retrieval.crag.failed');
+      }
+    }
+  }
+
   if (hits.length === 0) {
     return { emitted: 0, skipped: 'no_hits' };
   }

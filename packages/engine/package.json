@@ -54,6 +54,14 @@
       "types": "./dist/summarize-doc/index.d.ts",
       "default": "./dist/summarize-doc/index.js"
     },
+    "./query-expand": {
+      "types": "./dist/query-expand/index.d.ts",
+      "default": "./dist/query-expand/index.js"
+    },
+    "./query-route": {
+      "types": "./dist/query-route/index.d.ts",
+      "default": "./dist/query-route/index.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "default": "./dist/types.js"

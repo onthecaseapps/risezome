@@ -44,6 +44,9 @@ import {
 } from '@risezome/engine/synthesize';
 import { hybridSearch } from '../corpus-search';
 import { optionalReranker } from '../reranker';
+import { optionalQueryExpander } from '../query-expand';
+import { augmentQuery } from '@risezome/engine/query-expand';
+import { shouldExpandOnMiss } from '@risezome/engine/query-route';
 import { AnthropicSummarizer, type MeetingSummary } from '@risezome/engine/summarize';
 import {
   AnthropicRelevanceClassifier,
@@ -598,14 +601,42 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
   // what surfaces specific-noun chunks ("what ai models") pure vector
   // missed; the floor drops weak-tail noise.
   const queryLiteral = `[${Array.from(vec).join(',')}]`;
-  const hits = await hybridSearch(args.db, {
+  const reranker = optionalReranker();
+  let hits = await hybridSearch(args.db, {
     orgId: args.orgId,
     queryVectorLiteral: queryLiteral,
     queryText: embedText,
     limit: TOP_K,
-    reranker: optionalReranker(),
+    reranker,
     logger: args.logger,
   });
+
+  // CRAG on-miss expansion (U9) gated by adaptive routing (U10): on a miss,
+  // expand the query with candidate terms and re-retrieve once.
+  if (hits.length === 0) {
+    const expander = optionalQueryExpander();
+    if (expander !== undefined && shouldExpandOnMiss(embedText)) {
+      try {
+        const augmented = augmentQuery(embedText, await expander(embedText));
+        if (augmented !== embedText) {
+          const expandedVec = (await embedder.embed({ items: [{ text: augmented, domain: 'text' }] })).vectors[0]?.vector;
+          if (expandedVec !== undefined) {
+            hits = await hybridSearch(args.db, {
+              orgId: args.orgId,
+              queryVectorLiteral: `[${Array.from(expandedVec).join(',')}]`,
+              queryText: augmented,
+              limit: TOP_K,
+              reranker,
+              logger: args.logger,
+            });
+            args.logger.info({ traceId, hits: hits.length }, 'local-debug.crag.expanded');
+          }
+        }
+      } catch (err) {
+        args.logger.warn({ traceId, err: String(err) }, 'local-debug.crag.failed');
+      }
+    }
+  }
 
   // ── Resolve the router classifier + run the chosen skill (if any).
   // Done here, after retrieval, so a tool answer survives an empty
