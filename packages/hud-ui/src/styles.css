@@ -487,9 +487,11 @@ body {
 
 .card.synthesis {
   border-color: var(--accent);
-  /* Soft periwinkle halo so the synthesis card reads as "the answer layer"
-     (matches the AI Summary Card design). */
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent), var(--card-shadow);
+  /* Soft periwinkle halo + floating drop so the synthesis card reads as
+     "the answer layer" (matches the AI Summary Card design). */
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--accent) 8%, transparent),
+    0 18px 50px rgba(10, 11, 20, 0.18);
   /* U4: subtle accent wash on top of the card surface. */
   background-color: var(--card-bg);
   background-image: linear-gradient(var(--synthesis-tint), var(--synthesis-tint));

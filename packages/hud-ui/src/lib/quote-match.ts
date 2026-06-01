@@ -43,24 +43,58 @@ export function findQuoteInBody(
   const raw = body.indexOf(quote);
   if (raw !== -1) return { index: raw, length: quote.length };
 
-  // Tier 2: whitespace-collapsed + NFC-normalized retry. Build a map
-  // from normalized-character index back to raw-character index so the
-  // hit position translates back to the original body.
-  const norm = normalizeWithMap(body);
-  const normalizedQuote = normalize(quote);
+  // Tier 2: whitespace-collapsed + NFC-normalized retry.
+  const tier2 = matchNormalized(quote, body, false);
+  if (tier2 !== null) return tier2;
+
+  // Tier 3: also fold typographic punctuation (curly quotes → straight,
+  // en/em dash → hyphen, ellipsis char). LLMs routinely re-punctuate a
+  // copied span (a chunk has a straight quote; the model emits a curly
+  // one, or vice versa). This is still character-faithful — no case
+  // folding (kept per the "no lookalikes" policy), no edit distance.
+  return matchNormalized(quote, body, true);
+}
+
+/** Whitespace/NFC (and optionally case+punctuation) normalized search,
+ *  mapping the hit back to raw-body offsets. */
+function matchNormalized(quote: string, body: string, fold: boolean): QuoteMatch | null {
+  const norm = normalizeWithMap(body, fold);
+  const normalizedQuote = normalize(quote, fold);
   if (normalizedQuote.length === 0) return null;
 
   const normHit = norm.text.indexOf(normalizedQuote);
   if (normHit === -1) return null;
 
   const startRaw = norm.indexMap[normHit];
-  const endNormExclusive = normHit + normalizedQuote.length;
-  // endRaw is the raw index of the character one PAST the match.
-  // indexMap is length normText + 1 to give us this sentinel.
-  const endRaw = norm.indexMap[endNormExclusive];
+  // endRaw is the raw index one PAST the match (indexMap has a sentinel).
+  const endRaw = norm.indexMap[normHit + normalizedQuote.length];
   if (startRaw === undefined || endRaw === undefined) return null;
 
   return { index: startRaw, length: endRaw - startRaw };
+}
+
+/** Fold typographic punctuation to its ASCII equivalent for a single code
+ *  point. Curly/straight quotes and en/em/minus dashes are the common LLM
+ *  re-encodings. 1:1 (each input maps to one output) so the index map stays
+ *  valid. No case folding — that's a deliberate policy (lookalike risk). */
+function foldChar(ch: string): string {
+  switch (ch) {
+    case '‘':
+    case '’':
+    case '′':
+    case '`':
+      return "'";
+    case '“':
+    case '”':
+    case '″':
+      return '"';
+    case '–':
+    case '—':
+    case '−':
+      return '-';
+    default:
+      return ch;
+  }
 }
 
 /**
@@ -68,8 +102,12 @@ export function findQuoteInBody(
  * query quote — its index doesn't need to map back since we never
  * reference raw-quote indices.
  */
-function normalize(s: string): string {
-  return s.normalize('NFC').replace(/\s+/g, ' ').trim();
+function normalize(s: string, fold = false): string {
+  const nfc = s.normalize('NFC').replace(/\s+/g, ' ').trim();
+  if (!fold) return nfc;
+  let out = '';
+  for (const ch of nfc) out += foldChar(ch);
+  return out;
 }
 
 interface NormalizedWithMap {
@@ -97,7 +135,7 @@ interface NormalizedWithMap {
  * matching the `.trim()` in `normalize(quote)` so both sides agree on
  * boundaries.
  */
-function normalizeWithMap(raw: string): NormalizedWithMap {
+function normalizeWithMap(raw: string, fold = false): NormalizedWithMap {
   const normalizedChars: string[] = [];
   const indexMap: number[] = [];
 
@@ -122,9 +160,12 @@ function normalizeWithMap(raw: string): NormalizedWithMap {
     // form; for simplicity here we normalize the single code unit and
     // rely on .normalize being a no-op for already-NFC content.
     const normalizedCh = ch.normalize('NFC');
-    for (const out of normalizedCh) {
-      normalizedChars.push(out);
-      indexMap.push(i);
+    for (const c of normalizedCh) {
+      const emitted = fold ? foldChar(c) : c;
+      for (const out of emitted) {
+        normalizedChars.push(out);
+        indexMap.push(i);
+      }
     }
     inWhitespaceRun = false;
     hasEmittedNonWhitespace = true;

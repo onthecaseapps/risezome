@@ -24,6 +24,21 @@ describe('findQuoteInBody — tier 1 raw indexOf', () => {
     expect(findQuoteInBody('anything', '')).toBeNull();
   });
 
+  it('tier 3: matches across curly/straight quote differences, mapping to raw offsets', () => {
+    // Body has straight quotes; the LLM quote uses curly ones.
+    const body = 'Replaces the legacy "cookie" store with OAuth2.';
+    const out = findQuoteInBody('the legacy “cookie” store', body);
+    expect(out).not.toBeNull();
+    expect(body.slice(out!.index, out!.index + out!.length)).toBe('the legacy "cookie" store');
+  });
+
+  it('tier 3: matches across en/em-dash differences', () => {
+    const body = 'staged rollout - internal, then a canary.';
+    const out = findQuoteInBody('staged rollout — internal', body);
+    expect(out).not.toBeNull();
+    expect(body.slice(out!.index, out!.index + out!.length)).toBe('staged rollout - internal');
+  });
+
   it('case-sensitivity: NO match when quote case differs from body', () => {
     // Plan policy: case-insensitive fallback is explicitly dropped.
     expect(findQuoteInBody('Hello', 'hello world')).toBeNull();
