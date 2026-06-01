@@ -29,6 +29,9 @@ import { buildByAssigneeCountSkill } from './github/by_assignee_count.js';
 import { buildByAssigneeListSkill } from './github/by_assignee_list.js';
 import { buildIssueProgressSkill } from './github/issue_progress.js';
 import { buildSearchCountSkill } from './github/search_count.js';
+import { buildSearchListSkill } from './github/search_list.js';
+import { buildSearchRecentlyUpdatedSkill } from './github/search_recently_updated.js';
+import { buildSearchByAuthorSkill } from './github/search_by_author.js';
 import { countSkill } from './github/count.js';
 import { listSkill } from './github/list.js';
 import { byAuthorSkill } from './github/by_author.js';
@@ -68,9 +71,14 @@ export function buildSkillRegistry(options: BuildSkillRegistryOptions): SkillReg
       client: new GithubClient({}),
       resolve,
     };
-    // Live github_count (Search API) registered FIRST so it claims the
-    // `github_count` name before the corpus fallback below.
+    // All GitHub query skills are the live Search-API variants when App
+    // auth is present — fresh data over the indexed corpus. They claim the
+    // canonical names (github_count/list/recently_updated/by_author) so the
+    // corpus fallbacks below are skipped to avoid duplicate-name errors.
     registry.register(buildSearchCountSkill(liveContext));
+    registry.register(buildSearchListSkill(liveContext));
+    registry.register(buildSearchRecentlyUpdatedSkill(liveContext));
+    registry.register(buildSearchByAuthorSkill(liveContext));
     registry.register(buildIssueAssigneesSkill(liveContext));
     registry.register(buildByAssigneeCountSkill(liveContext));
     registry.register(buildByAssigneeListSkill(liveContext));
@@ -78,16 +86,16 @@ export function buildSkillRegistry(options: BuildSkillRegistryOptions): SkillReg
     options.logger.info({}, 'github.live.enabled');
   }
 
-  // ── Corpus GitHub skills ────────────────────────────────────────
-  // When live is enabled the Search-API count owns `github_count`, so
-  // the corpus count is skipped to avoid a duplicate-name error. list /
-  // by_author / recently_updated remain corpus-backed.
+  // ── Corpus GitHub skills (fallback only) ────────────────────────
+  // Registered only when the GitHub App isn't configured, so an org with
+  // an indexed corpus still gets answers without the live API. When live
+  // is enabled the Search-API variants above own these names.
   if (!githubLive) {
     registry.register(countSkill);
+    registry.register(listSkill);
+    registry.register(recentlyUpdatedSkill);
+    registry.register(byAuthorSkill);
   }
-  registry.register(listSkill);
-  registry.register(recentlyUpdatedSkill);
-  registry.register(byAuthorSkill);
 
   options.logger.info(
     { registeredSkills: registry.list().map((s) => s.name) },
