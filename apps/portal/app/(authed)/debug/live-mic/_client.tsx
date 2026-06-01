@@ -46,7 +46,13 @@ interface CardEvent {
   url: string | null;
   snippet: string;
   body: string;
-  distance: number;
+  /** Cosine distance when this was a vector candidate; undefined for an
+   *  FTS-only hit (hybrid retrieval). */
+  distance?: number;
+  /** Fused RRF score (hybrid retrieval). */
+  score?: number;
+  /** Whether the chunk matched the lexical (full-text) query. */
+  ftsMatched?: boolean;
 }
 
 interface SynthesisCitation {
@@ -465,7 +471,11 @@ function DebugInner({
                           <span className="text-[11px] font-medium">{c.title}</span>
                         </div>
                         <div className="text-[10px] text-muted">
-                          {c.source} · {c.docType} · distance {c.distance.toFixed(3)}
+                          {c.source} · {c.docType} ·{' '}
+                          {c.distance !== undefined
+                            ? `distance ${c.distance.toFixed(3)}`
+                            : `rrf ${(c.score ?? 0).toFixed(4)}`}
+                          {c.ftsMatched ? ' · fts' : ''}
                         </div>
                         <details className="mt-1">
                           <summary className="cursor-pointer text-[10px] text-muted hover:text-fg">
@@ -683,7 +693,7 @@ function toHudCard(c: CardEvent): HudCardEvent {
     title: c.title,
     snippet: c.snippet,
     body: c.body,
-    score: 1 - c.distance,
+    score: c.distance !== undefined ? 1 - c.distance : (c.score ?? 0.5),
     rank: c.rank,
     metadata: {},
     surfacedAt: Date.now(),

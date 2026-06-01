@@ -5,7 +5,8 @@ import type {
   SynthesisSource,
   SynthesisUsage,
 } from '@risezome/engine/synthesize';
-import { parseSynthesisOutput } from '@risezome/engine/synthesize';
+import { parseSynthesisOutput, stripStatusPrefix, verifyCitations } from '@risezome/engine/synthesize';
+import { hybridSearch } from './corpus-search';
 import {
   classifyRelevanceHeuristic,
   type RelevanceClassifier,
@@ -248,17 +249,17 @@ export async function maybeRetrieveAndEmit(args: {
   }
 
   const queryLiteral = `[${Array.from(queryEmbedding).join(',')}]`;
-  const { data: vectorRows, error: vectorErr } = (await args.db.rpc('search_corpus_vector', {
-    p_org_id: args.orgId,
-    p_query_vector: queryLiteral,
-    p_limit: TOP_K,
-  })) as { data: { chunk_id: string; distance: number }[] | null; error: { message: string } | null };
-
-  if (vectorErr !== null) {
-    args.logger.warn({ err: vectorErr, meetingId: args.meetingId }, 'retrieval.search.failed');
-    return { emitted: 0, skipped: 'search_failed' };
-  }
-  const hits = vectorRows ?? [];
+  // Hybrid: dense (vector) + lexical (FTS) fused with RRF, gated by a
+  // relevance floor. The lexical leg anchors specific-noun queries ("what
+  // ai models") on the chunks that literally mention them, which pure
+  // vector search missed; the floor drops weak-tail noise.
+  const hits = await hybridSearch(args.db, {
+    orgId: args.orgId,
+    queryVectorLiteral: queryLiteral,
+    queryText: queryText,
+    limit: TOP_K,
+    logger: args.logger,
+  });
   if (hits.length === 0) {
     return { emitted: 0, skipped: 'no_hits' };
   }
@@ -316,8 +317,10 @@ export async function maybeRetrieveAndEmit(args: {
     const snippet = body.length > 400 ? body.slice(0, 400) + '…' : body;
     // cosine distance is in [0, 2]; convert to a [0, 1] similarity-ish
     // score so the HUD's score field aligns with what the HUD currently
-    // expects (the daemon emits cosine similarity).
-    const score = clamp01(1 - hit.distance / 2);
+    // expects (the daemon emits cosine similarity). FTS-only hits have no
+    // vector distance; show a neutral mid score (they're lexically grounded
+    // and ranked by RRF, just not by cosine proximity).
+    const score = hit.distance !== null ? clamp01(1 - hit.distance / 2) : 0.5;
 
     const { error: cardErr } = await args.db.from('cards').insert({
       card_id: cardId,
@@ -728,7 +731,9 @@ async function runSynthesisAndBroadcast(args: {
 }): Promise<void> {
   const synthesisId = `synth_${randomUUID()}`;
   let accumulated = '';
-  let lastFlushedLength = 0;
+  // Length of the answer BODY already flushed (the body excludes the leading
+  // STATUS line, which is control metadata and never streamed to the UI).
+  let lastFlushedBodyLength = 0;
   let flushTimer: NodeJS.Timeout | null = null;
   let startUsage: SynthesisUsage | null = null;
   const startedAt = Date.now();
@@ -750,15 +755,20 @@ async function runSynthesisAndBroadcast(args: {
     return;
   }
 
-  // Helper: flush the current buffer as a single synthesisDelta broadcast.
+  // Helper: flush newly-arrived BODY text as a single synthesisDelta.
+  // The STATUS line is gated out: while it's still arriving we hold (so the
+  // control token never flashes on screen), and on a refusal we never stream
+  // a body at all (the done handler retracts the card instead).
   const flush = async (): Promise<void> => {
-    if (accumulated.length === lastFlushedLength) return;
-    const delta = accumulated.slice(lastFlushedLength);
-    lastFlushedLength = accumulated.length;
-    // Persist accumulated_text snapshot first (R23a), then broadcast.
+    const gate = stripStatusPrefix(accumulated);
+    if (!gate.complete || gate.status === 'no_relevant_context') return;
+    if (gate.body.length === lastFlushedBodyLength) return;
+    const delta = gate.body.slice(lastFlushedBodyLength);
+    lastFlushedBodyLength = gate.body.length;
+    // Persist accumulated body snapshot first (R23a), then broadcast.
     await args.db
       .from('syntheses')
-      .update({ accumulated_text: accumulated })
+      .update({ accumulated_text: gate.body })
       .eq('synthesis_id', synthesisId);
     await persistAndBroadcast(args.db, {
       meetingId: args.meetingId,
@@ -855,7 +865,16 @@ async function runSynthesisAndBroadcast(args: {
         // rank, 0-based index). Drop entries with no resolvable cardId
         // (shouldn't happen because the parser already bounds rank to
         // sources.length, but defensive belt-and-suspenders).
-        const richCitations = parsed.citations.flatMap((c) => {
+        // Drop fabricated quoted citations (quote not present in the cited
+        // source) before mapping to cardIds — grounding safety net.
+        const { verified, droppedQuoted } = verifyCitations(parsed.citations, args.sources);
+        if (droppedQuoted > 0) {
+          args.logger.warn(
+            { synthesisId, meetingId: args.meetingId, droppedQuoted },
+            'synthesis.citations.dropped-unverified',
+          );
+        }
+        const richCitations = verified.flatMap((c) => {
           const cardId = args.surfacedCardIds[c.rank - 1];
           if (cardId === undefined) return [];
           return [
@@ -875,6 +894,38 @@ async function runSynthesisAndBroadcast(args: {
           (n, c) => n + ('quote' in c ? c.quote.length : 0),
           0,
         );
+
+        // Grounded-or-nothing: an answer with no surviving citation is not
+        // grounded in the retrieved sources (the model cited nothing, or
+        // every quote failed verification). Suppress it like a refusal
+        // rather than render a confident, unsourced paragraph.
+        if (richCitations.length === 0) {
+          await args.db
+            .from('syntheses')
+            .update({
+              status: 'retracted',
+              retracted_at: new Date().toISOString(),
+              retracted_reason: 'ungrounded',
+              stop_reason: chunk.stopReason,
+              input_tokens: chunk.usage.inputTokens,
+              output_tokens: chunk.usage.outputTokens,
+              cache_read_tokens: chunk.usage.cacheReadTokens,
+              cache_creation_tokens: chunk.usage.cacheCreationTokens,
+              latency_ms: latencyMs,
+            })
+            .eq('synthesis_id', synthesisId);
+          await persistAndBroadcast(args.db, {
+            meetingId: args.meetingId,
+            orgId: args.orgId,
+            type: 'synthesisRetracted',
+            payload: { retracted: { synthesisId, reason: 'source-retracted' } },
+          });
+          args.logger.info(
+            { synthesisId, meetingId: args.meetingId, latencyMs, droppedQuoted },
+            'synthesis.ungrounded',
+          );
+          return;
+        }
 
         await args.db
           .from('syntheses')

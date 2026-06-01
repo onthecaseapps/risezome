@@ -38,8 +38,11 @@ import { VoyageEmbedder } from '@risezome/engine/embed';
 import {
   AnthropicSynthesizer,
   parseSynthesisOutput,
+  stripStatusPrefix,
+  verifyCitations,
   type SynthesisSource,
 } from '@risezome/engine/synthesize';
+import { hybridSearch } from '../corpus-search';
 import { AnthropicSummarizer, type MeetingSummary } from '@risezome/engine/summarize';
 import {
   AnthropicRelevanceClassifier,
@@ -589,18 +592,18 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     return;
   }
 
-  // ── Hybrid search via the existing RPC
+  // ── Hybrid search: dense (vector) + lexical (FTS) fused with RRF and
+  // gated by a relevance floor (see corpus-search.ts). Lexical recall is
+  // what surfaces specific-noun chunks ("what ai models") pure vector
+  // missed; the floor drops weak-tail noise.
   const queryLiteral = `[${Array.from(vec).join(',')}]`;
-  const { data: vectorRows, error: searchErr } = (await args.db.rpc('search_corpus_vector', {
-    p_org_id: args.orgId,
-    p_query_vector: queryLiteral,
-    p_limit: TOP_K,
-  })) as { data: { chunk_id: string; distance: number }[] | null; error: { message: string } | null };
-  if (searchErr !== null) {
-    send(socket, { type: 'retrieval-skip', reason: 'search_failed', traceId, detail: searchErr.message });
-    return;
-  }
-  const hits = vectorRows ?? [];
+  const hits = await hybridSearch(args.db, {
+    orgId: args.orgId,
+    queryVectorLiteral: queryLiteral,
+    queryText: embedText,
+    limit: TOP_K,
+    logger: args.logger,
+  });
 
   // ── Resolve the router classifier + run the chosen skill (if any).
   // Done here, after retrieval, so a tool answer survives an empty
@@ -685,7 +688,11 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
         url: doc.url,
         snippet: chunk.text.slice(0, 400),
         body: chunk.text,
-        distance: hit.distance,
+        // FTS-only hits have no cosine distance; surface the fused RRF score
+        // instead so the debug panel still shows a relevance signal.
+        distance: hit.distance ?? undefined,
+        score: hit.score,
+        ftsMatched: hit.ftsMatched,
       });
     }
   }
@@ -740,6 +747,8 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
   });
 
   let accumulated = '';
+  // Body length already streamed (excludes the leading STATUS control line).
+  let lastSentBodyLength = 0;
   let deltaCount = 0;
   let sawStart = false;
   let sawDone = false;
@@ -764,13 +773,21 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
           'local-debug.synthesis.upstream-start',
         );
       } else if (chunk.type === 'textDelta') {
-        deltaCount += 1;
         accumulated += chunk.delta;
-        send(socket, { type: 'synthesisDelta', synthesisId, delta: chunk.delta });
+        // Gate out the leading STATUS line: hold until it resolves, and never
+        // stream a refusal body (the done handler emits synthesisRefusal).
+        const gate = stripStatusPrefix(accumulated);
+        if (gate.complete && gate.status === 'answer' && gate.body.length > lastSentBodyLength) {
+          const delta = gate.body.slice(lastSentBodyLength);
+          lastSentBodyLength = gate.body.length;
+          deltaCount += 1;
+          send(socket, { type: 'synthesisDelta', synthesisId, delta });
+        }
       } else if (chunk.type === 'done') {
         sawDone = true;
         const parsed = parseSynthesisOutput(accumulated, synthesisSources.length);
-        const richCitations = parsed.citations.flatMap((c) => {
+        const { verified, droppedQuoted } = verifyCitations(parsed.citations, synthesisSources);
+        const richCitations = verified.flatMap((c) => {
           // With a tool source at [1], card N is at rank N+1. Subtract
           // the offset to map a citation rank back to its cardId.
           const cardId = cardIds[c.rank - 1 - cardRankOffset];
@@ -793,23 +810,42 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
             outputChars: accumulated.length,
             isRefusal: parsed.isRefusal,
             citationCount: richCitations.length,
+            droppedQuoted,
+            // Diagnostic: what the model actually cited (rank + quote prefix)
+            // and a preview of the answer, so a grounded-in-0 result can be
+            // traced to "no citations emitted" vs "verifier dropped them".
+            rawCitations: parsed.citations.map((c) => ({ rank: c.rank, quote: c.quote?.slice(0, 60) })),
+            answerPreview: parsed.text.slice(0, 200),
+            sourceTitles: synthesisSources.map((s, i) => `[${String(i + 1)}] ${s.title.slice(0, 60)}`),
             stopReason: chunk.stopReason,
             usage: chunk.usage,
           },
           'local-debug.synthesis.done',
         );
+        // Grounded-or-nothing: an answer with no surviving citation isn't
+        // grounded in the retrieved sources (the model cited nothing, or
+        // every quote failed verification). Treat it like a refusal so the
+        // page doesn't show a confident, unsourced paragraph. The debug
+        // view surfaces WHY (production would simply render nothing).
+        const ungrounded = !parsed.isRefusal && richCitations.length === 0;
+        const declined = parsed.isRefusal || ungrounded;
+        const debugText = parsed.isRefusal
+          ? (parsed.refusalReason ?? 'No relevant context.')
+          : ungrounded
+            ? 'Ungrounded: the answer had no citation matching a retrieved source, so it was suppressed.'
+            : parsed.text;
         send(socket, {
-          type: parsed.isRefusal ? 'synthesisRefusal' : 'synthesisDone',
+          type: declined ? 'synthesisRefusal' : 'synthesisDone',
           synthesisId,
           stopReason: chunk.stopReason,
-          accumulatedText: accumulated,
+          accumulatedText: debugText,
           citations: richCitations,
           usage: chunk.usage,
         });
-        // Notify caller so it can update its priorSynth tracker. Skip
-        // for refusals — they shouldn't form the basis for "replaces
-        // this card" comparisons on the next synthesis.
-        if (!parsed.isRefusal) {
+        // Notify caller so it can update its priorSynth tracker. Skip when
+        // declined — refusals/ungrounded answers shouldn't form the basis
+        // for "replaces this card" comparisons on the next synthesis.
+        if (!declined) {
           p.onComplete(cardIds);
         }
         return;
