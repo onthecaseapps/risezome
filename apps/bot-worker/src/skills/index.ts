@@ -36,6 +36,14 @@ import { countSkill } from './github/count.js';
 import { listSkill } from './github/list.js';
 import { byAuthorSkill } from './github/by_author.js';
 import { recentlyUpdatedSkill } from './github/recently_updated.js';
+import { TrelloClient } from './trello/client.js';
+import { buildTrelloSourceResolver } from './trello/source-resolver.js';
+import type { TrelloLiveContext } from './trello/live-context.js';
+import { buildTrelloCountSkill } from './trello/count.js';
+import { buildTrelloListSkill } from './trello/list.js';
+import { buildTrelloByMemberSkill } from './trello/by_member.js';
+import { buildTrelloRecentlyActiveSkill } from './trello/recently_active.js';
+import { buildTrelloBoardBreakdownSkill } from './trello/board_breakdown.js';
 
 export interface BuildSkillRegistryOptions {
   readonly logger: {
@@ -95,6 +103,29 @@ export function buildSkillRegistry(options: BuildSkillRegistryOptions): SkillReg
     registry.register(listSkill);
     registry.register(recentlyUpdatedSkill);
     registry.register(byAuthorSkill);
+  }
+
+  // ── Live-API Trello skills ──────────────────────────────────────
+  // Gated on the platform Power-Up API key (TRELLO_API_KEY). Purely
+  // additive — Trello has no corpus skills today, so there's no name
+  // collision and nothing to fall back from. The per-org read token +
+  // connected boards resolve from `trello_connections` + `sources` at call
+  // time; an org with no Trello board connected gets a graceful "connect on
+  // the Sources page" answer.
+  const trelloApiKey = process.env.TRELLO_API_KEY ?? '';
+  if (trelloApiKey.length === 0) {
+    options.logger.info({}, 'trello.live.disabled');
+  } else {
+    const trelloContext: TrelloLiveContext = {
+      client: new TrelloClient({ apiKey: trelloApiKey }),
+      resolve: buildTrelloSourceResolver({ db: options.db }),
+    };
+    registry.register(buildTrelloCountSkill(trelloContext));
+    registry.register(buildTrelloListSkill(trelloContext));
+    registry.register(buildTrelloByMemberSkill(trelloContext));
+    registry.register(buildTrelloRecentlyActiveSkill(trelloContext));
+    registry.register(buildTrelloBoardBreakdownSkill(trelloContext));
+    options.logger.info({}, 'trello.live.enabled');
   }
 
   options.logger.info(

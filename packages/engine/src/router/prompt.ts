@@ -456,7 +456,50 @@ Utterance: "how does retrieval work under the hood"
 Choice: respond with text. No tool call.
 Reasoning: classic how-to question. RAG over the retrieval pipeline source is correct.
 
-These 50 examples should cover most v1 dogfood patterns. Apply the same logic to every new utterance: identify the verb shape (count / list / who / when / how), check the explicit filters, pick the most conservative tool, or respond with text when no tool fits cleanly.`;
+These 50 examples should cover most v1 dogfood patterns. Apply the same logic to every new utterance: identify the verb shape (count / list / who / when / how), check the explicit filters, pick the most conservative tool, or respond with text when no tool fits cleanly.
+
+TRELLO — the workspace may also have Trello boards connected. Trello skills operate on CARDS, which live in columns (also called lists) on a board — a different surface from GitHub issues/PRs. Routing between the two sources:
+- Route to a trello_* skill when the utterance names Trello, a board, a column/list, a card, or a due date.
+- Route to a github_* skill when it names issues, PRs, or pull requests.
+- When the utterance signals NEITHER source and is a generic "working on" / "assigned to" question, keep the existing GitHub assignee behavior (github_by_assignee_*). Only switch to Trello when the utterance gives a Trello cue.
+
+Trello counting:
+- "how many cards are in Doing" → trello_count {list:"Doing"}
+- "how many cards does alice have on the board" → trello_count {member:"alice"}
+- "count the overdue cards" → trello_count {due:"overdue"}
+- "how many cards are labeled bug on the roadmap board" → trello_count {label:"bug",board:"roadmap"}
+- "how many cards have no due date" → trello_count {due:"none"}
+
+Trello listing:
+- "list the cards in backlog" → trello_list {list:"backlog"}
+- "show me the cards labeled bug" → trello_list {label:"bug"}
+- "what cards are overdue" → trello_list {due:"overdue"}
+- "show the cards on the roadmap board" → trello_list {board:"roadmap"}
+- "list the cards in the doing column assigned to bob" → trello_list {list:"doing",member:"bob"}
+
+Trello by member (who is assigned to a card):
+- "what is alice working on in trello" → trello_by_member {member:"alice"}
+- "what's on bob's plate on the board" → trello_by_member {member:"bob"}
+- "show jamie's cards" → trello_by_member {member:"jamie"}
+- "which cards is alice on in the backlog" → trello_by_member {member:"alice",list:"backlog"}
+
+Trello recently active:
+- "what cards changed recently in trello" → trello_recently_active {}
+- "what got touched on the board this week" → trello_recently_active {}
+- "most recently updated cards" → trello_recently_active {}
+- "recent card activity on the roadmap board" → trello_recently_active {board:"roadmap"}
+
+Trello board state (per-column breakdown):
+- "what's the state of the roadmap board" → trello_board_breakdown {board:"roadmap"}
+- "give me the board breakdown" → trello_board_breakdown {}
+- "how many cards in each column" → trello_board_breakdown {}
+
+Trello refusals (still RAG — text response):
+- "what does the onboarding card say" → respond text (content of a specific card — RAG)
+- "summarize the roadmap board" → respond text (open-ended summary — RAG)
+- "why is the login card blocked" → respond text (reasoning from card body — RAG)
+
+Apply the same conservatism to Trello: pass only the filters the utterance states (board / list / label / member / due / limit), never invent a board or column name, and respond with text when the utterance wants the CONTENT or meaning of a card rather than a count/list/breakdown.`;
 
 export const CLASSIFIER_SYSTEM_PROMPT = SYSTEM_INSTRUCTIONS + ADDITIONAL_EXAMPLES;
 
