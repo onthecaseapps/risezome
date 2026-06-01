@@ -1,5 +1,4 @@
 import type { Skill, SkillResult } from '@risezome/engine/skills';
-import type { GithubIssue } from './types.js';
 import type { LiveSkillContext } from './live-context.js';
 import { mapGithubError } from './error.js';
 import { resolvePerson } from './person.js';
@@ -7,13 +6,11 @@ import { resolvePerson } from './person.js';
 const NAME = 'github_by_assignee_count';
 
 /**
- * Counts open issues currently assigned to a person. Same resolution
- * path as github_by_assignee_list (try-as-login → user search fallback)
- * but returns a count, not a list.
- *
- * First page only — if the user has more than 30 open issues, the
- * response truncates and the summary annotates the count as a lower
- * bound. This is acceptable for v1; pagination is deferred.
+ * Counts open issues currently assigned to a person via the GitHub
+ * Search API. Same resolution path as github_by_assignee_list
+ * (try-as-login → user-search fallback) but returns an exact count
+ * from the Search API's `total_count` — no first-page truncation
+ * (the prior /issues?assignee= approach capped at 30).
  */
 export function buildByAssigneeCountSkill(ctx: LiveSkillContext): Skill {
   return {
@@ -41,12 +38,14 @@ export function buildByAssigneeCountSkill(ctx: LiveSkillContext): Skill {
             summary: `Couldn't find a GitHub user matching "${person}".`,
           };
         }
-        const issues = await ctx.client.getJson<readonly GithubIssue[]>(
+        const q = `repo:${ctx.repo.owner}/${ctx.repo.name} type:issue state:open assignee:${resolved.login}`;
+        const result = await ctx.client.getJson<{ total_count: number }>(
           ctx.auth,
-          `/repos/${ctx.repo.owner}/${ctx.repo.name}/issues`,
-          { assignee: resolved.login, state: 'open' },
+          '/search/issues',
+          { q, per_page: '1' },
         );
-        return formatResult(person, resolved.login, resolved.resolved, issues.length);
+        const count = typeof result.total_count === 'number' ? result.total_count : 0;
+        return formatResult(person, resolved.login, resolved.resolved, count);
       } catch (err) {
         throw mapGithubError(err, NAME);
       }
@@ -62,10 +61,9 @@ function formatResult(
 ): SkillResult {
   const resolutionNote =
     via === 'search' && spoken !== login ? `Resolved "${spoken}" → "${login}". ` : '';
-  // First-page truncation: if exactly 30 there may be more open issues.
-  const suffix = count === 30 ? '+ open issues (first-page count).' : ' open issues.';
+  const noun = count === 1 ? 'open issue' : 'open issues';
   return {
     kind: 'count',
-    summary: `${resolutionNote}${login} has ${String(count)}${suffix}`,
+    summary: `${resolutionNote}${login} has ${String(count)} ${noun}.`,
   };
 }

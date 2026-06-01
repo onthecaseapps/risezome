@@ -1,5 +1,6 @@
 import type { Skill, SkillContext, SkillDbClient, SkillResult } from '@risezome/engine/skills';
 import { ftsPhraseQuery, lookupChunkMatchDocIds, type GithubFilter } from './filter.js';
+import { summarizeCount } from './count-summary.js';
 
 /**
  * github_count — return the count of docs matching a filter. The filter can
@@ -47,7 +48,7 @@ async function doCount(filter: GithubFilter, ctx: SkillContext): Promise<SkillRe
   const count = await countMatching(ctx.db, ctx.orgId, filter);
   return {
     kind: 'count',
-    summary: summarize(count, filter),
+    summary: summarizeCount(count, filter),
     raw: { count, filter },
   };
 }
@@ -86,35 +87,4 @@ async function countMatching(
     throw new Error(`docs count failed: ${String((error as { message?: string }).message ?? error)}`);
   }
   return count ?? 0;
-}
-
-// Verbatim from apps/daemon/src/skills/github/count.ts — the wording is
-// load-bearing for the synthesizer's prompt-tuned behavior. Do not
-// reword without updating snapshot tests in lockstep.
-function summarize(count: number, filter: GithubFilter): string {
-  if (count === 0) return `No matching ${docTypeLabel(filter)}.`;
-  const noun = count === 1 ? docTypeNoun(filter) : docTypePlural(filter);
-  const stateAdj = filter.state !== undefined ? ` ${filter.state}` : '';
-  const labels =
-    filter.labels !== undefined && filter.labels.length > 0
-      ? ` labeled ${filter.labels.map((l) => `'${l}'`).join(' and ')}`
-      : '';
-  const author = filter.author !== undefined ? ` by ${filter.author}` : '';
-  return `${String(count)}${stateAdj} ${noun}${labels}${author}.`;
-}
-
-function docTypeLabel(filter: GithubFilter): string {
-  if (filter.type === 'issue') return 'issues';
-  if (filter.type === 'pull-request') return 'pull requests';
-  return 'docs';
-}
-
-function docTypeNoun(filter: GithubFilter): string {
-  if (filter.type === 'issue') return 'issue';
-  if (filter.type === 'pull-request') return 'pull request';
-  return 'doc';
-}
-
-function docTypePlural(filter: GithubFilter): string {
-  return docTypeLabel(filter);
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { buildByAssigneeCountSkill } from '../../../src/skills/github/by_assignee_count.js';
 import type { LiveSkillContext } from '../../../src/skills/github/live-context.js';
 import { GithubClient } from '../../../src/skills/github/client.js';
@@ -16,112 +16,86 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function makeIssue(num: number): unknown {
+/**
+ * Route fetch by URL. The count now comes from the GitHub Search API
+ * (/search/issues → { total_count }), not a /repos/.../issues list.
+ * Person resolution hits /users/{login} (try-as-login) then
+ * /search/users (fallback).
+ */
+function routedFetch(routes: {
+  searchIssuesTotal?: number;
+  userLookup?: { status: number; login?: string };
+  userSearch?: string[];
+}): typeof fetch {
+  return ((input: string | URL | Request) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/search/issues')) {
+      return Promise.resolve(jsonResponse({ total_count: routes.searchIssuesTotal ?? 0 }));
+    }
+    if (url.includes('/search/users')) {
+      return Promise.resolve(jsonResponse({ items: (routes.userSearch ?? []).map((login) => ({ login })) }));
+    }
+    if (url.includes('/users/')) {
+      const u = routes.userLookup ?? { status: 200, login: 'Nath5' };
+      if (u.status !== 200) return Promise.resolve(new Response('', { status: u.status }));
+      return Promise.resolve(jsonResponse({ login: u.login }));
+    }
+    throw new Error(`unexpected url: ${url}`);
+  }) as typeof fetch;
+}
+
+function ctxWith(fetchImpl: typeof fetch): LiveSkillContext {
   return {
-    id: num,
-    number: num,
-    title: `t${String(num)}`,
-    state: 'open',
-    html_url: '',
-    body: null,
-    user: { login: 'jamie' },
-    assignees: [{ login: 'Nath5' }],
-    labels: [],
-    created_at: '',
-    updated_at: '',
+    client: new GithubClient({ fetchImpl }),
+    auth: AUTH,
+    repo: { owner: 'o', name: 'r' },
   };
 }
 
 describe('github_by_assignee_count', () => {
-  it('returns kind:count with the count in the summary', async () => {
-    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
-      const url = typeof input === 'string' ? input : input.toString();
-      if (url.includes('/users/')) return Promise.resolve(jsonResponse({ login: 'Nath5' }));
-      return Promise.resolve(jsonResponse([makeIssue(1), makeIssue(2), makeIssue(3), makeIssue(4), makeIssue(5)]));
-    });
-    const ctx: LiveSkillContext = {
-      client: new GithubClient({ fetchImpl }),
-      auth: AUTH,
-      repo: { owner: 'o', name: 'r' },
-    };
+  it('returns kind:count with the total_count in the summary', async () => {
+    const ctx = ctxWith(routedFetch({ searchIssuesTotal: 5, userLookup: { status: 200, login: 'Nath5' } }));
     const skill = buildByAssigneeCountSkill(ctx);
     const result = await skill.handler({ person: 'Nath5' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.kind).toBe('count');
-    expect(result.summary).toContain('Nath5 has 5');
-    expect(result.summary).toContain('open issues');
+    expect(result.summary).toBe('Nath5 has 5 open issues.');
     expect(result.items).toBeUndefined();
   });
 
-  it('zero issues returns "0 open issues"', async () => {
-    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
-      const url = typeof input === 'string' ? input : input.toString();
-      if (url.includes('/users/')) return Promise.resolve(jsonResponse({ login: 'Nath5' }));
-      return Promise.resolve(jsonResponse([]));
-    });
-    const ctx: LiveSkillContext = {
-      client: new GithubClient({ fetchImpl }),
-      auth: AUTH,
-      repo: { owner: 'o', name: 'r' },
-    };
+  it('singular noun for a count of 1', async () => {
+    const ctx = ctxWith(routedFetch({ searchIssuesTotal: 1, userLookup: { status: 200, login: 'Nath5' } }));
     const skill = buildByAssigneeCountSkill(ctx);
     const result = await skill.handler({ person: 'Nath5' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
-    expect(result.summary).toContain('0');
+    expect(result.summary).toBe('Nath5 has 1 open issue.');
   });
 
-  it('30 results triggers first-page truncation annotation', async () => {
-    const issues = Array.from({ length: 30 }, (_, i) => makeIssue(i + 1));
-    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
-      const url = typeof input === 'string' ? input : input.toString();
-      if (url.includes('/users/')) return Promise.resolve(jsonResponse({ login: 'Nath5' }));
-      return Promise.resolve(jsonResponse(issues));
-    });
-    const ctx: LiveSkillContext = {
-      client: new GithubClient({ fetchImpl }),
-      auth: AUTH,
-      repo: { owner: 'o', name: 'r' },
-    };
+  it('zero issues returns "0 open issues"', async () => {
+    const ctx = ctxWith(routedFetch({ searchIssuesTotal: 0, userLookup: { status: 200, login: 'Nath5' } }));
     const skill = buildByAssigneeCountSkill(ctx);
     const result = await skill.handler({ person: 'Nath5' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
-    expect(result.summary).toContain('30+');
-    expect(result.summary).toContain('first-page count');
+    expect(result.summary).toBe('Nath5 has 0 open issues.');
+  });
+
+  it('counts above 30 are exact (no first-page truncation)', async () => {
+    const ctx = ctxWith(routedFetch({ searchIssuesTotal: 147, userLookup: { status: 200, login: 'Nath5' } }));
+    const skill = buildByAssigneeCountSkill(ctx);
+    const result = await skill.handler({ person: 'Nath5' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
+    expect(result.summary).toBe('Nath5 has 147 open issues.');
+    expect(result.summary).not.toContain('+');
   });
 
   it('person unresolved → graceful summary, no issues query', async () => {
-    let callCount = 0;
-    const fetchImpl: typeof fetch = (() => {
-      callCount += 1;
-      if (callCount === 1) return Promise.resolve(new Response('', { status: 404 }));
-      if (callCount === 2) return Promise.resolve(jsonResponse({ items: [] }));
-      throw new Error('unexpected call');
-    });
-    const ctx: LiveSkillContext = {
-      client: new GithubClient({ fetchImpl }),
-      auth: AUTH,
-      repo: { owner: 'o', name: 'r' },
-    };
+    const ctx = ctxWith(routedFetch({ userLookup: { status: 404 }, userSearch: [] }));
     const skill = buildByAssigneeCountSkill(ctx);
     const result = await skill.handler({ person: 'ghost' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.summary).toContain("Couldn't find a GitHub user");
-    expect(callCount).toBe(2);
   });
 
   it('search-resolved person includes "Resolved X → Y" prefix', async () => {
-    let call = 0;
-    const fetchImpl: typeof fetch = (() => {
-      call += 1;
-      if (call === 1) return Promise.resolve(new Response('', { status: 404 }));
-      if (call === 2) return Promise.resolve(jsonResponse({ items: [{ login: 'Nath5' }] }));
-      return Promise.resolve(jsonResponse([makeIssue(1)]));
-    });
-    const ctx: LiveSkillContext = {
-      client: new GithubClient({ fetchImpl }),
-      auth: AUTH,
-      repo: { owner: 'o', name: 'r' },
-    };
+    const ctx = ctxWith(routedFetch({ searchIssuesTotal: 1, userLookup: { status: 404 }, userSearch: ['Nath5'] }));
     const skill = buildByAssigneeCountSkill(ctx);
     const result = await skill.handler({ person: 'nathan' }, { db: null as never, orgId: 'test-org', now: FAKE_CTX_FN });
     expect(result.summary).toContain('Resolved "nathan" → "Nath5"');
+    expect(result.summary).toContain('Nath5 has 1 open issue.');
   });
-
-  void vi;
 });
