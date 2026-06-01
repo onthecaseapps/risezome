@@ -37,6 +37,7 @@ import { buildSkillRegistry } from './skills/index.js';
 import { adaptRecallMessage } from './recall-adapter.js';
 import { verifyBotWsJwt, type BotWsJwtPayload } from './jwt.js';
 import { handleLocalDebugWs } from './debug/local-debug-ws.js';
+import { registerEvalRoutes } from './debug/eval-routes.js';
 import {
   createServiceClient,
   markRecordingIfFirst,
@@ -135,7 +136,9 @@ async function main(): Promise<void> {
   }
   console.log(`[bot-worker] skill registry size: ${String(skillRegistry.size())}`);
 
-  const fastify = Fastify({ logger: { level: 'info' } });
+  // maxParamLength default is 100; the eval endpoints carry the auth JWT
+  // (~270 chars) as a :jwt path param, so raise the cap or those routes 404.
+  const fastify = Fastify({ logger: { level: 'info' }, maxParamLength: 2000 });
   await fastify.register(websocket);
 
   fastify.get('/health', () => ({ ok: true, runtimes: runtimes.size }));
@@ -302,6 +305,10 @@ async function main(): Promise<void> {
         });
       },
     });
+
+    // Eval dev-page endpoints (portal /debug/eval). Same LOCAL_DEBUG_ENABLED
+    // gate + BOT_WORKER_SECRET JWT auth as the WS above.
+    registerEvalRoutes(instance, { db, secret, voyageKey, anthropicKey });
   });
 
   try {

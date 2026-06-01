@@ -2,179 +2,35 @@
  * Corpus eval replay runner (U1).
  *
  * Replays each labeled question in golden-questions.jsonl through the REAL
- * retrieval + synthesis path (embed -> hybridSearch -> enrich -> synthesize)
- * and reports per-question recall on the labeled must-surface set plus the
- * synthesized answer / refusal. This is the yardstick every later phase of
- * the Claude-augmented RAG plan reports against.
+ * retrieval + synthesis path (embed -> hybridSearch -> dedupe -> parent-expand
+ * -> synthesize -> verify -> score) and reports per-question pass/recall plus
+ * the synthesized answer / refusal. The pipeline itself lives in
+ * src/corpus-eval.ts (shared with the dev-page endpoints); this file is the CLI
+ * wrapper + report formatting.
  *
  * Usage (from apps/bot-worker):
- *   pnpm tsx --env-file=.env eval/replay.ts <orgId>
+ *   pnpm tsx --env-file=.env eval/replay.ts <orgId> [--metrics]
  *   # or set RISEZOME_EVAL_ORG_ID
  *
  * Env: SUPABASE_URL, SUPABASE_SECRET_KEY, VOYAGE_API_KEY, ANTHROPIC_API_KEY.
  * Read-only against the corpus; no writes.
  */
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import { VoyageEmbedder } from '@risezome/engine/embed';
-import {
-  AnthropicSynthesizer,
-  parseSynthesisOutput,
-  verifyCitations,
-  type SynthesisSource,
-} from '@risezome/engine/synthesize';
-import {
-  makeAnthropicJudge,
-  scoreRagas,
-  meanScores,
-  type Judge,
-  type RagasScores,
-} from '@risezome/engine/eval';
+import { AnthropicSynthesizer } from '@risezome/engine/synthesize';
+import { makeAnthropicJudge, meanScores, type RagasScores } from '@risezome/engine/eval';
 import { createServiceClient } from '../src/db.js';
-import { hybridSearch } from '../src/corpus-search.js';
-import { optionalReranker } from '../src/reranker.js';
-import { expandWinnersToParents, parentDocEnabled, dedupeByDoc, type WinningChunk } from '../src/parent-doc.js';
 import {
-  scoreQuestion,
+  evaluateQuestion,
+  loadGoldenSet,
   summarize,
-  type GoldenQuestion,
-  type RetrievedDoc,
-  type QuestionResult,
-} from './lib/corpus-replay.js';
-
-interface ScoredResult {
-  readonly result: QuestionResult;
-  readonly scores: RagasScores | null;
-}
-
-const TOP_K = 5;
-
-const silentLogger = { warn: () => undefined };
+  type EvalDeps,
+  type EvalQuestionView,
+} from '../src/corpus-eval.js';
 
 function requireEnv(name: string): string {
   const v = process.env[name];
   if (v === undefined || v.length === 0) throw new Error(`Missing required env var: ${name}`);
   return v;
-}
-
-function loadGoldenSet(): GoldenQuestion[] {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const raw = readFileSync(join(here, 'golden-questions.jsonl'), 'utf8');
-  return raw
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
-    .map((l) => JSON.parse(l) as GoldenQuestion);
-}
-
-async function replayOne(
-  deps: {
-    db: ReturnType<typeof createServiceClient>;
-    embedder: VoyageEmbedder;
-    synthesizer: AnthropicSynthesizer;
-    orgId: string;
-    judge: Judge | null;
-  },
-  question: GoldenQuestion,
-): Promise<ScoredResult> {
-  // 1) embed the question
-  const embedResult = await deps.embedder.embed({ items: [{ text: question.q, domain: 'text' }] });
-  const vec = embedResult.vectors[0]?.vector;
-  if (vec === undefined) {
-    return { result: scoreQuestion(question, [], '', true), scores: null };
-  }
-  const queryVectorLiteral = `[${Array.from(vec).join(',')}]`;
-
-  // 2) hybrid search (the real query path)
-  const hits = await hybridSearch(deps.db, {
-    orgId: deps.orgId,
-    queryVectorLiteral,
-    queryText: question.q,
-    limit: TOP_K,
-    reranker: optionalReranker(),
-    logger: silentLogger,
-  });
-  if (hits.length === 0) {
-    return { result: scoreQuestion(question, [], '', true), scores: null };
-  }
-
-  // 3) enrich chunk -> doc (mirrors apps/bot-worker/src/retrieval.ts)
-  const chunkIds = hits.map((h) => h.chunk_id);
-  const { data: chunkRows } = await deps.db
-    .from('doc_chunks')
-    .select('chunk_id, doc_id, text, position')
-    .in('chunk_id', chunkIds);
-  const chunkById = new Map(
-    (chunkRows ?? []).map((c) => [
-      c.chunk_id as string,
-      { docId: c.doc_id as string, text: c.text as string, position: c.position as number },
-    ]),
-  );
-  const docIds = [...new Set([...chunkById.values()].map((c) => c.docId))];
-  const { data: docRows } = await deps.db.from('docs').select('id, title').in('id', docIds);
-  const titleById = new Map((docRows ?? []).map((d) => [d.id as string, d.title as string]));
-
-  // Parent-document retrieval (U8): collapse multiple chunks of one doc to a
-  // single best-ranked source, then expand the survivor to its parent context
-  // for synthesis. Citations/recall key off the child. No-op (raw per-chunk
-  // hits, child text) when the flag is off — keeps parity with production.
-  const sourceHits = parentDocEnabled()
-    ? dedupeByDoc(hits, (h) => chunkById.get(h.chunk_id)?.docId)
-    : hits;
-  const winners: WinningChunk[] = sourceHits.flatMap((h) => {
-    const c = chunkById.get(h.chunk_id);
-    return c === undefined ? [] : [{ chunkId: h.chunk_id, docId: c.docId, position: c.position, text: c.text }];
-  });
-  const expandedByChunk = parentDocEnabled()
-    ? await expandWinnersToParents(deps.db, winners)
-    : new Map<string, string>();
-
-  const retrieved: RetrievedDoc[] = [];
-  const sources: SynthesisSource[] = [];
-  sourceHits.forEach((h, i) => {
-    const chunk = chunkById.get(h.chunk_id);
-    if (chunk === undefined) return;
-    const title = titleById.get(chunk.docId) ?? chunk.docId;
-    retrieved.push({ chunkId: h.chunk_id, docId: chunk.docId, title, score: h.score });
-    // U8: judge relevance from the tight child (`focus`), formulate from the
-    // expanded parent (`text`). Equal when expansion was a no-op / disabled.
-    sources.push({
-      rank: i + 1,
-      title,
-      text: expandedByChunk.get(h.chunk_id) ?? chunk.text,
-      focus: chunk.text,
-      docId: chunk.docId,
-    });
-  });
-
-  // 4) synthesize (consume the stream, parse for refusal + body)
-  let accumulated = '';
-  for await (const chunk of deps.synthesizer.synthesize({ utterance: question.q, sources })) {
-    if (chunk.type === 'textDelta') accumulated += chunk.delta;
-  }
-  const parsed = parseSynthesisOutput(accumulated, sources.length);
-  // Mirror production grounded-or-nothing: a non-refusal answer whose citations
-  // all fail verification is suppressed (rendered as nothing), so score it as a
-  // non-answer. Without this the eval would "pass" answers that are invisible
-  // in production. (This is the suppression class the citation-verification
-  // fixes target — keep it exercised so we don't regress.)
-  const { verified } = verifyCitations(parsed.citations, sources);
-  const suppressed = !parsed.isRefusal && verified.length === 0;
-  const effectiveRefusal = parsed.isRefusal || suppressed;
-  const result = scoreQuestion(question, retrieved, parsed.text, effectiveRefusal);
-
-  // 5) optional RAGAS metrics (judge calls; flag-gated). Skip when suppressed —
-  // a hidden answer isn't what the user sees, so it shouldn't score.
-  let scores: RagasScores | null = null;
-  if (deps.judge !== null && !effectiveRefusal) {
-    scores = await scoreRagas(
-      { question: question.q, answer: parsed.text, contexts: sources.map((s) => s.text) },
-      deps.judge,
-    );
-  }
-
-  return { result, scores };
 }
 
 async function main(): Promise<void> {
@@ -185,7 +41,7 @@ async function main(): Promise<void> {
   }
   const anthropicKey = requireEnv('ANTHROPIC_API_KEY');
   const metricsEnabled = process.env.RISEZOME_EVAL_METRICS === 'true' || process.argv.includes('--metrics');
-  const deps = {
+  const deps: EvalDeps = {
     db: createServiceClient(),
     embedder: new VoyageEmbedder({ apiKey: requireEnv('VOYAGE_API_KEY') }),
     synthesizer: new AnthropicSynthesizer({ apiKey: anthropicKey }),
@@ -193,31 +49,30 @@ async function main(): Promise<void> {
     judge: metricsEnabled ? makeAnthropicJudge({ apiKey: anthropicKey }) : null,
   };
 
-  const questions = loadGoldenSet();
-  const scored: ScoredResult[] = [];
-  for (const q of questions) {
+  const views: EvalQuestionView[] = [];
+  for (const q of loadGoldenSet()) {
     process.stderr.write(`  replaying: ${q.q}\n`);
-    scored.push(await replayOne(deps, q));
+    views.push(await evaluateQuestion(deps, q));
   }
 
-  const results: QuestionResult[] = scored.map((s) => s.result);
-  const summary = summarize(results);
-  // Human-readable report to stderr; machine-readable JSON to stdout.
+  const summary = summarize(views.map((v) => v.result));
   process.stderr.write(
     `\n=== Corpus eval: ${String(summary.passed)}/${String(summary.total)} pass ` +
       `(${(summary.passRate * 100).toFixed(0)}%), mean recall ` +
       `${summary.meanRecall === null ? 'n/a' : summary.meanRecall.toFixed(2)} ===\n`,
   );
-  for (const r of summary.results) {
+  for (const v of views) {
+    const r = v.result;
     const mark = r.pass ? 'PASS' : 'FAIL';
     const recallStr = r.recall === null ? '—' : `${(r.recall * 100).toFixed(0)}%`;
+    const tag = v.suppressed ? 'suppressed' : `refusal=${String(r.isRefusal)}`;
     process.stderr.write(
-      `  [${mark}] recall=${recallStr} refusal=${String(r.isRefusal)} :: ${r.q}\n` +
+      `  [${mark}] recall=${recallStr} ${tag} :: ${r.q}\n` +
         (r.missed.length > 0 ? `         missed: ${r.missed.join(', ')}\n` : ''),
     );
   }
 
-  const allScores = scored.map((s) => s.scores).filter((s): s is RagasScores => s !== null);
+  const allScores = views.map((v) => v.ragas).filter((s): s is RagasScores => s !== null);
   const ragasMean = allScores.length > 0 ? meanScores(allScores) : null;
   if (ragasMean !== null) {
     const fmt = (n: number | null): string => (n === null ? 'n/a' : n.toFixed(2));
@@ -231,7 +86,7 @@ async function main(): Promise<void> {
   }
 
   process.stdout.write(
-    JSON.stringify({ ...summary, ragas: { mean: ragasMean, perQuestion: scored.map((s) => s.scores) } }, null, 2),
+    JSON.stringify({ ...summary, ragas: { mean: ragasMean, perQuestion: views.map((v) => v.ragas) } }, null, 2),
   );
 }
 

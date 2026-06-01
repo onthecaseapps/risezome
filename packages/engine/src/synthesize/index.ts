@@ -8,6 +8,7 @@ export {
   parseSynthesisOutput,
   stripStatusPrefix,
   verifyCitations,
+  verifyCitationsDetailed,
   citationsToRanks,
   REFUSAL_SENTINEL,
   STATUS_ANSWER,
@@ -20,4 +21,6 @@ export {
   type SynthesisStatus,
   type StatusGate,
   type CitationVerification,
+  type CitationDetail,
+  type CitationStatus,
 } from './prompt.js';

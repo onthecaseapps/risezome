@@ -616,15 +616,33 @@ const MIN_GROUNDING_FRAGMENT = 20;
  * This is the safety net behind grounding: a quote that bears no resemblance
  * to the cited document gets caught here.
  */
-export function verifyCitations(
+export type CitationStatus =
+  /** Quote is verbatim (strict or punctuation-loose) in the cited document. */
+  | 'verified'
+  /** Quote isn't verbatim but shares a substantial fragment with the cited
+   *  document (paraphrase) — kept as a bare citation, quote/highlight stripped. */
+  | 'downgraded'
+  /** Quote bears no real resemblance to the cited document — dropped. */
+  | 'dropped';
+
+/** Per-citation verification detail (drives the eval page's breakdown). Bare
+ *  citations (no quote) are always 'verified'. */
+export interface CitationDetail {
+  readonly rank: number;
+  readonly position: number;
+  readonly quote: string | undefined;
+  readonly status: CitationStatus;
+}
+
+/** Classify each citation as verified / downgraded / dropped — the single
+ *  source of truth for citation grounding. `verifyCitations` derives its
+ *  summary from this. */
+export function verifyCitationsDetailed(
   citations: readonly ParsedCitation[],
   sources: readonly { readonly text: string; readonly docId?: string }[],
-): CitationVerification {
+): CitationDetail[] {
   const strictSources = sources.map((s) => normalizeForMatch(s.text));
   const looseSources = sources.map((s) => looseNormalizeForMatch(s.text));
-  const verified: ParsedCitation[] = [];
-  let droppedQuoted = 0;
-  let downgradedToBare = 0;
 
   // A quote is present in source `i` if it matches strictly OR (fallback)
   // under loose punctuation-tolerant normalization.
@@ -632,45 +650,52 @@ export function verifyCitations(
     strictSources[i]?.includes(strictNeedle) === true ||
     looseSources[i]?.includes(looseNeedle) === true;
 
-  for (const c of citations) {
-    if (c.quote === undefined) {
-      verified.push(c);
-      continue;
-    }
+  return citations.map((c): CitationDetail => {
+    const base = { rank: c.rank, position: c.position, quote: c.quote };
+    if (c.quote === undefined) return { ...base, status: 'verified' }; // bare
+    const cited = c.rank - 1;
+    if (cited < 0 || cited >= sources.length) return { ...base, status: 'dropped' };
+
     const strictNeedle = normalizeForMatch(c.quote);
     const looseNeedle = looseNormalizeForMatch(c.quote);
-    const cited = c.rank - 1;
-    if (cited < 0 || cited >= sources.length) {
-      droppedQuoted += 1;
-      continue;
-    }
-    // The candidate texts a quote may legitimately come from: the cited source
-    // plus any retrieved source sharing its docId (one doc split across ranks).
+    // Candidate texts: the cited source + any retrieved source sharing its
+    // docId (one doc split across ranks).
     const citedDocId = sources[cited]?.docId;
     const candidates = [cited, ...sources.flatMap((s, i) =>
       i !== cited && citedDocId !== undefined && s.docId === citedDocId ? [i] : [],
     )];
 
     if (candidates.some((i) => presentIn(i, strictNeedle, looseNeedle))) {
-      verified.push(c); // verbatim (strict or punctuation-loose) — keep the quote
-      continue;
+      return { ...base, status: 'verified' };
     }
-    // Not verbatim. If the quote shares a substantial contiguous fragment with
-    // the cited document, the model paraphrased real content — keep a BARE
-    // citation (grounding preserved, no highlight). Otherwise it reads as
-    // fabrication / wrong-source and is dropped.
+    // Not verbatim — paraphrase (keep bare) if it shares a substantial fragment
+    // with the cited document, else fabrication/wrong-source (drop).
     const maxFragment = Math.max(
       0,
       ...candidates.map((i) => longestCommonSubstringLen(looseNeedle, looseSources[i] ?? '')),
     );
-    if (maxFragment >= MIN_GROUNDING_FRAGMENT) {
-      verified.push({ ...c, quote: undefined });
-      downgradedToBare += 1;
-    } else {
-      droppedQuoted += 1;
-    }
-  }
-  return { verified, droppedQuoted, downgradedToBare };
+    return { ...base, status: maxFragment >= MIN_GROUNDING_FRAGMENT ? 'downgraded' : 'dropped' };
+  });
+}
+
+export function verifyCitations(
+  citations: readonly ParsedCitation[],
+  sources: readonly { readonly text: string; readonly docId?: string }[],
+): CitationVerification {
+  const detail = verifyCitationsDetailed(citations, sources);
+  const verified: ParsedCitation[] = detail
+    .filter((d) => d.status !== 'dropped')
+    .map((d) => ({
+      rank: d.rank,
+      position: d.position,
+      // Downgraded citations lose their quote (kept as a bare citation).
+      quote: d.status === 'downgraded' ? undefined : d.quote,
+    }));
+  return {
+    verified,
+    droppedQuoted: detail.filter((d) => d.status === 'dropped').length,
+    downgradedToBare: detail.filter((d) => d.status === 'downgraded').length,
+  };
 }
 
 /** Helper for callers that need the legacy dedup'd-sorted ranks shape
