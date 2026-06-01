@@ -77,7 +77,7 @@ async function collect(iter: AsyncIterable<SynthesisChunk>): Promise<SynthesisCh
 }
 
 function captureCalls(
-  handlers: Array<(req: Request) => Promise<Response> | Response>,
+  handlers: ((req: Request) => Promise<Response> | Response)[],
 ): { calls: Request[]; fetchImpl: typeof fetch } {
   const calls: Request[] = [];
   let i = 0;
@@ -86,7 +86,7 @@ function captureCalls(
     calls.push(req);
     const handler = handlers[i++] ?? handlers[handlers.length - 1]!;
     return handler(req);
-  }) as typeof fetch;
+  });
   return { calls, fetchImpl };
 }
 
@@ -118,10 +118,10 @@ describe('AnthropicSynthesizer.synthesize', () => {
     expect(req.headers.get('x-api-key')).toBe('sk-test');
     expect(req.headers.get('anthropic-version')).toBe(ANTHROPIC_VERSION);
     const body = (await req.json()) as Record<string, unknown>;
-    expect(body['model']).toBe(DEFAULT_ANTHROPIC_MODEL);
-    expect(body['stream']).toBe(true);
-    expect(Array.isArray(body['system'])).toBe(true);
-    const systemBlocks = body['system'] as Array<{ type: string; cache_control?: unknown }>;
+    expect(body.model).toBe(DEFAULT_ANTHROPIC_MODEL);
+    expect(body.stream).toBe(true);
+    expect(Array.isArray(body.system)).toBe(true);
+    const systemBlocks = body.system as { type: string; cache_control?: unknown }[];
     expect(systemBlocks.length).toBeGreaterThanOrEqual(1);
     // The LAST block must carry cache_control: ephemeral; no other block should.
     expect(systemBlocks[systemBlocks.length - 1]!.cache_control).toEqual({ type: 'ephemeral' });
@@ -132,8 +132,8 @@ describe('AnthropicSynthesizer.synthesize', () => {
 
   it('reports cache_read_input_tokens on a cache hit', async () => {
     const events = JSON.parse(JSON.stringify(SUCCESS_EVENTS)) as typeof SUCCESS_EVENTS;
-    const startMessage = events[0]!.data['message'] as Record<string, unknown>;
-    startMessage['usage'] = {
+    const startMessage = events[0]!.data.message as Record<string, unknown>;
+    startMessage.usage = {
       input_tokens: 12,
       cache_creation_input_tokens: 0,
       cache_read_input_tokens: 4200,
@@ -168,7 +168,7 @@ describe('AnthropicSynthesizer.synthesize', () => {
 
   it('retries on 429 honoring Retry-After', async () => {
     let attempts = 0;
-    const retryWait: Array<{ waitMs: number; reason: string }> = [];
+    const retryWait: { waitMs: number; reason: string }[] = [];
     const handlers = [
       () => {
         attempts += 1;
@@ -353,12 +353,18 @@ describe('AnthropicSynthesizer.synthesize', () => {
     });
 
     const promise = collect(synth.synthesize(SAMPLE_INPUT));
-    // Allow backoffs to elapse
-    await vi.advanceTimersByTimeAsync(60_000);
-    await expect(promise).rejects.toMatchObject({
+    // Attach the rejection handler BEFORE advancing timers. Otherwise the
+    // rejection settles during advanceTimersByTimeAsync — before the
+    // expect().rejects handler is attached — and Node reports it as an
+    // unhandled rejection (the assertion still passes, but vitest flags the
+    // run). Building the assertion promise here attaches the catch upfront.
+    const assertion = expect(promise).rejects.toMatchObject({
       constructor: SynthesisProviderError,
       kind: 'network-error',
     });
+    // Allow backoffs to elapse
+    await vi.advanceTimersByTimeAsync(60_000);
+    await assertion;
     vi.useRealTimers();
     expect(attempts).toBe(4);
   });
