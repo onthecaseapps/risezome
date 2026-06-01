@@ -70,10 +70,6 @@ interface SynthesisStartEvent {
   sourceCardIds: string[];
   traceId: string;
   utteranceId: string;
-  /** When present, the page should REPLACE the prior synthesis card
-   *  with this one (same topic, refined question). When absent, the
-   *  new synthesis stands alone as a new card. */
-  replacesSynthesisId?: string;
 }
 
 interface SynthesisDeltaEvent {
@@ -241,8 +237,8 @@ function DebugInner({
       }
       case 'synthesisStart': {
         const s = evt as SynthesisStartEvent;
-        // Stacks newest-first, matching the production live page (which
-        // doesn't special-case replacement). `utteranceId` is debug-only.
+        // Stacks newest-first, matching the production live page.
+        // `utteranceId` is debug-only.
         dispatch({
           type: 'synthesisStart',
           start: { synthesisId: s.synthesisId, sourceCardIds: s.sourceCardIds, traceId: s.traceId },

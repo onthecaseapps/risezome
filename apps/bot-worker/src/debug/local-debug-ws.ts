@@ -44,7 +44,6 @@ import {
 import { hybridSearch } from '../corpus-search';
 import { optionalReranker } from '../reranker';
 import { expandWinnersToParents, parentDocEnabled, dedupeByDoc, type WinningChunk } from '../parent-doc';
-import { shouldReplaceSynthesis, type PriorSynthesis } from './synthesis-replace';
 import { optionalQueryExpander } from '../query-expand';
 import { augmentQuery } from '@risezome/engine/query-expand';
 import { shouldExpandOnMiss } from '@risezome/engine/query-route';
@@ -220,15 +219,9 @@ export async function handleLocalDebugWs(
   //   long-running sessions don't accumulate stale context. Passed to
   //   the synthesizer as `recentContext` so Claude can resolve pronouns
   //   + fragments without an explicit pre-merge step.
-  //
-  // priorSynth — last completed (non-refusal) synthesis. Used to decide
-  //   whether the next synthesis should REPLACE the prior card (same
-  //   topic, refined question) or stand alone (different topic). The
-  //   page consumes the `replacesSynthesisId` field on synthesisStart.
   let currentSynthesisAbort: AbortController | null = null;
   let currentSynthesisId: string | null = null;
   const recentFinals: { text: string; at: number }[] = [];
-  let priorSynth: PriorSynthesis | null = null;
 
   runner.on('frame', (frame: AudioFrame) => {
     engine.sendFrame(frame.samples);
@@ -334,7 +327,6 @@ export async function handleLocalDebugWs(
       utteranceId: t.utterance.utteranceId,
       recentContext,
       lastSummary: lastSummaryAtBuild,
-      priorSynth,
       socket,
       args,
       embedder,
@@ -343,8 +335,7 @@ export async function handleLocalDebugWs(
       routerClassifier,
       skillRegistry,
       abortSignal: ac.signal,
-      onComplete: (sourceDocIds, answerText) => {
-        priorSynth = { synthesisId, sourceDocIds, completedAt: Date.now() };
+      onComplete: (answerText) => {
         // Close the loop: the grounded answer was shown, not spoken, so feed
         // it to the summarizer to retire the open question it resolved.
         summarizerRuntime.recordAssistantAnswer(answerText);
@@ -414,11 +405,6 @@ interface PipelineArgs {
    *  ONCE at fire time so a mid-flight summary refresh can't produce
    *  a torn read. */
   readonly lastSummary: MeetingSummary | null;
-  /** Last completed synthesis (if any). Used to compute
-   *  replacesSynthesisId on the new synthesisStart so the page can
-   *  replace the prior card in place when the new answer is a
-   *  refinement on the same topic. */
-  readonly priorSynth: PriorSynthesis | null;
   readonly socket: WebSocket;
   readonly args: LocalDebugHandlerArgs;
   readonly embedder: VoyageEmbedder;
@@ -431,10 +417,10 @@ interface PipelineArgs {
   readonly skillRegistry: SkillRegistry;
   readonly abortSignal: AbortSignal;
   /** Called after the pipeline completes successfully (non-refusal) with the
-   *  stable source DOC ids and the grounded answer body, so the caller can
-   *  update `priorSynth` AND feed the answer to the summarizer (close-the-loop:
-   *  an answered question retires from the next rolling summary). */
-  readonly onComplete: (sourceDocIds: readonly string[], answerText: string) => void;
+   *  grounded answer body, so the caller can feed it to the summarizer
+   *  (close-the-loop: an answered question retires from the next rolling
+   *  summary). */
+  readonly onComplete: (answerText: string) => void;
 }
 
 /**
@@ -646,9 +632,6 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
   // entirely when retrieval found nothing but a tool answered).
   const sources: SynthesisSource[] = [];
   const cardIds: string[] = [];
-  // Stable doc ids of the cited sources — the basis for the replace-vs-new
-  // decision (card ids are fresh per retrieval and never overlap).
-  const sourceDocIds: string[] = [];
   if (hits.length > 0) {
     // ── Enrich with chunk + doc metadata
     const chunkIds = hits.map((h) => h.chunk_id);
@@ -709,7 +692,6 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       if (doc === undefined) continue;
       const cardId = `dbg_${randomUUID()}`;
       cardIds.push(cardId);
-      sourceDocIds.push(chunk.doc_id);
       const expanded = expandedByChunk.get(hit.chunk_id) ?? chunk.text;
       // Card body leads with the matched excerpt (focus) when U8 expanded a
       // SUMMARY chunk to body chunks (so the summary the model quoted is in the
@@ -758,18 +740,6 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
   const synthesisSources = toolSource !== null ? [toolSource, ...sources] : sources;
   const cardRankOffset = toolSource !== null ? 1 : 0;
 
-  // Decide whether this synthesis REPLACES the prior card or stands alone:
-  // high overlap with the prior's source DOCS (not card ids) + within the
-  // replacement window. The page receives `replacesSynthesisId` on
-  // synthesisStart and swaps in place rather than stacking.
-  const replacesSynthesisId = shouldReplaceSynthesis({
-    currentDocIds: sourceDocIds,
-    prior: p.priorSynth,
-    now: Date.now(),
-  })
-    ? p.priorSynth!.synthesisId
-    : null;
-
   // ── Synthesize, stream textDeltas, parse on done
   args.logger.info(
     {
@@ -779,7 +749,6 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       hasToolSource: toolSource !== null,
       totalSourceChars: synthesisSources.reduce((n, s) => n + s.text.length, 0),
       recentContextSize: p.recentContext.length,
-      replacesSynthesisId,
     },
     'local-debug.synthesis.start',
   );
@@ -894,7 +863,6 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
           sourceCardIds: cardIds,
           traceId,
           utteranceId: p.utteranceId,
-          ...(replacesSynthesisId !== null ? { replacesSynthesisId } : {}),
         });
         send(socket, { type: 'synthesisDelta', synthesisId, delta: parsed.text });
         send(socket, {
@@ -905,9 +873,10 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
           citations: richCitations,
           usage: chunk.usage,
         });
-        // Notify caller so it can update its priorSynth tracker (grounded only —
-        // a declined answer shouldn't anchor the next "replaces" comparison).
-        p.onComplete(sourceDocIds, parsed.text);
+        // Close the loop: feed the grounded answer to the summarizer so the
+        // question it resolved retires from the next rolling summary (grounded
+        // only — a declined answer resolves nothing).
+        p.onComplete(parsed.text);
         return;
       }
     }
