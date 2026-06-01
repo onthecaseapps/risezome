@@ -1,6 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import {
+  AppStateProvider,
+  CardActionsProvider,
+  SynthesisActionsProvider,
+  SynthesisStream,
+  initialAppState,
+  useAppDispatch,
+  useAppState,
+  type CardActions,
+  type CardEvent as HudCardEvent,
+  type SynthesisActions,
+} from '@risezome/hud-ui';
 
 /**
  * Client component for the local-mic debug page. Opens a WebSocket to
@@ -131,15 +143,6 @@ type DebugEvent =
   | SummaryEvent
   | OtherEvent;
 
-interface SynthesisRecord {
-  synthesisId: string;
-  text: string;
-  streaming: boolean;
-  citations: SynthesisCitation[];
-  refused: boolean;
-  aborted: boolean;
-  utteranceId: string;
-}
 
 interface SkillResultRecord {
   traceId: string;
@@ -157,20 +160,37 @@ interface CardGroup {
   cards: CardEvent[];
 }
 
-export function LiveMicDebugClient({
+export function LiveMicDebugClient(props: { wsUrl: string; orgId: string }): ReactElement {
+  // Wrap in the same hud-ui providers the live meeting page uses, so the
+  // synthesis renders with the real SynthesisStream — including click-to-
+  // expand citations with quote highlighting. Pin/dismiss are no-ops here
+  // (the debug session has no persistence).
+  return (
+    <AppStateProvider initial={{ ...initialAppState, meeting: 'live' }}>
+      <CardActionsProvider actions={NOOP_CARD_ACTIONS}>
+        <SynthesisActionsProvider actions={NOOP_SYNTHESIS_ACTIONS}>
+          <DebugInner {...props} />
+        </SynthesisActionsProvider>
+      </CardActionsProvider>
+    </AppStateProvider>
+  );
+}
+
+function DebugInner({
   wsUrl,
   orgId,
 }: {
   wsUrl: string;
   orgId: string;
 }): ReactElement {
+  const dispatch = useAppDispatch();
+  const synthesisCount = useAppState().syntheses.size;
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'closed' | 'errored'>(
     'idle',
   );
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [utterances, setUtterances] = useState<UtteranceEvent[]>([]);
   const [cardGroups, setCardGroups] = useState<CardGroup[]>([]);
-  const [syntheses, setSyntheses] = useState<SynthesisRecord[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResultRecord[]>([]);
   const [systemEvents, setSystemEvents] = useState<string[]>([]);
   const [currentSummary, setCurrentSummary] = useState<MeetingSummaryPayload | null>(null);
@@ -193,6 +213,7 @@ export function LiveMicDebugClient({
       }
       case 'card': {
         const c = evt as CardEvent;
+        // Keep the raw retrieval panel (debug-specific)…
         setCardGroups((prev) => {
           const idx = prev.findIndex((g) => g.traceId === c.traceId);
           if (idx === -1) {
@@ -205,55 +226,32 @@ export function LiveMicDebugClient({
           copy[idx] = { ...copy[idx]!, cards: [...copy[idx]!.cards, c] };
           return copy;
         });
+        // …and feed the real HUD reducer so citation clicks can expand the
+        // source card with its quote highlighted, exactly like the live page.
+        dispatch({ type: 'card', card: toHudCard(c) });
         return;
       }
       case 'synthesisStart': {
         const s = evt as SynthesisStartEvent;
-        setSyntheses((prev) => {
-          // When the bot-worker signals this synthesis REPLACES a
-          // prior one (same topic, refined question — Jaccard overlap
-          // ≥0.5 on source cardIds + within the replacement window),
-          // swap in place rather than stacking. Keeps the page from
-          // accumulating a card per partial-utterance refinement.
-          const next: SynthesisRecord = {
-            synthesisId: s.synthesisId,
-            text: '',
-            streaming: true,
-            citations: [],
-            refused: false,
-            aborted: false,
-            utteranceId: s.utteranceId,
-          };
-          if (s.replacesSynthesisId !== undefined) {
-            const idx = prev.findIndex((p) => p.synthesisId === s.replacesSynthesisId);
-            if (idx !== -1) {
-              const copy = prev.slice();
-              copy[idx] = next;
-              return copy;
-            }
-          }
-          return [...prev, next].slice(-10);
+        // Stacks newest-first, matching the production live page (which
+        // doesn't special-case replacement). `utteranceId` is debug-only.
+        dispatch({
+          type: 'synthesisStart',
+          start: { synthesisId: s.synthesisId, sourceCardIds: s.sourceCardIds, traceId: s.traceId },
         });
         return;
       }
       case 'synthesisAborted': {
         const a = evt as SynthesisAbortedEvent;
-        setSyntheses((prev) =>
-          prev.map((s) =>
-            s.synthesisId === a.synthesisId
-              ? { ...s, streaming: false, aborted: true }
-              : s,
-          ),
-        );
+        dispatch({
+          type: 'synthesisRetracted',
+          retracted: { synthesisId: a.synthesisId, reason: 'manual-dismiss' },
+        });
         return;
       }
       case 'synthesisDelta': {
         const d = evt as SynthesisDeltaEvent;
-        setSyntheses((prev) =>
-          prev.map((s) =>
-            s.synthesisId === d.synthesisId ? { ...s, text: s.text + d.delta } : s,
-          ),
-        );
+        dispatch({ type: 'synthesisDelta', delta: { synthesisId: d.synthesisId, delta: d.delta } });
         return;
       }
       case 'summary': {
@@ -283,19 +281,24 @@ export function LiveMicDebugClient({
       case 'synthesisDone':
       case 'synthesisRefusal': {
         const d = evt as SynthesisDoneEvent;
-        setSyntheses((prev) =>
-          prev.map((s) =>
-            s.synthesisId === d.synthesisId
-              ? {
-                  ...s,
-                  streaming: false,
-                  text: d.accumulatedText,
-                  citations: d.citations,
-                  refused: d.type === 'synthesisRefusal',
-                }
-              : s,
-          ),
-        );
+        if (d.type === 'synthesisRefusal') {
+          dispatch({
+            type: 'synthesisError',
+            error: { synthesisId: d.synthesisId, code: 'refused', message: d.accumulatedText },
+          });
+          return;
+        }
+        dispatch({
+          type: 'synthesisDone',
+          done: {
+            synthesisId: d.synthesisId,
+            stopReason: d.stopReason,
+            citations: d.citations,
+            usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            ttftMs: 0,
+            latencyMs: 0,
+          },
+        });
         return;
       }
       default: {
@@ -308,7 +311,7 @@ export function LiveMicDebugClient({
         setSystemEvents((prev) => [...prev, `${new Date().toLocaleTimeString()} · ${label}`].slice(-50));
       }
     }
-  }, []);
+  }, [dispatch]);
 
   const start = useCallback(() => {
     if (wsRef.current !== null) return;
@@ -354,9 +357,10 @@ export function LiveMicDebugClient({
   }, []);
 
   const reset = useCallback(() => {
+    // Clears the debug-specific panels. The HUD reducer (synthesis cards)
+    // isn't cleared here — reload the page for a fully fresh session.
     setUtterances([]);
     setCardGroups([]);
-    setSyntheses([]);
     setSkillResults([]);
     setSystemEvents([]);
     setCurrentSummary(null);
@@ -480,7 +484,7 @@ export function LiveMicDebugClient({
           )}
         </Panel>
 
-        <Panel title={`Syntheses (${syntheses.length})`}>
+        <Panel title="AI synthesis">
           <>
           {/* Skill answers: structured tool results (github_count etc.)
               shown directly, independent of synthesis. The synthesizer
@@ -521,63 +525,10 @@ export function LiveMicDebugClient({
               ))}
             </ul>
           )}
-          {syntheses.length === 0 && skillResults.length === 0 ? (
-            <EmptyHint text='Synthesis answers stream here. Citations parse from the [N: "quote"] format.' />
+          {synthesisCount === 0 && skillResults.length === 0 ? (
+            <EmptyHint text='Synthesis streams here exactly as on the live meeting page — click a [N] citation to expand the source card with its quote highlighted.' />
           ) : (
-            <ul className="space-y-3 text-sm">
-              {syntheses.slice().reverse().map((s) => (
-                <li
-                  key={s.synthesisId}
-                  className={
-                    s.refused
-                      ? 'rounded border border-rose-400/40 bg-rose-500/10 p-3'
-                      : s.aborted
-                        ? 'rounded border border-dashed border-border bg-card/40 p-3 opacity-60'
-                        : 'rounded border border-border bg-card p-3'
-                  }
-                >
-                  <div className="text-[10px] uppercase tracking-wider text-muted">
-                    {s.synthesisId.slice(-6)}
-                    {s.streaming
-                      ? ' · streaming'
-                      : s.aborted
-                        ? ' · superseded'
-                        : s.refused
-                          ? ' · refused'
-                          : ' · done'}
-                  </div>
-                  <div className="mt-1 whitespace-pre-wrap text-sm">
-                    {s.text || (s.streaming ? '…' : '(empty)')}
-                    {s.streaming && <span className="ml-1 animate-pulse">▊</span>}
-                  </div>
-                  {s.citations.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      <div className="text-[10px] uppercase tracking-wider text-muted">
-                        Citations
-                      </div>
-                      <ol className="space-y-1 text-xs">
-                        {s.citations.map((c, i) => (
-                          <li
-                            key={`${s.synthesisId}-${String(i)}`}
-                            className="border-l-2 border-accent pl-2"
-                          >
-                            <span className="font-mono text-[10px] text-muted">
-                              [{String(c.rank)}] pos {String(c.position)} ·{' '}
-                              {c.cardId.slice(-6)}
-                            </span>
-                            {c.quote !== undefined && (
-                              <pre className="mt-0.5 whitespace-pre-wrap font-mono text-[10px]">
-                                &ldquo;{c.quote}&rdquo;
-                              </pre>
-                            )}
-                          </li>
-                        ))}
-                      </ol>
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <SynthesisStream />
           )}
           </>
         </Panel>
@@ -709,4 +660,36 @@ function SummaryStrip({
       </div>
     </section>
   );
+}
+
+const NOOP_CARD_ACTIONS: CardActions = {
+  pin: async () => undefined,
+  unpin: async () => undefined,
+  dismiss: async () => undefined,
+};
+
+const NOOP_SYNTHESIS_ACTIONS: SynthesisActions = {
+  pin: async () => undefined,
+  unpin: async () => undefined,
+};
+
+/** Map a debug-WS card payload to the hud-ui CardEvent the reducer expects. */
+function toHudCard(c: CardEvent): HudCardEvent {
+  return {
+    cardId: c.cardId,
+    docId: c.docId,
+    source: c.source,
+    type: c.docType,
+    title: c.title,
+    snippet: c.snippet,
+    body: c.body,
+    score: 1 - c.distance,
+    rank: c.rank,
+    metadata: {},
+    surfacedAt: Date.now(),
+    triggeredBy: 'window',
+    traceId: c.traceId,
+    utteranceId: c.utteranceId,
+    ...(c.url !== null ? { url: c.url } : {}),
+  };
 }
