@@ -40,10 +40,11 @@ export function SourceActions({
     setBranchError(null);
   }
 
-  function handleReindex(): void {
+  function handleReindex(reindexMode: 'delta' | 'full'): void {
     setError(null);
     const fd = new FormData();
     fd.set('sourceId', sourceId);
+    fd.set('mode', reindexMode);
     startTransition(async () => {
       const result = await reindexSourceAction(fd);
       if (!result.ok) setError(humanError(result.error));
@@ -110,13 +111,30 @@ export function SourceActions({
               <button
                 type="button"
                 role="menuitem"
-                onClick={handleReindex}
+                onClick={() => handleReindex('delta')}
                 disabled={busy || pending}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-bg disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex w-full items-start gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-bg disabled:cursor-not-allowed disabled:opacity-50"
                 title={busy ? 'Indexer is already running — wait for it to finish' : undefined}
               >
                 {pending ? <Spinner /> : <RetryIcon />}
-                {pending ? 'Queuing…' : 'Reindex'}
+                <span className="flex flex-col">
+                  <span>{pending ? 'Queuing…' : 'Reindex (delta)'}</span>
+                  <span className="text-[11px] text-muted">New &amp; changed only</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => handleReindex('full')}
+                disabled={busy || pending}
+                className="flex w-full items-start gap-2 border-t border-border px-3 py-2 text-left text-sm text-fg hover:bg-bg disabled:cursor-not-allowed disabled:opacity-50"
+                title={busy ? 'Indexer is already running — wait for it to finish' : undefined}
+              >
+                {pending ? <Spinner /> : <RetryIcon />}
+                <span className="flex flex-col">
+                  <span>{pending ? 'Queuing…' : 'Reindex (full)'}</span>
+                  <span className="text-[11px] text-muted">Also removes deleted items</span>
+                </span>
               </button>
               <button
                 type="button"

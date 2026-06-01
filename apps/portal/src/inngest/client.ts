@@ -11,12 +11,25 @@ import { Inngest } from 'inngest';
  *   - Payload always includes `orgId` so the function can scope DB writes
  *     and the dashboard can filter per-org.
  */
+/**
+ * Reconciliation mode carried on every index-request event.
+ *   - `delta` — index new + changed, skip unchanged, do NOT prune
+ *     removals (cheap routine refresh; the only safe mode for
+ *     incremental/webhook fetches that can't see the full source set).
+ *   - `full`  — fetch the complete current set and reconcile fully,
+ *     including deleting items the source no longer has.
+ * Consumers default a missing value to `delta` (fail toward "no prune").
+ */
+export type IndexMode = 'delta' | 'full';
+
 export interface SourceIndexRequestedEvent {
   name: 'risezome/source.index-requested';
   data: {
     orgId: string;
     sourceId: string;
     reason: 'install' | 'reindex' | 'webhook';
+    /** `install` → full; `webhook` → delta; `reindex` → user's choice. */
+    mode: IndexMode;
   };
 }
 
@@ -31,6 +44,8 @@ export interface TrelloIndexRequestedEvent {
     orgId: string;
     sourceId: string;
     reason: 'connect' | 'reindex';
+    /** `connect` → full; `reindex` → user's choice. */
+    mode: IndexMode;
   };
 }
 
@@ -38,11 +53,11 @@ export interface TrelloIndexRequestedEvent {
  *  for its kind; the Sources actions emit by source.kind). */
 export interface JiraIndexRequestedEvent {
   name: 'risezome/jira.index-requested';
-  data: { orgId: string; sourceId: string; reason: 'connect' | 'reindex' };
+  data: { orgId: string; sourceId: string; reason: 'connect' | 'reindex'; mode: IndexMode };
 }
 export interface ConfluenceIndexRequestedEvent {
   name: 'risezome/confluence.index-requested';
-  data: { orgId: string; sourceId: string; reason: 'connect' | 'reindex' };
+  data: { orgId: string; sourceId: string; reason: 'connect' | 'reindex'; mode: IndexMode };
 }
 
 export interface CalendarSyncRequestedEvent {

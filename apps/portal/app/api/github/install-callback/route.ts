@@ -157,7 +157,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         await inngest.send(
           persisted.map((s) => ({
             name: 'risezome/source.index-requested' as const,
-            data: { orgId, sourceId: s.id as string, reason: 'install' as const },
+            data: { orgId, sourceId: s.id as string, reason: 'install' as const, mode: 'full' as const },
           })),
         );
       }

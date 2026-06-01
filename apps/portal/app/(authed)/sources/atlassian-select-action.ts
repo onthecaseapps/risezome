@@ -117,7 +117,7 @@ export async function selectAtlassianResourcesAction(
 
     await inngest.send({
       name: EVENT_BY_KIND[resource.kind],
-      data: { orgId, sourceId, reason: 'connect' },
+      data: { orgId, sourceId, reason: 'connect', mode: 'full' },
     });
     count += 1;
   }

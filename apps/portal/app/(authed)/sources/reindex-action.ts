@@ -3,14 +3,18 @@
 import { revalidatePath } from 'next/cache';
 import { requireAuthedUserWithOrg } from '../../_lib/auth';
 import { createServiceRoleClient } from '../../_lib/supabase-server';
-import { inngest } from '../../../src/inngest/client';
+import { inngest, type IndexMode } from '../../../src/inngest/client';
 
 /**
  * User-initiated reindex of a single source. Verifies the user is a member
  * of the org that owns the source (defense-in-depth — RLS would block the
- * row lookup anyway), then emits a `risezome/source.index-requested` event
- * with reason='reindex'. The Inngest function picks it up the same way it
- * handles install-time events.
+ * row lookup anyway), then emits the source's kind-specific index event.
+ *
+ * `mode` (from the chosen menu item):
+ *   - `delta` — index new + changed, skip unchanged, no prune. Default.
+ *   - `full`  — also delete items the source no longer has.
+ * An unrecognized/missing `mode` form value falls back to `delta` (safe:
+ * never prunes unexpectedly).
  *
  * Returns a small status object so the calling client can show a toast or
  * inline confirmation. We don't wait for the indexer to finish — it could
@@ -23,6 +27,7 @@ export async function reindexSourceAction(
   if (typeof sourceId !== 'string' || sourceId.length === 0) {
     return { ok: false, error: 'missing_source_id' };
   }
+  const mode: IndexMode = formData.get('mode') === 'full' ? 'full' : 'delta';
 
   const { orgId } = await requireAuthedUserWithOrg();
 
@@ -54,11 +59,11 @@ export async function reindexSourceAction(
   };
   const kindEvent = eventByKind[source.kind as string];
   if (kindEvent !== undefined) {
-    await inngest.send({ name: kindEvent, data: { orgId, sourceId, reason: 'reindex' } });
+    await inngest.send({ name: kindEvent, data: { orgId, sourceId, reason: 'reindex', mode } });
   } else {
     await inngest.send({
       name: 'risezome/source.index-requested',
-      data: { orgId, sourceId, reason: 'reindex' },
+      data: { orgId, sourceId, reason: 'reindex', mode },
     });
   }
 

@@ -89,7 +89,7 @@ export async function setRepoBranchAction(
 
   await inngest.send({
     name: 'risezome/source.index-requested',
-    data: { orgId, sourceId, reason: 'reindex' },
+    data: { orgId, sourceId, reason: 'reindex', mode: 'full' },
   });
 
   revalidatePath('/sources');

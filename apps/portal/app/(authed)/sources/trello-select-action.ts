@@ -106,7 +106,7 @@ export async function selectTrelloBoardsAction(
 
     await inngest.send({
       name: 'risezome/trello.index-requested',
-      data: { orgId, sourceId, reason: 'connect' },
+      data: { orgId, sourceId, reason: 'connect', mode: 'full' },
     });
     count += 1;
   }
