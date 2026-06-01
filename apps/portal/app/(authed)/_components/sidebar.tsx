@@ -146,6 +146,12 @@ export async function Sidebar(): Promise<ReactElement> {
               icon={<DebugIcon />}
               label="Retrieval probe"
             />
+            <SidebarNavLink
+              href="/debug/eval"
+              matchPrefix="/debug/eval"
+              icon={<DebugIcon />}
+              label="Corpus eval"
+            />
           </>
         )}
         </>
