@@ -127,12 +127,12 @@ describe('SynthesisStream', () => {
     expect(body).not.toContain('[9]');
   });
 
-  it('renders consolidated source cards beneath the answer when finished', () => {
+  it('renders the cited source card beneath the answer when finished', () => {
     const syn = mkSyn({
-      accumulatedText: 'Answer body.',
+      accumulatedText: 'Answer body [1].',
       streaming: false,
       sourceCardIds: ['src1'],
-      citations: [],
+      citations: [{ rank: 1, cardId: 'src1', position: 12 }],
     });
     const { container } = render(
       <AppStateProvider
@@ -145,6 +145,30 @@ describe('SynthesisStream', () => {
     expect(
       container.querySelector('.synthesis-sources article[data-card-id="src1"]'),
     ).not.toBeNull();
+  });
+
+  it('omits an uncited retrieved source from the synthesis sources panel', () => {
+    // src1 is cited, src2 is retrieved but never cited → only src1 shows.
+    const syn = mkSyn({
+      accumulatedText: 'Answer body [1].',
+      streaming: false,
+      sourceCardIds: ['src1', 'src2'],
+      citations: [{ rank: 1, cardId: 'src1', position: 12 }],
+    });
+    const { container } = render(
+      <AppStateProvider
+        initial={stateWith({
+          cards: [mkCard({ cardId: 'src1' }), mkCard({ cardId: 'src2' })],
+          syntheses: [syn],
+        })}
+      >
+        <SynthesisStream />
+      </AppStateProvider>,
+    );
+    expect(container.querySelector('.synthesis-sources article[data-card-id="src1"]')).not.toBeNull();
+    expect(container.querySelector('.synthesis-sources article[data-card-id="src2"]')).toBeNull();
+    // "grounded in 1 source" reflects cited, not retrieved (2).
+    expect(container.querySelector('.synthesis-grounded')?.textContent).toContain('1 source');
   });
 
   it('does not render consolidated sources while streaming', () => {

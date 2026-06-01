@@ -251,6 +251,7 @@ describe('SynthesisCard — phase: done', () => {
         answer={<>Final answer</>}
         citations={[<span key="c1" data-testid="chip" />]}
         sources={sources}
+        citationRecords={[{ rank: 1, cardId: 'src1', position: 0 }]}
       />,
     );
     expect(container.querySelector('.synthesis-cursor')).toBeNull();

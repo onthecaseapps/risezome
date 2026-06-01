@@ -33,10 +33,11 @@ import { findQuoteInBody } from '../lib/quote-match';
 export interface SourceCardExpandedProps {
   readonly source: CardEvent;
   readonly open: boolean;
-  /** Verbatim quote from the LLM citation. Undefined when the parser
-   *  fell back to bare [N] (no quote payload); the source still
-   *  expands but no `<mark>` renders. */
-  readonly quote?: string;
+  /** Verbatim quotes from the LLM citations to highlight in the body. A
+   *  single quote when a specific [N] chip was clicked; all of the card's
+   *  cited quotes when the card itself was expanded. Empty (or all-miss) →
+   *  the body renders with no `<mark>`. */
+  readonly quotes?: readonly string[];
   /** Toggle handler — clicking the card header expands/collapses it,
    *  in addition to the inline `[N]` citation chips. Omitted → inert
    *  header (SSR / preview embeds). */
@@ -49,7 +50,7 @@ export interface SourceCardExpandedProps {
 export function SourceCardExpanded({
   source,
   open,
-  quote,
+  quotes,
   onToggle,
   index,
 }: SourceCardExpandedProps): ReactElement {
@@ -88,7 +89,7 @@ export function SourceCardExpanded({
             <span className="source-card-passage-dot" aria-hidden="true" />
             Matched passage
           </div>
-          <ExpandedBody source={source} quote={quote} />
+          <ExpandedBody source={source} quotes={quotes ?? []} />
           {source.url !== undefined && source.url.length > 0 ? (
             <div className="source-card-footer">
               <a
@@ -152,39 +153,66 @@ function OpenIcon(): ReactElement {
 
 function ExpandedBody({
   source,
-  quote,
+  quotes,
 }: {
   source: CardEvent;
-  quote: string | undefined;
+  quotes: readonly string[];
 }): ReactElement {
   const body = source.body ?? source.snippet;
-  const match = useMemo(() => findQuoteInBody(quote, body), [quote, body]);
-  const markRef = useRef<HTMLElement | null>(null);
+  // Stable dep: re-find only when the set of quotes or the body changes.
+  const quotesKey = quotes.join('\u0000');
+  const matches = useMemo(() => {
+    const qs = quotesKey.length > 0 ? quotesKey.split('\u0000') : [];
+    const found: { index: number; length: number }[] = [];
+    for (const q of qs) {
+      const m = findQuoteInBody(q, body);
+      if (m !== null) found.push(m);
+    }
+    // Order by position and drop overlaps so the segment walk is monotonic
+    // (two quotes can resolve to overlapping spans in the same body).
+    found.sort((a, b) => a.index - b.index);
+    const merged: { index: number; length: number }[] = [];
+    let lastEnd = -1;
+    for (const m of found) {
+      if (m.index >= lastEnd) {
+        merged.push(m);
+        lastEnd = m.index + m.length;
+      }
+    }
+    return merged;
+  }, [quotesKey, body]);
+  const firstMarkRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (match === null || markRef.current === null) return;
-    // scrollIntoView 'center' so the highlighted span lands roughly mid-
-    // viewport. smooth so the move is visible without being jarring.
-    markRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [match, quote]);
+    if (matches.length === 0 || firstMarkRef.current === null) return;
+    // Scroll the first highlight to roughly mid-viewport so the user lands
+    // on the matched region; smooth so the move reads as intentional.
+    firstMarkRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [matches]);
 
-  const segments: ReactNode = match === null
-    ? body
-    : (
-      <>
-        {body.slice(0, match.index)}
-        <mark ref={markRef} className="quote-highlight">
-          {body.slice(match.index, match.index + match.length)}
-        </mark>
-        {body.slice(match.index + match.length)}
-      </>
-    );
+  let segments: ReactNode = body;
+  if (matches.length > 0) {
+    const parts: ReactNode[] = [];
+    let pos = 0;
+    matches.forEach((m, i) => {
+      if (m.index > pos) parts.push(body.slice(pos, m.index));
+      parts.push(
+        <mark
+          key={`mark-${String(i)}`}
+          {...(i === 0 ? { ref: firstMarkRef } : {})}
+          className="quote-highlight"
+        >
+          {body.slice(m.index, m.index + m.length)}
+        </mark>,
+      );
+      pos = m.index + m.length;
+    });
+    if (pos < body.length) parts.push(body.slice(pos));
+    segments = <>{parts}</>;
+  }
 
   return (
-    <div
-      className="source-body"
-      data-has-highlight={match !== null ? 'true' : 'false'}
-    >
+    <div className="source-body" data-has-highlight={matches.length > 0 ? 'true' : 'false'}>
       {segments}
     </div>
   );

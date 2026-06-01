@@ -53,7 +53,7 @@ describe('SourceCardExpanded', () => {
 
   it('wraps the matching substring in <mark.quote-highlight> when quote hits raw indexOf', () => {
     const { container } = render(
-      <SourceCardExpanded source={mkSource()} open={true} quote='edition = "2021"' />,
+      <SourceCardExpanded source={mkSource()} open={true} quotes={['edition = "2021"']} />,
     );
     const mark = container.querySelector('mark.quote-highlight');
     expect(mark).not.toBeNull();
@@ -61,12 +61,21 @@ describe('SourceCardExpanded', () => {
     expect(container.querySelector('.source-body')?.getAttribute('data-has-highlight')).toBe('true');
   });
 
-  it('expands without highlight when quote does not match (quiet failure per R8)', () => {
+  it('highlights every matched quote when the card is expanded with multiple quotes', () => {
+    const body = 'alpha then beta and finally gamma in the body.';
+    const { container } = render(
+      <SourceCardExpanded source={mkSource({ body })} open={true} quotes={['alpha', 'gamma']} />,
+    );
+    const marks = [...container.querySelectorAll('mark.quote-highlight')].map((m) => m.textContent);
+    expect(marks).toEqual(['alpha', 'gamma']);
+  });
+
+  it('expands without highlight when the quote does not match (quiet failure per R8)', () => {
     const { container } = render(
       <SourceCardExpanded
         source={mkSource()}
         open={true}
-        quote="this text does not exist anywhere in the body"
+        quotes={['this text does not exist anywhere in the body']}
       />,
     );
     expect(container.querySelector('mark.quote-highlight')).toBeNull();
@@ -79,7 +88,7 @@ describe('SourceCardExpanded', () => {
       <SourceCardExpanded
         source={mkSource({ body })}
         open={true}
-        quote="foo bar baz"
+        quotes={['foo bar baz']}
       />,
     );
     const mark = container.querySelector('mark.quote-highlight');
@@ -93,7 +102,7 @@ describe('SourceCardExpanded', () => {
       <SourceCardExpanded
         source={mkSource({ body })}
         open={true}
-        quote="<script>alert(1)</script>"
+        quotes={['<script>alert(1)</script>']}
       />,
     );
     // The <mark> should contain literal characters; React text-node

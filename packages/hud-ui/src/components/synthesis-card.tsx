@@ -63,7 +63,22 @@ export interface SynthesisCardProps {
 
 interface ExpansionState {
   readonly cardId: string;
-  readonly quote: string | undefined;
+  /** Quotes to highlight in the expanded body. A single-element list when a
+   *  specific [N] chip was clicked; the card's full set when the card header
+   *  itself was expanded. */
+  readonly quotes: readonly string[];
+}
+
+/** Distinct non-empty quotes the synthesis cited for one source card. */
+function quotesForCard(
+  records: readonly SynthesisCitation[] | undefined,
+  cardId: string,
+): readonly string[] {
+  const seen = new Set<string>();
+  for (const c of records ?? []) {
+    if (c.cardId === cardId && c.quote !== undefined && c.quote.length > 0) seen.add(c.quote);
+  }
+  return [...seen];
 }
 
 export function SynthesisCard({
@@ -92,23 +107,41 @@ export function SynthesisCard({
   // synthesisId because useState binds to component instance + key.
   const [expansion, setExpansion] = useState<ExpansionState | null>(null);
 
+  // Chip-facing activation: clicking an inline [N] chip highlights just that
+  // occurrence's quote. Clicking the same card+quote again collapses.
   const activate = useCallback(
     (args: { rank: number; cardId: string; quote: string | undefined }) => {
       setExpansion((current) => {
+        const quotes = args.quote !== undefined ? [args.quote] : [];
         if (
           current !== null &&
           current.cardId === args.cardId &&
-          current.quote === args.quote
+          current.quotes.length === quotes.length &&
+          current.quotes[0] === quotes[0]
         ) {
           return null;
         }
-        return { cardId: args.cardId, quote: args.quote };
+        return { cardId: args.cardId, quotes };
       });
     },
     [],
   );
 
+  // Card-facing toggle: expanding the source card itself highlights ALL of
+  // that card's cited quotes. Clicking an open card collapses it.
+  const toggleCard = useCallback((cardId: string, quotes: readonly string[]) => {
+    setExpansion((current) => (current !== null && current.cardId === cardId ? null : { cardId, quotes }));
+  }, []);
+
   const isDone = phase === 'done';
+  // The SOURCES panel and the "grounded in N" count reflect the sources the
+  // model actually CITED, not every card retrieval surfaced — uncited cards
+  // (often an off-topic top match) are noise here and live in the raw card
+  // feed instead. sourceCardIds stays unfiltered for inline rank→cardId
+  // mapping; only the displayed list is filtered.
+  const citedCardIds = new Set((citationRecords ?? []).map((c) => c.cardId));
+  const citedSources = sources.filter((s) => citedCardIds.has(s.cardId));
+  const groundedCount = isDone ? citedSources.length : sources.length;
   const ariaBusy = phase !== 'done';
   // Stream phase reads politely so SRs follow along; placeholder is
   // intentionally silent (the shimmer means nothing to announce).
@@ -130,7 +163,7 @@ export function SynthesisCard({
             AI Summary
           </span>
           <span className="synthesis-grounded">
-            grounded in {sources.length} {sources.length === 1 ? 'source' : 'sources'}
+            grounded in {groundedCount} {groundedCount === 1 ? 'source' : 'sources'}
           </span>
           {phase === 'done' && (
             <PinButton
@@ -162,33 +195,25 @@ export function SynthesisCard({
 
         {isDone && citations.length > 0 && <div className="citations">{citations}</div>}
 
-        {isDone && sources.length > 0 && (
+        {isDone && citedSources.length > 0 && (
           <div className="synthesis-sources">
             <div className="synthesis-sources-label">
-              Sources ({String(sources.length)})
+              Sources ({String(citedSources.length)})
             </div>
             <div className="synthesis-sources-list">
-              {sources.map((source, idx) => {
+              {citedSources.map((source, idx) => {
                 const isOpen = expansion !== null && expansion.cardId === source.cardId;
-                const passQuote = isOpen && expansion?.quote !== undefined;
-                // Clicking the card itself opens it with the card's first
-                // cited quote highlighted (clicking a specific [N] chip routes
-                // its own per-occurrence quote).
-                const firstQuote = citationRecords?.find((c) => c.cardId === source.cardId)?.quote;
+                // Expanding the card highlights ALL of its cited quotes;
+                // clicking a specific [N] chip narrows to that one.
+                const cardQuotes = quotesForCard(citationRecords, source.cardId);
                 return (
                   <SourceCardExpanded
                     key={source.cardId}
                     source={source}
                     index={idx}
                     open={isOpen}
-                    onToggle={() =>
-                      activate({
-                        rank: 0,
-                        cardId: source.cardId,
-                        quote: isOpen ? expansion?.quote : firstQuote,
-                      })
-                    }
-                    {...(passQuote ? { quote: expansion.quote } : {})}
+                    onToggle={() => toggleCard(source.cardId, cardQuotes)}
+                    quotes={isOpen ? expansion.quotes : []}
                   />
                 );
               })}
