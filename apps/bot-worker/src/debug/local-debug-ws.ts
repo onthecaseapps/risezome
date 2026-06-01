@@ -38,12 +38,12 @@ import { VoyageEmbedder } from '@risezome/engine/embed';
 import {
   AnthropicSynthesizer,
   parseSynthesisOutput,
-  stripStatusPrefix,
   verifyCitations,
   type SynthesisSource,
 } from '@risezome/engine/synthesize';
 import { hybridSearch } from '../corpus-search';
 import { optionalReranker } from '../reranker';
+import { expandWinnersToParents, parentDocEnabled, type WinningChunk } from '../parent-doc';
 import { optionalQueryExpander } from '../query-expand';
 import { augmentQuery } from '@risezome/engine/query-expand';
 import { shouldExpandOnMiss } from '@risezome/engine/query-route';
@@ -699,6 +699,18 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       ]),
     );
 
+    // Parent-document expansion (U8): expand each winning child to its parent
+    // context for synthesis. Expanded text becomes BOTH card body and source
+    // text so the model's verbatim quote stays findable for citation
+    // verification + highlight. No-op (child text) when the flag is off.
+    const winners: WinningChunk[] = hits.flatMap((h) => {
+      const c = chunkById.get(h.chunk_id);
+      return c === undefined ? [] : [{ chunkId: h.chunk_id, docId: c.doc_id, position: c.position, text: c.text }];
+    });
+    const expandedByChunk = parentDocEnabled()
+      ? await expandWinnersToParents(args.db, winners)
+      : new Map<string, string>();
+
     for (let i = 0; i < hits.length; i++) {
       const hit = hits[i]!;
       const chunk = chunkById.get(hit.chunk_id);
@@ -707,7 +719,10 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       if (doc === undefined) continue;
       const cardId = `dbg_${randomUUID()}`;
       cardIds.push(cardId);
-      sources.push({ rank: i + 1, title: doc.title, text: chunk.text });
+      const body = expandedByChunk.get(hit.chunk_id) ?? chunk.text;
+      // U8: judge relevance from the tight child (`focus`), formulate from the
+      // expanded parent (`text`). Equal when expansion was a no-op / disabled.
+      sources.push({ rank: i + 1, title: doc.title, text: body, focus: chunk.text });
       send(socket, {
         type: 'card',
         traceId,
@@ -719,8 +734,8 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
         source: doc.source,
         docType: doc.type,
         url: doc.url,
-        snippet: chunk.text.slice(0, 400),
-        body: chunk.text,
+        snippet: body.slice(0, 400),
+        body,
         // FTS-only hits have no cosine distance; surface the fused RRF score
         // instead so the debug panel still shows a relevance signal.
         distance: hit.distance ?? undefined,
@@ -770,18 +785,14 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     },
     'local-debug.synthesis.start',
   );
-  send(socket, {
-    type: 'synthesisStart',
-    synthesisId,
-    sourceCardIds: cardIds,
-    traceId,
-    utteranceId: p.utteranceId,
-    ...(replacesSynthesisId !== null ? { replacesSynthesisId } : {}),
-  });
-
+  // Flash fix: do NOT emit synthesisStart up front. Grounded-or-nothing can't
+  // be decided until `done`, and streaming a body optimistically then
+  // retracting an ungrounded/refused answer is exactly what made the debug
+  // panel flash text that then vanished (frequent when talking off-corpus).
+  // Buffer here; reveal the whole answer at once on `done`, and only when it
+  // actually grounds. A prior grounded answer therefore survives subsequent
+  // filler instead of being wiped by a replace-then-refuse.
   let accumulated = '';
-  // Body length already streamed (excludes the leading STATUS control line).
-  let lastSentBodyLength = 0;
   let deltaCount = 0;
   let sawStart = false;
   let sawDone = false;
@@ -806,16 +817,10 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
           'local-debug.synthesis.upstream-start',
         );
       } else if (chunk.type === 'textDelta') {
+        // Buffer only (see the flash-fix note above): accumulate so we can
+        // parse + verify citations on `done`; nothing is streamed mid-flight.
         accumulated += chunk.delta;
-        // Gate out the leading STATUS line: hold until it resolves, and never
-        // stream a refusal body (the done handler emits synthesisRefusal).
-        const gate = stripStatusPrefix(accumulated);
-        if (gate.complete && gate.status === 'answer' && gate.body.length > lastSentBodyLength) {
-          const delta = gate.body.slice(lastSentBodyLength);
-          lastSentBodyLength = gate.body.length;
-          deltaCount += 1;
-          send(socket, { type: 'synthesisDelta', synthesisId, delta });
-        }
+        deltaCount += 1;
       } else if (chunk.type === 'done') {
         sawDone = true;
         const parsed = parseSynthesisOutput(accumulated, synthesisSources.length);
@@ -867,20 +872,43 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
           : ungrounded
             ? 'Ungrounded: the answer had no citation matching a retrieved source, so it was suppressed.'
             : parsed.text;
+        if (declined) {
+          // No synthesisStart was emitted, so this is a UI no-op (the reducer
+          // ignores a refusal for an unknown synthesisId) — nothing flashes.
+          // The reason is captured in the log above + the event payload.
+          send(socket, {
+            type: 'synthesisRefusal',
+            synthesisId,
+            stopReason: chunk.stopReason,
+            accumulatedText: debugText,
+            citations: richCitations,
+            usage: chunk.usage,
+          });
+          return;
+        }
+        // Grounded: reveal the whole answer in one shot — start, a single full
+        // delta, then done — so a complete, cited synthesis appears at once
+        // with no optimistic-then-retracted flash.
         send(socket, {
-          type: declined ? 'synthesisRefusal' : 'synthesisDone',
+          type: 'synthesisStart',
+          synthesisId,
+          sourceCardIds: cardIds,
+          traceId,
+          utteranceId: p.utteranceId,
+          ...(replacesSynthesisId !== null ? { replacesSynthesisId } : {}),
+        });
+        send(socket, { type: 'synthesisDelta', synthesisId, delta: parsed.text });
+        send(socket, {
+          type: 'synthesisDone',
           synthesisId,
           stopReason: chunk.stopReason,
           accumulatedText: debugText,
           citations: richCitations,
           usage: chunk.usage,
         });
-        // Notify caller so it can update its priorSynth tracker. Skip when
-        // declined — refusals/ungrounded answers shouldn't form the basis
-        // for "replaces this card" comparisons on the next synthesis.
-        if (!declined) {
-          p.onComplete(cardIds);
-        }
+        // Notify caller so it can update its priorSynth tracker (grounded only —
+        // a declined answer shouldn't anchor the next "replaces" comparison).
+        p.onComplete(cardIds);
         return;
       }
     }
