@@ -167,7 +167,7 @@ function CaptureRowCard({ capture }: { capture: CaptureRow }): ReactElement {
       href={`/meetings/${capture.meeting_id}/review`}
       className="flex items-center gap-4 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-accent-soft/40"
     >
-      <div className="flex w-14 flex-shrink-0 flex-col items-end text-xs text-muted">
+      <div className="flex w-20 flex-shrink-0 flex-col items-end whitespace-nowrap text-xs text-muted">
         {capture.started_at !== null ? (
           <span className="text-sm font-medium text-fg">{formatTime(capture.started_at)}</span>
         ) : (

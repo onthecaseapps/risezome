@@ -69,7 +69,7 @@ export default async function LiveMeetingsListPage(): Promise<ReactElement> {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto max-w-4xl px-6 py-8">
       <header className="mb-6">
         <div className="flex items-center gap-2">
           <span
@@ -136,7 +136,7 @@ function LiveMeetingCard({
 }): ReactElement {
   return (
     <div className="group flex items-center gap-4 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-accent-soft/40">
-      <div className="flex w-16 flex-shrink-0 flex-col items-end text-xs text-muted">
+      <div className="flex w-20 flex-shrink-0 flex-col items-end whitespace-nowrap text-xs text-muted">
         {startedAt !== null ? (
           <>
             <span className="text-sm font-medium text-fg">{formatTime(startedAt)}</span>

@@ -98,7 +98,7 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   const syntheses = (synthRows ?? []) as ReviewSynthesis[];
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
+    <div className="mx-auto max-w-4xl px-6 py-8">
       <header className="mb-6">
         <a href="/upcoming" className="text-xs text-muted hover:text-fg">
           ← Upcoming
