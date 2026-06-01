@@ -54,14 +54,12 @@ describe('buildGithubSourceResolver', () => {
     expect(inst20.repos).toEqual([{ owner: 'other', name: 'thing' }]);
   });
 
-  it('scopes the query by org_id and requires non-null installation_id + repo_full_name', async () => {
+  it('scopes the query by org_id, kind=github, and excludes removed sources', async () => {
     const { db, capture } = dbReturning([{ installation_id: 1, repo_full_name: 'a/b' }]);
     const resolve = buildGithubSourceResolver({ db: db as never, appAuth: fakeAppAuth({ 1: 't' }) });
     await resolve('org-xyz');
     expect(capture.eqs).toContainEqual(['org_id', 'org-xyz']);
-    // GitHub rows identified by non-null GitHub columns, not `kind`.
-    expect(capture.nots).toContainEqual(['installation_id', 'is', null]);
-    expect(capture.nots).toContainEqual(['repo_full_name', 'is', null]);
+    expect(capture.eqs).toContainEqual(['kind', 'github']);
   });
 
   it('skips malformed repo_full_name rows', async () => {
