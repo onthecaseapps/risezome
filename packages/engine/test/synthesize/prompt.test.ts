@@ -285,6 +285,26 @@ describe('verifyCitations — drops fabricated quoted citations', () => {
     expect(out.verified).toHaveLength(1);
   });
 
+  it('matches tolerant of punctuation/apostrophe drift (loose fallback)', () => {
+    // Source has "users sources" (no apostrophe); model "tidied" to "user's".
+    const apostropheSources = [{ text: 'log questions grounded in the users sources here.' }];
+    const out = verifyCitations(
+      [{ rank: 1, position: 0, quote: "grounded in the user's sources" }],
+      apostropheSources,
+    );
+    expect(out.verified).toHaveLength(1);
+    expect(out.droppedQuoted).toBe(0);
+  });
+
+  it('loose fallback still rejects genuinely different words (no fabrication pass-through)', () => {
+    const out = verifyCitations(
+      [{ rank: 1, position: 0, quote: 'grounded in the admin sources' }],
+      [{ text: 'log questions grounded in the users sources here.' }],
+    );
+    expect(out.verified).toEqual([]);
+    expect(out.droppedQuoted).toBe(1);
+  });
+
   it('keeps bare [N] citations (no quote to verify)', () => {
     const out = verifyCitations([{ rank: 1, position: 0, quote: undefined }], sources);
     expect(out.verified).toHaveLength(1);

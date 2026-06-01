@@ -39,10 +39,12 @@ describe('findQuoteInBody — tier 1 raw indexOf', () => {
     expect(body.slice(out!.index, out!.index + out!.length)).toBe('staged rollout - internal');
   });
 
-  it('case-sensitivity: NO match when quote case differs from body', () => {
-    // Plan policy: case-insensitive fallback is explicitly dropped.
-    expect(findQuoteInBody('Hello', 'hello world')).toBeNull();
-    expect(findQuoteInBody('hello', 'Hello world')).toBeNull();
+  it('tier 4 bridges a pure case difference (loose match folds case)', () => {
+    // The earlier case-sensitive policy was relaxed: the backend citation
+    // verifier lowercases, so the highlighter must also fold case or a
+    // verified quote would fail to highlight. Tier 4 does this.
+    expect(findQuoteInBody('Hello', 'hello world')).toEqual({ index: 0, length: 5 });
+    expect(findQuoteInBody('hello', 'Hello world')).toEqual({ index: 0, length: 5 });
   });
 
   it('regex-special chars in the quote are matched literally (indexOf, not RegExp)', () => {
@@ -110,10 +112,27 @@ describe('findQuoteInBody — tier 2 normalized fallback', () => {
     expect(out).toBeNull();
   });
 
-  it('returns null when normalization can\'t bridge a genuine difference (case mismatch)', () => {
-    // Even after normalization, case differs → no match. Stays within
-    // "quiet beats wrong" scope boundary.
-    expect(findQuoteInBody('FOO bar', 'foo  bar')).toBeNull();
+  it('tier 4 bridges an apostrophe the model added (user’s vs source users)', () => {
+    // Real failure: source has "the users sources" (no apostrophe); the model
+    // quoted "the user's sources". The apostrophe is dropped in tier 4.
+    const body = 'grounded in the users sources today';
+    const out = findQuoteInBody("the user's sources", body);
+    expect(out).not.toBeNull();
+    expect(body.slice(out!.index, out!.index + out!.length)).toBe('the users sources');
+  });
+
+  it('tier 4 still returns null for genuinely different alphanumeric content', () => {
+    // Punctuation/case tolerance must NOT become a fuzzy match: different
+    // words still miss (no fabrication pass-through).
+    expect(findQuoteInBody('the admin sources', 'grounded in the users sources')).toBeNull();
+  });
+
+  it('tier 4 bridges case + whitespace drift together', () => {
+    // Loose tier folds case and collapses any run of boundary chars, so a
+    // re-cased, re-spaced quote still locates.
+    const out = findQuoteInBody('FOO bar', 'foo  bar');
+    expect(out).not.toBeNull();
+    expect('foo  bar'.slice(out!.index, out!.index + out!.length)).toBe('foo  bar');
   });
 
   it('handles a quote that appears in body but with extra trailing whitespace differences', () => {

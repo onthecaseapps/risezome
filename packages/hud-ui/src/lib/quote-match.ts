@@ -52,7 +52,81 @@ export function findQuoteInBody(
   // copied span (a chunk has a straight quote; the model emits a curly
   // one, or vice versa). This is still character-faithful — no case
   // folding (kept per the "no lookalikes" policy), no edit distance.
-  return matchNormalized(quote, body, true);
+  const tier3 = matchNormalized(quote, body, true);
+  if (tier3 !== null) return tier3;
+
+  // Tier 4: loose — drop apostrophes/quotes (model writes "user's", source has
+  // "users"), treat any other punctuation as a word boundary, and fold case.
+  // The alphanumeric token sequence must still appear contiguously, so this
+  // tolerates "tidied" quotes without matching genuinely-different text. Must
+  // mirror the backend verifier's loose tier so a verified quote highlights.
+  return matchLoose(quote, body);
+}
+
+/** Loose, case-insensitive, punctuation-tolerant match (tier 4). Both quote
+ *  and body collapse to lowercase alphanumeric tokens separated by single
+ *  spaces (apostrophes/quotes dropped, other punctuation → boundary), so a
+ *  re-punctuated quote still locates. Maps the hit back to raw-body offsets. */
+function matchLoose(quote: string, body: string): QuoteMatch | null {
+  const norm = looseNormalizeWithMap(body);
+  const normalizedQuote = looseNormalizeString(quote);
+  if (normalizedQuote.length === 0) return null;
+
+  const normHit = norm.text.indexOf(normalizedQuote);
+  if (normHit === -1) return null;
+
+  const startRaw = norm.indexMap[normHit];
+  const endRaw = norm.indexMap[normHit + normalizedQuote.length];
+  if (startRaw === undefined || endRaw === undefined) return null;
+  return { index: startRaw, length: endRaw - startRaw };
+}
+
+const ALNUM = /[a-z0-9]/i;
+const DROPPED = /['’`"“”]/;
+
+/** String-only loose normalization (for the query quote). */
+function looseNormalizeString(s: string): string {
+  let out = '';
+  let prevSpace = true; // start as boundary so leading punctuation is trimmed
+  for (const ch of s) {
+    if (ALNUM.test(ch)) {
+      out += ch.toLowerCase();
+      prevSpace = false;
+    } else if (DROPPED.test(ch)) {
+      continue; // apostrophes/quotes vanish: user's -> users
+    } else if (!prevSpace) {
+      out += ' ';
+      prevSpace = true;
+    }
+  }
+  return prevSpace && out.endsWith(' ') ? out.slice(0, -1) : out;
+}
+
+/** Loose normalization of the body WITH an index map back to raw offsets. */
+function looseNormalizeWithMap(raw: string): NormalizedWithMap {
+  const chars: string[] = [];
+  const indexMap: number[] = [];
+  let prevSpace = true;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]!;
+    if (ALNUM.test(ch)) {
+      chars.push(ch.toLowerCase());
+      indexMap.push(i);
+      prevSpace = false;
+    } else if (DROPPED.test(ch)) {
+      continue;
+    } else if (!prevSpace) {
+      chars.push(' ');
+      indexMap.push(i);
+      prevSpace = true;
+    }
+  }
+  while (chars.length > 0 && chars[chars.length - 1] === ' ') {
+    chars.pop();
+    indexMap.pop();
+  }
+  indexMap.push(raw.length);
+  return { text: chars.join(''), indexMap };
 }
 
 /** Whitespace/NFC (and optionally case+punctuation) normalized search,

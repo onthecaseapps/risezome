@@ -524,6 +524,21 @@ function normalizeForMatch(s: string): string {
   return s.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+/** Looser normalization for the fallback tier: also drop apostrophes/quotes
+ *  (so "user's" matches a source's "users") and treat other punctuation as a
+ *  word boundary. The model routinely re-punctuates or "tidies" a copied span
+ *  (adds an apostrophe, fixes a comma); the alphanumeric content must still
+ *  appear contiguously, so a fabricated quote is still rejected. Must mirror
+ *  the frontend highlighter's loose tier so "verified" implies "highlightable". */
+function looseNormalizeForMatch(s: string): string {
+  return s
+    .replace(/['’`"“”]/g, '') // drop quotes/apostrophes: user's -> users
+    .replace(/[^a-z0-9\s]/gi, ' ') // other punctuation -> word boundary
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 export interface CitationVerification {
   /** Citations that survived verification (quoted ones whose quote is present
    *  in the cited source, plus all bare ones, which can't be quote-checked). */
@@ -558,26 +573,35 @@ export function verifyCitations(
   citations: readonly ParsedCitation[],
   sources: readonly { readonly text: string; readonly docId?: string }[],
 ): CitationVerification {
-  const normalizedSources = sources.map((s) => normalizeForMatch(s.text));
+  const strictSources = sources.map((s) => normalizeForMatch(s.text));
+  const looseSources = sources.map((s) => looseNormalizeForMatch(s.text));
   const verified: ParsedCitation[] = [];
   let droppedQuoted = 0;
+
+  // A quote is present in source `i` if it matches strictly OR (fallback)
+  // under loose punctuation-tolerant normalization.
+  const presentIn = (i: number, strictNeedle: string, looseNeedle: string): boolean =>
+    strictSources[i]?.includes(strictNeedle) === true ||
+    looseSources[i]?.includes(looseNeedle) === true;
+
   for (const c of citations) {
     if (c.quote === undefined) {
       verified.push(c);
       continue;
     }
-    const needle = normalizeForMatch(c.quote);
-    const citedText = normalizedSources[c.rank - 1];
-    if (citedText?.includes(needle) === true) {
+    const strictNeedle = normalizeForMatch(c.quote);
+    const looseNeedle = looseNormalizeForMatch(c.quote);
+    const cited = c.rank - 1;
+    if (cited >= 0 && cited < sources.length && presentIn(cited, strictNeedle, looseNeedle)) {
       verified.push(c);
       continue;
     }
-    // Same-document fallback: accept if the quote is verbatim in any retrieved
+    // Same-document fallback: accept if the quote appears in any retrieved
     // source sharing the cited source's docId (one doc split across ranks).
-    const citedDocId = sources[c.rank - 1]?.docId;
+    const citedDocId = sources[cited]?.docId;
     const inSameDoc =
       citedDocId !== undefined &&
-      sources.some((s, i) => s.docId === citedDocId && normalizedSources[i]?.includes(needle) === true);
+      sources.some((s, i) => s.docId === citedDocId && presentIn(i, strictNeedle, looseNeedle));
     if (inSameDoc) {
       verified.push(c);
     } else {
