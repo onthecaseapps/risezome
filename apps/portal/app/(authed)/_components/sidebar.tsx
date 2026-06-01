@@ -115,18 +115,22 @@ export async function Sidebar(): Promise<ReactElement> {
             label="Members"
           />
         )}
-        <SidebarNavLink
-          href="/sources"
-          matchPrefix="/sources"
-          icon={<SourcesIcon />}
-          label="Sources"
-        />
-        <SidebarNavLink
-          href="/settings"
-          matchPrefix="/settings"
-          icon={<SettingsIcon />}
-          label="Settings"
-        />
+        {isManager && (
+          <>
+            <SidebarNavLink
+              href="/sources"
+              matchPrefix="/sources"
+              icon={<SourcesIcon />}
+              label="Sources"
+            />
+            <SidebarNavLink
+              href="/settings"
+              matchPrefix="/settings"
+              icon={<SettingsIcon />}
+              label="Settings"
+            />
+          </>
+        )}
         <SidebarNavLink
           href="/whats-new"
           matchPrefix="/whats-new"

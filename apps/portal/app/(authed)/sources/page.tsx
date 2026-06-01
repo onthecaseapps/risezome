@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import { requireAuthedUserWithOrg } from '../../_lib/auth';
+import { requireManager } from '../../_lib/auth';
 import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
 import { requireTrelloApiKey } from '../../_lib/trello';
 import { listBoards } from '../../_lib/trello-client';
@@ -59,7 +59,7 @@ interface InstallationRow {
 export default async function SourcesPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }): Promise<ReactElement> {
-  const { orgId } = await requireAuthedUserWithOrg();
+  const { orgId } = await requireManager();
   const searchParams = await props.searchParams;
 
   const supabase = await createServerClient();

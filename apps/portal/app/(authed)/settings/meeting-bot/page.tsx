@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import { requireAuthedUserWithOrg } from '../../../_lib/auth';
+import { requireManager } from '../../../_lib/auth';
 import { createServerClient } from '../../../_lib/supabase-server';
 import { SettingsForm } from './_form';
 
@@ -17,7 +17,7 @@ import { SettingsForm } from './_form';
  * for org members but the action verifies membership server-side).
  */
 export default async function MeetingBotSettingsPage(): Promise<ReactElement> {
-  const { orgId, orgName } = await requireAuthedUserWithOrg();
+  const { orgId, orgName } = await requireManager();
 
   const supabase = await createServerClient();
   const { data } = await supabase
