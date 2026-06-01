@@ -10,25 +10,88 @@ interface Resource {
 
 /**
  * Lets a connected org pick which Jira projects and Confluence spaces to index.
- * Only not-yet-indexed resources are offered. Submitting upserts a source per
- * resource (of the matching kind) and kicks off indexing.
+ * Only not-yet-indexed resources are offered.
+ *
+ * Two modes (mirrors the Trello board picker):
+ *   - First-time setup (`startCollapsed=false`): the checkbox picker shows inline.
+ *   - After resources are indexed (`startCollapsed=true`): hidden behind a kebab
+ *     (⋮) "Manage sources" menu so the Sources page shows indexed rows rather
+ *     than a perpetual selector. Re-open it any time to add more.
+ *
+ * Submitting upserts a source per resource (of the matching kind) and kicks off
+ * indexing.
  */
 export function AtlassianPickers({
   projects,
   spaces,
+  startCollapsed = false,
 }: {
   projects: Resource[];
   spaces: Resource[];
-}): React.ReactElement {
+  startCollapsed?: boolean;
+}): React.ReactElement | null {
   const [selected, setSelected] = useState<Map<string, 'jira' | 'confluence'>>(new Map());
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(!startCollapsed);
+  const [menuOpen, setMenuOpen] = useState(false);
 
+  // Nothing left to add. After setup, render nothing; on first run, say so.
   if (projects.length === 0 && spaces.length === 0) {
+    if (startCollapsed) return null;
     return (
       <p className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted">
         Every Jira project and Confluence space on this account is already indexed.
       </p>
+    );
+  }
+
+  // Collapsed: a kebab menu whose one item reveals the picker.
+  if (!expanded) {
+    return (
+      <div className="flex justify-end">
+        <div className="relative">
+          <button
+            type="button"
+            aria-label="Manage indexed Jira & Confluence sources"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
+            className="rounded-md p-1.5 text-muted hover:bg-bg"
+          >
+            <KebabIcon />
+          </button>
+          {menuOpen ? (
+            <>
+              {/* Transparent overlay catches outside clicks to close the menu. */}
+              <button
+                type="button"
+                aria-hidden
+                tabIndex={-1}
+                onClick={() => setMenuOpen(false)}
+                className="fixed inset-0 z-10 cursor-default"
+              />
+              <div
+                role="menu"
+                className="absolute right-0 top-full z-20 mt-1 w-48 overflow-hidden rounded-lg border border-border bg-card shadow-lg"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setExpanded(true);
+                    setMenuOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-bg"
+                >
+                  <GearIcon />
+                  Manage sources
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
     );
   }
 
@@ -62,6 +125,17 @@ export function AtlassianPickers({
 
   return (
     <div className="rounded-xl border border-border bg-card p-4">
+      {startCollapsed ? (
+        <div className="mb-3 flex items-center justify-end">
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="text-xs text-muted hover:text-fg"
+          >
+            Done
+          </button>
+        </div>
+      ) : null}
       {projects.length > 0 ? (
         <ResourceGroup
           label="Jira projects"
@@ -128,5 +202,24 @@ function ResourceGroup({
         })}
       </ul>
     </div>
+  );
+}
+
+function KebabIcon(): React.ReactElement {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="12" cy="5" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="12" cy="19" r="1.5" />
+    </svg>
+  );
+}
+
+function GearIcon(): React.ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
   );
 }

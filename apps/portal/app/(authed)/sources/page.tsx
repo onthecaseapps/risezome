@@ -256,7 +256,11 @@ export default async function SourcesPage(props: {
                   ))}
                 </ul>
               ) : null}
-              <AtlassianPickers projects={jiraProjects} spaces={confluenceSpaces} />
+              <AtlassianPickers
+                projects={jiraProjects}
+                spaces={confluenceSpaces}
+                startCollapsed={atlassianSources.length > 0}
+              />
             </div>
           ) : null}
 
