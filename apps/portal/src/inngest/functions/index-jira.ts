@@ -11,6 +11,7 @@ import {
 } from '../../../app/_lib/atlassian-client';
 import { buildIssueDocText, jiraIssueDocId } from '../../../app/_lib/atlassian-doc';
 import { runConnectorIndex, type PreparedDoc } from '../lib/connector-index';
+import { optionalContextGenerator } from '../lib/contextualizer';
 
 const RECONNECT_MSG = 'Atlassian access was revoked or expired. Reconnect Atlassian to re-index.';
 
@@ -79,6 +80,7 @@ export const indexJiraFn = inngest.createFunction(
       docType: 'issue',
       provenance: 'trusted',
       reconnectMessage: RECONNECT_MSG,
+      contextGenerator: optionalContextGenerator(),
       isAuthError: (err) => err instanceof AtlassianAuthError,
       fetchEntities: () => searchJiraIssues(ctx.projectKey, client),
       prepare: async (issue): Promise<PreparedDoc | null> => {
@@ -91,6 +93,7 @@ export const indexJiraFn = inngest.createFunction(
           title: issue.summary,
           url: siteUrl.length > 0 ? `${siteUrl}/browse/${issue.key}` : null,
           updatedAt: new Date().toISOString(),
+          docText: text,
           chunks: chunks.map((c) => ({ text: c.text, domain: c.domain })),
         };
       },

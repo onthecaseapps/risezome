@@ -6,6 +6,12 @@ import { getInstallationOctokit } from '../../../app/_lib/github-app';
 import { chunkIssue } from '../../lib/github/chunk-issues';
 import type { GithubIssue } from '../../lib/github/issue-types';
 import { reconcile, clearDocChunks } from '../lib/corpus-reconcile';
+import {
+  contextualizeChunks,
+  contextualizedText,
+  type ContextGenerator,
+} from '@risezome/engine/contextualize';
+import { optionalContextGenerator } from '../lib/contextualizer';
 
 /** Doc types this indexer owns — reconcile must never touch the
  *  type='file' docs that share this source_id (corpus-reconcile R8). */
@@ -159,12 +165,13 @@ export const indexGithubIssuesFn = inngest.createFunction(
     });
 
     const embedder = new VoyageEmbedder({ apiKey: requireEnv('VOYAGE_API_KEY') });
+    const contextGenerator = optionalContextGenerator();
     const BATCH_SIZE = 20;
     let totalChunks = 0;
     for (let i = 0; i < toIndexIssues.length; i += BATCH_SIZE) {
       const batch = toIndexIssues.slice(i, i + BATCH_SIZE);
       const result = await step.run(`index-issues-batch-${String(i)}`, async () => {
-        return await indexBatch({ batch, orgId, sourceId, ownerRepo, embedder, kindByDocId });
+        return await indexBatch({ batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator });
       });
       totalChunks += result.chunks;
     }
@@ -203,8 +210,9 @@ async function indexBatch(args: {
   ownerRepo: string;
   embedder: VoyageEmbedder;
   kindByDocId: ReadonlyMap<string, 'new' | 'changed'>;
+  contextGenerator: ContextGenerator | undefined;
 }): Promise<{ issues: number; chunks: number }> {
-  const { batch, orgId, sourceId, ownerRepo, embedder, kindByDocId } = args;
+  const { batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator } = args;
   const service = createServiceRoleClient();
 
   let indexedIssues = 0;
@@ -216,10 +224,22 @@ async function indexBatch(args: {
     const kind = kindByDocId.get(doc.docId);
     if (kind === undefined) continue; // unchanged — reconcile didn't select it
 
+    // Contextual Retrieval (U3): per-chunk context prepended to the embedded
+    // text; verbatim body stays in `text`, context folded into text_fts.
+    const bodies = chunks.map((c) => c.text);
+    const contexts =
+      contextGenerator !== undefined
+        ? await contextualizeChunks(bodies.join('\n\n'), bodies, contextGenerator)
+        : bodies.map(() => '');
+
     let embeddings;
     try {
       embeddings = await embedder.embed({
-        items: chunks.map((c) => ({ id: c.chunkId, text: c.text, domain: c.domain })),
+        items: chunks.map((c, i) => ({
+          id: c.chunkId,
+          text: contextualizedText(contexts[i] ?? '', c.text),
+          domain: c.domain,
+        })),
       });
     } catch (err) {
       if (err instanceof EmbeddingRateLimitError) throw err;
@@ -256,12 +276,13 @@ async function indexBatch(args: {
       throw new Error(`docs upsert failed for ${doc.docId}: ${docErr.message}`);
     }
 
-    const chunkRows = chunks.map((c) => ({
+    const chunkRows = chunks.map((c, i) => ({
       chunk_id: c.chunkId,
       org_id: orgId,
       doc_id: c.docId,
       domain: c.domain,
       text: c.text,
+      context: contexts[i] ?? '',
       position: c.position,
     }));
     const { error: chunkErr } = await service

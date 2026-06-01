@@ -1,4 +1,9 @@
 import { VoyageEmbedder, EmbeddingRateLimitError, type EmbeddingDomain } from '@risezome/engine/embed';
+import {
+  contextualizeChunks,
+  contextualizedText,
+  type ContextGenerator,
+} from '@risezome/engine/contextualize';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
 import type { IndexMode } from '../client';
 import {
@@ -40,6 +45,9 @@ export interface PreparedDoc {
   readonly title: string;
   readonly url: string | null;
   readonly updatedAt: string;
+  /** Full source-doc text, used to generate per-chunk contextual-retrieval
+   *  context (the cache-block source). Defaults to the joined chunk text. */
+  readonly docText?: string;
   readonly chunks: ReadonlyArray<{ readonly text: string; readonly domain: EmbeddingDomain }>;
 }
 
@@ -71,6 +79,10 @@ export interface ConnectorIndexConfig<E> {
   readonly prepare: (entity: E) => Promise<PreparedDoc | null>;
   readonly isAuthError: (err: unknown) => boolean;
   readonly reconnectMessage: string;
+  /** Optional contextual-retrieval generator (U3). When set, each chunk gets
+   *  an LLM context prepended to its embedded + lexically-indexed text. When
+   *  omitted, chunks index body-only (prior behavior). */
+  readonly contextGenerator?: ContextGenerator | undefined;
 }
 
 export interface ConnectorIndexResult {
@@ -159,10 +171,24 @@ export async function runConnectorIndex<E>(
         const kind = kindByDocId.get(doc.docId);
         if (kind === undefined) continue;
 
+        // Contextual Retrieval (U3): generate a per-chunk context and prepend
+        // it to the EMBEDDED text; the verbatim body stays in `text` for
+        // display + citation matching, and the context is folded into
+        // text_fts via the doc_chunks.context column.
+        const bodies = doc.chunks.map((c) => c.text);
+        const contexts =
+          config.contextGenerator !== undefined
+            ? await contextualizeChunks(doc.docText ?? bodies.join('\n\n'), bodies, config.contextGenerator)
+            : bodies.map(() => '');
+
         let embeddings;
         try {
           embeddings = await embedder.embed({
-            items: doc.chunks.map((c, idx) => ({ id: `${doc.docId}::${String(idx)}`, text: c.text, domain: c.domain })),
+            items: doc.chunks.map((c, idx) => ({
+              id: `${doc.docId}::${String(idx)}`,
+              text: contextualizedText(contexts[idx] ?? '', c.text),
+              domain: c.domain,
+            })),
           });
         } catch (err) {
           if (err instanceof EmbeddingRateLimitError) throw err;
@@ -194,6 +220,7 @@ export async function runConnectorIndex<E>(
             chunkId: `${doc.docId}::${String(idx)}`,
             domain: c.domain,
             text: c.text,
+            context: contexts[idx] ?? '',
             position: idx,
           })),
           embeddings: doc.chunks.map((_, idx) => arrayToVectorLiteral(embeddings.vectors[idx]!.vector)),

@@ -10,6 +10,7 @@ import {
 } from '../../../app/_lib/trello-client';
 import { buildCardDocText, trelloCardDocId } from '../../../app/_lib/trello-doc';
 import { runConnectorIndex, type PreparedDoc } from '../lib/connector-index';
+import { optionalContextGenerator } from '../lib/contextualizer';
 
 const RECONNECT_MSG = 'Trello access was revoked. Reconnect Trello to re-index.';
 
@@ -77,6 +78,7 @@ export const indexTrelloFn = inngest.createFunction(
       docType: 'card',
       provenance: 'trusted',
       reconnectMessage: RECONNECT_MSG,
+      contextGenerator: optionalContextGenerator(),
       isAuthError: (err) => err instanceof TrelloAuthError,
       fetchEntities: () => fetchBoardCards(ctx.boardId, trello),
       prepare: async (card): Promise<PreparedDoc | null> => {
@@ -90,6 +92,7 @@ export const indexTrelloFn = inngest.createFunction(
           title: card.name,
           url: card.url,
           updatedAt: card.dateLastActivity ?? new Date().toISOString(),
+          docText: text,
           chunks: chunks.map((c) => ({ text: c.text, domain: c.domain })),
         };
       },

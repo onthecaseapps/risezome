@@ -1,5 +1,11 @@
 import { Buffer } from 'node:buffer';
 import { chunkFile } from '@risezome/engine/chunker';
+import {
+  contextualizeChunks,
+  contextualizedText,
+  type ContextGenerator,
+} from '@risezome/engine/contextualize';
+import { optionalContextGenerator } from '../lib/contextualizer';
 import { VoyageEmbedder, EmbeddingRateLimitError } from '@risezome/engine/embed';
 import { inngest, type IndexMode } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
@@ -228,6 +234,7 @@ export const indexRepoFn = inngest.createFunction(
     const embedder = new VoyageEmbedder({
       apiKey: requireEnv('VOYAGE_API_KEY'),
     });
+    const contextGenerator = optionalContextGenerator();
 
     let indexedFiles = recon.counts.unchanged; // unchanged already count as covered
     let chunkCount = 0;
@@ -246,6 +253,7 @@ export const indexRepoFn = inngest.createFunction(
           branch: tree.branch,
           installationId: source.installation_id,
           embedder,
+          contextGenerator,
         });
       });
       indexedFiles += result.files;
@@ -288,8 +296,9 @@ async function indexBatch(args: {
   branch: string;
   installationId: number;
   embedder: VoyageEmbedder;
+  contextGenerator: ContextGenerator | undefined;
 }): Promise<{ files: number; chunks: number }> {
-  const { batch, orgId, sourceId, owner, repo, branch, installationId, embedder } = args;
+  const { batch, orgId, sourceId, owner, repo, branch, installationId, embedder, contextGenerator } = args;
   const octokit = await getInstallationOctokit(installationId);
   const service = createServiceRoleClient();
 
@@ -318,13 +327,21 @@ async function indexBatch(args: {
     const chunkInputs = chunkFile(entry.path, content);
     if (chunkInputs.length === 0) continue;
 
+    // Contextual Retrieval (U3): per-chunk context from the full file,
+    // prepended to the embedded text; verbatim body stays in `text`,
+    // context folded into text_fts via the doc_chunks.context column.
+    const contexts =
+      contextGenerator !== undefined
+        ? await contextualizeChunks(content, chunkInputs.map((c) => c.text), contextGenerator)
+        : chunkInputs.map(() => '');
+
     // Embed all chunks for this file in one request to amortize HTTP overhead.
     let embeddings;
     try {
       embeddings = await embedder.embed({
         items: chunkInputs.map((c, i) => ({
           id: `${entry.sha}::${i}`,
-          text: c.text,
+          text: contextualizedText(contexts[i] ?? '', c.text),
           domain: c.domain,
         })),
       });
@@ -362,6 +379,7 @@ async function indexBatch(args: {
       doc_id: docId,
       domain: c.domain,
       text: c.text,
+      context: contexts[i] ?? '',
       position: i,
     }));
     const { error: chunkErr } = await service

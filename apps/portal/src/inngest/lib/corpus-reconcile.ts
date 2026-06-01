@@ -212,7 +212,11 @@ export interface ReconciledDocWrite {
   readonly chunks: ReadonlyArray<{
     readonly chunkId: string;
     readonly domain: string;
+    /** Verbatim chunk body (display + citation matching). */
     readonly text: string;
+    /** Contextual-retrieval context for this chunk, '' when none. Folded
+     *  into text_fts (and the embedding input) but kept out of `text`. */
+    readonly context?: string;
     readonly position: number;
   }>;
   /** pgvector literals, index-aligned with `chunks`. */
@@ -266,6 +270,7 @@ export async function writeReconciledDoc(db: SupabaseClient, w: ReconciledDocWri
     doc_id: w.docId,
     domain: c.domain,
     text: c.text,
+    context: c.context ?? null,
     position: c.position,
   }));
   const { error: chunkErr } = await db.from('doc_chunks').upsert(chunkRows, { onConflict: 'chunk_id' });

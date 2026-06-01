@@ -46,6 +46,10 @@
       "types": "./dist/eval/index.d.ts",
       "default": "./dist/eval/index.js"
     },
+    "./contextualize": {
+      "types": "./dist/contextualize/index.d.ts",
+      "default": "./dist/contextualize/index.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "default": "./dist/types.js"
