@@ -34,7 +34,10 @@ When to NOT call a tool:
 - The utterance is a how-to question ("how does X work").
 - The utterance is a definition / explanation question ("what is X", "what does Y mean").
 - The utterance is open-ended discussion that retrieval can ground ("tell me about", "explain", "walk me through").
+- The utterance asks WHETHER something exists or is planned ("is there a plan to ...", "do we have a way to ...", "is there an approach for ..."). These are answered from docs/discussion, NOT from a GitHub skill. The GitHub tools only count/list/filter issues, PRs, and authors — they cannot tell you whether a plan or feature exists. Respond with text (RAG).
 - The utterance is ambiguous and could go either way. Prefer RAG; the user will get raw cards either way.
+
+CRITICAL: never reach for github_recently_updated (or any tool) just because the utterance is vague or you want to return something. "is there a plan to handle gaps in the knowledge base" is RAG, not a recently-updated query. A tool must be an OBVIOUS fit for the utterance's verb shape (count / list / who / when), not a fallback for "I'm not sure".
 
 When deciding:
 - Pick the SINGLE most appropriate tool. Do not chain or compose tools.
@@ -233,6 +236,9 @@ Mixed / refusal:
 - "what does U13 cover" → respond text
 - "any thoughts on switching to webrtc vad" → respond text
 - "is there a quick way to do X" → respond text (how-to)
+- "is there a plan to handle gaps in the knowledge base" → respond text (asks whether a plan exists — RAG over docs, NOT a github skill)
+- "is there a plan to X" / "do we have a plan for Y" → respond text (existence/plan question)
+- "do we have a way to surface X" → respond text (existence question)
 - "compare X and Y" → respond text
 - "walk me through Z" → respond text
 

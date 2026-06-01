@@ -16,7 +16,8 @@ describe('isToolShaped — positive matches', () => {
     'what are closed',
     'any open bugs',
     'are there any phase 2 issues',
-    'is there a label for ux',
+    'is there an open issue for ux',
+    'are there any open bugs left',
     'who has open bugs',
     'who owns the auth refactor',
     'all the PRs assigned to jamie',
@@ -42,6 +43,13 @@ describe('isToolShaped — negative matches', () => {
     "let's talk about prompt caching",
     'I think we should switch to webrtc vad',
     'walk me through the meeting lifecycle',
+    // Regression: "is/are there a ..." existence/plan questions are RAG, not
+    // tool-shaped. These mis-routed to github_recently_updated before the gate
+    // required a github-entity noun.
+    "is there a plan to handle gaps in a customer's knowledge base",
+    'is there a way to surface knowledge gaps',
+    'is there a label for ux',
+    'are there any plans to add SSO',
   ])('does not match: %s', (utterance) => {
     expect(isToolShaped(utterance)).toBe(false);
   });

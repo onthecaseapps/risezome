@@ -27,8 +27,11 @@ export const HEURISTIC_PATTERNS: readonly RegExp[] = [
   /\bwhat('s| is) open\b/,
   /\bwhat('s| are) (open|closed|merged)\b/,
   /\bany open\b/,
-  /\bare there any\b/,
-  /\bis there (a|any)\b/,
+  // "is/are there a|an|any <github entity>" — require a GitHub-ish noun within
+  // the clause so RAG questions like "is there a plan/way/reason to ..." do
+  // NOT trip the gate (they were mis-routing to a github skill). A false
+  // negative here is graceful: it just routes to plain RAG.
+  /\b(is|are) there (a|an|any)\b[^.?!]{0,40}\b(issue|issues|pr|prs|pull request|pull requests|ticket|tickets|bug|bugs|card|cards|open|closed|merged)\b/,
   // Author queries
   /\bwho has\b/,
   /\bwho owns\b/,
