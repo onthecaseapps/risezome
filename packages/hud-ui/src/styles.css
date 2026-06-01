@@ -500,6 +500,15 @@ body {
      synthesis card and raw cards share the same motion language. */
 }
 
+/* Space stacked synthesis cards apart. SynthesisStream renders them as a bare
+   fragment with no container gap (both the live page and the debug page), and
+   .card carries no margin, so consecutive synthesis cards otherwise touch and
+   their drop-shadows overlap. Adjacent-sibling so only consecutive synthesis
+   cards get the gap (raw cards and the first card are unaffected). */
+.card.synthesis + .card.synthesis {
+  margin-top: 16px;
+}
+
 .card.synthesis .ai-label {
   display: inline-flex;
   align-items: center;
