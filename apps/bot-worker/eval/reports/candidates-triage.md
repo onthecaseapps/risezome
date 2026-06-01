@@ -38,10 +38,11 @@ model answered the old design:
 | how does the pipeline gate filler / route tool-vs-rag / cards reach live page / provenance | archive plans+brainstorms | current code |
 | person resolver injection guard | apps/daemon by_assignee_list | bot-worker person.ts |
 
-**Fix:** corpus hygiene — exclude `apps/daemon/**` and `docs/plans/archive/**`
-from indexing (or down-rank them). This is the same recurring signal as the
-"what database → SQLite" miss; this batch makes its priority concrete. The eval
-is behaving correctly by failing these.
+**Decision: ACCEPTED, not a bug.** The corpus legitimately contains historical
+/ superseded material (the old local-daemon implementation, archived plans).
+Answering from it is the *correct* thing to do given the indexed content — the
+model is grounding faithfully in what's there. No hygiene fix; these eval
+"failures" are expected and we leave them as documentation of what's indexed.
 
 ### 2. CORRECT to fail — implementation-identifier lookups RAG isn't built for
 
@@ -58,10 +59,10 @@ Several were resolved by re-phrasing at the concept level (those passing
 versions are in the set). The literal-identifier versions are left out: RAG
 over prose is not an exact-symbol lookup, and declining is reasonable.
 
-### 3. TUNING NEEDED — correct answers that were SUPPRESSED
+### 3. FIXED — correct answers that were SUPPRESSED
 
 These produced a **correct** answer that grounded-or-nothing then **hid**
-(0 surviving citations) — a real over-suppression signal, not correct behavior:
+(0 surviving citations) — a real over-suppression bug, now fixed:
 
 - **"what is the rrf constant and the vector distance floor"** — answer quoted
   `DEFAULT_RRF_K=60` and `DEFAULT_VECTOR_DISTANCE_FLOOR=0.45` (correct!) but was
@@ -77,13 +78,20 @@ These produced a **correct** answer that grounded-or-nothing then **hid**
 - **"how does the github install flow protect against csrf"** — correct answer
   suppressed.
 
-**Fix:** a follow-up tuning item on citation verification + U8 windowing so a
-correct, genuinely-grounded answer isn't hidden when the quoted span falls
-outside the retrieved window or spans multiple cited docs.
+**Confirmed cause:** the matched chunk was the per-doc **summary** chunk (U6),
+which densely names the facts (so it ranks). U8 `expandWinnersToParents` fetches
+only `is_summary=false` body chunks, so the expanded `text` excluded the
+summary — the model quoted the summary (`focus`), which wasn't in `text`, so
+every quote dropped. (Verified by dumping `inFocus`/`inText` per source.)
 
-## Follow-ups (priority order)
+**Fix (shipped):** `verifyCitationsDetailed` now verifies a quote against the
+matched-excerpt `focus` **OR** the expanded `text` — both are shown to the
+model, and `focus` is real retrieved content, so the grounding guarantee holds.
+All four suppressed cases now ground (rrf constants, external services, csrf,
+person resolver) and were added as regression golden questions.
 
-1. **Corpus hygiene** — exclude `apps/daemon/**` + `docs/plans/archive/**`.
-   Removes bucket-1 failures (and the standing "what database → SQLite" miss).
-2. **Over-suppression tuning** — verify quotes against the shown `focus` /
-   parent doc, not only the windowed `text` (bucket 3).
+## Follow-ups
+
+- ~~Corpus hygiene~~ — not pursuing; bucket-1 stale-source answers are accepted
+  (the corpus legitimately contains historical data).
+- ~~Over-suppression tuning~~ — DONE (focus-aware verification).

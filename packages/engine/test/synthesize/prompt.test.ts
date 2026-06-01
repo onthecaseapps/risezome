@@ -305,6 +305,19 @@ describe('verifyCitations — drops fabricated quoted citations', () => {
     expect(out.droppedQuoted).toBe(1);
   });
 
+  it('verifies a quote that is in the matched-excerpt focus but not the expanded text', () => {
+    // U8 can expand a matched SUMMARY chunk to body chunks (summary excluded),
+    // so the quote the model took from the focus isn't in `text`. The focus is
+    // real retrieved content the model was shown, so it must still verify.
+    const out = verifyCitations(
+      [{ rank: 1, position: 0, quote: 'DEFAULT_RRF_K=60' }],
+      [{ text: 'unrelated body chunk about fusion math', focus: 'corpus-search constants: DEFAULT_RRF_K = 60, floor 0.45' }],
+    );
+    expect(out.verified).toHaveLength(1);
+    expect(out.verified[0]!.quote).toBe('DEFAULT_RRF_K=60'); // kept as a full (highlightable) quote
+    expect(out.droppedQuoted).toBe(0);
+  });
+
   describe('paraphrase downgrade (keep a bare citation instead of suppressing)', () => {
     const corpusSearch = [
       {

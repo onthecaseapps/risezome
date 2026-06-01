@@ -639,10 +639,18 @@ export interface CitationDetail {
  *  summary from this. */
 export function verifyCitationsDetailed(
   citations: readonly ParsedCitation[],
-  sources: readonly { readonly text: string; readonly docId?: string }[],
+  sources: readonly { readonly text: string; readonly docId?: string; readonly focus?: string }[],
 ): CitationDetail[] {
-  const strictSources = sources.map((s) => normalizeForMatch(s.text));
-  const looseSources = sources.map((s) => looseNormalizeForMatch(s.text));
+  // Verify against everything the model was SHOWN for a source: the (expanded)
+  // `text` AND the matched-excerpt `focus`. They differ when U8 expands a
+  // matched summary chunk to body chunks (summary excluded) — the model quotes
+  // the summary `focus`, which isn't in `text`. Combining both stops that from
+  // suppressing a correct answer; `focus` is real retrieved content, so the
+  // grounding guarantee holds.
+  const haystack = (s: { text: string; focus?: string }): string =>
+    s.focus !== undefined && s.focus.length > 0 && s.focus !== s.text ? `${s.text}\n${s.focus}` : s.text;
+  const strictSources = sources.map((s) => normalizeForMatch(haystack(s)));
+  const looseSources = sources.map((s) => looseNormalizeForMatch(haystack(s)));
 
   // A quote is present in source `i` if it matches strictly OR (fallback)
   // under loose punctuation-tolerant normalization.
@@ -680,7 +688,7 @@ export function verifyCitationsDetailed(
 
 export function verifyCitations(
   citations: readonly ParsedCitation[],
-  sources: readonly { readonly text: string; readonly docId?: string }[],
+  sources: readonly { readonly text: string; readonly docId?: string; readonly focus?: string }[],
 ): CitationVerification {
   const detail = verifyCitationsDetailed(citations, sources);
   const verified: ParsedCitation[] = detail
