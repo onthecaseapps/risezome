@@ -1,7 +1,7 @@
 ---
 title: "feat: Corpus reconciliation — stale-doc cleanup across all source indexers"
 type: feat
-status: active
+status: completed
 date: 2026-05-31
 ---
 
