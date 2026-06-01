@@ -73,6 +73,8 @@ The bar for "no_relevant_context" is HIGH. Choose "answer" whenever the sources 
 
 Judge filler across the WHOLE window, never the latest line alone. A short final line like "what ai models" is NOT filler when an earlier line ("models are used here") completes it into a real question ("what AI models are used here"). Assemble the question from the window before you decide. If you can state what the speaker is asking, you have an answerable question.
 
+When a source is split into a "Matched excerpt" and "Surrounding context", judge that source's RELEVANCE from the matched excerpt alone, because the matched excerpt is the passage retrieval actually selected for this question. The surrounding context is wider supporting material that legitimately ranges beyond the question, so do NOT treat its broader scope as a reason to decline. If any matched excerpt is on-topic, you have relevant context, answer; then use the surrounding context to make the answer complete and specific.
+
 When in doubt, answer. Declining renders as nothing on the user's screen, which is worse than a tangential answer they can scan and ignore.
 
 GROUNDING IS ABSOLUTE:
@@ -334,14 +336,28 @@ export function buildSystemPrefix(): SystemBlock[] {
   ];
 }
 
+/** Render one source. When parent-document expansion (U8) supplied a `focus`
+ *  excerpt distinct from the (wider) `text`, present them separately so the
+ *  model judges relevance from the matched excerpt but can draw on the full
+ *  context for detail. Otherwise fall back to the plain single-block form. */
+function renderSource(s: SynthesisSource): string {
+  const head = `[${String(s.rank)}] ${s.title}`;
+  if (s.focus !== undefined && s.focus.length > 0 && s.focus !== s.text) {
+    return (
+      `${head}\n` +
+      `Matched excerpt (judge relevance to the question from THIS):\n${s.focus}\n\n` +
+      `Surrounding context (draw on this for a fuller answer; it may range wider than the question):\n${s.text}`
+    );
+  }
+  return `${head}\n${s.text}`;
+}
+
 export function buildUserMessage(
   utterance: string,
   sources: readonly SynthesisSource[],
   recentContext?: readonly string[],
 ): string {
-  const numbered = sources
-    .map((s) => `[${String(s.rank)}] ${s.title}\n${s.text}`)
-    .join('\n\n');
+  const numbered = sources.map(renderSource).join('\n\n');
   return `${renderQuestionBlock(utterance, recentContext)}\n\nSources:\n${numbered}`;
 }
 

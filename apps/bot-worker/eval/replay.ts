@@ -33,6 +33,7 @@ import {
 import { createServiceClient } from '../src/db.js';
 import { hybridSearch } from '../src/corpus-search.js';
 import { optionalReranker } from '../src/reranker.js';
+import { expandWinnersToParents, parentDocEnabled, type WinningChunk } from '../src/parent-doc.js';
 import {
   scoreQuestion,
   summarize,
@@ -101,14 +102,28 @@ async function replayOne(
   const chunkIds = hits.map((h) => h.chunk_id);
   const { data: chunkRows } = await deps.db
     .from('doc_chunks')
-    .select('chunk_id, doc_id, text')
+    .select('chunk_id, doc_id, text, position')
     .in('chunk_id', chunkIds);
   const chunkById = new Map(
-    (chunkRows ?? []).map((c) => [c.chunk_id as string, { docId: c.doc_id as string, text: c.text as string }]),
+    (chunkRows ?? []).map((c) => [
+      c.chunk_id as string,
+      { docId: c.doc_id as string, text: c.text as string, position: c.position as number },
+    ]),
   );
   const docIds = [...new Set([...chunkById.values()].map((c) => c.docId))];
   const { data: docRows } = await deps.db.from('docs').select('id, title').in('id', docIds);
   const titleById = new Map((docRows ?? []).map((d) => [d.id as string, d.title as string]));
+
+  // Parent-document expansion (U8): the child won the ranking, but synthesis
+  // sees the surrounding parent context. Citations/recall still key off the
+  // child. No-op (child text) when the flag is off.
+  const winners: WinningChunk[] = hits.flatMap((h) => {
+    const c = chunkById.get(h.chunk_id);
+    return c === undefined ? [] : [{ chunkId: h.chunk_id, docId: c.docId, position: c.position, text: c.text }];
+  });
+  const expandedByChunk = parentDocEnabled()
+    ? await expandWinnersToParents(deps.db, winners)
+    : new Map<string, string>();
 
   const retrieved: RetrievedDoc[] = [];
   const sources: SynthesisSource[] = [];
@@ -117,7 +132,9 @@ async function replayOne(
     if (chunk === undefined) return;
     const title = titleById.get(chunk.docId) ?? chunk.docId;
     retrieved.push({ chunkId: h.chunk_id, docId: chunk.docId, title, score: h.score });
-    sources.push({ rank: i + 1, title, text: chunk.text });
+    // U8: judge relevance from the tight child (`focus`), formulate from the
+    // expanded parent (`text`). Equal when expansion was a no-op / disabled.
+    sources.push({ rank: i + 1, title, text: expandedByChunk.get(h.chunk_id) ?? chunk.text, focus: chunk.text });
   });
 
   // 4) synthesize (consume the stream, parse for refusal + body)

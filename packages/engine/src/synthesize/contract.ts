@@ -3,7 +3,18 @@ import { RisezomeError } from '@risezome/shared-types';
 export interface SynthesisSource {
   readonly rank: number;
   readonly title: string;
+  /** The text the model synthesizes from. With parent-document retrieval
+   *  (U8) this is the EXPANDED parent context; otherwise it's the chunk body. */
   readonly text: string;
+  /** Parent-document retrieval (U8): the tight child excerpt that actually
+   *  matched the query, when `text` has been expanded to wider parent context.
+   *  The model judges topical RELEVANCE from this focus excerpt (so wider
+   *  surrounding context can't make a precise-lookup source read as
+   *  off-topic), then draws on the full `text` to compose a complete answer.
+   *  Omitted (or equal to `text`) when no expansion happened — render falls
+   *  back to the plain single-block form. `focus` is always a substring of
+   *  `text`, so citation quotes still verify against `text`. */
+  readonly focus?: string;
 }
 
 export interface SynthesisInput {

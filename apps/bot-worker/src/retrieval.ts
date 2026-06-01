@@ -8,6 +8,7 @@ import type {
 import { parseSynthesisOutput, stripStatusPrefix, verifyCitations } from '@risezome/engine/synthesize';
 import { hybridSearch } from './corpus-search';
 import { optionalReranker } from './reranker';
+import { expandWinnersToParents, parentDocEnabled, type WinningChunk } from './parent-doc';
 import { optionalQueryExpander } from './query-expand';
 import { augmentQuery } from '@risezome/engine/query-expand';
 import { shouldExpandOnMiss } from '@risezome/engine/query-route';
@@ -340,6 +341,20 @@ export async function maybeRetrieveAndEmit(args: {
     ]),
   );
 
+  // Parent-document expansion (U8): expand each winning child to its
+  // surrounding parent context. The expanded text becomes BOTH the card body
+  // and the synthesis source text, so the verbatim quote the model emits is
+  // findable for citation verification AND for the live-page highlight (they
+  // search the same substrate). The card's identity still points at the child
+  // chunk's doc. No-op (child text) when the flag is off.
+  const winners: WinningChunk[] = hits.flatMap((h) => {
+    const c = chunkById.get(h.chunk_id);
+    return c === undefined ? [] : [{ chunkId: h.chunk_id, docId: c.doc_id, position: c.position, text: c.text }];
+  });
+  const expandedByChunk = parentDocEnabled()
+    ? await expandWinnersToParents(args.db, winners)
+    : new Map<string, string>();
+
   const traceId = randomUUID();
   let emitted = 0;
   const surfacedCardIds: string[] = [];
@@ -354,7 +369,7 @@ export async function maybeRetrieveAndEmit(args: {
     // Persist the card row (RLS-scoped by org_id; insert via service
     // role) BEFORE the broadcast, per R23a.
     const cardId = `card_${randomUUID()}`;
-    const body = chunk.text;
+    const body = expandedByChunk.get(hit.chunk_id) ?? chunk.text;
     const snippet = body.length > 400 ? body.slice(0, 400) + '…' : body;
     // cosine distance is in [0, 2]; convert to a [0, 1] similarity-ish
     // score so the HUD's score field aligns with what the HUD currently
@@ -428,8 +443,11 @@ export async function maybeRetrieveAndEmit(args: {
     surfacedCardIds.push(cardId);
     synthesisSources.push({
       rank: i + 1, // synthesizer expects 1-indexed
+      text: body, // U8: expanded parent context (== card body, so quotes verify + highlight)
+      // U8: judge relevance from the tight child that matched; formulate from
+      // the expanded `text`. Equal to `text` when expansion was a no-op.
+      focus: chunk.text,
       title: doc.title,
-      text: chunk.text,
     });
     emitted += 1;
   }

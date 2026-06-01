@@ -38,6 +38,28 @@ describe('buildUserMessage', () => {
     );
   });
 
+  it('splits a U8-expanded source into matched-excerpt + surrounding-context blocks', () => {
+    const expanded: SynthesisSource = {
+      rank: 1,
+      title: 'apps/bot-worker/src/debug/deepgram.ts',
+      text: 'preamble about the engine\n\nexponential backoff reconnection (max 3 attempts)\n\nteardown notes',
+      focus: 'exponential backoff reconnection (max 3 attempts)',
+    };
+    const out = buildUserMessage('deepgram reconnect', [expanded]);
+    expect(out).toContain('Matched excerpt (judge relevance to the question from THIS):');
+    expect(out).toContain('Surrounding context');
+    // The tight excerpt and the wider body both appear.
+    expect(out).toContain('exponential backoff reconnection (max 3 attempts)');
+    expect(out).toContain('teardown notes');
+  });
+
+  it('renders the plain single-block form when focus equals text (expansion was a no-op)', () => {
+    const noop: SynthesisSource = { rank: 1, title: 'f.ts', text: 'body', focus: 'body' };
+    const out = buildUserMessage('q', [noop]);
+    expect(out).toBe('Utterance: q\n\nSources:\n[1] f.ts\nbody');
+    expect(out).not.toContain('Matched excerpt');
+  });
+
   it('frames recentContext as a window the model must read as one thought', () => {
     const out = buildUserMessage('what ai models', SAMPLE_SOURCES, ['models are used here']);
     // The window is presented as joint context, with explicit instruction not
