@@ -1,18 +1,19 @@
 import { chunkFile } from '@risezome/engine/chunker';
-import { VoyageEmbedder, EmbeddingRateLimitError } from '@risezome/engine/embed';
-import { inngest } from '../client';
+import { inngest, type IndexMode } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
 import { AtlassianAuthError } from '../../../app/_lib/atlassian';
 import { getValidAtlassianToken } from '../../../app/_lib/atlassian-token';
 import { listConfluencePages, type AtlassianContext, type ConfluencePage } from '../../../app/_lib/atlassian-client';
 import { buildPageDocText, confluencePageDocId } from '../../../app/_lib/atlassian-doc';
+import { runConnectorIndex, type PreparedDoc } from '../lib/connector-index';
 
 const RECONNECT_MSG = 'Atlassian access was revoked or expired. Reconnect Atlassian to re-index.';
 
 /**
- * Index a single Confluence space's pages into the corpus. Mirrors index-jira /
- * index-trello: load source + token, list current pages with storage body, build
- * doc text (title + body), chunk/embed, upsert docs(source=confluence,type=page).
+ * Index a single Confluence space's pages. The shared connector orchestrator
+ * handles reconcile (skip-unchanged, atomic re-embed, full prune, counters);
+ * this file supplies the Confluence specifics. Pages carry their body inline,
+ * so `prepare` needs no extra fetch.
  */
 export const indexConfluenceFn = inngest.createFunction(
   {
@@ -26,7 +27,9 @@ export const indexConfluenceFn = inngest.createFunction(
     triggers: [{ event: 'risezome/confluence.index-requested' }],
   },
   async ({ event, step }) => {
-    const { orgId, sourceId } = (event as unknown as { data: { orgId: string; sourceId: string } }).data;
+    const { orgId, sourceId, mode } = (event as unknown as {
+      data: { orgId: string; sourceId: string; mode?: IndexMode };
+    }).data;
 
     const ctx = await step.run('load-source', async () => {
       const service = createServiceRoleClient();
@@ -41,149 +44,63 @@ export const indexConfluenceFn = inngest.createFunction(
       }
       await service
         .from('sources')
-        .update({ status: 'indexing', status_message: null, indexed_files: 0, total_files: null, chunk_count: 0 })
+        .update({ status: 'indexing', status_message: null, indexed_files: 0, total_files: null })
         .eq('id', sourceId);
       return { spaceId: source.external_id as string };
     });
 
     let token;
-    let pages: ConfluencePage[];
     try {
       token = await step.run('token', async () => getValidAtlassianToken(orgId, createServiceRoleClient()));
-      const client: AtlassianContext = { accessToken: token.accessToken, cloudId: token.cloudId };
-      pages = await step.run('fetch-pages', async () => listConfluencePages(ctx.spaceId, client));
     } catch (err) {
       if (err instanceof AtlassianAuthError) {
-        await markErrored(sourceId);
-        return { sourceId, pages: 0, error: 'atlassian_auth' };
+        await markErrored(step, sourceId);
+        return { sourceId, pages: 0, chunks: 0, error: 'atlassian_auth' };
       }
       throw err;
     }
 
-    await step.run('set-total', async () => {
-      await createServiceRoleClient().from('sources').update({ total_files: pages.length }).eq('id', sourceId);
-    });
-    if (pages.length === 0) {
-      await finalizeIdle(step, sourceId);
-      return { sourceId, pages: 0, chunks: 0 };
-    }
-
-    const BATCH = 8;
-    const embedder = new VoyageEmbedder({ apiKey: requireEnv('VOYAGE_API_KEY') });
+    const client: AtlassianContext = { accessToken: token.accessToken, cloudId: token.cloudId };
+    const cloudId = token.cloudId;
     const siteUrl = token.siteUrl ?? '';
 
-    let indexed = 0;
-    let chunkCount = 0;
-    for (let i = 0; i < pages.length; i += BATCH) {
-      const batch = pages.slice(i, i + BATCH);
-      const result = await step.run(`index-batch-${i}`, async () =>
-        indexPageBatch({ batch, cloudId: token.cloudId, siteUrl, orgId, sourceId, embedder }),
-      );
-      indexed += result.pages;
-      chunkCount += result.chunks;
-      await step.run(`counter-${i}`, async () => {
-        await createServiceRoleClient()
-          .from('sources')
-          .update({ indexed_files: indexed, chunk_count: chunkCount })
-          .eq('id', sourceId);
-      });
-    }
+    const result = await runConnectorIndex<ConfluencePage>({
+      step,
+      orgId,
+      sourceId,
+      mode,
+      source: 'confluence',
+      docType: 'page',
+      provenance: 'trusted',
+      reconnectMessage: RECONNECT_MSG,
+      isAuthError: (err) => err instanceof AtlassianAuthError,
+      fetchEntities: () => listConfluencePages(ctx.spaceId, client),
+      prepare: async (page): Promise<PreparedDoc | null> => {
+        const text = buildPageDocText(page);
+        const chunks = chunkFile('confluence-page.md', text);
+        if (chunks.length === 0) return null;
+        return {
+          docId: confluencePageDocId(cloudId, page.id),
+          title: page.title,
+          url: siteUrl.length > 0 ? `${siteUrl}/wiki/pages/viewpage.action?pageId=${page.id}` : null,
+          updatedAt: new Date().toISOString(),
+          chunks: chunks.map((c) => ({ text: c.text, domain: c.domain })),
+        };
+      },
+    });
 
-    await finalizeIdle(step, sourceId);
-    return { sourceId, pages: indexed, chunks: chunkCount };
+    return { sourceId, pages: result.items, chunks: result.chunks, ...(result.error !== undefined && { error: result.error }) };
   },
 );
 
-async function indexPageBatch(args: {
-  batch: ConfluencePage[];
-  cloudId: string;
-  siteUrl: string;
-  orgId: string;
-  sourceId: string;
-  embedder: VoyageEmbedder;
-}): Promise<{ pages: number; chunks: number }> {
-  const { batch, cloudId, siteUrl, orgId, sourceId, embedder } = args;
-  const service = createServiceRoleClient();
-  let pages = 0;
-  let chunks = 0;
-
-  for (const page of batch) {
-    const text = buildPageDocText(page);
-    const chunkInputs = chunkFile('confluence-page.md', text);
-    if (chunkInputs.length === 0) continue;
-
-    let embeddings;
-    try {
-      embeddings = await embedder.embed({
-        items: chunkInputs.map((c, i) => ({ id: `${page.id}::${i}`, text: c.text, domain: c.domain })),
-      });
-    } catch (err) {
-      if (err instanceof EmbeddingRateLimitError) throw err;
-      continue;
-    }
-
-    const docId = confluencePageDocId(cloudId, page.id);
-    const { error: docErr } = await service.from('docs').upsert({
-      id: docId,
-      org_id: orgId,
-      source_id: sourceId,
-      source: 'confluence',
-      type: 'page',
-      title: page.title,
-      url: siteUrl.length > 0 ? `${siteUrl}/wiki/pages/viewpage.action?pageId=${page.id}` : null,
-      provenance: 'trusted',
-      updated_at: new Date().toISOString(),
-    });
-    if (docErr !== null) continue;
-
-    const chunkRows = chunkInputs.map((c, i) => ({
-      chunk_id: `${docId}::${i}`,
-      org_id: orgId,
-      doc_id: docId,
-      domain: c.domain,
-      text: c.text,
-      position: i,
-    }));
-    if ((await service.from('doc_chunks').upsert(chunkRows, { onConflict: 'chunk_id' })).error !== null) continue;
-
-    const embedRows = chunkInputs.map((_, i) => ({
-      chunk_id: `${docId}::${i}`,
-      org_id: orgId,
-      embedding: arrayToVectorLiteral(embeddings.vectors[i]!.vector),
-    }));
-    if ((await service.from('corpus_chunk_embeddings').upsert(embedRows, { onConflict: 'chunk_id' })).error !== null) continue;
-
-    pages += 1;
-    chunks += chunkInputs.length;
-  }
-  return { pages, chunks };
-}
-
-async function markErrored(sourceId: string): Promise<void> {
-  await createServiceRoleClient()
-    .from('sources')
-    .update({ status: 'errored', status_message: RECONNECT_MSG })
-    .eq('id', sourceId);
-}
-
-async function finalizeIdle(
+async function markErrored(
   step: { run: (id: string, fn: () => Promise<unknown>) => Promise<unknown> },
   sourceId: string,
 ): Promise<void> {
-  await step.run('finalize', async () => {
+  await step.run('mark-token-errored', async () => {
     await createServiceRoleClient()
       .from('sources')
-      .update({ status: 'idle', last_indexed_at: new Date().toISOString() })
+      .update({ status: 'errored', status_message: RECONNECT_MSG })
       .eq('id', sourceId);
   });
-}
-
-function arrayToVectorLiteral(vec: Float32Array): string {
-  return `[${Array.from(vec).join(',')}]`;
-}
-
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (value === undefined || value.length === 0) throw new Error(`Missing required environment variable: ${name}`);
-  return value;
 }
