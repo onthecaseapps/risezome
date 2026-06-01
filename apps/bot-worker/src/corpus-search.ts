@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Reranker } from '@risezome/engine/embed';
 
 /**
  * Hybrid corpus retrieval: dense (pgvector cosine) + lexical (Postgres
@@ -108,8 +109,15 @@ export interface HybridSearchParams {
   readonly queryText: string;
   readonly limit: number;
   readonly candidateLimit?: number;
+  /** Optional cross-encoder reranker (U4). When set, the fused candidate
+   *  pool is reranked by query-document relevance and truncated to `limit`;
+   *  on any rerank error the RRF order is kept (graceful degrade). */
+  readonly reranker?: Reranker | undefined;
   readonly logger?: { warn: (obj: object, msg?: string) => void };
 }
+
+/** Fused candidates fetched for reranking before the final top-K cut. */
+const RERANK_POOL = 25;
 
 /**
  * Run vector + FTS in parallel and fuse. If FTS errors (or the query text
@@ -147,7 +155,38 @@ export async function hybridSearch(
     params.logger?.warn({ err: ftsRes.error }, 'corpus-search.fts.failed');
   }
 
-  return fuseRrf(vecRes.data ?? [], ftsRes.error === null ? (ftsRes.data ?? []) : [], {
-    limit: params.limit,
+  const fused = fuseRrf(vecRes.data ?? [], ftsRes.error === null ? (ftsRes.data ?? []) : [], {
+    // With a reranker, fuse to a larger pool and let the cross-encoder pick
+    // the final top-`limit`; otherwise fuse straight to `limit`.
+    limit: params.reranker !== undefined ? RERANK_POOL : params.limit,
   });
+
+  if (params.reranker === undefined || fused.length <= 1) {
+    return fused.slice(0, params.limit);
+  }
+
+  // Rerank the pool by query-document relevance. Fetch the verbatim chunk
+  // bodies (what a reader sees) for the cross-encoder; on any failure keep
+  // the RRF order.
+  const ids = fused.map((h) => h.chunk_id);
+  const { data: rows, error: textErr } = await db
+    .from('doc_chunks')
+    .select('chunk_id, text')
+    .in('chunk_id', ids);
+  if (textErr !== null || rows === null) {
+    params.logger?.warn({ err: textErr }, 'corpus-search.rerank.text-fetch-failed');
+    return fused.slice(0, params.limit);
+  }
+  const textById = new Map((rows as { chunk_id: string; text: string }[]).map((r) => [r.chunk_id, r.text]));
+  const documents = fused.map((h) => textById.get(h.chunk_id) ?? '');
+  try {
+    const ranked = await params.reranker(params.queryText, documents, { topK: params.limit });
+    const reordered = ranked
+      .map((r) => fused[r.index])
+      .filter((h): h is HybridHit => h !== undefined);
+    return reordered.slice(0, params.limit);
+  } catch (err) {
+    params.logger?.warn({ err }, 'corpus-search.rerank.failed');
+    return fused.slice(0, params.limit);
+  }
 }

@@ -4,4 +4,11 @@
 
 export * from './contract.js';
 export * from './voyage.js';
+export {
+  makeVoyageReranker,
+  type Reranker,
+  type RerankResult,
+  type RerankOptions,
+  type VoyageRerankerOptions,
+} from './voyage-rerank.js';
 export { EmbedCache, contentHash } from './cache.js';

@@ -32,6 +32,7 @@ import {
 } from '@risezome/engine/eval';
 import { createServiceClient } from '../src/db.js';
 import { hybridSearch } from '../src/corpus-search.js';
+import { optionalReranker } from '../src/reranker.js';
 import {
   scoreQuestion,
   summarize,
@@ -89,6 +90,7 @@ async function replayOne(
     queryVectorLiteral,
     queryText: question.q,
     limit: TOP_K,
+    reranker: optionalReranker(),
     logger: silentLogger,
   });
   if (hits.length === 0) {

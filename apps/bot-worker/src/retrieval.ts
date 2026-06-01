@@ -7,6 +7,7 @@ import type {
 } from '@risezome/engine/synthesize';
 import { parseSynthesisOutput, stripStatusPrefix, verifyCitations } from '@risezome/engine/synthesize';
 import { hybridSearch } from './corpus-search';
+import { optionalReranker } from './reranker';
 import {
   classifyRelevanceHeuristic,
   type RelevanceClassifier,
@@ -258,6 +259,7 @@ export async function maybeRetrieveAndEmit(args: {
     queryVectorLiteral: queryLiteral,
     queryText: queryText,
     limit: TOP_K,
+    reranker: optionalReranker(),
     logger: args.logger,
   });
   if (hits.length === 0) {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { fuseRrf } from '../src/corpus-search.js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { fuseRrf, hybridSearch } from '../src/corpus-search.js';
+import type { Reranker } from '@risezome/engine/embed';
 
 describe('fuseRrf — reciprocal rank fusion + relevance floor', () => {
   it('ranks a chunk appearing in BOTH lists above single-list chunks', () => {
@@ -72,6 +74,72 @@ describe('fuseRrf — reciprocal rank fusion + relevance floor', () => {
       { limit: 2 },
     );
     expect(out).toHaveLength(2);
+    expect(out.map((h) => h.chunk_id)).toEqual(['A', 'B']);
+  });
+});
+
+function mockDb(
+  vector: { chunk_id: string; distance: number }[],
+  fts: { chunk_id: string; rank: number }[],
+  texts: Record<string, string>,
+): SupabaseClient {
+  return {
+    rpc: (name: string) =>
+      Promise.resolve(
+        name === 'search_corpus_vector' ? { data: vector, error: null } : { data: fts, error: null },
+      ),
+    from: () => ({
+      select: () => ({
+        in: (_col: string, ids: string[]) =>
+          Promise.resolve({ data: ids.map((id) => ({ chunk_id: id, text: texts[id] ?? '' })), error: null }),
+      }),
+    }),
+  } as unknown as SupabaseClient;
+}
+
+describe('hybridSearch — reranker integration', () => {
+  const vector = [
+    { chunk_id: 'A', distance: 0.1 },
+    { chunk_id: 'B', distance: 0.2 },
+    { chunk_id: 'C', distance: 0.3 },
+  ];
+  const texts = { A: 'alpha', B: 'beta', C: 'gamma (the real answer)' };
+
+  it('reorders the fused pool by rerank score and truncates to limit', async () => {
+    // Rerank pushes C (index 2 in the fused pool) to the top.
+    const reranker: Reranker = async (_q, docs) =>
+      docs.map((_d, i) => ({ index: i, score: i === 2 ? 9 : i === 0 ? 1 : 0 })).sort((a, b) => b.score - a.score);
+    const out = await hybridSearch(mockDb(vector, [], texts), {
+      orgId: 'o',
+      queryVectorLiteral: '[0]',
+      queryText: 'what is the real answer',
+      limit: 2,
+      reranker,
+    });
+    expect(out.map((h) => h.chunk_id)).toEqual(['C', 'A']);
+  });
+
+  it('keeps RRF order when the reranker throws (graceful degrade)', async () => {
+    const reranker: Reranker = async () => {
+      throw new Error('rerank 500');
+    };
+    const out = await hybridSearch(mockDb(vector, [], texts), {
+      orgId: 'o',
+      queryVectorLiteral: '[0]',
+      queryText: 'q',
+      limit: 2,
+      reranker,
+    });
+    expect(out.map((h) => h.chunk_id)).toEqual(['A', 'B']);
+  });
+
+  it('skips reranking entirely when no reranker is supplied', async () => {
+    const out = await hybridSearch(mockDb(vector, [], texts), {
+      orgId: 'o',
+      queryVectorLiteral: '[0]',
+      queryText: 'q',
+      limit: 2,
+    });
     expect(out.map((h) => h.chunk_id)).toEqual(['A', 'B']);
   });
 });

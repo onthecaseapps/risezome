@@ -43,6 +43,7 @@ import {
   type SynthesisSource,
 } from '@risezome/engine/synthesize';
 import { hybridSearch } from '../corpus-search';
+import { optionalReranker } from '../reranker';
 import { AnthropicSummarizer, type MeetingSummary } from '@risezome/engine/summarize';
 import {
   AnthropicRelevanceClassifier,
@@ -602,6 +603,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     queryVectorLiteral: queryLiteral,
     queryText: embedText,
     limit: TOP_K,
+    reranker: optionalReranker(),
     logger: args.logger,
   });
 
