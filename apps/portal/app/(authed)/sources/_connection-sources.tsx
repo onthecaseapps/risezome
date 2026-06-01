@@ -4,6 +4,7 @@ import { useState, useTransition, type ReactElement } from 'react';
 import { reindexSourceAction } from './reindex-action';
 import { TrelloBoardPicker } from './_trello-board-picker';
 import { AtlassianPickers } from './_atlassian-pickers';
+import { SourceMark } from './_source-icons';
 
 export interface ConnectionSourceRow {
   id: string;
@@ -13,6 +14,7 @@ export interface ConnectionSourceRow {
   status_message: string | null;
   indexed_files: number;
   total_files: number | null;
+  last_indexed_at: string | null;
 }
 
 type PickerData =
@@ -90,20 +92,10 @@ function SourceRowCard({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  const count = source.indexed_files;
-  const total = source.total_files;
-  const noun = ITEM_NOUN[source.kind ?? 'trello'] ?? 'item';
-  const plural = count === 1 ? noun : `${noun}s`;
+  const kind = source.kind ?? 'trello';
+  const noun = ITEM_NOUN[kind] ?? 'item';
+  const isErrored = source.status === 'errored';
   const busy = source.status === 'indexing' || source.status === 'pending';
-
-  const statusLine =
-    source.status === 'idle'
-      ? `${count} ${plural} indexed`
-      : source.status === 'indexing'
-        ? `Indexing… ${count}${total !== null ? ` / ${total}` : ''} ${noun}s`
-        : source.status === 'errored'
-          ? (source.status_message ?? 'Indexing failed')
-          : 'Queued';
 
   function handleReindex(): void {
     setError(null);
@@ -117,13 +109,22 @@ function SourceRowCard({
   }
 
   return (
-    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-3">
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-fg">{source.display_name ?? 'Source'}</div>
-        <div className="mt-0.5 text-xs text-muted">{statusLine}</div>
+    <div
+      className={`flex items-center gap-4 rounded-xl border bg-card p-4 ${
+        isErrored ? 'border-rose-400/40' : 'border-border'
+      }`}
+    >
+      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-bg">
+        <SourceMark kind={kind} />
       </div>
 
-      <div className="relative flex-shrink-0">
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium text-fg">{source.display_name ?? 'Source'}</div>
+        <SourceStatusLine source={source} noun={noun} />
+      </div>
+
+      <div className="relative flex flex-shrink-0 items-center gap-2">
+        <SourceStatusBadge source={source} />
         <button
           type="button"
           aria-label="Source actions"
@@ -186,6 +187,120 @@ function SourceRowCard({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function SourceStatusLine({ source, noun }: { source: ConnectionSourceRow; noun: string }): ReactElement {
+  const count = source.indexed_files;
+  const plural = count === 1 ? noun : `${noun}s`;
+  if (source.status === 'idle') {
+    return (
+      <div className="mt-1 flex items-center gap-1.5 text-xs text-emerald-500 dark:text-emerald-400">
+        <CheckIcon />
+        <span>
+          Indexed {formatRelative(source.last_indexed_at)} ·{' '}
+          <span className="text-muted">
+            {count.toLocaleString()} {plural}
+          </span>
+        </span>
+      </div>
+    );
+  }
+  if (source.status === 'indexing') {
+    return (
+      <div className="mt-1 text-xs text-accent">
+        Indexing… {count}
+        {source.total_files !== null ? ` / ${source.total_files}` : ''} {noun}s
+      </div>
+    );
+  }
+  if (source.status === 'errored') {
+    return (
+      <div className="mt-1 flex items-center gap-1.5 text-xs text-rose-500 dark:text-rose-400">
+        <AlertIcon />
+        <span>
+          {source.status_message ?? 'Indexing failed'}
+          {source.last_indexed_at !== null ? (
+            <span className="text-muted"> · last sync {formatRelative(source.last_indexed_at)}</span>
+          ) : null}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+      <ClockIcon />
+      Waiting to index
+    </div>
+  );
+}
+
+function SourceStatusBadge({ source }: { source: ConnectionSourceRow }): ReactElement | null {
+  if (source.status === 'idle') {
+    return (
+      <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-300">
+        Synced
+      </span>
+    );
+  }
+  if (source.status === 'indexing') {
+    return (
+      <span className="inline-flex items-center rounded-full bg-accent-soft px-2.5 py-0.5 text-xs font-medium text-accent">
+        Indexing
+      </span>
+    );
+  }
+  if (source.status === 'errored') {
+    return (
+      <span className="inline-flex items-center rounded-full bg-rose-500/15 px-2.5 py-0.5 text-xs font-medium text-rose-600 dark:text-rose-300">
+        Failed
+      </span>
+    );
+  }
+  if (source.status === 'pending') {
+    return (
+      <span className="inline-flex items-center rounded-full bg-bg px-2.5 py-0.5 text-xs font-medium text-muted">
+        Queued
+      </span>
+    );
+  }
+  return null;
+}
+
+function formatRelative(iso: string | null): string {
+  if (iso === null) return 'never';
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+
+function CheckIcon(): ReactElement {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+
+function ClockIcon(): ReactElement {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+
+function AlertIcon(): ReactElement {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 9v4M12 17h.01" />
+      <path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0z" />
+    </svg>
   );
 }
 
