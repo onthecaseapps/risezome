@@ -6,8 +6,8 @@ import { CURRENT_ORG_COOKIE, requireAuthedUser } from '../../_lib/auth';
 import { createServiceRoleClient } from '../../_lib/supabase-server';
 
 /**
- * Create a new org with the current user as admin. Used by both the
- * onboarding form (first-time sign-in) and the secondary "+ Create new
+ * Create a new org with the current user as its first manager. Used by both
+ * the onboarding form (first-time sign-in) and the secondary "+ Create new
  * org" form on /orgs/new.
  *
  * Service-role client because we're inserting into both orgs and
@@ -48,9 +48,9 @@ export async function createOrg(formData: FormData): Promise<void> {
   const orgId = orgRow.id as string;
   const { error: memberErr } = await service
     .from('org_members')
-    .insert({ org_id: orgId, user_id: user.id, role: 'admin' });
+    .insert({ org_id: orgId, user_id: user.id, role: 'manager' });
   if (memberErr !== null) {
-    // Compensating delete to avoid an orphan org without an admin.
+    // Compensating delete to avoid an orphan org without a manager.
     await service.from('orgs').delete().eq('id', orgId);
      
     console.error('[onboarding.createOrg] org_members insert failed:', memberErr);

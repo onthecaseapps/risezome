@@ -61,7 +61,7 @@ if (!stackReachable && !FORCE) {
         auth: { persistSession: false, autoRefreshToken: false },
       });
       userA = await createTestUser(admin, 'rls-trello-a@example.com');
-      orgA = await createOrgWithMember(admin, 'Trello Org A', userA.id, 'admin');
+      orgA = await createOrgWithMember(admin, 'Trello Org A', userA.id, 'manager');
 
       const { data: conn, error: connErr } = await admin
         .from('trello_connections')
@@ -155,7 +155,7 @@ async function createOrgWithMember(
   admin: SupabaseClient,
   orgName: string,
   userId: string,
-  role: 'admin' | 'member',
+  role: 'manager' | 'member',
 ): Promise<string> {
   const { data: org, error: orgErr } = await admin
     .from('orgs')

@@ -64,8 +64,8 @@ if (!stackReachable && !FORCE) {
       userA = await createTestUser(admin, 'rls-test-a@example.com');
       userB = await createTestUser(admin, 'rls-test-b@example.com');
 
-      orgA = await createOrgWithMember(admin, 'Org A', userA.id, 'admin');
-      orgB = await createOrgWithMember(admin, 'Org B', userB.id, 'admin');
+      orgA = await createOrgWithMember(admin, 'Org A', userA.id, 'manager');
+      orgB = await createOrgWithMember(admin, 'Org B', userB.id, 'manager');
     });
 
     afterAll(async () => {
@@ -141,7 +141,7 @@ async function createOrgWithMember(
   admin: SupabaseClient,
   orgName: string,
   userId: string,
-  role: 'admin' | 'member',
+  role: 'manager' | 'member',
 ): Promise<string> {
   const { data: org, error: orgErr } = await admin
     .from('orgs')

@@ -52,7 +52,7 @@ if (!stackReachable && !FORCE) {
         auth: { persistSession: false, autoRefreshToken: false },
       });
       userA = await createTestUser(admin, 'rls-atlassian-a@example.com');
-      orgA = await createOrgWithMember(admin, 'Atlassian Org A', userA.id, 'admin');
+      orgA = await createOrgWithMember(admin, 'Atlassian Org A', userA.id, 'manager');
 
       const { data: conn, error } = await admin
         .from('atlassian_connections')
@@ -145,7 +145,7 @@ async function createOrgWithMember(
   admin: SupabaseClient,
   orgName: string,
   userId: string,
-  role: 'admin' | 'member',
+  role: 'manager' | 'member',
 ): Promise<string> {
   const { data: org, error: orgErr } = await admin
     .from('orgs')
