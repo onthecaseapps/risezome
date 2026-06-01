@@ -1,9 +1,22 @@
+import { createHash } from 'node:crypto';
 import { VoyageEmbedder, EmbeddingRateLimitError } from '@risezome/engine/embed';
-import { inngest } from '../client';
+import { inngest, type IndexMode } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
 import { getInstallationOctokit } from '../../../app/_lib/github-app';
 import { chunkIssue } from '../../lib/github/chunk-issues';
 import type { GithubIssue } from '../../lib/github/issue-types';
+import { reconcile, clearDocChunks } from '../lib/corpus-reconcile';
+
+/** Doc types this indexer owns — reconcile must never touch the
+ *  type='file' docs that share this source_id (corpus-reconcile R8). */
+const OWNED_TYPES = ['issue', 'pull-request'];
+
+/** SHA-256 of the joined chunk-input text — exact content fingerprint
+ *  (changes only when embedded content changes, not on incidental
+ *  activity like a label edit that doesn't alter chunk text). */
+function contentHash(texts: readonly string[]): string {
+  return createHash('sha256').update(texts.join('\n')).digest('hex');
+}
 
 /**
  * Index a single source's GitHub issues + pull requests into the Postgres
@@ -40,7 +53,10 @@ export const indexGithubIssuesFn = inngest.createFunction(
     triggers: [{ event: 'risezome/source.index-requested' }],
   },
   async ({ event, step }) => {
-    const { orgId, sourceId } = (event as unknown as { data: { orgId: string; sourceId: string } }).data;
+    const { orgId, sourceId, mode } = (event as unknown as {
+      data: { orgId: string; sourceId: string; mode?: IndexMode };
+    }).data;
+    const indexMode: IndexMode = mode === 'full' ? 'full' : 'delta';
 
     const source = await step.run('load-source', async () => {
       const service = createServiceRoleClient();
@@ -67,34 +83,30 @@ export const indexGithubIssuesFn = inngest.createFunction(
     }
     const ownerRepo = `${owner}/${repo}`;
 
-    // ── Step 1: read cursor from current corpus state ────────────────
-    // max(updated_at) where source_id = X AND type IN ('issue',
-    // 'pull-request') is the natural cursor — fully idempotent: the
-    // next run re-fetches the most recent doc but the upsert is a
-    // no-op since the doc didn't change.
-    const sinceParam = await step.run('read-cursor', async () => {
-      const service = createServiceRoleClient();
-      const { data } = await service
-        .from('docs')
-        .select('updated_at')
-        .eq('source_id', sourceId)
-        .in('type', ['issue', 'pull-request'])
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      return (data?.['updated_at'] as string | undefined) ?? null;
-    });
+    // ── Step 1: cursor (delta only) ──────────────────────────────────
+    // Delta uses max(updated_at over issue/PR docs) so only changed/new
+    // issues are fetched. Full ignores the cursor and fetches the
+    // complete set so removed issues become visible to the prune.
+    const sinceParam =
+      indexMode === 'full'
+        ? null
+        : await step.run('read-cursor', async () => {
+            const service = createServiceRoleClient();
+            const { data } = await service
+              .from('docs')
+              .select('updated_at')
+              .eq('source_id', sourceId)
+              .in('type', OWNED_TYPES)
+              .order('updated_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            return (data?.['updated_at'] as string | undefined) ?? null;
+          });
 
-    // ── Step 2: paginate through issues + PRs ────────────────────────
+    // ── Step 2: paginate, collecting the fetched issue set ───────────
     const PAGE_SIZE = 100;
+    const allIssues: GithubIssue[] = [];
     let page = 1;
-    let totalIssues = 0;
-    let totalChunks = 0;
-
-    const embedder = new VoyageEmbedder({
-      apiKey: requireEnv('VOYAGE_API_KEY'),
-    });
-
     while (true) {
       const issues = await step.run(`fetch-issues-page-${String(page)}`, async () => {
         const octokit = await getInstallationOctokit(source.installation_id);
@@ -110,34 +122,89 @@ export const indexGithubIssuesFn = inngest.createFunction(
         });
         return resp.data as GithubIssue[];
       });
-
-      if (issues.length === 0) break;
-
-      // ── Step 3: chunk + embed + upsert this batch ──────────────────
-      const result = await step.run(`index-issues-page-${String(page)}`, async () => {
-        return await indexBatch({ batch: issues, orgId, sourceId, ownerRepo, embedder });
-      });
-      totalIssues += result.issues;
-      totalChunks += result.chunks;
-
+      allIssues.push(...issues);
       if (issues.length < PAGE_SIZE) break;
       page += 1;
     }
 
-     
-    console.info(`[index-github-issues] indexed ${source.repo_full_name}: ${String(totalIssues)} issues+PRs, ${String(totalChunks)} chunks`);
-    return { sourceId, issues: totalIssues, chunks: totalChunks };
+    // ── Step 3: build desired set (docId → content hash) ─────────────
+    // chunkIssue is pure; chunk here to fingerprint, embed only the
+    // new/changed subset below.
+    const desired = new Map<string, { hash: string }>();
+    for (const issue of allIssues) {
+      const { doc, chunks } = chunkIssue(ownerRepo, issue);
+      if (chunks.length === 0) continue;
+      desired.set(doc.docId, { hash: contentHash(chunks.map((c) => c.text)) });
+    }
+
+    // ── Step 4: reconcile ────────────────────────────────────────────
+    // Full reaches the complete set → prune removed issues (R3/R9).
+    // Delta is incremental (cursor) → never prune (can't see removals).
+    const recon = await step.run('reconcile', async () => {
+      return await reconcile(createServiceRoleClient(), {
+        sourceId,
+        ownedTypes: OWNED_TYPES,
+        desired,
+        mode: indexMode,
+        fetchComplete: indexMode === 'full',
+        confirmedEmpty: indexMode === 'full' && desired.size === 0,
+      });
+    });
+
+    // ── Step 5: embed only new/changed issues ────────────────────────
+    const kindByDocId = new Map(recon.toIndex.map((t) => [t.docId, t.kind]));
+    const toIndexIssues = allIssues.filter((i) => {
+      const { doc } = chunkIssue(ownerRepo, i);
+      return kindByDocId.has(doc.docId);
+    });
+
+    const embedder = new VoyageEmbedder({ apiKey: requireEnv('VOYAGE_API_KEY') });
+    const BATCH_SIZE = 20;
+    let totalChunks = 0;
+    for (let i = 0; i < toIndexIssues.length; i += BATCH_SIZE) {
+      const batch = toIndexIssues.slice(i, i + BATCH_SIZE);
+      const result = await step.run(`index-issues-batch-${String(i)}`, async () => {
+        return await indexBatch({ batch, orgId, sourceId, ownerRepo, embedder, kindByDocId });
+      });
+      totalChunks += result.chunks;
+    }
+
+    console.info(
+      `[index-github-issues] ${source.repo_full_name} (${indexMode}): ` +
+        `new=${String(recon.counts.new)} changed=${String(recon.counts.changed)} ` +
+        `unchanged=${String(recon.counts.unchanged)} removed=${String(recon.counts.removed)} ` +
+        `chunks=${String(totalChunks)}`,
+    );
+    return { sourceId, chunks: totalChunks, ...recon.counts };
   },
 );
 
+/**
+ * Embed + upsert a batch of new/changed issues, one issue at a time so a
+ * single failure can't corrupt the others. Atomicity contract (R2/F5):
+ *
+ *   1. For a CHANGED issue, clearDocChunks first — its chunk count may have
+ *      shrunk (a long body edited down leaves trailing chunkIds orphaned).
+ *   2. Upsert the doc with content_hash = NULL (the FK needs the doc row
+ *      before chunks; a null hash marks the doc as "not yet whole").
+ *   3. Upsert chunks, then embeddings.
+ *   4. Only after all of that commits, set content_hash = the fingerprint.
+ *
+ * If embedding fails mid-way for a CHANGED issue we've already cleared its
+ * old chunks, so leaving content_hash null (or throwing) is the only safe
+ * move — a future reindex sees hash=null ≠ desired hash, treats it as
+ * changed, and rebuilds it. We throw so Inngest retries the batch. For a
+ * NEW issue there's nothing to corrupt, so we skip it and continue.
+ */
 async function indexBatch(args: {
   batch: readonly GithubIssue[];
   orgId: string;
   sourceId: string;
   ownerRepo: string;
   embedder: VoyageEmbedder;
+  kindByDocId: ReadonlyMap<string, 'new' | 'changed'>;
 }): Promise<{ issues: number; chunks: number }> {
-  const { batch, orgId, sourceId, ownerRepo, embedder } = args;
+  const { batch, orgId, sourceId, ownerRepo, embedder, kindByDocId } = args;
   const service = createServiceRoleClient();
 
   let indexedIssues = 0;
@@ -146,19 +213,28 @@ async function indexBatch(args: {
   for (const issue of batch) {
     const { doc, chunks } = chunkIssue(ownerRepo, issue);
     if (chunks.length === 0) continue;
+    const kind = kindByDocId.get(doc.docId);
+    if (kind === undefined) continue; // unchanged — reconcile didn't select it
 
     let embeddings;
     try {
       embeddings = await embedder.embed({
-        items: chunks.map((c) => ({
-          id: c.chunkId,
-          text: c.text,
-          domain: c.domain,
-        })),
+        items: chunks.map((c) => ({ id: c.chunkId, text: c.text, domain: c.domain })),
       });
     } catch (err) {
       if (err instanceof EmbeddingRateLimitError) throw err;
+      // A changed issue hasn't been cleared yet (we clear below, after a
+      // successful embed), so skipping here leaves the old version intact.
+      if (kind === 'changed') {
+        throw new Error(`embed failed for changed issue ${doc.docId}: ${String(err)}`);
+      }
       continue;
+    }
+
+    // Changed: drop stale chunks/embeddings before re-inserting. Cascade
+    // deletes the matching corpus_chunk_embeddings rows.
+    if (kind === 'changed') {
+      await clearDocChunks(service, doc.docId);
     }
 
     const { error: docErr } = await service.from('docs').upsert({
@@ -174,8 +250,11 @@ async function indexBatch(args: {
       url: doc.url,
       provenance: 'untrusted',
       updated_at: doc.updatedAt,
+      content_hash: null, // marked whole only after chunks+embeddings commit
     });
-    if (docErr !== null) continue;
+    if (docErr !== null) {
+      throw new Error(`docs upsert failed for ${doc.docId}: ${docErr.message}`);
+    }
 
     const chunkRows = chunks.map((c) => ({
       chunk_id: c.chunkId,
@@ -188,7 +267,9 @@ async function indexBatch(args: {
     const { error: chunkErr } = await service
       .from('doc_chunks')
       .upsert(chunkRows, { onConflict: 'chunk_id' });
-    if (chunkErr !== null) continue;
+    if (chunkErr !== null) {
+      throw new Error(`doc_chunks upsert failed for ${doc.docId}: ${chunkErr.message}`);
+    }
 
     const embedRows = chunks.map((c, i) => ({
       chunk_id: c.chunkId,
@@ -198,7 +279,19 @@ async function indexBatch(args: {
     const { error: embErr } = await service
       .from('corpus_chunk_embeddings')
       .upsert(embedRows, { onConflict: 'chunk_id' });
-    if (embErr !== null) continue;
+    if (embErr !== null) {
+      throw new Error(`embeddings upsert failed for ${doc.docId}: ${embErr.message}`);
+    }
+
+    // Now the doc is whole — stamp the fingerprint so the next reindex can
+    // skip it as unchanged.
+    const { error: hashErr } = await service
+      .from('docs')
+      .update({ content_hash: contentHash(chunks.map((c) => c.text)) })
+      .eq('id', doc.docId);
+    if (hashErr !== null) {
+      throw new Error(`content_hash update failed for ${doc.docId}: ${hashErr.message}`);
+    }
 
     indexedIssues += 1;
     chunkCount += chunks.length;
