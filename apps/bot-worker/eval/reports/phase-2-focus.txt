@@ -1,0 +1,29 @@
+  replaying: what ai models are used in the project
+  replaying: how does the bot join a meeting
+  replaying: how is the corpus searched at query time
+  replaying: what database does the corpus use
+  replaying: how do we handle deepgram disconnecting mid meeting
+  replaying: how are sources reindexed when files change
+  replaying: what connectors can a customer connect
+  replaying: should we order lunch before the next agenda item
+  replaying: what is the rolling meeting summary for
+  replaying: how are citations verified in synthesis
+
+=== Corpus eval: 9/10 pass (90%), mean recall 0.44 ===
+  [PASS] recall=0% refusal=false :: what ai models are used in the project
+         missed: synthesize
+  [PASS] recall=0% refusal=false :: how does the bot join a meeting
+         missed: bot-worker
+  [PASS] recall=100% refusal=false :: how is the corpus searched at query time
+  [FAIL] recall=100% refusal=false :: what database does the corpus use
+  [PASS] recall=0% refusal=false :: how do we handle deepgram disconnecting mid meeting
+         missed: transcribe
+  [PASS] recall=0% refusal=false :: how are sources reindexed when files change
+         missed: reconcile
+  [PASS] recall=100% refusal=false :: what connectors can a customer connect
+  [PASS] recall=— refusal=true :: should we order lunch before the next agenda item
+  [PASS] recall=100% refusal=false :: what is the rolling meeting summary for
+  [PASS] recall=0% refusal=false :: how are citations verified in synthesis
+         missed: synthesize
+
+=== RAGAS (mean over 9 answered): faithfulness 1.00 · answer-relevancy 0.95 · context-precision 0.40 · context-recall 1.00 ===

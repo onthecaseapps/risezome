@@ -1,0 +1,500 @@
+{
+  "total": 10,
+  "passed": 9,
+  "failed": 1,
+  "passRate": 0.9,
+  "meanRecall": 0.4444444444444444,
+  "results": [
+    {
+      "q": "what ai models are used in the project",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md@cc67bde2e5babc539282341b7a1df923da4081cf::0",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md@cc67bde2e5babc539282341b7a1df923da4081cf",
+          "title": "docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md",
+          "score": 0.03200204813108039
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/2026-06-01-002-feat-corpus-retrieval-claude-augmented-rag-plan.md@f43629f92fb1e00a67a8686786b2318b07eae7bc::0",
+          "docId": "github:onthecaseapps/risezome:docs/plans/2026-06-01-002-feat-corpus-retrieval-claude-augmented-rag-plan.md@f43629f92fb1e00a67a8686786b2318b07eae7bc",
+          "title": "docs/plans/2026-06-01-002-feat-corpus-retrieval-claude-augmented-rag-plan.md",
+          "score": 0.015625
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:packages/engine/src/summarize/prompt.ts@651a9123d45690f0991ca27fe04a8693ef12f04c::0",
+          "docId": "github:onthecaseapps/risezome:packages/engine/src/summarize/prompt.ts@651a9123d45690f0991ca27fe04a8693ef12f04c",
+          "title": "packages/engine/src/summarize/prompt.ts",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518::16",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518",
+          "title": "docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md",
+          "score": 0.015384615384615385
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518::1",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518",
+          "title": "docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md",
+          "score": 0.014492753623188406
+        }
+      ],
+      "recall": 0,
+      "surfaced": [],
+      "missed": [
+        "synthesize"
+      ],
+      "answer": "\nThe project uses Claude Haiku for synthesis [1: \"Claude Haiku synthesis with inline citations\"], Voyage embeddings for retrieval [1: \"Voyage embeddings\"], and Deepgram for transcription [1: \"Deepgram Nova-3 streaming\"]; the sources also mention Deepgram, Voyage, and Claude Haiku as the model stack [2: \"Deepgram in one, Voyage in another, Claude Haiku in a third\"].",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": true
+    },
+    {
+      "q": "how does the bot join a meeting",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:README.md@6a5d8512e950dc8512fe4ddf75acbb4a4ae3363c::0",
+          "docId": "github:onthecaseapps/risezome:README.md@6a5d8512e950dc8512fe4ddf75acbb4a4ae3363c",
+          "title": "README.md",
+          "score": 0.02946912242686891
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:README.md@6a5d8512e950dc8512fe4ddf75acbb4a4ae3363c::1",
+          "docId": "github:onthecaseapps/risezome:README.md@6a5d8512e950dc8512fe4ddf75acbb4a4ae3363c",
+          "title": "README.md",
+          "score": 0.02804284323271665
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-30-upwell-portal-and-cloud-shape-requirements.md@608000cd4b2ad6af3167088f547d41dcf6abf0da::1",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-30-upwell-portal-and-cloud-shape-requirements.md@608000cd4b2ad6af3167088f547d41dcf6abf0da",
+          "title": "docs/brainstorms/archive/2026-05-30-upwell-portal-and-cloud-shape-requirements.md",
+          "score": 0.028438886647841874
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-30-upwell-portal-and-cloud-shape-requirements.md@608000cd4b2ad6af3167088f547d41dcf6abf0da::2",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-30-upwell-portal-and-cloud-shape-requirements.md@608000cd4b2ad6af3167088f547d41dcf6abf0da",
+          "title": "docs/brainstorms/archive/2026-05-30-upwell-portal-and-cloud-shape-requirements.md",
+          "score": 0.028693528693528692
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:apps/portal/src/inngest/functions/launch-bot.ts@80043cfa0c1c60e27a934d85d9f672b7e0106a87::1",
+          "docId": "github:onthecaseapps/risezome:apps/portal/src/inngest/functions/launch-bot.ts@80043cfa0c1c60e27a934d85d9f672b7e0106a87",
+          "title": "apps/portal/src/inngest/functions/launch-bot.ts",
+          "score": 0.014492753623188406
+        }
+      ],
+      "recall": 0,
+      "surfaced": [],
+      "missed": [
+        "bot-worker"
+      ],
+      "answer": "\nThe bot joins a meeting after a user opts in via the portal: an Inngest function launches a Recall.ai bot just before the meeting starts [1: \"An Inngest function launches a **Recall.ai** bot just before start\"], and the bot joins the call and streams transcripts to the bot-worker over a JWT-authenticated WebSocket [1: \"The bot joins the call and streams transcripts to the **bot-worker** over a JWT-authenticated WebSocket\"]. When joining, the bot announces itself in-meeting via chat message and audio [2: \"the bot joins, announces itself (\"Risezome is taking notes for [user]\")\"].",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": true
+    },
+    {
+      "q": "how is the corpus searched at query time",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:apps/bot-worker/src/corpus-search.ts@2dccec167db01f7418a0056a299d079c0427a44d::summary",
+          "docId": "github:onthecaseapps/risezome:apps/bot-worker/src/corpus-search.ts@2dccec167db01f7418a0056a299d079c0427a44d",
+          "title": "apps/bot-worker/src/corpus-search.ts",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md@cc67bde2e5babc539282341b7a1df923da4081cf::2",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md@cc67bde2e5babc539282341b7a1df923da4081cf",
+          "title": "docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md",
+          "score": 0.014492753623188406
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md@cc67bde2e5babc539282341b7a1df923da4081cf::0",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md@cc67bde2e5babc539282341b7a1df923da4081cf",
+          "title": "docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md",
+          "score": 0.03200204813108039
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md@cc67bde2e5babc539282341b7a1df923da4081cf::1",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md@cc67bde2e5babc539282341b7a1df923da4081cf",
+          "title": "docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md",
+          "score": 0.0136986301369863
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/2026-06-01-002-feat-corpus-retrieval-claude-augmented-rag-plan.md@f43629f92fb1e00a67a8686786b2318b07eae7bc::0",
+          "docId": "github:onthecaseapps/risezome:docs/plans/2026-06-01-002-feat-corpus-retrieval-claude-augmented-rag-plan.md@f43629f92fb1e00a67a8686786b2318b07eae7bc",
+          "title": "docs/plans/2026-06-01-002-feat-corpus-retrieval-claude-augmented-rag-plan.md",
+          "score": 0.030330882352941176
+        }
+      ],
+      "recall": 1,
+      "surfaced": [
+        "corpus-search"
+      ],
+      "missed": [],
+      "answer": "\nAt query time, the corpus is searched using hybrid retrieval that combines dense vector search and lexical full-text search [1: \"hybrid corpus retrieval combining dense vector search (pgvector cosine distance) and lexical full-text search (Postgres FTS) fused via Reciprocal Rank Fusion\"]. The `hybridSearch()` function runs both the vector RPC (`search_corpus_vector`) and FTS RPC (`search_corpus_fts`) in parallel, applies a relevance floor of 0.45 for vector-only candidates [1: \"DEFAULT_VECTOR_DISTANCE_FLOOR=0.45\"], and degrades grac",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": true
+    },
+    {
+      "q": "what database does the corpus use",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:apps/daemon/src/corpus/db.ts@025fbbe3c9814e58284c1781872c3e7e24ca7555::summary",
+          "docId": "github:onthecaseapps/risezome:apps/daemon/src/corpus/db.ts@025fbbe3c9814e58284c1781872c3e7e24ca7555",
+          "title": "apps/daemon/src/corpus/db.ts",
+          "score": 0.03128054740957967
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:apps/daemon/src/corpus/db.ts@025fbbe3c9814e58284c1781872c3e7e24ca7555::0",
+          "docId": "github:onthecaseapps/risezome:apps/daemon/src/corpus/db.ts@025fbbe3c9814e58284c1781872c3e7e24ca7555",
+          "title": "apps/daemon/src/corpus/db.ts",
+          "score": 0.014925373134328358
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:apps/daemon/src/corpus/migrations/0001_init.sql@0b831de34a10385655938836f7d8ccfb118ae461::summary",
+          "docId": "github:onthecaseapps/risezome:apps/daemon/src/corpus/migrations/0001_init.sql@0b831de34a10385655938836f7d8ccfb118ae461",
+          "title": "apps/daemon/src/corpus/migrations/0001_init.sql",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518::8",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518",
+          "title": "docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md",
+          "score": 0.02632034632034632
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:apps/daemon/src/corpus/query.ts@85f1d0655fc1957416ea8fb97188fd875bfe5d25::summary",
+          "docId": "github:onthecaseapps/risezome:apps/daemon/src/corpus/query.ts@85f1d0655fc1957416ea8fb97188fd875bfe5d25",
+          "title": "apps/daemon/src/corpus/query.ts",
+          "score": 0.030886196246139225
+        }
+      ],
+      "recall": 1,
+      "surfaced": [
+        "migration"
+      ],
+      "missed": [],
+      "answer": "The corpus uses SQLite with the better-sqlite3 driver [1: \"SQLite database for the Risezome corpus system, using better-sqlite3\"]; it includes the sqlite-vec vector extension [1: \"sqlite-vec vector extension support\"] and FTS5 full-text search [1: \"initializes the database with FTS5 full-text search\"]. The database file defaults to `risezome.db` [1: \"defaulting to `risezome.db`\"] with 1024-dimensional embeddings [1: \"1024-dimensional embeddings\"].",
+      "isRefusal": false,
+      "answerContainsAll": false,
+      "pass": false
+    },
+    {
+      "q": "how do we handle deepgram disconnecting mid meeting",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518::11",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518",
+          "title": "docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md",
+          "score": 0.015151515151515152
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:apps/bot-worker/src/debug/deepgram.ts@9a2e8bf7bbcc7ca94a87db742b1d147339fbd808::summary",
+          "docId": "github:onthecaseapps/risezome:apps/bot-worker/src/debug/deepgram.ts@9a2e8bf7bbcc7ca94a87db742b1d147339fbd808",
+          "title": "apps/bot-worker/src/debug/deepgram.ts",
+          "score": 0.014925373134328358
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md@a59b37dad0cfa9f63dbbbcf004242fc3472743fe::19",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md@a59b37dad0cfa9f63dbbbcf004242fc3472743fe",
+          "title": "docs/plans/archive/2026-05-30-002-feat-upwell-portal-saas-plan.md",
+          "score": 0.01639344262295082
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/rolling-meeting-summary-requirements.md@55a6543e7e1cf5dcc4622cba1e45992676e2f27c::2",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/rolling-meeting-summary-requirements.md@55a6543e7e1cf5dcc4622cba1e45992676e2f27c",
+          "title": "docs/brainstorms/archive/rolling-meeting-summary-requirements.md",
+          "score": 0.013333333333333334
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518::12",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md@8cfa7944ce2cc8f7587cd23b32d7870f47e14518",
+          "title": "docs/plans/archive/2026-05-28-001-feat-meeting-context-copilot-plan.md",
+          "score": 0.016129032258064516
+        }
+      ],
+      "recall": 0,
+      "surfaced": [],
+      "missed": [
+        "transcribe"
+      ],
+      "answer": "\nWhen Deepgram disconnects mid-stream, the engine emits a `disconnected` event and attempts reconnect with backoff (max 3 attempts); if all reconnection attempts fail, it emits a `stopped` event with the reason [2: \"WS disconnect mid-stream → engine emits `disconnected`, attempts reconnect with backoff (max 3); if all fail, emits `stopped` with reason\"]. Additionally, audio frames that arrive before the WebSocket is ready are buffered briefly (under 500 ms) and then sent on connect [2: \"Audio frames arrive before WS is ready → frames buffered briefly (<500 ms) then",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": true
+    },
+    {
+      "q": "how are sources reindexed when files change",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b::1",
+          "docId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b",
+          "title": "docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md",
+          "score": 0.02967032967032967
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b::0",
+          "docId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b",
+          "title": "docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md",
+          "score": 0.029571646010002173
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b::3",
+          "docId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b",
+          "title": "docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md",
+          "score": 0.03252247488101534
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b::9",
+          "docId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b",
+          "title": "docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md",
+          "score": 0.029726775956284153
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b::13",
+          "docId": "github:onthecaseapps/risezome:docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md@ec7fab22d0bcca64a2a9eae674c1b6f25e1e3b8b",
+          "title": "docs/plans/2026-05-31-004-feat-corpus-reconciliation-plan.md",
+          "score": 0.028985507246376812
+        }
+      ],
+      "recall": 0,
+      "surfaced": [],
+      "missed": [
+        "reconcile"
+      ],
+      "answer": "\nSources are reindexed using a reconciliation helper that compares the current source state against the corpus via content fingerprints [2: \"unchanged items are skipped (no re-embed), changed items are re-embedded with their old chunks cleared, and removed items are deleted\"]. Unchanged items are detected via content hash and skipped to avoid re-embedding [1: \"Unchanged items are not re-embedded on reindex (skip via content fingerprint)\"], while changed items have their prior chunks cleared before re-embedding [1: \"Changed items are re-embedded, and their prior chunks + embeddings are cleared first\"]. Two reindex modes are available: delta mode indexes new and",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": true
+    },
+    {
+      "q": "what connectors can a customer connect",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-atlassian-jira-confluence-connector-requirements.md@35b6d587e18b196ce26a2e02c82b336d470c750b::0",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-atlassian-jira-confluence-connector-requirements.md@35b6d587e18b196ce26a2e02c82b336d470c750b",
+          "title": "docs/brainstorms/archive/2026-05-31-atlassian-jira-confluence-connector-requirements.md",
+          "score": 0.014705882352941176
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-trello-source-connector-requirements.md@f0cadca3adc1f32061297d5d5f435a757634a210::0",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-trello-source-connector-requirements.md@f0cadca3adc1f32061297d5d5f435a757634a210",
+          "title": "docs/brainstorms/archive/2026-05-31-trello-source-connector-requirements.md",
+          "score": 0.014925373134328358
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-atlassian-jira-confluence-connector-requirements.md@35b6d587e18b196ce26a2e02c82b336d470c750b::1",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-atlassian-jira-confluence-connector-requirements.md@35b6d587e18b196ce26a2e02c82b336d470c750b",
+          "title": "docs/brainstorms/archive/2026-05-31-atlassian-jira-confluence-connector-requirements.md",
+          "score": 0.015384615384615385
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-trello-source-connector-requirements.md@f0cadca3adc1f32061297d5d5f435a757634a210::1",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/2026-05-31-trello-source-connector-requirements.md@f0cadca3adc1f32061297d5d5f435a757634a210",
+          "title": "docs/brainstorms/archive/2026-05-31-trello-source-connector-requirements.md",
+          "score": 0.016129032258064516
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-004-feat-trello-source-connector-plan.md@9da352dc8992e41c73778efeccc989e93523a02d::0",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-004-feat-trello-source-connector-plan.md@9da352dc8992e41c73778efeccc989e93523a02d",
+          "title": "docs/plans/archive/2026-05-31-004-feat-trello-source-connector-plan.md",
+          "score": 0.015625
+        }
+      ],
+      "recall": 1,
+      "surfaced": [
+        "connector"
+      ],
+      "missed": [],
+      "answer": "\nCustomers can connect GitHub, Trello, and Atlassian (Jira and Confluence) [1: \"only GitHub is actually wired up\"][2: \"Trello is the first non-GitHub source\"][1: \"Jira and Confluence — both Atlassian Cloud products\"]. GitHub repos and Trello boards are selected individually after connecting [2: \"selects which boards Risezome should index\"], while Atlassian allows independent selection of Jira projects and Confluence spaces [1: \"a team may index only one product\"].",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": true
+    },
+    {
+      "q": "should we order lunch before the next agenda item",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-29-003-feat-utterance-relevance-classifier-plan.md@ad790824c62b1cf39c1c4ea5d2980f6685433fa0::7",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-29-003-feat-utterance-relevance-classifier-plan.md@ad790824c62b1cf39c1c4ea5d2980f6685433fa0",
+          "title": "docs/plans/archive/2026-05-29-003-feat-utterance-relevance-classifier-plan.md",
+          "score": 0.015873015873015872
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md@f1f4af3f34290165f63689064752d93277885078::10",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md@f1f4af3f34290165f63689064752d93277885078",
+          "title": "docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md",
+          "score": 0.016129032258064516
+        },
+        {
+          "chunkId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf::0",
+          "docId": "trello:6a1ca2c07f26845fb30f59f9:6a1cd2b0f9759767d80997bf",
+          "title": "Create Gap Fill Process",
+          "score": 0.01639344262295082
+        }
+      ],
+      "recall": null,
+      "surfaced": [],
+      "missed": [],
+      "answer": "",
+      "isRefusal": true,
+      "answerContainsAll": null,
+      "pass": true
+    },
+    {
+      "q": "what is the rolling meeting summary for",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/rolling-meeting-summary-requirements.md@55a6543e7e1cf5dcc4622cba1e45992676e2f27c::0",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/rolling-meeting-summary-requirements.md@55a6543e7e1cf5dcc4622cba1e45992676e2f27c",
+          "title": "docs/brainstorms/archive/rolling-meeting-summary-requirements.md",
+          "score": 0.03252247488101534
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md@f1f4af3f34290165f63689064752d93277885078::0",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md@f1f4af3f34290165f63689064752d93277885078",
+          "title": "docs/plans/archive/2026-05-31-002-feat-rolling-meeting-summary-plan.md",
+          "score": 0.03125763125763126
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:packages/engine/src/summarize/prompt.ts@651a9123d45690f0991ca27fe04a8693ef12f04c::0",
+          "docId": "github:onthecaseapps/risezome:packages/engine/src/summarize/prompt.ts@651a9123d45690f0991ca27fe04a8693ef12f04c",
+          "title": "packages/engine/src/summarize/prompt.ts",
+          "score": 0.015625
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:apps/bot-worker/src/summarizer-runtime.ts@f71449d859c06e53a5b4251be92930295821c9ea::0",
+          "docId": "github:onthecaseapps/risezome:apps/bot-worker/src/summarizer-runtime.ts@f71449d859c06e53a5b4251be92930295821c9ea",
+          "title": "apps/bot-worker/src/summarizer-runtime.ts",
+          "score": 0.015151515151515152
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:packages/engine/src/summarize/contract.ts@3b1eec349a78d583eb344956080a5369ee59170e::0",
+          "docId": "github:onthecaseapps/risezome:packages/engine/src/summarize/contract.ts@3b1eec349a78d583eb344956080a5369ee59170e",
+          "title": "packages/engine/src/summarize/contract.ts",
+          "score": 0.013513513513513514
+        }
+      ],
+      "recall": 1,
+      "surfaced": [
+        "summar"
+      ],
+      "missed": [],
+      "answer": "\nThe rolling meeting summary is internal infrastructure that gives downstream components long-range context without linear token cost [1: \"A rolling meeting-level summary, generated by a side-call to Claude on a pause-debounced cadence, gives both consumers the long-range context they need without paying the linear-token cost on every retrieval call\"]. It serves two purposes: providing the synthesizer with long-range topic context so questions like \"about that auth flow we were discussing\" can be answered even 20 minutes later [1: \"by minute 20 of a meeting, the user can ask 'about that auth flow we were discussing' and the system has no idea what that means\"], and",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": true
+    },
+    {
+      "q": "how are citations verified in synthesis",
+      "retrieved": [
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/live-page-synthesis-first-requirements.md@654f79087053acb76058172ead606be8e8b47211::0",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/live-page-synthesis-first-requirements.md@654f79087053acb76058172ead606be8e8b47211",
+          "title": "docs/brainstorms/archive/live-page-synthesis-first-requirements.md",
+          "score": 0.030090497737556562
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/brainstorms/archive/live-page-synthesis-first-requirements.md@654f79087053acb76058172ead606be8e8b47211::1",
+          "docId": "github:onthecaseapps/risezome:docs/brainstorms/archive/live-page-synthesis-first-requirements.md@654f79087053acb76058172ead606be8e8b47211",
+          "title": "docs/brainstorms/archive/live-page-synthesis-first-requirements.md",
+          "score": 0.031024531024531024
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:apps/bot-worker/src/debug/local-debug-ws.ts@209dce890c1d8a2b7b1b5c430dfa88ab681c2ffa::7",
+          "docId": "github:onthecaseapps/risezome:apps/bot-worker/src/debug/local-debug-ws.ts@209dce890c1d8a2b7b1b5c430dfa88ab681c2ffa",
+          "title": "apps/bot-worker/src/debug/local-debug-ws.ts",
+          "score": 0.013513513513513514
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md@852df5af81d00f7fc27445a4b2edc0fb0a10e026::6",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md@852df5af81d00f7fc27445a4b2edc0fb0a10e026",
+          "title": "docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md",
+          "score": 0.016129032258064516
+        },
+        {
+          "chunkId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md@852df5af81d00f7fc27445a4b2edc0fb0a10e026::0",
+          "docId": "github:onthecaseapps/risezome:docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md@852df5af81d00f7fc27445a4b2edc0fb0a10e026",
+          "title": "docs/plans/archive/2026-05-31-001-feat-live-page-synthesis-first-plan.md",
+          "score": 0.029116045245077504
+        }
+      ],
+      "recall": 0,
+      "surfaced": [],
+      "missed": [
+        "synthesize"
+      ],
+      "answer": "\nCitations are verified through a two-pass parsing approach that extracts both the citation rank and the verbatim quote [4: \"first match `[N: \\\"...\\\"]` (regex `\\\\[(\\\\d+):\\\\s*\\\"((?:\\\\\\\\.|[^\\\"])+)\\\"\\\\]`), then match bare `[N]` for backward compat\"]. When a user clicks a citation chip on the live page, the system locates the source, expands it inline, substring-searches the source body for the quote, and highlights the matched span [2: \"Substring-searches the source body for the quote, wraps the match in a highlight\"]. If the quote",
+      "isRefusal": false,
+      "answerContainsAll": true,
+      "pass": true
+    }
+  ],
+  "ragas": {
+    "mean": {
+      "faithfulness": 1,
+      "answerRelevancy": 0.95,
+      "contextPrecision": 0.4,
+      "contextRecall": 1
+    },
+    "perQuestion": [
+      {
+        "faithfulness": 1,
+        "answerRelevancy": 0.95,
+        "contextPrecision": 0.4,
+        "contextRecall": 1
+      },
+      {
+        "faithfulness": null,
+        "answerRelevancy": null,
+        "contextPrecision": null,
+        "contextRecall": null
+      },
+      {
+        "faithfulness": null,
+        "answerRelevancy": null,
+        "contextPrecision": null,
+        "contextRecall": 1
+      },
+      {
+        "faithfulness": 1,
+        "answerRelevancy": 0.95,
+        "contextPrecision": null,
+        "contextRecall": null
+      },
+      {
+        "faithfulness": null,
+        "answerRelevancy": null,
+        "contextPrecision": null,
+        "contextRecall": null
+      },
+      {
+        "faithfulness": null,
+        "answerRelevancy": null,
+        "contextPrecision": null,
+        "contextRecall": null
+      },
+      {
+        "faithfulness": null,
+        "answerRelevancy": null,
+        "contextPrecision": null,
+        "contextRecall": null
+      },
+      null,
+      {
+        "faithfulness": null,
+        "answerRelevancy": null,
+        "contextPrecision": null,
+        "contextRecall": null
+      },
+      {
+        "faithfulness": null,
+        "answerRelevancy": null,
+        "contextPrecision": null,
+        "contextRecall": null
+      }
+    ]
+  }
+}
