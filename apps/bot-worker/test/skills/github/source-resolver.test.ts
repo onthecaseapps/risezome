@@ -5,13 +5,14 @@ import type { GithubAppAuth } from '../../../src/skills/github/app-auth.js';
 /** Minimal Supabase query-builder stub returning canned source rows. */
 function dbReturning(rows: unknown[] | null, error: { message: string } | null = null): {
   db: { from: (t: string) => unknown };
-  capture: { eqs: [string, unknown][] };
+  capture: { eqs: [string, unknown][]; nots: unknown[][] };
 } {
-  const capture = { eqs: [] as [string, unknown][] };
+  const capture = { eqs: [] as [string, unknown][], nots: [] as unknown[][] };
   const builder: Record<string, unknown> = {};
-  for (const m of ['select', 'eq', 'neq']) {
+  for (const m of ['select', 'eq', 'neq', 'not']) {
     builder[m] = (...args: unknown[]) => {
       if (m === 'eq') capture.eqs.push([args[0] as string, args[1]]);
+      if (m === 'not') capture.nots.push(args);
       return builder;
     };
   }
@@ -53,12 +54,14 @@ describe('buildGithubSourceResolver', () => {
     expect(inst20.repos).toEqual([{ owner: 'other', name: 'thing' }]);
   });
 
-  it('scopes the query by org_id, kind=github, and excludes removed sources', async () => {
+  it('scopes the query by org_id and requires non-null installation_id + repo_full_name', async () => {
     const { db, capture } = dbReturning([{ installation_id: 1, repo_full_name: 'a/b' }]);
     const resolve = buildGithubSourceResolver({ db: db as never, appAuth: fakeAppAuth({ 1: 't' }) });
     await resolve('org-xyz');
     expect(capture.eqs).toContainEqual(['org_id', 'org-xyz']);
-    expect(capture.eqs).toContainEqual(['kind', 'github']);
+    // GitHub rows identified by non-null GitHub columns, not `kind`.
+    expect(capture.nots).toContainEqual(['installation_id', 'is', null]);
+    expect(capture.nots).toContainEqual(['repo_full_name', 'is', null]);
   });
 
   it('skips malformed repo_full_name rows', async () => {

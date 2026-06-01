@@ -43,12 +43,18 @@ export function buildGithubSourceResolver(deps: {
   appAuth: GithubAppAuth;
 }): GithubSourceResolver {
   return async (orgId: string): Promise<GithubAccess | null> => {
+    // Identify GitHub sources by their GitHub-specific columns
+    // (installation_id + repo_full_name both non-null) rather than the
+    // `kind` discriminator — `kind` was added by a later migration that
+    // may not be applied everywhere, and the check constraint makes
+    // installation_id non-null ⟺ a GitHub row in both schema versions.
     const { data, error } = await deps.db
       .from('sources')
       .select('installation_id, repo_full_name')
       .eq('org_id', orgId)
-      .eq('kind', 'github')
-      .neq('status', 'removed');
+      .neq('status', 'removed')
+      .not('installation_id', 'is', null)
+      .not('repo_full_name', 'is', null);
     if (error !== null) {
       throw new Error(`sources lookup failed for org ${orgId}: ${error.message}`);
     }
