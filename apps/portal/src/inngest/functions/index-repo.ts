@@ -86,24 +86,41 @@ export const indexRepoFn = inngest.createFunction(
     const tree = await step.run('fetch-tree', async () => {
       const octokit = await getInstallationOctokit(source.installation_id);
 
-      let branch = source.default_branch;
-      if (branch === null || branch.length === 0) {
+      // Resolve the repo's current default branch from GitHub and persist it.
+      const resolveDefaultBranch = async (): Promise<string> => {
         const repoResp = await octokit.request('GET /repos/{owner}/{repo}', { owner, repo });
-        branch = (repoResp.data as { default_branch: string }).default_branch;
+        const live = (repoResp.data as { default_branch: string }).default_branch;
         await createServiceRoleClient()
           .from('sources')
-          .update({ default_branch: branch })
+          .update({ default_branch: live })
           .eq('id', sourceId);
-      }
+        return live;
+      };
+      const fetchTreeSha = async (b: string): Promise<string> => {
+        const branchResp = await octokit.request('GET /repos/{owner}/{repo}/branches/{branch}', {
+          owner,
+          repo,
+          branch: b,
+        });
+        return (branchResp.data as { commit: { commit: { tree: { sha: string } } } }).commit.commit.tree.sha;
+      };
+
+      let branch = source.default_branch;
+      if (branch === null || branch.length === 0) branch = await resolveDefaultBranch();
 
       // Resolve branch → tree sha. The recursive flag may truncate at ~100k
       // entries; we accept truncation for V1 (no monorepos at beta scale).
-      const branchResp = await octokit.request('GET /repos/{owner}/{repo}/branches/{branch}', {
-        owner,
-        repo,
-        branch,
-      });
-      const treeSha = (branchResp.data as { commit: { commit: { tree: { sha: string } } } }).commit.commit.tree.sha;
+      // If the stored branch was renamed or deleted (e.g. a feature branch that
+      // got merged and pruned), GET branches 404s — re-resolve the repo's live
+      // default branch once and retry instead of failing the run forever.
+      let treeSha: string;
+      try {
+        treeSha = await fetchTreeSha(branch);
+      } catch (err) {
+        if ((err as { status?: number }).status !== 404) throw err;
+        branch = await resolveDefaultBranch();
+        treeSha = await fetchTreeSha(branch);
+      }
 
       const treeResp = await octokit.request('GET /repos/{owner}/{repo}/git/trees/{tree_sha}', {
         owner,
