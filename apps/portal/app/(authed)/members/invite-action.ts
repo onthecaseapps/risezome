@@ -1,0 +1,66 @@
+'use server';
+
+import { randomBytes } from 'node:crypto';
+import { headers } from 'next/headers';
+import { revalidatePath } from 'next/cache';
+import { requireManager } from '../../_lib/auth';
+import { createServiceRoleClient } from '../../_lib/supabase-server';
+
+/**
+ * Mint a shareable invite link (manager-only). The token row is the source of
+ * truth for the role + bot-invite the link grants — never trusted from input
+ * at accept time. Mirrors the pending_installations CSRF-token discipline:
+ * unguessable token, explicit expiry (table default 7 days), redeemed-and-
+ * deleted on accept.
+ */
+export async function createInviteAction(
+  formData: FormData,
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const { orgId, user } = await requireManager();
+
+  const roleRaw = formData.get('role');
+  const role = roleRaw === 'manager' ? 'manager' : 'member';
+  const canInviteBot = formData.get('can_invite_bot') === 'true';
+
+  const token = randomBytes(32).toString('hex');
+  const service = createServiceRoleClient();
+  const { error } = await service.from('org_invites').insert({
+    token,
+    org_id: orgId,
+    role,
+    can_invite_bot: canInviteBot,
+    created_by: user.id,
+  });
+  if (error !== null) {
+    return { ok: false, error: error.message };
+  }
+
+  const h = await headers();
+  const host = h.get('host') ?? '';
+  const proto = h.get('x-forwarded-proto') ?? 'https';
+  const url = `${proto}://${host}/invite/${token}`;
+
+  revalidatePath('/members');
+  return { ok: true, url };
+}
+
+/**
+ * Revoke a pending invite (manager-only). Scoped to the manager's own org so a
+ * token from another org can't be deleted by guessing it.
+ */
+export async function revokeInviteAction(
+  token: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { orgId } = await requireManager();
+  const service = createServiceRoleClient();
+  const { error } = await service
+    .from('org_invites')
+    .delete()
+    .eq('token', token)
+    .eq('org_id', orgId);
+  if (error !== null) {
+    return { ok: false, error: error.message };
+  }
+  revalidatePath('/members');
+  return { ok: true };
+}

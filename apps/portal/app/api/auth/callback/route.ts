@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient as createSsrClient } from '@supabase/ssr';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
+import { sanitizeNext } from '../../../_lib/safe-next';
 
 /**
  * OAuth callback. Google redirected the user back here after their consent;
@@ -18,7 +19,10 @@ import { cookies } from 'next/headers';
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
-  const next = url.searchParams.get('next') ?? '/onboarding';
+  // Sanitize the post-auth redirect — an attacker-supplied absolute `next`
+  // would otherwise resolve off-origin (open redirect). Invite links make
+  // this reachable by anyone holding a token.
+  const next = sanitizeNext(url.searchParams.get('next'));
 
   if (code === null) {
     return NextResponse.redirect(new URL('/sign-in?error=missing_code', url.origin));

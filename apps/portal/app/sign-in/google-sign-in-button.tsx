@@ -13,7 +13,7 @@ import { getBrowserClient } from '../_lib/supabase-browser';
  * both required for Google to return a refresh token. Get one wrong and
  * the access token expires in 1h with no recovery path.
  */
-export function GoogleSignInButton(): ReactElement {
+export function GoogleSignInButton({ next }: { next?: string } = {}): ReactElement {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -23,10 +23,16 @@ export function GoogleSignInButton(): ReactElement {
     try {
       const supabase = getBrowserClient();
       const origin = window.location.origin;
+      // Carry an optional post-auth destination (e.g. an invite-accept page)
+      // through to the callback, which sanitizes it before redirecting.
+      const callback =
+        next !== undefined && next.length > 0
+          ? `${origin}/api/auth/callback?next=${encodeURIComponent(next)}`
+          : `${origin}/api/auth/callback`;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${origin}/api/auth/callback`,
+          redirectTo: callback,
           scopes: 'https://www.googleapis.com/auth/calendar.events.readonly openid email profile',
           queryParams: {
             access_type: 'offline',
