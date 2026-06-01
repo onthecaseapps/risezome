@@ -23,6 +23,13 @@ import {
   parseSynthesisOutput,
   type SynthesisSource,
 } from '@risezome/engine/synthesize';
+import {
+  makeAnthropicJudge,
+  scoreRagas,
+  meanScores,
+  type Judge,
+  type RagasScores,
+} from '@risezome/engine/eval';
 import { createServiceClient } from '../src/db.js';
 import { hybridSearch } from '../src/corpus-search.js';
 import {
@@ -32,6 +39,11 @@ import {
   type RetrievedDoc,
   type QuestionResult,
 } from './lib/corpus-replay.js';
+
+interface ScoredResult {
+  readonly result: QuestionResult;
+  readonly scores: RagasScores | null;
+}
 
 const TOP_K = 5;
 
@@ -54,14 +66,20 @@ function loadGoldenSet(): GoldenQuestion[] {
 }
 
 async function replayOne(
-  deps: { db: ReturnType<typeof createServiceClient>; embedder: VoyageEmbedder; synthesizer: AnthropicSynthesizer; orgId: string },
+  deps: {
+    db: ReturnType<typeof createServiceClient>;
+    embedder: VoyageEmbedder;
+    synthesizer: AnthropicSynthesizer;
+    orgId: string;
+    judge: Judge | null;
+  },
   question: GoldenQuestion,
-): Promise<QuestionResult> {
+): Promise<ScoredResult> {
   // 1) embed the question
   const embedResult = await deps.embedder.embed({ items: [{ text: question.q, domain: 'text' }] });
   const vec = embedResult.vectors[0]?.vector;
   if (vec === undefined) {
-    return scoreQuestion(question, [], '', true);
+    return { result: scoreQuestion(question, [], '', true), scores: null };
   }
   const queryVectorLiteral = `[${Array.from(vec).join(',')}]`;
 
@@ -74,7 +92,7 @@ async function replayOne(
     logger: silentLogger,
   });
   if (hits.length === 0) {
-    return scoreQuestion(question, [], '', true);
+    return { result: scoreQuestion(question, [], '', true), scores: null };
   }
 
   // 3) enrich chunk -> doc (mirrors apps/bot-worker/src/retrieval.ts)
@@ -106,8 +124,18 @@ async function replayOne(
     if (chunk.type === 'textDelta') accumulated += chunk.delta;
   }
   const parsed = parseSynthesisOutput(accumulated, sources.length);
+  const result = scoreQuestion(question, retrieved, parsed.text, parsed.isRefusal);
 
-  return scoreQuestion(question, retrieved, parsed.text, parsed.isRefusal);
+  // 5) optional RAGAS metrics (judge calls; flag-gated)
+  let scores: RagasScores | null = null;
+  if (deps.judge !== null && !parsed.isRefusal) {
+    scores = await scoreRagas(
+      { question: question.q, answer: parsed.text, contexts: sources.map((s) => s.text) },
+      deps.judge,
+    );
+  }
+
+  return { result, scores };
 }
 
 async function main(): Promise<void> {
@@ -116,20 +144,24 @@ async function main(): Promise<void> {
     console.error('Usage: tsx --env-file=.env eval/replay.ts <orgId>  (or set RISEZOME_EVAL_ORG_ID)');
     process.exit(1);
   }
+  const anthropicKey = requireEnv('ANTHROPIC_API_KEY');
+  const metricsEnabled = process.env.RISEZOME_EVAL_METRICS === 'true' || process.argv.includes('--metrics');
   const deps = {
     db: createServiceClient(),
     embedder: new VoyageEmbedder({ apiKey: requireEnv('VOYAGE_API_KEY') }),
-    synthesizer: new AnthropicSynthesizer({ apiKey: requireEnv('ANTHROPIC_API_KEY') }),
+    synthesizer: new AnthropicSynthesizer({ apiKey: anthropicKey }),
     orgId,
+    judge: metricsEnabled ? makeAnthropicJudge({ apiKey: anthropicKey }) : null,
   };
 
   const questions = loadGoldenSet();
-  const results: QuestionResult[] = [];
+  const scored: ScoredResult[] = [];
   for (const q of questions) {
     process.stderr.write(`  replaying: ${q.q}\n`);
-    results.push(await replayOne(deps, q));
+    scored.push(await replayOne(deps, q));
   }
 
+  const results: QuestionResult[] = scored.map((s) => s.result);
   const summary = summarize(results);
   // Human-readable report to stderr; machine-readable JSON to stdout.
   process.stderr.write(
@@ -145,7 +177,23 @@ async function main(): Promise<void> {
         (r.missed.length > 0 ? `         missed: ${r.missed.join(', ')}\n` : ''),
     );
   }
-  process.stdout.write(JSON.stringify(summary, null, 2));
+
+  const allScores = scored.map((s) => s.scores).filter((s): s is RagasScores => s !== null);
+  const ragasMean = allScores.length > 0 ? meanScores(allScores) : null;
+  if (ragasMean !== null) {
+    const fmt = (n: number | null): string => (n === null ? 'n/a' : n.toFixed(2));
+    process.stderr.write(
+      `\n=== RAGAS (mean over ${String(allScores.length)} answered): ` +
+        `faithfulness ${fmt(ragasMean.faithfulness)} · answer-relevancy ${fmt(ragasMean.answerRelevancy)} · ` +
+        `context-precision ${fmt(ragasMean.contextPrecision)} · context-recall ${fmt(ragasMean.contextRecall)} ===\n`,
+    );
+  } else if (metricsEnabled) {
+    process.stderr.write('\n=== RAGAS: no answered questions to score ===\n');
+  }
+
+  process.stdout.write(
+    JSON.stringify({ ...summary, ragas: { mean: ragasMean, perQuestion: scored.map((s) => s.scores) } }, null, 2),
+  );
 }
 
 main().catch((err: unknown) => {

@@ -42,6 +42,10 @@
       "types": "./dist/summarize/index.d.ts",
       "default": "./dist/summarize/index.js"
     },
+    "./eval": {
+      "types": "./dist/eval/index.d.ts",
+      "default": "./dist/eval/index.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "default": "./dist/types.js"
