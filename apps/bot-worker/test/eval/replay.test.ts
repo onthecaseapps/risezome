@@ -51,7 +51,7 @@ describe('scoreQuestion', () => {
     expect_answer_contains: ['Haiku', 'Voyage'],
   };
 
-  it('passes when must-surface fully retrieved, no refusal, answer contains all', () => {
+  it('passes when no refusal and the answer contains all expected substrings', () => {
     const retrieved = [doc({ title: 'README.md' }), doc({ title: 'voyage.ts' })];
     const r = scoreQuestion(q, retrieved, 'We use Claude Haiku and Voyage embeddings.', false);
     expect(r.pass).toBe(true);
@@ -59,10 +59,11 @@ describe('scoreQuestion', () => {
     expect(r.answerContainsAll).toBe(true);
   });
 
-  it('fails when a must-surface doc is missing (the anchor-failure shape)', () => {
-    const retrieved = [doc({ title: 'README.md' })]; // voyage missing
+  it('does NOT fail on a missing must-surface doc when the answer is correct (recall is informational, non-gating)', () => {
+    const retrieved = [doc({ title: 'README.md' })]; // voyage doc missing from retrieval
     const r = scoreQuestion(q, retrieved, 'We use Claude Haiku and Voyage.', false);
-    expect(r.pass).toBe(false);
+    expect(r.pass).toBe(true); // answer is correct — the brittle keyword miss must not fail it
+    expect(r.recall).toBeCloseTo(0.5); // still reported as a retrieval signal
     expect(r.missed).toEqual(['voyage']);
   });
 
@@ -98,15 +99,15 @@ describe('summarize', () => {
     const qLabeled: GoldenQuestion = { q: 'a', must_surface: ['x'] };
     const qUnlabeled: GoldenQuestion = { q: 'b' };
     const results = [
-      scoreQuestion(qLabeled, [doc({ title: 'x' })], 'ans', false), // pass, recall 1
-      scoreQuestion(qLabeled, [doc({ title: 'y' })], 'ans', false), // fail, recall 0
+      scoreQuestion(qLabeled, [doc({ title: 'x' })], 'ans', false), // pass (no refusal), recall 1
+      scoreQuestion(qLabeled, [doc({ title: 'y' })], '', true), // fail (refusal), recall 0
       scoreQuestion(qUnlabeled, [doc()], 'ans', false), // pass, recall null
     ];
     const s = summarize(results);
     expect(s.total).toBe(3);
     expect(s.passed).toBe(2);
     expect(s.failed).toBe(1);
-    expect(s.meanRecall).toBeCloseTo(0.5); // (1 + 0) / 2, null excluded
+    expect(s.meanRecall).toBeCloseTo(0.5); // (1 + 0) / 2 over labeled, null excluded
   });
 
   it('handles an empty result set', () => {

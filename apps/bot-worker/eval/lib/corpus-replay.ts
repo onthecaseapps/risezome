@@ -7,8 +7,13 @@
 export interface GoldenQuestion {
   /** The question as a meeting participant would phrase it. */
   readonly q: string;
-  /** Doc-id or title substrings that SHOULD appear among the retrieved docs
-   *  (case-insensitive). Omit when the question only tests answer/refusal. */
+  /** Doc-id or title substrings expected among the retrieved docs
+   *  (case-insensitive). INFORMATIONAL ONLY — feeds the reported `meanRecall`
+   *  retrieval signal but does NOT gate pass/fail. For a contextual-retrieval
+   *  corpus many docs can legitimately answer a question, so "this exact file
+   *  must surface" is too brittle to gate on; answer correctness
+   *  (`expect_answer_contains`) is the gate, and RAGAS context-precision/recall
+   *  measures retrieval quality. Omit when not tracking a retrieval target. */
   readonly must_surface?: readonly string[];
   /** Substrings the synthesized answer must contain (case-insensitive). */
   readonly expect_answer_contains?: readonly string[];
@@ -77,11 +82,17 @@ export function evaluateAnswer(
 }
 
 /**
- * Score one replayed question. Pass criteria:
+ * Score one replayed question. Pass is driven by the END-TO-END answer, not by
+ * which docs retrieval surfaced:
  *  - expect_refusal questions pass iff the system refused.
- *  - otherwise: must NOT refuse, every expected substring must be present
- *    (when labeled), and all must_surface labels must be retrieved (when
- *    labeled). Unlabeled dimensions don't gate.
+ *  - otherwise: must NOT refuse, and every expected answer substring must be
+ *    present (when labeled). An unlabeled answer that doesn't refuse passes.
+ *
+ * `recall` over must_surface is still computed and reported (meanRecall) as a
+ * retrieval signal, but does NOT gate — a brittle keyword/file guess that
+ * doesn't match a legitimately-different-but-correct retrieval used to
+ * false-fail correct answers. Retrieval quality is measured by RAGAS
+ * context-precision/recall instead.
  */
 export function scoreQuestion(
   question: GoldenQuestion,
@@ -96,10 +107,7 @@ export function scoreQuestion(
   if (question.expect_refusal === true) {
     pass = isRefusal;
   } else {
-    pass =
-      !isRefusal &&
-      (answerContainsAll === null || answerContainsAll) &&
-      (recall === null || recall === 1);
+    pass = !isRefusal && answerContainsAll !== false;
   }
 
   return { q: question.q, retrieved, recall, surfaced, missed, answer, isRefusal, answerContainsAll, pass };
