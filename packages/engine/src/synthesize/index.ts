@@ -6,11 +6,18 @@ export * from './contract.js';
 export { AnthropicSynthesizer, DEFAULT_ANTHROPIC_MODEL } from './anthropic.js';
 export {
   parseSynthesisOutput,
+  stripStatusPrefix,
+  verifyCitations,
   citationsToRanks,
   REFUSAL_SENTINEL,
+  STATUS_ANSWER,
+  STATUS_NO_CONTEXT,
   buildSystemPrefix,
   buildUserMessage,
   type SystemBlock,
   type ParsedSynthesis,
   type ParsedCitation,
+  type SynthesisStatus,
+  type StatusGate,
+  type CitationVerification,
 } from './prompt.js';

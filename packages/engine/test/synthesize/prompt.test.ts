@@ -5,7 +5,11 @@ import {
   citationsToRanks,
   HAIKU_CACHE_MIN_CHAR_PROXY,
   parseSynthesisOutput,
+  stripStatusPrefix,
+  verifyCitations,
   REFUSAL_SENTINEL,
+  STATUS_ANSWER,
+  STATUS_NO_CONTEXT,
 } from '../../src/synthesize/prompt.js';
 import type { SynthesisSource } from '../../src/synthesize/contract.js';
 
@@ -32,6 +36,19 @@ describe('buildUserMessage', () => {
       'Utterance: what about jira\n\nSources:\n' +
         '[1] Issue #6 — Per-meeting summary view\nStatus: planned (Phase 3).',
     );
+  });
+
+  it('frames recentContext as a window the model must read as one thought', () => {
+    const out = buildUserMessage('what ai models', SAMPLE_SOURCES, ['models are used here']);
+    // The window is presented as joint context, with explicit instruction not
+    // to judge the most recent line alone (the bug this fixes).
+    expect(out).toContain('Read these lines together as one ongoing thought');
+    expect(out).toContain('do not ');
+    expect(out).toContain('judge the most recent line in isolation');
+    // Both lines are present; the latest is labeled as the focus, the prior as context.
+    expect(out).toContain('1. "models are used here"');
+    expect(out).toContain('Most recent line: what ai models');
+    expect(out).toContain('Sources:');
   });
 });
 
@@ -125,23 +142,137 @@ describe('parseSynthesisOutput — backward-compat with bare [N]', () => {
   });
 });
 
-describe('parseSynthesisOutput — refusal', () => {
-  it('detects the exact-match refusal sentinel', () => {
+describe('parseSynthesisOutput — STATUS protocol', () => {
+  it('STATUS: answer → answer, status line stripped from text, citations parsed', () => {
+    const out = parseSynthesisOutput(`${STATUS_ANSWER}\nClaude Haiku 4.5 is used [1: "haiku"].`, 2);
+    expect(out.isRefusal).toBe(false);
+    expect(out.text).toBe('Claude Haiku 4.5 is used [1: "haiku"].');
+    expect(out.citations.map((c) => c.rank)).toEqual([1]);
+    // Citation positions are relative to the stripped body, not the raw text.
+    expect(out.text.slice(out.citations[0]!.position)).toContain('[1:');
+  });
+
+  it('STATUS: no_relevant_context with a reason → refusal, reason captured, no body', () => {
+    const out = parseSynthesisOutput(`${STATUS_NO_CONTEXT}\nThe window is about lunch.`, 3);
+    expect(out.isRefusal).toBe(true);
+    expect(out.text).toBe('');
+    expect(out.citations).toEqual([]);
+    expect(out.refusalReason).toBe('The window is about lunch.');
+  });
+
+  it('STATUS: no_relevant_context with no reason → refusal, no refusalReason', () => {
+    const out = parseSynthesisOutput(STATUS_NO_CONTEXT, 0);
+    expect(out.isRefusal).toBe(true);
+    expect(out.refusalReason).toBeUndefined();
+  });
+
+  it('tolerates a missing space and case variance in the tag', () => {
+    expect(parseSynthesisOutput('status:no_relevant_context\nx', 0).isRefusal).toBe(true);
+    expect(parseSynthesisOutput('STATUS:answer\nhi [1].', 1).isRefusal).toBe(false);
+  });
+});
+
+describe('parseSynthesisOutput — legacy sentinel fallback (no STATUS tag)', () => {
+  it('bare sentinel → refusal', () => {
     const out = parseSynthesisOutput(REFUSAL_SENTINEL, 0);
     expect(out.isRefusal).toBe(true);
     expect(out.citations).toEqual([]);
   });
 
-  it('detects the refusal sentinel with surrounding whitespace', () => {
-    const out = parseSynthesisOutput(`  ${REFUSAL_SENTINEL}\n`, 0);
-    expect(out.isRefusal).toBe(true);
+  it('sentinel with surrounding whitespace → refusal', () => {
+    expect(parseSynthesisOutput(`  ${REFUSAL_SENTINEL}\n`, 0).isRefusal).toBe(true);
   });
 
-  it('does NOT treat partial-match as refusal', () => {
-    const out = parseSynthesisOutput('No relevant context. Maybe try again [1].', 1);
+  it('sentinel FOLLOWED BY prose → refusal (the prod ugly-card bug)', () => {
+    // This is the exact failure mode: the model emitted the sentinel plus a
+    // verbose explanation, which exact-match missed and rendered as a card.
+    const out = parseSynthesisOutput(
+      'No relevant context. The sources discuss models but the utterance is a fragment.',
+      2,
+    );
+    expect(out.isRefusal).toBe(true);
+    expect(out.text).toBe('');
+  });
+
+  it('ordinary answer with no tag and no sentinel → answer', () => {
+    const out = parseSynthesisOutput('The view is planned [1] but not built [2].', 3);
     expect(out.isRefusal).toBe(false);
-    // The trailing citation is still extracted normally.
-    expect(out.citations.map((c) => c.rank)).toEqual([1]);
+    expect(out.citations.map((c) => c.rank)).toEqual([1, 2]);
+  });
+});
+
+describe('stripStatusPrefix — streaming gate', () => {
+  it('holds (incomplete) while the STATUS line is still forming', () => {
+    for (const partial of ['', 'S', 'STAT', 'STATUS:', 'STATUS: ', 'STATUS: ans', 'STATUS: answer']) {
+      expect(stripStatusPrefix(partial).complete).toBe(false);
+    }
+  });
+
+  it('resolves once the STATUS: answer line ends, exposing the streamed body', () => {
+    const g1 = stripStatusPrefix(`${STATUS_ANSWER}\n`);
+    expect(g1).toMatchObject({ complete: true, status: 'answer', body: '' });
+    const g2 = stripStatusPrefix(`${STATUS_ANSWER}\nClaude Haiku`);
+    expect(g2).toMatchObject({ complete: true, status: 'answer', body: 'Claude Haiku' });
+  });
+
+  it('resolves a refusal without ever exposing a body', () => {
+    const g = stripStatusPrefix(`${STATUS_NO_CONTEXT}\nbecause lunch`);
+    expect(g).toMatchObject({ complete: true, status: 'no_relevant_context', body: '', reason: 'because lunch' });
+  });
+
+  it('streams immediately when output diverges from the protocol (legacy prose)', () => {
+    const g = stripStatusPrefix('The plan is [1].');
+    expect(g).toMatchObject({ complete: true, status: 'answer', body: 'The plan is [1].' });
+  });
+
+  it('classifies a legacy bare-sentinel refusal without a body', () => {
+    const g = stripStatusPrefix('No relevant context. unrelated sources.');
+    expect(g).toMatchObject({ complete: true, status: 'no_relevant_context', body: '' });
+  });
+});
+
+describe('verifyCitations — drops fabricated quoted citations', () => {
+  const sources = [
+    { text: 'The hold lasts 10 minutes and is keyed by a hold token.' },
+    { text: 'Cancellation within 7 days charges 50% of the subtotal.' },
+  ];
+
+  it('keeps a quoted citation whose quote is present in the cited source', () => {
+    const out = verifyCitations(
+      [{ rank: 1, position: 0, quote: 'hold lasts 10 minutes' }],
+      sources,
+    );
+    expect(out.verified).toHaveLength(1);
+    expect(out.droppedQuoted).toBe(0);
+  });
+
+  it('drops a quoted citation whose quote is NOT in the cited source (fabrication)', () => {
+    const out = verifyCitations(
+      [{ rank: 1, position: 0, quote: 'uses Claude Haiku 4.5' }],
+      sources,
+    );
+    expect(out.verified).toEqual([]);
+    expect(out.droppedQuoted).toBe(1);
+  });
+
+  it('matches tolerant of whitespace + case drift', () => {
+    const out = verifyCitations(
+      [{ rank: 2, position: 0, quote: 'charges 50%   of the SUBTOTAL' }],
+      sources,
+    );
+    expect(out.verified).toHaveLength(1);
+  });
+
+  it('keeps bare [N] citations (no quote to verify)', () => {
+    const out = verifyCitations([{ rank: 1, position: 0, quote: undefined }], sources);
+    expect(out.verified).toHaveLength(1);
+    expect(out.droppedQuoted).toBe(0);
+  });
+
+  it('drops a quote whose rank points past the source list', () => {
+    const out = verifyCitations([{ rank: 9, position: 0, quote: 'anything' }], sources);
+    expect(out.verified).toEqual([]);
+    expect(out.droppedQuoted).toBe(1);
   });
 });
 
@@ -172,24 +303,54 @@ describe('buildSystemPrefix', () => {
     expect(combined.length).toBeGreaterThanOrEqual(HAIKU_CACHE_MIN_CHAR_PROXY);
   });
 
-  it('includes the refusal sentinel verbatim so the model is anchored on the exact string', () => {
-    const blocks = buildSystemPrefix();
-    const combined = blocks.map((b) => b.text).join('');
-    expect(combined).toContain(REFUSAL_SENTINEL);
+  it('anchors the model on both STATUS tags', () => {
+    const combined = buildSystemPrefix().map((b) => b.text).join('');
+    expect(combined).toContain(STATUS_ANSWER);
+    expect(combined).toContain(STATUS_NO_CONTEXT);
   });
 
-  it('contains at least one refusal example so the model learns refusal behavior', () => {
-    const blocks = buildSystemPrefix();
-    const combined = blocks.map((b) => b.text).join('');
-    // Refusal examples emit the exact sentinel as the answer; expect ≥2 occurrences
-    // (one in instructions, plus at least one example using it).
-    const occurrences = combined.split(REFUSAL_SENTINEL).length - 1;
+  it('contains at least one refusal example (STATUS: no_relevant_context in an Answer block)', () => {
+    const combined = buildSystemPrefix().map((b) => b.text).join('');
+    // ≥2 occurrences: the protocol explanation plus at least one worked example.
+    const occurrences = combined.split(STATUS_NO_CONTEXT).length - 1;
     expect(occurrences).toBeGreaterThanOrEqual(2);
   });
 
+  it('teaches assembling the question from a window via a fragment example', () => {
+    const combined = buildSystemPrefix().map((b) => b.text).join('');
+    expect(combined).toContain('Most recent line: when does it kick in');
+  });
+
+  it('uses a fictional example domain (no real product stack to leak)', () => {
+    const combined = buildSystemPrefix().map((b) => b.text).join('');
+    // The few-shots are about the fictional "Marina" product so the model
+    // cannot recite this product's real stack as if grounded.
+    expect(combined).toContain('Marina');
+    for (const realFact of ['claude-haiku-4-5', 'voyage-3-large', 'Deepgram', 'Nova-3', 'Voyage AI']) {
+      expect(combined.includes(realFact), `leaked real fact in prompt: ${realFact}`).toBe(false);
+    }
+  });
+
   it('teaches the new quote format via at least one example with [N: "..."]', () => {
-    const blocks = buildSystemPrefix();
-    const combined = blocks.map((b) => b.text).join('');
+    const combined = buildSystemPrefix().map((b) => b.text).join('');
     expect(/\[\d+:\s*"/.test(combined)).toBe(true);
+  });
+
+  it('carries the no-em-dash rule', () => {
+    const combined = buildSystemPrefix().map((b) => b.text).join('');
+    expect(combined).toContain('NO EM-DASHES');
+  });
+
+  it('uses no em-dash or en-dash in any worked-example answer block', () => {
+    // Source snippets may legitimately contain em-dashes (they model real
+    // inputs), but the ANSWER blocks are the exemplars the model imitates, so
+    // they must be dash-clean to enforce rule 11.
+    const combined = buildSystemPrefix().map((b) => b.text).join('');
+    const answerBlocks = [...combined.matchAll(/Answer:\n([\s\S]*?)\n<\/example/g)].map((m) => m[1]!);
+    expect(answerBlocks.length).toBeGreaterThan(0);
+    for (const block of answerBlocks) {
+      expect(block.includes('—'), `em-dash in answer block: ${block}`).toBe(false);
+      expect(block.includes('–'), `en-dash in answer block: ${block}`).toBe(false);
+    }
   });
 });
