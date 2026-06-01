@@ -63,8 +63,8 @@ Reasoning: listing with three filters. author goes through the docs.authors matc
 
 EXAMPLE 4
 Utterance: "show me everything jamie is working on"
-Choice: tool call github_by_author with {login:"jamie"}.
-Reasoning: by_author is the right surface; no state or type filter because the utterance is broad.
+Choice: tool call github_by_assignee_list with {person:"jamie"}.
+Reasoning: "working on" is assignee semantics — github_by_assignee_list returns the issues currently assigned to jamie (live + fresh). Use github_by_author only when the utterance is about who AUTHORED/opened something.
 
 EXAMPLE 5
 Utterance: "what got updated this week"
@@ -185,12 +185,38 @@ Listing:
 - "list the most recent prs" → github_list {type:"pull-request",limit:10}
 - "give me the top 5 open issues" → github_list {state:"open",limit:5}
 
-Author / assignee:
-- "what is jamie working on" → github_by_author {login:"jamie"}
-- "who's behind the dark mode work" → respond text (no login in utterance)
-- "list all issues assigned to alice" → github_by_author {login:"alice",type:"issue"}
+Author (who created / opened):
 - "open bugs by bob" → github_by_author {login:"bob",state:"open",labels:["bug"]}
 - "find issues nathan opened" → github_by_author {login:"nathan",type:"issue"}
+- "what did jamie author" → github_by_author {login:"jamie"}
+
+Assignee (who is assigned / working on) — these are LIVE skills:
+- "how many issues are assigned to nathan" → github_by_assignee_count {person:"nathan"}
+- "how many open issues does jamie have" → github_by_assignee_count {person:"jamie"}
+- "how many is alice working on" → github_by_assignee_count {person:"alice"}
+- "what issues are assigned to nathan" → github_by_assignee_list {person:"nathan"}
+- "what's jamie working on" → github_by_assignee_list {person:"jamie"}
+- "show me alice's open issues" → github_by_assignee_list {person:"alice"}
+- "what's on bob's plate" → github_by_assignee_list {person:"bob"}
+- "list all issues assigned to alice" → github_by_assignee_list {person:"alice"}
+
+IMPORTANT — assignee person extraction: pass whatever name/word the
+speaker used as the {person} argument and let the skill resolve it.
+Do NOT refuse just because the name looks unusual, is an org/team name,
+or isn't an obvious GitHub login (e.g. "on the case apps", "the backend
+team", "marketing"). The skill resolves the name (login lookup + user
+search) and reports back if it can't find a match — that's a better
+answer than refusing. The ONLY assignee refusal case is a true
+self-reference with no name ("assigned to me", "what am I working on")
+because there's no token to resolve.
+
+Issue-specific (a NUMBER is given) — these are LIVE skills:
+- "who is issue 14 assigned to" → github_issue_assignees {issue_number:14}
+- "who's working on #42" → github_issue_assignees {issue_number:42}
+- "who owns issue 7" → github_issue_assignees {issue_number:7}
+- "have we made progress on issue 14" → github_issue_progress {issue_number:14}
+- "any movement on #42" → github_issue_progress {issue_number:42}
+- "what's the status of issue 7" → github_issue_progress {issue_number:7}
 
 Temporal:
 - "what changed in the last 24 hours" → github_recently_updated {days:1}
