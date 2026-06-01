@@ -13,12 +13,64 @@ Three runtime tiers, plus Supabase as the shared data plane:
 - **Background jobs** (Inngest functions in `apps/portal/src/inngest`) — schedule and launch Recall bots, index connected sources into the corpus, and sync Google Calendar.
 - **Supabase** — Postgres (with `pgvector` for the corpus), Auth, Row-Level Security, and Realtime (the channel the bot-worker broadcasts on and the live page subscribes to).
 
+### Flow at a glance
+
+Indexing runs in the background and fills the corpus; the live meeting path reads that same corpus on every utterance. The rolling summary window (dotted arrows) feeds the router, the relevance gate, and the synthesizer with meeting context.
+
+```mermaid
+flowchart TB
+  subgraph IDX["Indexing · Inngest background jobs (portal)"]
+    direction LR
+    SRC["Connected sources<br/>GitHub · Trello · Jira · Confluence"]
+    IXR["Per-kind indexers<br/>reconcile (delta / full)<br/>chunk + Voyage embed"]
+    SRC --> IXR
+  end
+
+  CORPUS[("Corpus — Postgres / pgvector<br/>docs · doc_chunks · corpus_chunk_embeddings")]
+  IXR -->|"upsert · prune stale"| CORPUS
+
+  CAL["Calendar sync → user toggles bot on<br/>Inngest launches Recall.ai bot"]
+  BOT["Recall.ai bot joins call<br/>Deepgram streaming inside Recall<br/>(our key · low-latency · retention null / ZDR)"]
+  CAL --> BOT
+  BOT -->|"transcript.data / partial_data<br/>over WebSocket (JWT)"| UTT
+
+  subgraph BW["Bot-worker (Fly.io) — per final utterance"]
+    direction TB
+    UTT["Final utterance"]
+    SUMW["Rolling summary window<br/>emit_meeting_summary<br/>fires async (~15 utt / 120s)"]
+    ROUTER{"Router classifier<br/>skill vs RAG"}
+    EMB["Embed transcript window<br/>(Voyage)"]
+    RET["Vector search → context cards"]
+    SKILL["Run skill<br/>GitHub / corpus lookup"]
+    REL{"Relevance gate<br/>heuristic → LLM"}
+    SYN["Synthesize with Claude<br/>sources: skill result + cards<br/>stream cited answer"]
+
+    UTT --> SUMW
+    UTT --> ROUTER
+    UTT --> EMB --> RET
+    ROUTER -->|"tool intent"| SKILL
+    RET --> REL
+    SKILL --> REL
+    REL -->|"relevant"| SYN
+  end
+
+  CORPUS -->|"vector search"| RET
+  SUMW -.->|"current topic · open questions"| ROUTER
+  SUMW -.->|"current topic · open questions"| REL
+  SUMW -.->|"summary + recent transcript"| SYN
+
+  RT["Supabase Realtime<br/>channel meeting:org:meeting"]
+  RET -->|"card events"| RT
+  SYN -->|"synthesisStart / Delta / Done"| RT
+  RT --> LIVE["Portal live page<br/>cards + cited synthesis"]
+```
+
 ### Meeting flow
 
 1. The portal syncs Google Calendar; a user toggles the bot on for a meeting.
 2. An Inngest function launches a **Recall.ai** bot just before start and records a `meetings` row.
-3. The bot joins the call and opens a WebSocket to the **bot-worker** (JWT-authenticated).
-4. Each final utterance is embedded via **Voyage**, matched against the **pgvector** corpus, optionally answered by a **skill** (GitHub/corpus lookups via a router classifier), and **synthesized** by **Claude** with inline citations.
+3. The bot joins the call and streams transcripts to the **bot-worker** over a JWT-authenticated WebSocket. Transcription is done by **Deepgram streaming configured inside Recall** (our Deepgram key, low-latency mode) — Recall runs with `retention: null` so it never stores transcripts or recordings (ZDR posture).
+4. Each final utterance is embedded via **Voyage**, matched against the **pgvector** corpus, optionally answered by a **skill** (GitHub/corpus lookups via a router classifier), gated for relevance, and **synthesized** by **Claude** with inline citations. A rolling **summary window** gives the router, relevance gate, and synthesizer ongoing meeting context.
 5. Cards and synthesis stream to the portal **live page** over Supabase Realtime; everything persists for post-meeting review.
 
 ### Corpus & connectors
