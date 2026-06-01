@@ -46,9 +46,23 @@ import {
   classifyRelevanceHeuristic,
   type RelevanceClassifier,
 } from '@risezome/engine/relevance';
+import {
+  AnthropicClassifier,
+  ClassifierProviderError,
+  isToolShaped,
+  type Classifier,
+} from '@risezome/engine/router';
+import {
+  SkillExecutionError,
+  formatAsSource,
+  type Skill,
+  type SkillContext,
+  type SkillRegistry,
+} from '@risezome/engine/skills';
 import type { AudioFrame } from '@risezome/shared-types';
 import type { Utterance } from '@risezome/engine/transcribe';
 import { MeetingSummarizerRuntime } from '../summarizer-runtime.js';
+import { buildSkillRegistry } from '../skills/index.js';
 
 export interface LocalDebugHandlerArgs {
   readonly db: SupabaseClient;
@@ -172,6 +186,16 @@ export async function handleLocalDebugWs(
     apiKey: args.anthropicKey,
     model: args.anthropicModel,
   });
+  // Router classifier + skill registry — mirrors the production Recall
+  // path (apps/bot-worker/src/retrieval.ts). Without this the debug
+  // page can never route "how many open issues" to github_count; every
+  // utterance goes straight to vector RAG. The registry is rebuilt per
+  // WS connection (cheap; reads env vars once).
+  const routerClassifier = new AnthropicClassifier({
+    apiKey: args.anthropicKey,
+    model: args.anthropicModel,
+  });
+  const skillRegistry = buildSkillRegistry({ logger: args.logger });
   const summarizerRuntime = new MeetingSummarizerRuntime({
     summarizer,
     onSummaryUpdated: (summary, at) => {
@@ -328,6 +352,8 @@ export async function handleLocalDebugWs(
       embedder,
       synthesizer,
       relevanceClassifier,
+      routerClassifier,
+      skillRegistry,
       abortSignal: ac.signal,
       onComplete: (sourceCardIds) => {
         priorSynth = { synthesisId, sourceCardIds, completedAt: Date.now() };
@@ -411,6 +437,11 @@ interface PipelineArgs {
   readonly embedder: VoyageEmbedder;
   readonly synthesizer: AnthropicSynthesizer;
   readonly relevanceClassifier: RelevanceClassifier;
+  /** Router classifier — picks `tool` vs `rag` per utterance. When it
+   *  returns a tool intent, the chosen skill runs and its result is
+   *  prepended to the synthesizer's sources as [1]. */
+  readonly routerClassifier: Classifier;
+  readonly skillRegistry: SkillRegistry;
   readonly abortSignal: AbortSignal;
   /** Called after the pipeline completes successfully (non-refusal)
    *  so the caller can update `priorSynth`. */
@@ -425,7 +456,7 @@ interface PipelineArgs {
 async function runDebugPipeline(p: PipelineArgs): Promise<void> {
   const traceId = randomUUID();
   const synthesisId = p.synthesisId;
-  const { socket, args, embedder, synthesizer, relevanceClassifier, abortSignal } = p;
+  const { socket, args, embedder, synthesizer, relevanceClassifier, routerClassifier, skillRegistry, abortSignal } = p;
 
   args.logger.info(
     { traceId, synthesisId, utteranceId: p.utteranceId, text: p.utteranceText },
@@ -495,6 +526,38 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     }
   }
 
+  // ── Router gate: launch the classifier in parallel with embed when
+  // the utterance is tool-shaped and at least one skill is registered.
+  // Resolved after retrieval, before synthesis. On a tool intent the
+  // chosen skill's result becomes source[0] (cited as [1]).
+  let classifierPromise: ReturnType<Classifier['classify']> | null = null;
+  let classifierStartedAt = 0;
+  if (skillRegistry.size() > 0 && isToolShaped(p.utteranceText)) {
+    classifierStartedAt = Date.now();
+    const hasContext =
+      p.lastSummary !== null &&
+      ((p.lastSummary.current_topic?.length ?? 0) > 0 ||
+        p.lastSummary.open_questions.length > 0);
+    args.logger.info(
+      { traceId, utteranceId: p.utteranceId, hadContext: hasContext },
+      'local-debug.classifier.start',
+    );
+    classifierPromise = routerClassifier.classify(
+      {
+        utterance: p.utteranceText,
+        registry: skillRegistry,
+        ...(hasContext && {
+          context: {
+            current_topic: p.lastSummary!.current_topic,
+            open_questions: p.lastSummary!.open_questions,
+          },
+        }),
+      },
+      abortSignal,
+    );
+    classifierPromise.catch(() => undefined);
+  }
+
   // ── Embed
   // Optional key_terms boost: append project nouns the rolling summary
   // extracted so short follow-up utterances ("about that auth flow")
@@ -538,74 +601,95 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     return;
   }
   const hits = vectorRows ?? [];
-  if (hits.length === 0) {
+
+  // ── Resolve the router classifier + run the chosen skill (if any).
+  // Done here, after retrieval, so a tool answer survives an empty
+  // retrieval: "how many open issues" gets github_count even when no
+  // vector hits are relevant.
+  const toolSource = await resolveToolSource({
+    classifierPromise,
+    classifierStartedAt,
+    skillRegistry,
+    db: args.db,
+    orgId: args.orgId,
+    socket,
+    utteranceId: p.utteranceId,
+    abortSignal,
+    logger: args.logger,
+    traceId,
+  });
+
+  if (hits.length === 0 && toolSource === null) {
     send(socket, { type: 'retrieval-skip', reason: 'no_hits', traceId });
     return;
   }
 
-  // ── Enrich with chunk + doc metadata
-  const chunkIds = hits.map((h) => h.chunk_id);
-  const { data: chunkRows } = await args.db
-    .from('doc_chunks')
-    .select('chunk_id, doc_id, domain, text, position')
-    .in('chunk_id', chunkIds);
-  const chunkById = new Map(
-    (chunkRows ?? []).map((c) => [
-      c.chunk_id as string,
-      {
-        doc_id: c.doc_id as string,
-        domain: c.domain as string,
-        text: c.text as string,
-        position: c.position as number,
-      },
-    ]),
-  );
-  const docIds = Array.from(new Set(Array.from(chunkById.values()).map((c) => c.doc_id)));
-  const { data: docRows } = await args.db
-    .from('docs')
-    .select('id, source, type, title, url')
-    .in('id', docIds);
-  const docById = new Map(
-    (docRows ?? []).map((d) => [
-      d.id as string,
-      {
-        source: d.source as string,
-        type: d.type as string,
-        title: d.title as string,
-        url: (d.url as string | null) ?? null,
-      },
-    ]),
-  );
-
-  // ── Build per-rank source list + emit card events
+  // ── Build per-rank source list + emit card events (skip enrichment
+  // entirely when retrieval found nothing but a tool answered).
   const sources: SynthesisSource[] = [];
   const cardIds: string[] = [];
-  for (let i = 0; i < hits.length; i++) {
-    const hit = hits[i]!;
-    const chunk = chunkById.get(hit.chunk_id);
-    if (chunk === undefined) continue;
-    const doc = docById.get(chunk.doc_id);
-    if (doc === undefined) continue;
-    const cardId = `dbg_${randomUUID()}`;
-    cardIds.push(cardId);
-    sources.push({ rank: i + 1, title: doc.title, text: chunk.text });
-    send(socket, {
-      type: 'card',
-      traceId,
-      utteranceId: p.utteranceId,
-      cardId,
-      rank: i + 1,
-      docId: chunk.doc_id,
-      title: doc.title,
-      source: doc.source,
-      docType: doc.type,
-      url: doc.url,
-      snippet: chunk.text.slice(0, 400),
-      body: chunk.text,
-      distance: hit.distance,
-    });
+  if (hits.length > 0) {
+    // ── Enrich with chunk + doc metadata
+    const chunkIds = hits.map((h) => h.chunk_id);
+    const { data: chunkRows } = await args.db
+      .from('doc_chunks')
+      .select('chunk_id, doc_id, domain, text, position')
+      .in('chunk_id', chunkIds);
+    const chunkById = new Map(
+      (chunkRows ?? []).map((c) => [
+        c.chunk_id as string,
+        {
+          doc_id: c.doc_id as string,
+          domain: c.domain as string,
+          text: c.text as string,
+          position: c.position as number,
+        },
+      ]),
+    );
+    const docIds = Array.from(new Set(Array.from(chunkById.values()).map((c) => c.doc_id)));
+    const { data: docRows } = await args.db
+      .from('docs')
+      .select('id, source, type, title, url')
+      .in('id', docIds);
+    const docById = new Map(
+      (docRows ?? []).map((d) => [
+        d.id as string,
+        {
+          source: d.source as string,
+          type: d.type as string,
+          title: d.title as string,
+          url: (d.url as string | null) ?? null,
+        },
+      ]),
+    );
+
+    for (let i = 0; i < hits.length; i++) {
+      const hit = hits[i]!;
+      const chunk = chunkById.get(hit.chunk_id);
+      if (chunk === undefined) continue;
+      const doc = docById.get(chunk.doc_id);
+      if (doc === undefined) continue;
+      const cardId = `dbg_${randomUUID()}`;
+      cardIds.push(cardId);
+      sources.push({ rank: i + 1, title: doc.title, text: chunk.text });
+      send(socket, {
+        type: 'card',
+        traceId,
+        utteranceId: p.utteranceId,
+        cardId,
+        rank: i + 1,
+        docId: chunk.doc_id,
+        title: doc.title,
+        source: doc.source,
+        docType: doc.type,
+        url: doc.url,
+        snippet: chunk.text.slice(0, 400),
+        body: chunk.text,
+        distance: hit.distance,
+      });
+    }
   }
-  if (sources.length === 0) {
+  if (sources.length === 0 && toolSource === null) {
     send(socket, { type: 'retrieval-skip', reason: 'enrichment_empty', traceId });
     return;
   }
@@ -614,6 +698,11 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     args.logger.info({ traceId }, 'local-debug.pipeline.aborted.post-cards');
     return;
   }
+
+  // Tool result, when present, takes source[0]; cards follow at
+  // [1..N]. The synthesizer cites by 1-indexed array position.
+  const synthesisSources = toolSource !== null ? [toolSource, ...sources] : sources;
+  const cardRankOffset = toolSource !== null ? 1 : 0;
 
   // Decide whether this synthesis REPLACES the prior card or stands
   // alone. Trigger: high source-set overlap with the prior + within
@@ -633,8 +722,9 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     {
       traceId,
       synthesisId,
-      sources: sources.length,
-      totalSourceChars: sources.reduce((n, s) => n + s.text.length, 0),
+      sources: synthesisSources.length,
+      hasToolSource: toolSource !== null,
+      totalSourceChars: synthesisSources.reduce((n, s) => n + s.text.length, 0),
       recentContextSize: p.recentContext.length,
       replacesSynthesisId,
     },
@@ -658,7 +748,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     for await (const chunk of synthesizer.synthesize(
       {
         utterance: p.utteranceText,
-        sources,
+        sources: synthesisSources,
         ...(p.recentContext.length > 0 ? { recentContext: p.recentContext } : {}),
       },
       abortSignal,
@@ -679,9 +769,11 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
         send(socket, { type: 'synthesisDelta', synthesisId, delta: chunk.delta });
       } else if (chunk.type === 'done') {
         sawDone = true;
-        const parsed = parseSynthesisOutput(accumulated, sources.length);
+        const parsed = parseSynthesisOutput(accumulated, synthesisSources.length);
         const richCitations = parsed.citations.flatMap((c) => {
-          const cardId = cardIds[c.rank - 1];
+          // With a tool source at [1], card N is at rank N+1. Subtract
+          // the offset to map a citation rank back to its cardId.
+          const cardId = cardIds[c.rank - 1 - cardRankOffset];
           if (cardId === undefined) return [];
           return [
             {
@@ -765,6 +857,109 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       synthesisId,
       message: (err as Error).message,
     });
+  }
+}
+
+/**
+ * Resolve the router classifier promise (if one was launched) and, on
+ * a tool intent, dispatch the chosen skill. Returns the formatted
+ * SynthesisSource for the synthesizer's source[0], or null when the
+ * classifier returned `rag`, the skill was unknown, or anything failed
+ * (fail-open — the pipeline falls through to RAG-only). Mirrors the
+ * production Recall path in apps/bot-worker/src/retrieval.ts.
+ */
+async function resolveToolSource(p: {
+  classifierPromise: ReturnType<Classifier['classify']> | null;
+  classifierStartedAt: number;
+  skillRegistry: SkillRegistry;
+  db: SupabaseClient;
+  orgId: string;
+  socket: WebSocket;
+  utteranceId: string;
+  abortSignal: AbortSignal;
+  logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void };
+  traceId: string;
+}): Promise<SynthesisSource | null> {
+  if (p.classifierPromise === null) return null;
+  try {
+    const result = await p.classifierPromise;
+    p.logger.info(
+      {
+        traceId: p.traceId,
+        utteranceId: p.utteranceId,
+        intent: result.intent,
+        ...(result.intent === 'tool' && { skillName: result.skillName }),
+        latencyMs: Date.now() - p.classifierStartedAt,
+      },
+      'local-debug.classifier.done',
+    );
+    if (result.intent !== 'tool') return null;
+
+    const skill: Skill | undefined = p.skillRegistry.lookup(result.skillName);
+    if (skill === undefined) {
+      p.logger.warn(
+        { traceId: p.traceId, skillName: result.skillName, code: 'unknown-skill' },
+        'local-debug.skill.failed',
+      );
+      return null;
+    }
+    const skillStartedAt = Date.now();
+    p.logger.info(
+      { traceId: p.traceId, skillName: result.skillName, args: result.args },
+      'local-debug.skill.start',
+    );
+    try {
+      const skillContext: SkillContext = {
+        db: p.db,
+        orgId: p.orgId,
+        signal: p.abortSignal,
+      };
+      const skillResult = await skill.handler(result.args, skillContext);
+      p.logger.info(
+        {
+          traceId: p.traceId,
+          skillName: result.skillName,
+          latencyMs: Date.now() - skillStartedAt,
+          resultShape: skillResult.kind,
+          summary: skillResult.summary,
+        },
+        'local-debug.skill.done',
+      );
+      // Emit the structured tool answer as its own card so it's always
+      // visible on the page — independent of whether the synthesizer
+      // chooses to relay it (it can refuse). The synthesizer still gets
+      // the source for prose framing, but the raw answer never hides.
+      send(p.socket, {
+        type: 'skillResult',
+        traceId: p.traceId,
+        utteranceId: p.utteranceId,
+        skillName: result.skillName,
+        args: result.args,
+        kind: skillResult.kind,
+        summary: skillResult.summary,
+        items: skillResult.items ?? [],
+      });
+      return formatAsSource(skillResult, result.skillName, result.args);
+    } catch (err) {
+      const code = err instanceof SkillExecutionError ? err.executionCode : 'execution-error';
+      p.logger.warn(
+        { traceId: p.traceId, skillName: result.skillName, code, message: (err as Error).message },
+        'local-debug.skill.failed',
+      );
+      return null;
+    }
+  } catch (err) {
+    if (err instanceof ClassifierProviderError) {
+      p.logger.warn(
+        { traceId: p.traceId, code: err.kind, message: err.message },
+        'local-debug.classifier.error',
+      );
+    } else if (err instanceof Error && err.name === 'AbortError') {
+      // Aborted — silent.
+    } else {
+      p.logger.warn({ traceId: p.traceId, message: (err as Error).message }, 'local-debug.classifier.error');
+    }
+    return null;
   }
 }
 

@@ -78,6 +78,23 @@ interface RetrievalSkipEvent {
   detail?: string;
 }
 
+interface SkillResultItemPayload {
+  title: string;
+  url?: string;
+  subtitle?: string;
+}
+
+interface SkillResultEvent {
+  type: 'skillResult';
+  traceId: string;
+  utteranceId: string;
+  skillName: string;
+  args: Record<string, unknown>;
+  kind: 'count' | 'list' | 'detail';
+  summary: string;
+  items: SkillResultItemPayload[];
+}
+
 interface MeetingSummaryPayload {
   summary: string;
   current_topic: string;
@@ -110,6 +127,7 @@ type DebugEvent =
   | SynthesisDoneEvent
   | SynthesisAbortedEvent
   | RetrievalSkipEvent
+  | SkillResultEvent
   | SummaryEvent
   | OtherEvent;
 
@@ -121,6 +139,16 @@ interface SynthesisRecord {
   refused: boolean;
   aborted: boolean;
   utteranceId: string;
+}
+
+interface SkillResultRecord {
+  traceId: string;
+  utteranceId: string;
+  skillName: string;
+  args: Record<string, unknown>;
+  kind: 'count' | 'list' | 'detail';
+  summary: string;
+  items: SkillResultItemPayload[];
 }
 
 interface CardGroup {
@@ -143,6 +171,7 @@ export function LiveMicDebugClient({
   const [utterances, setUtterances] = useState<UtteranceEvent[]>([]);
   const [cardGroups, setCardGroups] = useState<CardGroup[]>([]);
   const [syntheses, setSyntheses] = useState<SynthesisRecord[]>([]);
+  const [skillResults, setSkillResults] = useState<SkillResultRecord[]>([]);
   const [systemEvents, setSystemEvents] = useState<string[]>([]);
   const [currentSummary, setCurrentSummary] = useState<MeetingSummaryPayload | null>(null);
   const [summaryAt, setSummaryAt] = useState<number | null>(null);
@@ -233,6 +262,24 @@ export function LiveMicDebugClient({
         setSummaryAt(s.at);
         return;
       }
+      case 'skillResult': {
+        const s = evt as SkillResultEvent;
+        setSkillResults((prev) =>
+          [
+            ...prev,
+            {
+              traceId: s.traceId,
+              utteranceId: s.utteranceId,
+              skillName: s.skillName,
+              args: s.args,
+              kind: s.kind,
+              summary: s.summary,
+              items: s.items,
+            },
+          ].slice(-10),
+        );
+        return;
+      }
       case 'synthesisDone':
       case 'synthesisRefusal': {
         const d = evt as SynthesisDoneEvent;
@@ -310,6 +357,7 @@ export function LiveMicDebugClient({
     setUtterances([]);
     setCardGroups([]);
     setSyntheses([]);
+    setSkillResults([]);
     setSystemEvents([]);
     setCurrentSummary(null);
     setSummaryAt(null);
@@ -433,7 +481,47 @@ export function LiveMicDebugClient({
         </Panel>
 
         <Panel title={`Syntheses (${syntheses.length})`}>
-          {syntheses.length === 0 ? (
+          <>
+          {/* Skill answers: structured tool results (github_count etc.)
+              shown directly, independent of synthesis. The synthesizer
+              can refuse; the raw skill answer never hides. */}
+          {skillResults.length > 0 && (
+            <ul className="mb-3 space-y-2 text-sm">
+              {skillResults.slice().reverse().map((sr) => (
+                <li
+                  key={`${sr.traceId}-${sr.skillName}`}
+                  className="rounded border border-accent/50 bg-accent-soft/40 p-3"
+                >
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-accent">
+                    <span className="rounded bg-accent/20 px-1.5 py-0.5 font-semibold">Skill</span>
+                    <span className="font-mono normal-case text-muted">
+                      {sr.skillName}({JSON.stringify(sr.args)})
+                    </span>
+                  </div>
+                  <div className="mt-1 font-medium">{sr.summary}</div>
+                  {sr.items.length > 0 && (
+                    <ol className="mt-1.5 space-y-1 text-xs">
+                      {sr.items.map((item, i) => (
+                        <li key={`${sr.traceId}-item-${String(i)}`} className="border-l-2 border-accent/40 pl-2">
+                          {item.url !== undefined ? (
+                            <a href={item.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                              {item.title}
+                            </a>
+                          ) : (
+                            <span>{item.title}</span>
+                          )}
+                          {item.subtitle !== undefined && (
+                            <span className="text-muted"> — {item.subtitle}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {syntheses.length === 0 && skillResults.length === 0 ? (
             <EmptyHint text='Synthesis answers stream here. Citations parse from the [N: "quote"] format.' />
           ) : (
             <ul className="space-y-3 text-sm">
@@ -491,6 +579,7 @@ export function LiveMicDebugClient({
               ))}
             </ul>
           )}
+          </>
         </Panel>
       </div>
 
