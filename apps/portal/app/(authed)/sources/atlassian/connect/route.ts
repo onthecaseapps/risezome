@@ -13,7 +13,15 @@ import { buildAtlassianAuthorizeUrl, requireAtlassianClientId } from '../../../.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const { user, orgId } = await requireAuthedUserWithOrg();
-  const clientId = requireAtlassianClientId();
+
+  // The Atlassian integration isn't configured on this deployment (no
+  // ATLASSIAN_CLIENT_ID). Redirect back with a clear message, not a 500.
+  let clientId: string;
+  try {
+    clientId = requireAtlassianClientId();
+  } catch {
+    return NextResponse.redirect(new URL('/sources?error=atlassian_not_configured', request.nextUrl.origin));
+  }
   const stateToken = randomBytes(32).toString('hex');
 
   const service = createServiceRoleClient();

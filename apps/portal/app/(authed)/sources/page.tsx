@@ -633,8 +633,14 @@ function errorMessage(code: string): string {
     install_state_expired: 'Install state expired. Start the install again.',
     install_github_fetch_failed: 'Could not reach GitHub to confirm the installation. Try again in a minute.',
     install_persist_failed: 'Could not save the installation. Try again.',
+    trello_not_configured:
+      'Trello isn’t configured on this deployment. Set TRELLO_API_KEY to enable it.',
+    trello_init_failed: 'Could not start the Trello connect flow. Try again.',
+    atlassian_not_configured:
+      'Jira & Confluence aren’t configured on this deployment. Set ATLASSIAN_CLIENT_ID / ATLASSIAN_CLIENT_SECRET to enable them.',
+    atlassian_init_failed: 'Could not start the Atlassian connect flow. Try again.',
   };
-  return map[code] ?? `Install failed (${code}). Try again.`;
+  return map[code] ?? `Something went wrong (${code}). Try again.`;
 }
 
 /* ---------- Inline icons ---------- */

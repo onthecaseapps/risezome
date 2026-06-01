@@ -15,7 +15,14 @@ import { buildTrelloAuthorizeUrl, requireTrelloApiKey } from '../../../../_lib/t
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const { user, orgId } = await requireAuthedUserWithOrg();
 
-  const apiKey = requireTrelloApiKey();
+  // The Trello integration isn't configured on this deployment (no
+  // TRELLO_API_KEY). Redirect back with a clear message instead of a 500.
+  let apiKey: string;
+  try {
+    apiKey = requireTrelloApiKey();
+  } catch {
+    return NextResponse.redirect(new URL('/sources?error=trello_not_configured', request.nextUrl.origin));
+  }
   const stateToken = randomBytes(32).toString('hex');
 
   const service = createServiceRoleClient();
