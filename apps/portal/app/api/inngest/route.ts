@@ -6,6 +6,7 @@ import { indexJiraFn } from '../../../src/inngest/functions/index-jira';
 import { indexConfluenceFn } from '../../../src/inngest/functions/index-confluence';
 import { syncCalendarFn, syncAllCalendarsCron } from '../../../src/inngest/functions/sync-calendar';
 import { launchBotFn } from '../../../src/inngest/functions/launch-bot';
+import { reapStaleMeetingsCron } from '../../../src/inngest/functions/reap-stale-meetings';
 
 /**
  * Inngest function registry, exposed at /api/inngest.
@@ -28,5 +29,6 @@ export const { GET, POST, PUT } = serve({
     syncCalendarFn,
     syncAllCalendarsCron,
     launchBotFn,
+    reapStaleMeetingsCron,
   ],
 });
