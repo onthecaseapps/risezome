@@ -88,32 +88,11 @@ function PinnedSynthesisItem({ syn }: { syn: SynthesisRecord }): ReactElement {
     phase !== 'done',
   );
 
-  const uniqueRanks =
-    phase === 'done'
-      ? [...new Set(syn.citations.map((c) => c.rank))].sort((a, b) => a - b)
-      : [];
-  const citationNodes: ReactNode[] = uniqueRanks.map((rank) => {
-    const cardId = syn.sourceCardIds[rank - 1];
-    if (typeof cardId !== 'string') return null;
-    const sourceCard = state.cards.get(cardId);
-    const firstQuote = syn.citations.find((c) => c.rank === rank)?.quote;
-    return (
-      <ActivatableCitationChip
-        key={`final-${String(rank)}`}
-        rank={rank}
-        cardId={cardId}
-        sourceTitle={sourceCard?.card.title}
-        quote={firstQuote}
-      />
-    );
-  });
-
   return (
     <SynthesisCard
       synthesisId={syn.synthesisId}
       phase={phase}
       answer={answer}
-      citations={citationNodes.filter((n): n is ReactElement => n !== null)}
       sources={sources}
       citationRecords={syn.citations}
       pinned={syn.pinned}

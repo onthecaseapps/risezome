@@ -29,7 +29,6 @@ describe('SynthesisCard — phase: placeholder', () => {
         synthesisId="s1"
         phase="placeholder"
         answer={null}
-        citations={[]}
         sources={[]}
       />,
     );
@@ -46,7 +45,6 @@ describe('SynthesisCard — phase: placeholder', () => {
         synthesisId="s1"
         phase="placeholder"
         answer={null}
-        citations={[]}
         sources={[]}
       />,
     );
@@ -62,7 +60,6 @@ describe('SynthesisCard — phase: placeholder', () => {
         synthesisId="s1"
         phase="placeholder"
         answer={null}
-        citations={[]}
         sources={[mkCard({ cardId: 'a', title: 'Alpha title' }), mkCard({ cardId: 'b', title: 'Beta title' })]}
       />,
     );
@@ -79,7 +76,6 @@ describe('SynthesisCard — phase: placeholder', () => {
         synthesisId="s1"
         phase="placeholder"
         answer={null}
-        citations={[]}
         sources={[]}
       />,
     );
@@ -92,7 +88,6 @@ describe('SynthesisCard — phase: placeholder', () => {
         synthesisId="s1"
         phase="placeholder"
         answer={null}
-        citations={[]}
         sources={[mkCard({ cardId: 'a', title: 'Only one' })]}
       />,
     );
@@ -109,7 +104,6 @@ describe('SynthesisCard — phase: streaming', () => {
         synthesisId="s1"
         phase="streaming"
         answer={<>Partial answer </>}
-        citations={[]}
         sources={[mkCard()]}
       />,
     );
@@ -126,7 +120,6 @@ describe('SynthesisCard — phase: streaming', () => {
         synthesisId="s1"
         phase="streaming"
         answer={<>x</>}
-        citations={[]}
         sources={[]}
       />,
     );
@@ -142,7 +135,6 @@ describe('SynthesisCard — pin button (U5)', () => {
         synthesisId="s1"
         phase="done"
         answer={<>x</>}
-        citations={[]}
         sources={[]}
       />,
     );
@@ -157,7 +149,6 @@ describe('SynthesisCard — pin button (U5)', () => {
           synthesisId="s1"
           phase="done"
           answer={<>x</>}
-          citations={[]}
           sources={[]}
           pinned={false}
         />
@@ -177,7 +168,6 @@ describe('SynthesisCard — pin button (U5)', () => {
           synthesisId="s1"
           phase="done"
           answer={<>x</>}
-          citations={[]}
           sources={[]}
           pinned={true}
         />
@@ -197,7 +187,6 @@ describe('SynthesisCard — pin button (U5)', () => {
           synthesisId="s1"
           phase="placeholder"
           answer={null}
-          citations={[]}
           sources={[]}
         />
       </SynthesisActionsProvider>,
@@ -211,7 +200,6 @@ describe('SynthesisCard — pin button (U5)', () => {
           synthesisId="s1"
           phase="streaming"
           answer={<>x</>}
-          citations={[]}
           sources={[]}
         />
       </SynthesisActionsProvider>,
@@ -230,7 +218,6 @@ describe('SynthesisCard — pin button (U5)', () => {
           synthesisId="my-syn"
           phase="done"
           answer={<>x</>}
-          citations={[]}
           sources={[]}
           pinned={false}
         />
@@ -242,21 +229,22 @@ describe('SynthesisCard — pin button (U5)', () => {
 });
 
 describe('SynthesisCard — phase: done', () => {
-  it('hides cursor; renders citations + sources', () => {
+  it('hides cursor; renders sources; no trailing citations row', () => {
     const sources = [mkCard()];
     const { container } = render(
       <SynthesisCard
         synthesisId="s1"
         phase="done"
         answer={<>Final answer</>}
-        citations={[<span key="c1" data-testid="chip" />]}
         sources={sources}
         citationRecords={[{ rank: 1, cardId: 'src1', position: 0 }]}
       />,
     );
     expect(container.querySelector('.synthesis-cursor')).toBeNull();
     expect(container.querySelector('.synthesis-sources')).not.toBeNull();
-    expect(container.querySelectorAll('[data-testid="chip"]').length).toBe(1);
+    // The trailing consolidated citation-chip row was removed; inline chips
+    // in the answer body are the only citation affordance now.
+    expect(container.querySelector('.citations')).toBeNull();
     expect(container.querySelector('article')?.getAttribute('aria-busy')).toBe('false');
   });
 });
@@ -272,7 +260,6 @@ describe('SynthesisCard — B4 in-place transition (no remount)', () => {
         synthesisId="s1"
         phase="placeholder"
         answer={null}
-        citations={[]}
         sources={[]}
       />,
     );
@@ -284,7 +271,6 @@ describe('SynthesisCard — B4 in-place transition (no remount)', () => {
         synthesisId="s1"
         phase="streaming"
         answer={<>Streaming text</>}
-        citations={[]}
         sources={[]}
       />,
     );
@@ -296,7 +282,6 @@ describe('SynthesisCard — B4 in-place transition (no remount)', () => {
         synthesisId="s1"
         phase="done"
         answer={<>Final text</>}
-        citations={[]}
         sources={[]}
       />,
     );
@@ -313,7 +298,6 @@ describe('SynthesisCard — B4 in-place transition (no remount)', () => {
         synthesisId="s1"
         phase="placeholder"
         answer={null}
-        citations={[]}
         sources={[]}
       />,
     );
@@ -323,7 +307,6 @@ describe('SynthesisCard — B4 in-place transition (no remount)', () => {
         synthesisId="s1"
         phase="streaming"
         answer={<>x</>}
-        citations={[]}
         sources={[]}
       />,
     );

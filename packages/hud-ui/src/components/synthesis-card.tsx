@@ -43,9 +43,6 @@ export interface SynthesisCardProps {
   /** Pre-rendered answer with `<CitationChip>` interpolated by
    *  SynthesisStream. Empty during placeholder phase. */
   readonly answer: ReactNode;
-  /** Consolidated citation chip nodes shown beneath the answer (final
-   *  row). Empty in placeholder + streaming. */
-  readonly citations: ReactNode[];
   /** Cards consolidated under the summary, in `sourceCardIds` order.
    *  Available during placeholder too (used for source-title line). */
   readonly sources: readonly CardEvent[];
@@ -85,7 +82,6 @@ export function SynthesisCard({
   synthesisId,
   phase,
   answer,
-  citations,
   sources,
   citationRecords,
   pinned = false,
@@ -192,8 +188,6 @@ export function SynthesisCard({
         {phase === 'placeholder' && sources.length > 0 && (
           <PlaceholderSourceTitles sources={sources} />
         )}
-
-        {isDone && citations.length > 0 && <div className="citations">{citations}</div>}
 
         {isDone && citedSources.length > 0 && (
           <div className="synthesis-sources">
