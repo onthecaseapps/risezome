@@ -6,13 +6,14 @@ import { getInstallationOctokit } from '../../../app/_lib/github-app';
 import { chunkIssue } from '../../lib/github/chunk-issues';
 import type { GithubIssue } from '../../lib/github/issue-types';
 import { reconcile, clearDocChunks } from '../lib/corpus-reconcile';
+import { mapWithConcurrency } from '../lib/concurrency';
 import {
   contextualizeChunks,
   contextualizedText,
   type ContextGenerator,
 } from '@risezome/engine/contextualize';
 import { summarizeDoc, type DocSummarizer } from '@risezome/engine/summarize-doc';
-import { optionalContextGenerator, optionalDocSummarizer } from '../lib/contextualizer';
+import { optionalContextGenerator, optionalDocSummarizer, docConcurrency } from '../lib/contextualizer';
 
 /** Doc types this indexer owns — reconcile must never touch the
  *  type='file' docs that share this source_id (corpus-reconcile R8). */
@@ -218,14 +219,11 @@ async function indexBatch(args: {
   const { batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator, docSummarizer } = args;
   const service = createServiceRoleClient();
 
-  let indexedIssues = 0;
-  let chunkCount = 0;
-
-  for (const issue of batch) {
+  const perDoc = await mapWithConcurrency(batch, docConcurrency(), async (issue) => {
     const { doc, chunks } = chunkIssue(ownerRepo, issue);
-    if (chunks.length === 0) continue;
+    if (chunks.length === 0) return { issues: 0, chunks: 0 };
     const kind = kindByDocId.get(doc.docId);
-    if (kind === undefined) continue; // unchanged — reconcile didn't select it
+    if (kind === undefined) return { issues: 0, chunks: 0 }; // unchanged — reconcile didn't select it
 
     // Contextual Retrieval (U3): per-chunk context prepended to the embedded
     // text; verbatim body stays in `text`, context folded into text_fts.
@@ -258,7 +256,7 @@ async function indexBatch(args: {
       if (kind === 'changed') {
         throw new Error(`embed failed for changed issue ${doc.docId}: ${String(err)}`);
       }
-      continue;
+      return { issues: 0, chunks: 0 };
     }
 
     // Changed: drop stale chunks/embeddings before re-inserting. Cascade
@@ -346,11 +344,13 @@ async function indexBatch(args: {
       throw new Error(`content_hash update failed for ${doc.docId}: ${hashErr.message}`);
     }
 
-    indexedIssues += 1;
-    chunkCount += chunks.length;
-  }
+    return { issues: 1, chunks: chunks.length };
+  });
 
-  return { issues: indexedIssues, chunks: chunkCount };
+  return perDoc.reduce(
+    (acc, r) => ({ issues: acc.issues + r.issues, chunks: acc.chunks + r.chunks }),
+    { issues: 0, chunks: 0 },
+  );
 }
 
 function arrayToVectorLiteral(vec: Float32Array): string {

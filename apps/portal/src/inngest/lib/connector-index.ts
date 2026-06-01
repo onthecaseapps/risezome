@@ -7,6 +7,8 @@ import {
 import { summarizeDoc, type DocSummarizer } from '@risezome/engine/summarize-doc';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
 import type { IndexMode } from '../client';
+import { mapWithConcurrency } from './concurrency';
+import { docConcurrency } from './contextualizer';
 import {
   reconcile,
   writeReconciledDoc,
@@ -171,9 +173,9 @@ export async function runConnectorIndex<E>(
     const batch = toWrite.slice(i, i + EMBED_BATCH);
     await step.run(`embed-${String(i)}`, async () => {
       const db = createServiceRoleClient();
-      for (const doc of batch) {
+      await mapWithConcurrency(batch, docConcurrency(), async (doc) => {
         const kind = kindByDocId.get(doc.docId);
-        if (kind === undefined) continue;
+        if (kind === undefined) return;
 
         // Contextual Retrieval (U3): generate a per-chunk context and prepend
         // it to the EMBEDDED text; the verbatim body stays in `text` for
@@ -216,7 +218,7 @@ export async function runConnectorIndex<E>(
           if (kind === 'changed') {
             throw new Error(`${source} embed failed for changed ${doc.docId}: ${String(err)}`);
           }
-          continue;
+          return;
         }
 
         const writeChunks: Array<{
@@ -262,7 +264,7 @@ export async function runConnectorIndex<E>(
           chunks: writeChunks,
           embeddings: embedItems.map((_, idx) => arrayToVectorLiteral(embeddings.vectors[idx]!.vector)),
         });
-      }
+      });
     });
   }
 

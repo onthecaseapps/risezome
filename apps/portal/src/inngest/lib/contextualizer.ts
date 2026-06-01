@@ -24,3 +24,16 @@ export function optionalDocSummarizer(): DocSummarizer | undefined {
   if (apiKey === undefined || apiKey.length === 0) return undefined;
   return makeAnthropicDocSummarizer({ apiKey });
 }
+
+/**
+ * How many documents in an index batch to enrich (contextualize + summarize +
+ * embed + write) concurrently. Defaults to 5; override with
+ * RISEZOME_INDEX_DOC_CONCURRENCY. Each doc fires its own chain of Anthropic
+ * (contextualization + summary) and Voyage (embed) calls, so this is the knob
+ * that trades reindex wall-clock against API rate-limit pressure.
+ */
+export function docConcurrency(): number {
+  const raw = Number(process.env.RISEZOME_INDEX_DOC_CONCURRENCY);
+  if (!Number.isFinite(raw) || raw < 1) return 5;
+  return Math.floor(raw);
+}

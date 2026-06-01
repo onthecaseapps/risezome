@@ -6,7 +6,8 @@ import {
   type ContextGenerator,
 } from '@risezome/engine/contextualize';
 import { summarizeDoc, type DocSummarizer } from '@risezome/engine/summarize-doc';
-import { optionalContextGenerator, optionalDocSummarizer } from '../lib/contextualizer';
+import { optionalContextGenerator, optionalDocSummarizer, docConcurrency } from '../lib/contextualizer';
+import { mapWithConcurrency } from '../lib/concurrency';
 import { VoyageEmbedder, EmbeddingRateLimitError } from '@risezome/engine/embed';
 import { inngest, type IndexMode } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
@@ -306,10 +307,7 @@ async function indexBatch(args: {
   const octokit = await getInstallationOctokit(installationId);
   const service = createServiceRoleClient();
 
-  let files = 0;
-  let chunks = 0;
-
-  for (const entry of batch) {
+  const perFile = await mapWithConcurrency(batch, docConcurrency(), async (entry) => {
     // Fetch file content. Octokit returns base64 for files; the `media`
     // override would return raw bytes but is harder to type — base64 is fine.
     let content: string;
@@ -321,15 +319,15 @@ async function indexBatch(args: {
         ref: branch,
       });
       const data = resp.data as { type?: string; content?: string; encoding?: string };
-      if (data.type !== 'file' || data.content === undefined) continue;
+      if (data.type !== 'file' || data.content === undefined) return { files: 0, chunks: 0 };
       content = Buffer.from(data.content, 'base64').toString('utf8');
     } catch {
       // 404 / 403 → skip this file. Don't fail the whole run for one bad path.
-      continue;
+      return { files: 0, chunks: 0 };
     }
 
     const chunkInputs = chunkFile(entry.path, content);
-    if (chunkInputs.length === 0) continue;
+    if (chunkInputs.length === 0) return { files: 0, chunks: 0 };
 
     // Contextual Retrieval (U3): per-chunk context from the full file,
     // prepended to the embedded text; verbatim body stays in `text`,
@@ -359,7 +357,7 @@ async function indexBatch(args: {
     } catch (err) {
       if (err instanceof EmbeddingRateLimitError) throw err; // let Inngest retry
       // Other embed errors: skip the file, keep going.
-      continue;
+      return { files: 0, chunks: 0 };
     }
 
     const docId = `github:${owner}/${repo}:${entry.path}@${entry.sha}`;
@@ -382,7 +380,7 @@ async function indexBatch(args: {
       content_hash: entry.sha,
       updated_at: new Date().toISOString(),
     });
-    if (docErr !== null) continue;
+    if (docErr !== null) return { files: 0, chunks: 0 };
 
     const chunkRows: Array<{
       chunk_id: string;
@@ -418,7 +416,7 @@ async function indexBatch(args: {
     const { error: chunkErr } = await service
       .from('doc_chunks')
       .upsert(chunkRows, { onConflict: 'chunk_id' });
-    if (chunkErr !== null) continue;
+    if (chunkErr !== null) return { files: 0, chunks: 0 };
 
     // chunkRows and embedItems are in the same order (body chunks, then the
     // optional summary), so vectors[i] aligns with chunkRows[i].
@@ -430,13 +428,15 @@ async function indexBatch(args: {
     const { error: embErr } = await service
       .from('corpus_chunk_embeddings')
       .upsert(embedRows, { onConflict: 'chunk_id' });
-    if (embErr !== null) continue;
+    if (embErr !== null) return { files: 0, chunks: 0 };
 
-    files += 1;
-    chunks += chunkInputs.length;
-  }
+    return { files: 1, chunks: chunkInputs.length };
+  });
 
-  return { files, chunks };
+  return perFile.reduce(
+    (acc, r) => ({ files: acc.files + r.files, chunks: acc.chunks + r.chunks }),
+    { files: 0, chunks: 0 },
+  );
 }
 
 /**
