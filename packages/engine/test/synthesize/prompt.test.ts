@@ -305,6 +305,38 @@ describe('verifyCitations — drops fabricated quoted citations', () => {
     expect(out.droppedQuoted).toBe(1);
   });
 
+  describe('paraphrase downgrade (keep a bare citation instead of suppressing)', () => {
+    const corpusSearch = [
+      {
+        text: 'Hybrid corpus retrieval: dense (pgvector cosine) + lexical (Postgres full-text) fused with Reciprocal Rank Fusion.',
+      },
+    ];
+
+    it('downgrades a reworded quote that shares a long fragment to a BARE citation', () => {
+      // The model paraphrased inside the quote marks ("combining dense vector
+      // search ...") but shares the verbatim run "hybrid corpus retrieval".
+      const out = verifyCitations(
+        [{ rank: 1, position: 0, quote: 'hybrid corpus retrieval combining dense vector search (pgvector cosine distance)' }],
+        corpusSearch,
+      );
+      expect(out.verified).toHaveLength(1);
+      expect(out.verified[0]!.quote).toBeUndefined(); // quote stripped → bare
+      expect(out.verified[0]!.rank).toBe(1); // citation (and grounding) preserved
+      expect(out.downgradedToBare).toBe(1);
+      expect(out.droppedQuoted).toBe(0);
+    });
+
+    it('drops (does not downgrade) a quote with no substantial shared fragment', () => {
+      const out = verifyCitations(
+        [{ rank: 1, position: 0, quote: 'the project uses a graph database with gremlin traversals' }],
+        corpusSearch,
+      );
+      expect(out.verified).toEqual([]);
+      expect(out.downgradedToBare).toBe(0);
+      expect(out.droppedQuoted).toBe(1);
+    });
+  });
+
   it('keeps bare [N] citations (no quote to verify)', () => {
     const out = verifyCitations([{ rank: 1, position: 0, quote: undefined }], sources);
     expect(out.verified).toHaveLength(1);

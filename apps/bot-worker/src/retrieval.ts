@@ -941,10 +941,10 @@ async function runSynthesisAndBroadcast(args: {
         // sources.length, but defensive belt-and-suspenders).
         // Drop fabricated quoted citations (quote not present in the cited
         // source) before mapping to cardIds — grounding safety net.
-        const { verified, droppedQuoted } = verifyCitations(parsed.citations, args.sources);
-        if (droppedQuoted > 0) {
+        const { verified, droppedQuoted, downgradedToBare } = verifyCitations(parsed.citations, args.sources);
+        if (droppedQuoted > 0 || downgradedToBare > 0) {
           args.logger.warn(
-            { synthesisId, meetingId: args.meetingId, droppedQuoted },
+            { synthesisId, meetingId: args.meetingId, droppedQuoted, downgradedToBare },
             'synthesis.citations.dropped-unverified',
           );
         }

@@ -815,7 +815,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       } else if (chunk.type === 'done') {
         sawDone = true;
         const parsed = parseSynthesisOutput(accumulated, synthesisSources.length);
-        const { verified, droppedQuoted } = verifyCitations(parsed.citations, synthesisSources);
+        const { verified, droppedQuoted, downgradedToBare } = verifyCitations(parsed.citations, synthesisSources);
         const richCitations = verified.flatMap((c) => {
           // With a tool source at [1], card N is at rank N+1. Subtract
           // the offset to map a citation rank back to its cardId.
@@ -840,6 +840,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
             isRefusal: parsed.isRefusal,
             citationCount: richCitations.length,
             droppedQuoted,
+            downgradedToBare,
             // Diagnostic: what the model actually cited (rank + quote prefix)
             // and a preview of the answer, so a grounded-in-0 result can be
             // traced to "no citations emitted" vs "verifier dropped them".

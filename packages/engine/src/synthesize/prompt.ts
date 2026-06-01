@@ -85,7 +85,9 @@ BEHAVIOR RULES FOR THE ANSWER BODY (follow every one):
 
 1. USE ONLY THE PROVIDED NUMBERED SOURCES. Do not use prior knowledge, do not infer facts not present in the sources, do not extrapolate. If a fact is not literally in a source, it does not exist for the purposes of your answer.
 
-2. CITE EVERY FACTUAL STATEMENT, AND MAKE THE CITATION REAL. Every sentence that asserts a fact must end with at least one bracketed source reference. STRONGLY PREFER the quoted form [N: "verbatim substring from source N"]: copy a short substring (typically 4-15 words) that ACTUALLY appears in source N and directly supports your claim. The downstream UI highlights that substring, and a verifier drops any quote that is not found verbatim in source N, so an invented quote silently deletes your citation. Only use the bare form [N] when you are paraphrasing and no single substring captures the claim. Use straight ASCII double quotes only; escape any inner double quote as \\". Cite multiple sources in sequence, e.g. [1: "..."][2]. Never cite a source number that is not in the provided list, and never attach a quote that is not in that source.
+2. CITE EVERY FACTUAL STATEMENT, AND MAKE THE CITATION REAL. Every sentence that asserts a fact must end with at least one bracketed source reference. STRONGLY PREFER the quoted form [N: "verbatim substring from source N"]: copy a short substring (typically 4-15 words) that ACTUALLY appears in source N and directly supports your claim. The downstream UI highlights that substring, and a verifier drops any quote that is not found verbatim in source N, so an invented quote silently deletes your citation. Use straight ASCII double quotes only; escape any inner double quote as \\". Cite multiple sources in sequence, e.g. [1: "..."][2]. Never cite a source number that is not in the provided list, and never attach a quote that is not in that source.
+
+   COPY VERBATIM OR GO BARE. The text inside [N: "..."] must be an EXACT, character-for-character copy of a span in source N — do NOT reword, summarize, tidy punctuation, fix a typo, or merge two phrases into one quote. If you cannot copy an exact span (you are paraphrasing, or the wording you want is spread across the source), use the BARE form [N] with no quote. A reworded "quote" fails verification and silently deletes your citation; a bare [N] is always kept. So: exact copy in quotes, otherwise bare [N].
 
    THE CITATION IS INVISIBLE TO THE READER except as a small numbered chip: the quoted text inside [N: "..."] is NEVER shown inline, it only drives a source highlight. So every fact, name, number, and noun must stand on its own in your prose. NEVER put a word the sentence depends on ONLY inside the citation quote. State the fact in your own words FIRST, then attach the citation. WRONG: "Marina uses [1: \\"CartoNova\\"] for map tiles" — this renders as "Marina uses [1] for map tiles" and the provider name disappears, breaking the sentence. RIGHT: "Marina uses CartoNova for map tiles [1: \\"CartoNova\\"]" — the name is in the prose; the quote merely supports it. Read your sentence back with every [N: "..."] deleted: it must still be a complete, grammatical statement of the fact.
 
@@ -543,9 +545,48 @@ export interface CitationVerification {
   /** Citations that survived verification (quoted ones whose quote is present
    *  in the cited source, plus all bare ones, which can't be quote-checked). */
   readonly verified: readonly ParsedCitation[];
-  /** Quoted citations dropped because the quote was not found in the source. */
+  /** Quoted citations dropped because the quote was neither verbatim in the
+   *  cited document nor a recognizable paraphrase of it (likely fabrication). */
   readonly droppedQuoted: number;
+  /** Quoted citations whose quote wasn't verbatim but shared a substantial
+   *  contiguous fragment with the cited document (the model paraphrased real
+   *  content). Kept as BARE citations — quote/highlight stripped, grounding
+   *  preserved — instead of being dropped (which would suppress the answer). */
+  readonly downgradedToBare: number;
 }
+
+/** Longest common substring length between two normalized strings. Used to
+ *  tell a paraphrase-of-real-content (long shared run) from a fabrication
+ *  (no shared run). Rolling-DP, O(a*b); the source is capped to bound cost. */
+function longestCommonSubstringLen(a: string, b: string): number {
+  const LONG_CAP = 20_000;
+  const x = a.length <= b.length ? a : b.slice(0, LONG_CAP);
+  const y = a.length <= b.length ? b.slice(0, LONG_CAP) : a;
+  if (x.length === 0 || y.length === 0) return 0;
+  let prev = new Array<number>(x.length + 1).fill(0);
+  let best = 0;
+  for (let i = 1; i <= y.length; i += 1) {
+    const cur = new Array<number>(x.length + 1).fill(0);
+    const yi = y[i - 1];
+    for (let j = 1; j <= x.length; j += 1) {
+      if (yi === x[j - 1]) {
+        const run = prev[j - 1]! + 1;
+        cur[j] = run;
+        if (run > best) best = run;
+      }
+    }
+    prev = cur;
+  }
+  return best;
+}
+
+/** A quote that fails verbatim match is kept as a BARE citation (paraphrase of
+ *  real content) when it shares at least this many contiguous normalized chars
+ *  with the cited document; below it, the quote is treated as fabrication and
+ *  the citation is dropped. ~3 words. A downgrade is no weaker than a bare [N]
+ *  the model could emit directly, so the bar is about "did this draw on the
+ *  cited doc at all," not exact fidelity. */
+const MIN_GROUNDING_FRAGMENT = 20;
 
 /**
  * Drop fabricated quoted citations: a `[N: "quote"]` whose quote does not
@@ -560,14 +601,20 @@ export interface CitationVerification {
  * attributes a verbatim quote to one rank while the quoted text lives in a
  * sibling chunk of the SAME document. A quote therefore verifies if it appears
  * in the cited source's text OR in any other source sharing the cited source's
- * `docId`. This still catches fabrication (the quote must be verbatim in the
- * cited document) but stops suppressing a grounded answer over chunk-vs-rank
- * fragmentation. The rank is left unchanged (re-pointing it would desync the
- * inline chip from its highlight); the highlight is best-effort across the
- * doc's cards.
+ * `docId`. The rank is left unchanged (re-pointing it would desync the inline
+ * chip from its highlight); the highlight is best-effort across the doc's cards.
  *
- * This is the safety net behind grounding: even if the model invents a fact,
- * a quote it attaches that isn't in the cited document gets caught here.
+ * Paraphrase downgrade: the model also rewords inside the quote marks (a
+ * "quote" that summarizes rather than copies). Rather than drop such a
+ * citation — which can suppress an otherwise-correct, grounded answer — we
+ * KEEP it as a BARE citation (quote/highlight stripped) when it shares a
+ * substantial contiguous fragment with the cited document. A bare citation is
+ * exactly what the model is told to emit for paraphrases, so this is no weaker
+ * than its own intended behavior. A quote with no real shared fragment (true
+ * fabrication / wrong source) is still dropped.
+ *
+ * This is the safety net behind grounding: a quote that bears no resemblance
+ * to the cited document gets caught here.
  */
 export function verifyCitations(
   citations: readonly ParsedCitation[],
@@ -577,6 +624,7 @@ export function verifyCitations(
   const looseSources = sources.map((s) => looseNormalizeForMatch(s.text));
   const verified: ParsedCitation[] = [];
   let droppedQuoted = 0;
+  let downgradedToBare = 0;
 
   // A quote is present in source `i` if it matches strictly OR (fallback)
   // under loose punctuation-tolerant normalization.
@@ -592,23 +640,37 @@ export function verifyCitations(
     const strictNeedle = normalizeForMatch(c.quote);
     const looseNeedle = looseNormalizeForMatch(c.quote);
     const cited = c.rank - 1;
-    if (cited >= 0 && cited < sources.length && presentIn(cited, strictNeedle, looseNeedle)) {
-      verified.push(c);
+    if (cited < 0 || cited >= sources.length) {
+      droppedQuoted += 1;
       continue;
     }
-    // Same-document fallback: accept if the quote appears in any retrieved
-    // source sharing the cited source's docId (one doc split across ranks).
+    // The candidate texts a quote may legitimately come from: the cited source
+    // plus any retrieved source sharing its docId (one doc split across ranks).
     const citedDocId = sources[cited]?.docId;
-    const inSameDoc =
-      citedDocId !== undefined &&
-      sources.some((s, i) => s.docId === citedDocId && presentIn(i, strictNeedle, looseNeedle));
-    if (inSameDoc) {
-      verified.push(c);
+    const candidates = [cited, ...sources.flatMap((s, i) =>
+      i !== cited && citedDocId !== undefined && s.docId === citedDocId ? [i] : [],
+    )];
+
+    if (candidates.some((i) => presentIn(i, strictNeedle, looseNeedle))) {
+      verified.push(c); // verbatim (strict or punctuation-loose) — keep the quote
+      continue;
+    }
+    // Not verbatim. If the quote shares a substantial contiguous fragment with
+    // the cited document, the model paraphrased real content — keep a BARE
+    // citation (grounding preserved, no highlight). Otherwise it reads as
+    // fabrication / wrong-source and is dropped.
+    const maxFragment = Math.max(
+      0,
+      ...candidates.map((i) => longestCommonSubstringLen(looseNeedle, looseSources[i] ?? '')),
+    );
+    if (maxFragment >= MIN_GROUNDING_FRAGMENT) {
+      verified.push({ ...c, quote: undefined });
+      downgradedToBare += 1;
     } else {
       droppedQuoted += 1;
     }
   }
-  return { verified, droppedQuoted };
+  return { verified, droppedQuoted, downgradedToBare };
 }
 
 /** Helper for callers that need the legacy dedup'd-sorted ranks shape
