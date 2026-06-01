@@ -40,7 +40,7 @@ Four-field output schema:
 
 - current_topic: A short label (2-6 words) of the currently active thread. Examples: "Auth flow error handling", "Voyage embedding model selection", "Bot worker deployment to Fly.io". This is what the most recent utterances are about, not what the meeting started with.
 
-- open_questions: An array of verbatim questions raised in the meeting but not yet resolved. Quote them as closely as the transcript allows. If no open questions, return an empty array. Limit to the 3-5 most recent unresolved questions.
+- open_questions: An array of verbatim questions raised in the meeting but not yet resolved. Quote them as closely as the transcript allows. If no open questions, return an empty array. Limit to the 3-5 most recent unresolved questions. CRITICAL: a question is NOT open if it has been answered. When the input includes an "Assistant answers already shown" block, those are answers the copilot already displayed on-screen (the speakers did not read them aloud, so they will NOT appear in the transcript). Treat any open question that one of those answers resolves as RESOLVED and leave it OUT of open_questions, even if it is still carried in the prior summary. Do not keep re-listing a question the assistant has already answered.
 
 - key_terms: An array of project-specific nouns the conversation has used: filenames (e.g., "apps/bot-worker/src/retrieval.ts"), identifiers (e.g., "U7", "PR #42"), library / service names (e.g., "Supabase", "Anthropic", "Voyage", "Recall"), domain concepts ("relevance classifier", "synthesis pipeline"). Skip generic words. Limit to 5-15 entries — the most distinctive ones.
 
@@ -126,6 +126,13 @@ export function buildSummarizerUserMessage(input: SummarizerInput): string {
   if (input.prior_summary !== undefined) {
     parts.push('Prior summary (carry-forward source):');
     parts.push(JSON.stringify(input.prior_summary, null, 2));
+    parts.push('');
+  }
+  if (input.resolved_answers !== undefined && input.resolved_answers.length > 0) {
+    parts.push(
+      'Assistant answers already shown (on-screen, NOT spoken; drop any open question these resolve):',
+    );
+    for (const a of input.resolved_answers) parts.push(`- ${a}`);
     parts.push('');
   }
   parts.push('Recent transcript:');

@@ -126,6 +126,10 @@ export async function maybeRetrieveAndEmit(args: {
    *  emitted we run them through synthesis and stream batched
    *  synthesisDelta broadcasts to the live page's right panel. */
   synthesizer?: Synthesizer;
+  /** Called with the grounded answer body when a synthesis succeeds (not
+   *  refused/ungrounded). Used to close the loop: the answer is never spoken,
+   *  so feeding it to the summarizer is how an answered open question retires. */
+  onGroundedAnswer?: (text: string) => void;
   /** Optional LLM relevance classifier. Used ONLY for `ambiguous`
    *  heuristic results — `clearly_filler` short-circuits without an
    *  API call, `clearly_substantive` always synthesizes. When unset,
@@ -620,6 +624,7 @@ export async function maybeRetrieveAndEmit(args: {
           orgId: args.orgId,
           db: args.db,
           ...(recentContext.length > 0 && { recentContext }),
+          ...(args.onGroundedAnswer !== undefined && { onGroundedAnswer: args.onGroundedAnswer }),
           logger: args.logger,
         });
       }
@@ -786,6 +791,8 @@ async function runSynthesisAndBroadcast(args: {
    *  Head entry is the rolling-summary prose (long-range memory);
    *  remainder are recent finals (short-range). */
   recentContext?: readonly string[];
+  /** Close-the-loop: invoked with the grounded answer body on success. */
+  onGroundedAnswer?: (text: string) => void;
   logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void };
 }): Promise<void> {
   const synthesisId = `synth_${randomUUID()}`;
@@ -1015,6 +1022,11 @@ async function runSynthesisAndBroadcast(args: {
             },
           },
         });
+
+        // Close the loop: the grounded answer was shown on-screen but never
+        // spoken, so hand it to the summarizer to retire the open question it
+        // resolved (otherwise that question keeps re-driving synthesis).
+        args.onGroundedAnswer?.(parsed.text);
 
         args.logger.info(
           {

@@ -98,6 +98,9 @@ export const DEFAULT_COLD_START_CADENCE: SummarizerCadence = {
 
 export const DEFAULT_RATE_CAP_MS = 60_000;
 export const DEFAULT_TRANSCRIPT_CHAR_CAP = 20_000;
+/** How many recent grounded assistant answers to carry into the summarizer so
+ *  it can retire questions it has already answered (close-the-loop). */
+export const RESOLVED_ANSWERS_CAP = 8;
 
 export class MeetingSummarizerRuntime {
   readonly #summarizer: Summarizer;
@@ -112,6 +115,10 @@ export class MeetingSummarizerRuntime {
   readonly #transcriptCharCap: number;
 
   #transcript = '';
+  /** Recent grounded assistant answers (most recent last), capped to
+   *  RESOLVED_ANSWERS_CAP. Fed to the summarizer so an on-screen answer
+   *  retires the open question that prompted it (close-the-loop). */
+  #resolvedAnswers: string[] = [];
   #utterancesSinceLast = 0;
   #lastSummary: MeetingSummary | null = null;
   /** Wall-clock at which the last summary completed. 0 before the
@@ -150,6 +157,22 @@ export class MeetingSummarizerRuntime {
     this.#appendToTranscript(trimmed);
     this.#utterancesSinceLast += 1;
     this.#armPauseDebounce();
+  }
+
+  /**
+   * Record a grounded answer the assistant just showed on-screen, so the next
+   * summary can drop the open question it resolved (close-the-loop). The
+   * answer is never spoken, so it never reaches the transcript on its own.
+   * Cheap + synchronous; keeps only the most recent RESOLVED_ANSWERS_CAP.
+   */
+  recordAssistantAnswer(text: string): void {
+    if (this.#disposed) return;
+    const trimmed = text.trim();
+    if (trimmed.length === 0) return;
+    this.#resolvedAnswers.push(trimmed);
+    if (this.#resolvedAnswers.length > RESOLVED_ANSWERS_CAP) {
+      this.#resolvedAnswers = this.#resolvedAnswers.slice(-RESOLVED_ANSWERS_CAP);
+    }
   }
 
   /** Read the latest summary atomically. Returns null before the first
@@ -239,9 +262,13 @@ export class MeetingSummarizerRuntime {
     // amplify cost on a misbehaving model.
     this.#utterancesSinceLast = 0;
 
-    const input: SummarizerInput = priorSummarySnapshot === null
-      ? { transcript_window: transcriptSnapshot }
-      : { transcript_window: transcriptSnapshot, prior_summary: priorSummarySnapshot };
+    const resolvedAnswersSnapshot =
+      this.#resolvedAnswers.length > 0 ? [...this.#resolvedAnswers] : undefined;
+    const input: SummarizerInput = {
+      transcript_window: transcriptSnapshot,
+      ...(priorSummarySnapshot !== null ? { prior_summary: priorSummarySnapshot } : {}),
+      ...(resolvedAnswersSnapshot !== undefined ? { resolved_answers: resolvedAnswersSnapshot } : {}),
+    };
 
     this.#summarizer.summarize(input).then(
       (summary) => {

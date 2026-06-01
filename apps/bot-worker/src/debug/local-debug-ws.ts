@@ -343,8 +343,11 @@ export async function handleLocalDebugWs(
       routerClassifier,
       skillRegistry,
       abortSignal: ac.signal,
-      onComplete: (sourceDocIds) => {
+      onComplete: (sourceDocIds, answerText) => {
         priorSynth = { synthesisId, sourceDocIds, completedAt: Date.now() };
+        // Close the loop: the grounded answer was shown, not spoken, so feed
+        // it to the summarizer to retire the open question it resolved.
+        summarizerRuntime.recordAssistantAnswer(answerText);
         if (currentSynthesisId === synthesisId) {
           currentSynthesisId = null;
           currentSynthesisAbort = null;
@@ -428,8 +431,10 @@ interface PipelineArgs {
   readonly skillRegistry: SkillRegistry;
   readonly abortSignal: AbortSignal;
   /** Called after the pipeline completes successfully (non-refusal) with the
-   *  stable source DOC ids, so the caller can update `priorSynth`. */
-  readonly onComplete: (sourceDocIds: readonly string[]) => void;
+   *  stable source DOC ids and the grounded answer body, so the caller can
+   *  update `priorSynth` AND feed the answer to the summarizer (close-the-loop:
+   *  an answered question retires from the next rolling summary). */
+  readonly onComplete: (sourceDocIds: readonly string[], answerText: string) => void;
 }
 
 /**
@@ -888,7 +893,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
         });
         // Notify caller so it can update its priorSynth tracker (grounded only —
         // a declined answer shouldn't anchor the next "replaces" comparison).
-        p.onComplete(sourceDocIds);
+        p.onComplete(sourceDocIds, parsed.text);
         return;
       }
     }

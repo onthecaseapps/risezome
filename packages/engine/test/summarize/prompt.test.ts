@@ -79,6 +79,24 @@ describe('buildSummarizerUserMessage', () => {
     // Prior summary appears BEFORE the transcript
     expect(out.indexOf('Prior summary')).toBeLessThan(out.indexOf('Recent transcript'));
   });
+
+  it('renders resolved_answers as a block above the transcript (close-the-loop)', () => {
+    const out = buildSummarizerUserMessage({
+      transcript_window: 'small talk about the weather',
+      resolved_answers: ['The project uses Claude Haiku, Voyage, and Deepgram.'],
+    });
+    expect(out).toContain('Assistant answers already shown');
+    expect(out).toContain('- The project uses Claude Haiku, Voyage, and Deepgram.');
+    // Answers block precedes the transcript.
+    expect(out.indexOf('Assistant answers already shown')).toBeLessThan(out.indexOf('Recent transcript'));
+  });
+
+  it('omits the resolved_answers block when the list is empty or absent', () => {
+    expect(buildSummarizerUserMessage({ transcript_window: 't', resolved_answers: [] })).not.toContain(
+      'Assistant answers already shown',
+    );
+    expect(buildSummarizerUserMessage({ transcript_window: 't' })).not.toContain('Assistant answers already shown');
+  });
 });
 
 describe('parseSummarizerToolInput', () => {

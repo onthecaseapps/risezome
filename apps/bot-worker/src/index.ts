@@ -416,6 +416,11 @@ async function handleMessage(
       ...(classifier !== null ? { classifier } : {}),
       skillRegistry,
       ...(lastSummary !== null ? { lastSummary } : {}),
+      // Close the loop: feed a grounded answer back to the summarizer so the
+      // open question it resolved retires from the next rolling summary.
+      ...(runtime.summarizer !== null
+        ? { onGroundedAnswer: (text: string) => runtime.summarizer!.recordAssistantAnswer(text) }
+        : {}),
       logger,
     });
     if (retrievalResult.emitted > 0 || retrievalResult.skipped !== undefined) {

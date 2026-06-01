@@ -138,6 +138,59 @@ describe('MeetingSummarizerRuntime cadence triggers', () => {
     rt.dispose();
   });
 
+  it('close-the-loop: recorded assistant answers ride into the summarize input', async () => {
+    const fake = makeFakeSummarizer();
+    const rt = new MeetingSummarizerRuntime({
+      summarizer: fake.summarizer,
+      onSummaryUpdated: () => undefined,
+    });
+
+    rt.recordAssistantAnswer('The project uses Claude Haiku, Voyage, and Deepgram.');
+    for (let i = 0; i < 5; i++) rt.recordUtterance(`u${String(i)}`);
+    vi.advanceTimersByTime(DEFAULT_COLD_START_CADENCE.pauseDebounceMs + 100);
+
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]!.resolved_answers).toEqual([
+      'The project uses Claude Haiku, Voyage, and Deepgram.',
+    ]);
+
+    rt.dispose();
+  });
+
+  it('close-the-loop: keeps only the most recent RESOLVED_ANSWERS_CAP answers', async () => {
+    const fake = makeFakeSummarizer();
+    const rt = new MeetingSummarizerRuntime({
+      summarizer: fake.summarizer,
+      onSummaryUpdated: () => undefined,
+    });
+
+    for (let i = 0; i < 12; i++) rt.recordAssistantAnswer(`answer ${String(i)}`);
+    for (let i = 0; i < 5; i++) rt.recordUtterance(`u${String(i)}`);
+    vi.advanceTimersByTime(DEFAULT_COLD_START_CADENCE.pauseDebounceMs + 100);
+
+    const answers = fake.calls[0]!.resolved_answers;
+    expect(answers).toHaveLength(8); // RESOLVED_ANSWERS_CAP
+    expect(answers![0]).toBe('answer 4'); // oldest 4 dropped
+    expect(answers![7]).toBe('answer 11');
+
+    rt.dispose();
+  });
+
+  it('close-the-loop: omits resolved_answers entirely when none recorded', async () => {
+    const fake = makeFakeSummarizer();
+    const rt = new MeetingSummarizerRuntime({
+      summarizer: fake.summarizer,
+      onSummaryUpdated: () => undefined,
+    });
+
+    for (let i = 0; i < 5; i++) rt.recordUtterance(`u${String(i)}`);
+    vi.advanceTimersByTime(DEFAULT_COLD_START_CADENCE.pauseDebounceMs + 100);
+
+    expect(fake.calls[0]!.resolved_answers).toBeUndefined();
+
+    rt.dispose();
+  });
+
   it('steady-state: time threshold (M=120s) fires even with few utterances', async () => {
     const fake = makeFakeSummarizer();
     const updates: MeetingSummary[] = [];

@@ -35,6 +35,14 @@ export interface MeetingSummary {
 export interface SummarizerInput {
   readonly transcript_window: string;
   readonly prior_summary?: MeetingSummary;
+  /**
+   * Recent grounded answers the assistant has already shown on-screen (the AI
+   * Summary), which are NOT spoken and so never appear in transcript_window.
+   * Closing the loop: the summarizer treats any open question one of these
+   * answers resolves as no longer open, so an answered question retires
+   * instead of perpetually re-driving retrieval + synthesis. Most recent last.
+   */
+  readonly resolved_answers?: readonly string[];
 }
 
 export interface SummarizerUsage {
