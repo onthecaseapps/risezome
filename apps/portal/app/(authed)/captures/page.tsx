@@ -1,42 +1,39 @@
 import type { ReactElement } from 'react';
 import { requireAuthedUserWithOrg } from '../../_lib/auth';
 import { createServerClient } from '../../_lib/supabase-server';
+import { CapturesClient, type CaptureCard, type CapturePlatform } from './_client';
 
 /**
  * Captures — the historical record of past meetings the bot attended.
- * Lists meetings in terminal states (completed or failed) for the
- * current org. Each row links to /meetings/[id]/review.
+ * Lists meetings in terminal states (completed / failed) for the current org
+ * as a filterable card grid (the client owns search / filter / sort over the
+ * fetched set; the cap is small enough that client-side is fine).
  *
- * `recording` meetings are excluded — those belong on Live meeting in
- * the sidebar. `launching` / `awaiting_recall` / `joining` /
- * `waiting_room` are mid-flight and don't surface here either.
+ * `recording` + mid-flight statuses are excluded (those belong on Live meeting).
  *
- * Grouping: by day of started_at (Today / Yesterday / Mon, Jun 2). A
- * follow-up could add filters (only failed, only with cards, etc.) —
- * for V1 the chronological dump matches the captures mockup.
+ * Per-meeting aggregates (answers, sources, distinct speakers) come from the
+ * `capture_card_stats` RPC in ONE round trip. If that RPC isn't present yet
+ * (migration not applied), we fall back to JS-tallied answer/source counts and
+ * no speaker avatars, so the page degrades instead of erroring.
  */
 
-interface CaptureRow {
-  meeting_id: string;
-  status: 'completed' | 'failed';
-  started_at: string | null;
-  ended_at: string | null;
-  created_at: string;
-  error_code: string | null;
-  error_message: string | null;
-  calendar_event_id: string | null;
-  synthesis_count: number;
-  title: string;
+function platformFromUrl(url: string | null): CapturePlatform {
+  if (url === null) return 'other';
+  const u = url.toLowerCase();
+  if (u.includes('zoom.us') || u.includes('zoom.com')) return 'zoom';
+  if (u.includes('meet.google.com')) return 'meet';
+  if (u.includes('teams.microsoft') || u.includes('teams.live')) return 'teams';
+  return 'other';
 }
 
 export default async function CapturesPage(): Promise<ReactElement> {
   const { orgId, orgName } = await requireAuthedUserWithOrg();
-
   const supabase = await createServerClient();
+
   const { data: meetingRows } = await supabase
     .from('meetings')
     .select(
-      'meeting_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, created_at',
+      'meeting_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, conference_url, recap_text, recap_status, created_at',
     )
     .eq('org_id', orgId)
     .in('status', ['completed', 'failed'])
@@ -52,205 +49,94 @@ export default async function CapturesPage(): Promise<ReactElement> {
     error_message: string | null;
     calendar_event_id: string | null;
     title: string;
+    conference_url: string | null;
+    recap_text: string | null;
+    recap_status: 'generating' | 'done' | 'failed' | null;
     created_at: string;
   }>;
 
-  // Bulk-fetch titles + per-meeting synthesis (AI summary) counts. Two
-  // round-trips, but at the 100-meeting cap the total is small.
   const meetingIds = meetings.map((m) => m.meeting_id);
   const calendarEventIds = meetings
     .map((m) => m.calendar_event_id)
     .filter((id): id is string => id !== null);
 
-  const [titlesResult, synthsResult] = await Promise.all([
+  // Title fallback for old rows whose title wasn't denormalized at launch.
+  const titlesResult =
     calendarEventIds.length > 0
-      ? supabase.from('calendar_events').select('id, title').in('id', calendarEventIds)
-      : Promise.resolve({ data: [] as Array<{ id: string; title: string }> }),
-    meetingIds.length > 0
-      ? supabase
+      ? await supabase.from('calendar_events').select('id, title').in('id', calendarEventIds)
+      : { data: [] as Array<{ id: string; title: string }> };
+  const titleByEventId = new Map(
+    (titlesResult.data ?? []).map((r) => [r.id as string, (r.title as string) ?? '']),
+  );
+
+  // Per-meeting aggregates. Prefer the single-round-trip RPC; on any failure
+  // (e.g. migration not applied) fall back to JS tallies + no speakers.
+  const stats = new Map<string, { answers: number; sources: number; speakers: string[] }>();
+  if (meetingIds.length > 0) {
+    const { data: statRows, error: statErr } = await supabase.rpc('capture_card_stats', {
+      p_meeting_ids: meetingIds,
+    });
+    if (statErr === null && Array.isArray(statRows)) {
+      for (const r of statRows as Array<{
+        meeting_id: string;
+        answers_count: number;
+        sources_count: number;
+        speakers: string[] | null;
+      }>) {
+        stats.set(r.meeting_id, {
+          answers: r.answers_count ?? 0,
+          sources: r.sources_count ?? 0,
+          speakers: r.speakers ?? [],
+        });
+      }
+    } else {
+      // Fallback: tally answers (done syntheses) + sources (live cards) in JS.
+      const [synths, cards] = await Promise.all([
+        supabase
           .from('syntheses')
           .select('meeting_id')
           .in('meeting_id', meetingIds)
           .eq('status', 'done')
-          .is('retracted_at', null)
-      : Promise.resolve({ data: [] as Array<{ meeting_id: string }> }),
-  ]);
-
-  const titleByEventId = new Map(
-    (titlesResult.data ?? []).map((r) => [r.id as string, (r.title as string) ?? '']),
-  );
-  const synthCountByMeeting = new Map<string, number>();
-  for (const row of synthsResult.data ?? []) {
-    const id = row.meeting_id as string;
-    synthCountByMeeting.set(id, (synthCountByMeeting.get(id) ?? 0) + 1);
+          .is('retracted_at', null),
+        supabase.from('cards').select('meeting_id').in('meeting_id', meetingIds).is('retracted_at', null),
+      ]);
+      const tally = (rows: Array<{ meeting_id: string }> | null, key: 'answers' | 'sources'): void => {
+        for (const row of rows ?? []) {
+          const cur = stats.get(row.meeting_id) ?? { answers: 0, sources: 0, speakers: [] };
+          cur[key] += 1;
+          stats.set(row.meeting_id, cur);
+        }
+      };
+      tally(synths.data as Array<{ meeting_id: string }> | null, 'answers');
+      tally(cards.data as Array<{ meeting_id: string }> | null, 'sources');
+    }
   }
 
-  const captures: CaptureRow[] = meetings.map((m) => ({
-    meeting_id: m.meeting_id,
-    status: m.status,
-    started_at: m.started_at,
-    ended_at: m.ended_at,
-    created_at: m.created_at,
-    error_code: m.error_code,
-    error_message: m.error_message,
-    calendar_event_id: m.calendar_event_id,
-    synthesis_count: synthCountByMeeting.get(m.meeting_id) ?? 0,
-    title:
+  const captures: CaptureCard[] = meetings.map((m) => {
+    const s = stats.get(m.meeting_id) ?? { answers: 0, sources: 0, speakers: [] };
+    const title =
       m.title.length > 0
         ? m.title
-        : m.calendar_event_id !== null && titleByEventId.has(m.calendar_event_id)
-          ? titleByEventId.get(m.calendar_event_id)!
-          : 'Meeting',
-  }));
-
-  const grouped = groupByDay(captures);
-
-  return (
-    <div className="mx-auto max-w-4xl px-6 py-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Captures</h1>
-        <p className="mt-1.5 text-sm text-muted">
-          Past meetings the bot attended for <span className="text-fg">{orgName}</span>.
-        </p>
-      </header>
-
-      {captures.length === 0 ? (
-        <EmptyState />
-      ) : (
-        <div className="flex flex-col gap-6">
-          {grouped.map((group) => (
-            <section key={group.dayKey}>
-              <h2 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted">
-                {group.day}
-              </h2>
-              <ul className="flex flex-col gap-2">
-                {group.items.map((c) => (
-                  <li key={c.meeting_id}>
-                    <CaptureRowCard capture={c} />
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EmptyState(): ReactElement {
-  return (
-    <div className="rounded-xl border border-dashed border-border bg-card/40 px-6 py-14 text-center">
-      <h2 className="text-lg font-semibold tracking-tight">No captures yet</h2>
-      <p className="mx-auto mt-2 max-w-sm text-sm text-muted">
-        Meetings the Risezome bot attended will appear here once they wrap. Toggle the bot on
-        for a meeting on the <a href="/upcoming" className="text-accent hover:underline">Upcoming</a> page to get started.
-      </p>
-    </div>
-  );
-}
-
-function CaptureRowCard({ capture }: { capture: CaptureRow }): ReactElement {
-  const duration = formatDuration(capture.started_at, capture.ended_at);
-  return (
-    <a
-      href={`/meetings/${capture.meeting_id}/review`}
-      className="flex items-center gap-4 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-accent-soft/40"
-    >
-      <div className="flex w-20 flex-shrink-0 flex-col items-end whitespace-nowrap text-xs text-muted">
-        {capture.started_at !== null ? (
-          <span className="text-sm font-medium text-fg">{formatTime(capture.started_at)}</span>
-        ) : (
-          <span className="text-sm text-muted">—</span>
-        )}
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-sm font-medium text-fg">{capture.title}</span>
-          <StatusBadge status={capture.status} />
-        </div>
-        <div className="mt-1 flex items-center gap-2 text-xs text-muted">
-          {capture.status === 'completed' ? (
-            <span>
-              {duration.length > 0 ? `${duration} · ` : ''}
-              {capture.synthesis_count} {capture.synthesis_count === 1 ? 'summary' : 'summaries'}
-            </span>
-          ) : capture.error_message !== null ? (
-            <span className="truncate text-rose-400">{capture.error_message}</span>
-          ) : capture.error_code !== null ? (
-            <span className="font-mono text-rose-400">{capture.error_code}</span>
-          ) : (
-            <span className="text-rose-400">Failed</span>
-          )}
-        </div>
-      </div>
-
-      <span className="text-muted">→</span>
-    </a>
-  );
-}
-
-function StatusBadge({ status }: { status: 'completed' | 'failed' }): ReactElement {
-  const map = {
-    completed: { label: 'Recorded', className: 'bg-emerald-500/15 text-emerald-400' },
-    failed: { label: 'Failed', className: 'bg-rose-500/15 text-rose-400' },
-  };
-  const v = map[status];
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${v.className}`}
-    >
-      {v.label}
-    </span>
-  );
-}
-
-function groupByDay(
-  items: CaptureRow[],
-): Array<{ dayKey: string; day: string; items: CaptureRow[] }> {
-  const groups = new Map<string, CaptureRow[]>();
-  for (const c of items) {
-    // Failed meetings have started_at AND ended_at = null (the bot
-    // never reached "in_call"). Fall back to created_at, which the
-    // launcher always populates, so they group under the day the user
-    // tried to start the bot rather than landing in an "Unknown date"
-    // bucket.
-    const ts = c.started_at ?? c.ended_at ?? c.created_at;
-    const key = new Date(ts).toDateString();
-    const bucket = groups.get(key) ?? [];
-    bucket.push(c);
-    groups.set(key, bucket);
-  }
-  const today = new Date().toDateString();
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toDateString();
-
-  return Array.from(groups.entries()).map(([dayKey, list]) => {
-    let day: string;
-    if (dayKey === today) day = 'Today';
-    else if (dayKey === yesterday) day = 'Yesterday';
-    else
-      day = new Date(dayKey).toLocaleDateString(undefined, {
-        weekday: 'long',
-        month: 'short',
-        day: 'numeric',
-      });
-    return { dayKey, day, items: list };
+        : m.calendar_event_id !== null
+          ? (titleByEventId.get(m.calendar_event_id) ?? '')
+          : '';
+    return {
+      meetingId: m.meeting_id,
+      title,
+      status: m.status,
+      startedAtIso: m.started_at,
+      endedAtIso: m.ended_at,
+      createdAtIso: m.created_at,
+      platform: platformFromUrl(m.conference_url),
+      summary: m.recap_text,
+      recapStatus: m.recap_status,
+      answersCount: s.answers,
+      sourcesCount: s.sources,
+      speakers: s.speakers,
+      errorCode: m.error_code,
+      errorMessage: m.error_message,
+    };
   });
-}
 
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-}
-
-function formatDuration(startIso: string | null, endIso: string | null): string {
-  if (startIso === null || endIso === null) return '';
-  const minutes = Math.round(
-    (new Date(endIso).getTime() - new Date(startIso).getTime()) / 60_000,
-  );
-  if (minutes <= 0) return '0m';
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const rem = minutes % 60;
-  return `${hours}h ${rem}m`;
+  return <CapturesClient captures={captures} orgName={orgName} />;
 }
