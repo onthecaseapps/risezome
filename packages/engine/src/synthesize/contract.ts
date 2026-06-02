@@ -22,6 +22,11 @@ export interface SynthesisSource {
    *  retrieved source of the cited document (still grounded), instead of
    *  dropping it for being absent from the single cited chunk. */
   readonly docId?: string;
+  /** Self-healing (skills, U1): set on a tool source whose result was
+   *  repaired (a bogus arg was neutralized). Signals the synthesizer to frame
+   *  the result honestly and never assert its numbers as hard fact. Mirrors
+   *  the presence of `SkillResult.recovery`. */
+  readonly suspect?: boolean;
 }
 
 export interface SynthesisInput {

@@ -31,11 +31,35 @@ export interface SkillResultItem {
   readonly subtitle?: string;
 }
 
+/**
+ * Self-healing recovery signal (U1). Set by a skill when it validated a
+ * free-text argument against its own domain and had to neutralize a bogus
+ * value. Absent on the common path (extraction was clean), so existing
+ * handlers and `formatAsSource` behave byte-identically.
+ *
+ * `status` tells the router safety-net what to do:
+ *  - `'repaired'`  — a bogus arg was dropped but a real scope survives; keep
+ *    the result and let the synthesizer frame it honestly via `note`.
+ *  - `'unresolved'` — the result can't be trusted (the bogus arg was the only
+ *    filter so the re-run is unscoped, or a validation fetch failed). The
+ *    router drops the tool source and falls back to RAG.
+ */
+export interface SkillRecovery {
+  readonly status: 'repaired' | 'unresolved';
+  /** Args dropped during healing — telemetry + the basis for `note`. */
+  readonly neutralized?: readonly { readonly arg: string; readonly value: string }[];
+  /** Honest caveat surfaced to synthesis, e.g.
+   *  "There's no 'case' label — showing all open issues." */
+  readonly note: string;
+}
+
 export interface SkillResult {
   readonly kind: SkillResultKind;
   readonly summary: string;
   readonly items?: readonly SkillResultItem[];
   readonly raw?: unknown;
+  /** Self-healing recovery signal. Absent ⇒ clean common path. */
+  readonly recovery?: SkillRecovery;
 }
 
 /**
@@ -170,7 +194,14 @@ export function formatAsSource(
 ): SynthesisSource {
   const argsJson = JSON.stringify(args);
   const title = `Tool: ${skillName}(${argsJson})`;
-  const lines: string[] = [result.summary];
+  const lines: string[] = [];
+  // Recovery caveat leads the body so the synthesizer reads it before the
+  // (possibly broadened) number. Absent on the common path → byte-identical
+  // to the pre-U1 output, preserving the tuned-summary snapshot tests.
+  if (result.recovery !== undefined) {
+    lines.push(`Note: ${result.recovery.note}`, '');
+  }
+  lines.push(result.summary);
   if (result.items !== undefined && result.items.length > 0) {
     lines.push('');
     result.items.forEach((item, i) => {
@@ -184,5 +215,6 @@ export function formatAsSource(
     rank: 0,
     title,
     text: lines.join('\n'),
+    ...(result.recovery !== undefined && { suspect: true }),
   };
 }

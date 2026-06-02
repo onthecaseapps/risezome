@@ -76,6 +76,69 @@ describe('formatAsSource', () => {
     );
     expect(source.title).toBe('Tool: fn({"a":1,"b":"two","c":["x","y"]})');
   });
+
+  // --- Self-healing recovery signal (U1) ---
+
+  it('a result with no recovery is byte-identical to pre-U1 output and not suspect', () => {
+    const result: SkillResult = { kind: 'count', summary: '5 open issues.' };
+    const source = formatAsSource(result, 'github_count', { state: 'open' });
+    // Regression guard: the tuned summary surface must not drift.
+    expect(source.text).toBe('5 open issues.');
+    expect(source.suspect).toBeUndefined();
+  });
+
+  it('a repaired result leads its body with the caveat note and is marked suspect', () => {
+    const result: SkillResult = {
+      kind: 'count',
+      summary: '12 open issues.',
+      recovery: {
+        status: 'repaired',
+        neutralized: [{ arg: 'labels', value: 'case' }],
+        note: "There's no 'case' label — showing all open issues.",
+      },
+    };
+    const source = formatAsSource(result, 'github_count', { state: 'open', labels: ['case'] });
+    expect(source.suspect).toBe(true);
+    expect(source.text).toBe(
+      "Note: There's no 'case' label — showing all open issues.\n" + '\n' + '12 open issues.',
+    );
+  });
+
+  it('an unresolved result is also marked suspect and carries its note', () => {
+    const result: SkillResult = {
+      kind: 'count',
+      summary: 'Could not narrow the result.',
+      recovery: {
+        status: 'unresolved',
+        note: 'Dropped an unrecognized filter; result would cover the whole repo.',
+      },
+    };
+    const source = formatAsSource(result, 'github_count', { labels: ['frobnicate'] });
+    expect(source.suspect).toBe(true);
+    expect(source.text.startsWith('Note: Dropped an unrecognized filter')).toBe(true);
+  });
+
+  it('renders the caveat before a list result’s items', () => {
+    const result: SkillResult = {
+      kind: 'list',
+      summary: 'Cards on the board:',
+      items: [{ title: 'Card A' }],
+      recovery: {
+        status: 'repaired',
+        neutralized: [{ arg: 'member', value: 'Jraffe' }],
+        note: 'No member matches "Jraffe" — showing all cards.',
+      },
+    };
+    const source = formatAsSource(result, 'trello_list', { member: 'Jraffe' });
+    expect(source.text).toBe(
+      'Note: No member matches "Jraffe" — showing all cards.\n' +
+        '\n' +
+        'Cards on the board:\n' +
+        '\n' +
+        '#1: Card A',
+    );
+    expect(source.suspect).toBe(true);
+  });
 });
 
 describe('SkillExecutionError', () => {

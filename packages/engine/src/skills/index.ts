@@ -12,6 +12,7 @@ export {
   type SkillResult,
   type SkillResultKind,
   type SkillResultItem,
+  type SkillRecovery,
   type SkillExecutionCode,
   type AnthropicToolDef,
   type JsonSchema,
