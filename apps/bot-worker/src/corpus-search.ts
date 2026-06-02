@@ -33,6 +33,35 @@ function envFloor(): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_VECTOR_DISTANCE_FLOOR;
 }
 
+// CRAG escalation (U10 close-out): a "strong" hit is one that is lexically
+// grounded (FTS-matched) or a close vector match (distance <= this). When the
+// result set contains no strong hit, the first pass is low-confidence — worth
+// a CRAG expansion even though it wasn't a total miss, so a scattered query
+// that pulled one mediocre vector-only chunk still escalates to the richer
+// path instead of synthesizing a thin answer. Sits below the 0.45 relevance
+// floor: hits between strong-distance and floor survive retrieval but are weak
+// enough to be worth a second look. Tunable via RISEZOME_CRAG_STRONG_DISTANCE.
+const DEFAULT_CRAG_STRONG_DISTANCE = 0.3;
+
+function strongDistance(): number {
+  const raw = process.env.RISEZOME_CRAG_STRONG_DISTANCE;
+  if (raw === undefined) return DEFAULT_CRAG_STRONG_DISTANCE;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_CRAG_STRONG_DISTANCE;
+}
+
+/**
+ * Is this hybrid-search result set low-confidence (worth a CRAG expansion)?
+ * True when there are no hits, or when no hit is "strong" — i.e. every hit is
+ * a vector-only near-miss (no lexical anchor) beyond `strongDistance()`. A
+ * single FTS-matched or close-vector hit makes the set confident.
+ */
+export function isLowConfidenceHits(hits: readonly HybridHit[]): boolean {
+  if (hits.length === 0) return true;
+  const strong = strongDistance();
+  return !hits.some((h) => h.ftsMatched || (h.distance !== null && h.distance <= strong));
+}
+
 export interface VectorCandidate {
   readonly chunk_id: string;
   readonly distance: number;

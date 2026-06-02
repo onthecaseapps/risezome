@@ -1,7 +1,43 @@
 import { describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { fuseRrf, hybridSearch } from '../src/corpus-search.js';
+import { fuseRrf, hybridSearch, isLowConfidenceHits, type HybridHit } from '../src/corpus-search.js';
 import type { Reranker } from '@risezome/engine/embed';
+
+const hit = (over: Partial<HybridHit>): HybridHit => ({
+  chunk_id: 'c',
+  distance: null,
+  score: 0.01,
+  ftsMatched: false,
+  ...over,
+});
+
+describe('isLowConfidenceHits — CRAG escalation trigger', () => {
+  it('is low-confidence on an empty result set (the classic miss)', () => {
+    expect(isLowConfidenceHits([])).toBe(true);
+  });
+
+  it('is confident when any hit is lexically grounded (FTS-matched)', () => {
+    expect(isLowConfidenceHits([hit({ ftsMatched: true, distance: null })])).toBe(false);
+  });
+
+  it('is confident when any hit is a close vector match (<= strong distance)', () => {
+    expect(isLowConfidenceHits([hit({ distance: 0.2 })])).toBe(false);
+  });
+
+  it('is low-confidence when every hit is a vector-only near-miss beyond strong distance', () => {
+    // Distances 0.4 / 0.44 survive the 0.45 relevance floor but clear neither
+    // the FTS-grounded nor the close-vector (0.30) bar → worth expanding.
+    expect(
+      isLowConfidenceHits([hit({ distance: 0.4 }), hit({ distance: 0.44 })]),
+    ).toBe(true);
+  });
+
+  it('is confident if even one of several hits is strong', () => {
+    expect(
+      isLowConfidenceHits([hit({ distance: 0.44 }), hit({ distance: 0.2 }), hit({ distance: 0.41 })]),
+    ).toBe(false);
+  });
+});
 
 describe('fuseRrf — reciprocal rank fusion + relevance floor', () => {
   it('ranks a chunk appearing in BOTH lists above single-list chunks', () => {

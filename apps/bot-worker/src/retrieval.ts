@@ -6,7 +6,7 @@ import type {
   SynthesisUsage,
 } from '@risezome/engine/synthesize';
 import { parseSynthesisOutput, verifyCitations } from '@risezome/engine/synthesize';
-import { hybridSearch } from './corpus-search';
+import { hybridSearch, isLowConfidenceHits } from './corpus-search';
 import { optionalReranker } from './reranker';
 import { expandWinnersToParents, parentDocEnabled, dedupeByDoc, type WinningChunk } from './parent-doc';
 import { optionalQueryExpander } from './query-expand';
@@ -276,11 +276,16 @@ export async function maybeRetrieveAndEmit(args: {
     logger: args.logger,
   });
 
-  // CRAG on-miss expansion (U9), gated by adaptive routing (U10): when the
-  // first pass finds nothing and the query is substantive enough to be worth
-  // it, ask Claude for candidate terms, augment the query, and re-retrieve
-  // once. Bounded to a single retry.
-  if (hits.length === 0) {
+  // CRAG expansion (U9), gated by adaptive routing (U10 close-out): fire when
+  // the first pass MISSED (zero hits) OR came back WEAK (no lexically-grounded
+  // or close-vector hit — `isLowConfidenceHits`), and the query is substantive
+  // enough to be worth it. Ask Claude for candidate terms, augment the query,
+  // and re-retrieve once (bounded to a single retry). Escalating weak
+  // retrievals — not just empty ones — is the real value of adaptive routing;
+  // a scattered query that pulled one mediocre chunk now gets the richer path.
+  const missed = hits.length === 0;
+  const weak = !missed && isLowConfidenceHits(hits);
+  if (missed || weak) {
     const expander = optionalQueryExpander();
     if (expander !== undefined && shouldExpandOnMiss(queryText)) {
       try {
@@ -290,7 +295,7 @@ export async function maybeRetrieveAndEmit(args: {
           const expandedEmbed = await args.embedder.embed({ items: [{ text: augmented, domain: 'text' }] });
           const expandedVec = expandedEmbed.vectors[0]?.vector;
           if (expandedVec !== undefined) {
-            hits = await hybridSearch(args.db, {
+            const expandedHits = await hybridSearch(args.db, {
               orgId: args.orgId,
               queryVectorLiteral: `[${Array.from(expandedVec).join(',')}]`,
               queryText: augmented,
@@ -298,8 +303,20 @@ export async function maybeRetrieveAndEmit(args: {
               reranker,
               logger: args.logger,
             });
+            // On a true miss, any expanded hits are an improvement. On a weak
+            // first pass we already have grounded (if mediocre) hits, so only
+            // adopt the expansion when it comes back confident — never trade a
+            // grounded result for a weaker one.
+            const adopt = missed ? expandedHits.length > 0 : !isLowConfidenceHits(expandedHits);
+            if (adopt) hits = expandedHits;
             args.logger.info(
-              { meetingId: args.meetingId, termCount: terms.length, hits: hits.length },
+              {
+                meetingId: args.meetingId,
+                reason: missed ? 'miss' : 'low_confidence',
+                termCount: terms.length,
+                hits: expandedHits.length,
+                adopted: adopt,
+              },
               'retrieval.crag.expanded',
             );
           }
