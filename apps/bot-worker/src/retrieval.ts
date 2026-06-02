@@ -638,6 +638,7 @@ export async function maybeRetrieveAndEmit(args: {
           utterance: queryText,
           sources: mergedSources,
           surfacedCardIds,
+          utteranceId: args.utteranceId,
           traceId,
           meetingId: args.meetingId,
           orgId: args.orgId,
@@ -801,6 +802,9 @@ async function runSynthesisAndBroadcast(args: {
   utterance: string;
   sources: SynthesisSource[];
   surfacedCardIds: string[];
+  /** The transcript utterance that triggered this synthesis — anchors the
+   *  synthesis to its spot in the transcript on the review page (U6). */
+  utteranceId: string;
   traceId: string;
   meetingId: string;
   orgId: string;
@@ -835,6 +839,7 @@ async function runSynthesisAndBroadcast(args: {
     status: 'running',
     citations: [],
     trace_id: args.traceId,
+    trigger_utterance_id: args.utteranceId,
   });
   if (insertResult.error !== null) {
     args.logger.warn({ err: insertResult.error, synthesisId }, 'synthesis.insert.failed');
