@@ -22,7 +22,7 @@ export { PinnedSynthesesSection } from './components/pinned-syntheses-section';
 export { SourceCardExpanded } from './components/source-card-expanded';
 export { SynthesisAnnounce } from './components/synthesis-announce';
 export { SynthesisCard, type SynthesisPhase } from './components/synthesis-card';
-export { SynthesisStream } from './components/synthesis-stream';
+export { SynthesisStream, SynthesisStreamItem } from './components/synthesis-stream';
 export {
   TranscriptPanel,
   LiveTranscriptPanel,

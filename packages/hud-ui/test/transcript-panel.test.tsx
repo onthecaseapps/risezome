@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { TranscriptPanel } from '../src/components/transcript-panel.js';
 import type { TranscriptUtterance } from '../src/types.js';
@@ -71,13 +71,21 @@ describe('TranscriptPanel (U4)', () => {
     expect(getByText('Unknown speaker')).toBeTruthy();
   });
 
-  it('injects a per-utterance marker when provided', () => {
+  it('renders an anchored utterance as a clickable highlight that fires onAnchorClick', async () => {
+    const onAnchorClick = vi.fn();
     const { container } = render(
       <TranscriptPanel
-        utterances={[u({ utteranceId: 'anchored', text: 'asked a question', startMs: 1 })]}
-        marker={(id) => (id === 'anchored' ? <button type="button" data-testid="anchor">●</button> : null)}
+        utterances={[
+          u({ utteranceId: 'anchored', text: 'asked a question', startMs: 1 }),
+          u({ utteranceId: 'plain', text: 'just chatter', startMs: 2 }),
+        ]}
+        anchoredUtteranceIds={new Set(['anchored'])}
+        onAnchorClick={onAnchorClick}
       />,
     );
-    expect(container.querySelector('[data-testid="anchor"]')).not.toBeNull();
+    const anchors = container.querySelectorAll('.transcript-anchor');
+    expect(anchors).toHaveLength(1); // only the anchored utterance
+    (anchors[0] as HTMLButtonElement).click();
+    expect(onAnchorClick).toHaveBeenCalledWith('anchored');
   });
 });

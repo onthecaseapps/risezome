@@ -3,12 +3,10 @@ import { notFound, redirect } from 'next/navigation';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServerClient } from '../../../../_lib/supabase-server';
 import { LiveMeetingClient } from './_client';
-import type {
-  CardEvent,
-  CardTrigger,
-  SynthesisErrorCode,
-  TranscriptUtterance,
-} from '@risezome/hud-ui';
+import type { CardEvent, CardTrigger, TranscriptUtterance } from '@risezome/hud-ui';
+import { mapSynthesisRow, type InitialSynthesis } from '../_synthesis-seed';
+
+export type { InitialSynthesis };
 
 /**
  * Live meeting page. Server renders the initial state from DB; the
@@ -120,38 +118,7 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
       .order('created_at', { ascending: false });
     initialSyntheses = (synthRows ?? [])
       .filter((s) => s.retracted_at === null)
-      .map((s): InitialSynthesis => {
-        const sourceCardIds = (s.source_card_ids as string[]) ?? [];
-        const rawCitations = s.citations;
-        const out: InitialSynthesis = {
-          synthesisId: s.synthesis_id as string,
-          sourceCardIds,
-          accumulatedText: s.accumulated_text as string,
-          status: s.status as 'running' | 'done' | 'errored' | 'retracted',
-          traceId: s.trace_id as string,
-          citations: normalizeCitations(
-            rawCitations,
-            sourceCardIds,
-            s.accumulated_text as string,
-          ),
-          pinned: (s.pinned as boolean | null) ?? false,
-          pinnedAt: (s.pinned_at as string | null) ?? null,
-        };
-        if (s.stop_reason !== null) out.stopReason = s.stop_reason as string;
-        if (s.error_code !== null) out.errorCode = s.error_code as SynthesisErrorCode;
-        if (s.error_message !== null) out.errorMessage = s.error_message as string;
-        if (s.ttft_ms !== null) out.ttftMs = s.ttft_ms as number;
-        if (s.latency_ms !== null) out.latencyMs = s.latency_ms as number;
-        if (s.input_tokens !== null) {
-          out.usage = {
-            inputTokens: s.input_tokens as number,
-            outputTokens: (s.output_tokens as number) ?? 0,
-            cacheReadTokens: (s.cache_read_tokens as number) ?? 0,
-            cacheCreationTokens: (s.cache_creation_tokens as number) ?? 0,
-          };
-        }
-        return out;
-      });
+      .map((s) => mapSynthesisRow(s as Record<string, unknown>));
 
     // Seed the prior transcript (finals only) so a reload mid-meeting restores
     // what was already said; the live channel + reconnect-replay keep it
@@ -197,70 +164,3 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
   );
 }
 
-export interface InitialSynthesis {
-  synthesisId: string;
-  sourceCardIds: string[];
-  accumulatedText: string;
-  status: 'running' | 'done' | 'errored' | 'retracted';
-  traceId: string;
-  stopReason?: string;
-  errorCode?: SynthesisErrorCode;
-  errorMessage?: string;
-  citations: NormalizedCitation[];
-  pinned: boolean;
-  pinnedAt: string | null;
-  usage?: {
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens: number;
-    cacheCreationTokens: number;
-  };
-  ttftMs?: number;
-  latencyMs?: number;
-}
-
-interface NormalizedCitation {
-  rank: number;
-  cardId: string;
-  position: number;
-  quote?: string;
-}
-
-/**
- * Normalize the citations jsonb into the post-U2 object shape regardless
- * of which shape the row was written in. New rows (post-U2) already
- * have `[{rank, cardId, position, quote?}, ...]` and pass through. Old
- * rows (pre-U2) have `[1, 2, 3]` — for each rank we look up the cardId
- * via sourceCardIds[rank-1] and scan accumulated_text for the first
- * occurrence of `[N]` to get position. Quote stays undefined for old
- * rows (the LLM didn't emit one). The Supabase migration backfills the
- * column on disk; this normalizer is the belt-and-suspenders for any
- * row whose migration hasn't run yet.
- */
-function normalizeCitations(
-  raw: unknown,
-  sourceCardIds: readonly string[],
-  accumulatedText: string,
-): NormalizedCitation[] {
-  if (!Array.isArray(raw)) return [];
-  if (raw.length === 0) return [];
-  // New shape: array of objects with `rank`.
-  if (typeof raw[0] === 'object' && raw[0] !== null && 'rank' in (raw[0] as object)) {
-    return (raw as Array<Record<string, unknown>>).map((c) => {
-      const rank = Number(c['rank']);
-      const cardId =
-        typeof c['cardId'] === 'string' ? (c['cardId'] as string) : (sourceCardIds[rank - 1] ?? '');
-      const position = Number(c['position'] ?? 0);
-      const quote = typeof c['quote'] === 'string' ? (c['quote'] as string) : undefined;
-      return quote !== undefined ? { rank, cardId, position, quote } : { rank, cardId, position };
-    });
-  }
-  // Old shape: array of numeric ranks.
-  return (raw as number[]).flatMap((rank) => {
-    if (!Number.isInteger(rank) || rank < 1 || rank > sourceCardIds.length) return [];
-    const cardId = sourceCardIds[rank - 1];
-    if (cardId === undefined) return [];
-    const idx = accumulatedText.indexOf(`[${String(rank)}]`);
-    return [{ rank, cardId, position: idx >= 0 ? idx : 0 }];
-  });
-}

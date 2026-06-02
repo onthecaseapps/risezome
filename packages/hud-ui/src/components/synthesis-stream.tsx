@@ -57,7 +57,7 @@ export function SynthesisStream(): ReactElement {
 // rank-queue order during chip emission.
 const CITATION_REGEX = /\[(\d+)(?::\s*"(?:\\.|[^"])*")?\]/g;
 
-function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
+export function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactElement {
   const state = useAppState();
   const sources: CardEvent[] = [];
   for (const id of syn.sourceCardIds) {

@@ -1143,6 +1143,26 @@ body {
 .transcript-line.is-partial {
   color: var(--muted);
 }
+/* An utterance that triggered an AI summary (review page): highlighted +
+   clickable to open its synthesis card. */
+.transcript-anchor {
+  appearance: none;
+  border: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--fg);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.transcript-anchor:hover,
+.transcript-anchor:focus-visible {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  outline: none;
+}
 .transcript-cursor {
   margin-left: 1px;
   color: var(--accent);

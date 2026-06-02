@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useRef, type ReactElement, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, type ReactElement } from 'react';
 import { useAppState } from '../state/app-state';
 import type { TranscriptUtterance } from '../types';
 
@@ -11,8 +11,9 @@ import type { TranscriptUtterance } from '../types';
  * state via {@link LiveTranscriptPanel}; the review page passes the full
  * static list directly.
  *
- * `marker` is an optional per-utterance prefix slot — the review page injects
- * a clickable synthesis anchor at utterances that triggered one (plan U8).
+ * `anchoredUtteranceIds` + `onAnchorClick` let the review page highlight the
+ * utterances that triggered an AI summary and open that summary on click
+ * (plan U8).
  */
 
 interface SpeakerGroup {
@@ -40,14 +41,18 @@ export interface TranscriptPanelProps {
   /** Stick-to-bottom as new utterances arrive (live). Off for the static
    *  review transcript. Default false. */
   readonly autoScroll?: boolean;
-  /** Optional per-utterance prefix (e.g. a synthesis anchor on review). */
-  readonly marker?: (utteranceId: string) => ReactNode;
+  /** Utterances that triggered an AI summary — rendered highlighted + clickable
+   *  (review page). */
+  readonly anchoredUtteranceIds?: ReadonlySet<string>;
+  /** Invoked when a highlighted (anchored) utterance is clicked. */
+  readonly onAnchorClick?: (utteranceId: string) => void;
 }
 
 export function TranscriptPanel({
   utterances,
   autoScroll = false,
-  marker,
+  anchoredUtteranceIds,
+  onAnchorClick,
 }: TranscriptPanelProps): ReactElement {
   const scrollRef = useRef<HTMLDivElement>(null);
   // Stick to bottom only while the user is already near the bottom, so reading
@@ -87,15 +92,41 @@ export function TranscriptPanel({
         <div className="transcript-group" key={`${group.speaker ?? 'unknown'}-${String(i)}`}>
           <div className="transcript-speaker">{group.speaker ?? 'Unknown speaker'}</div>
           <p className="transcript-lines">
-            {group.utterances.map((u) => (
-              <Fragment key={u.utteranceId}>
-                {marker !== undefined ? marker(u.utteranceId) : null}
-                <span className={u.isFinal ? 'transcript-line' : 'transcript-line is-partial'}>
+            {group.utterances.map((u) => {
+              const anchored = anchoredUtteranceIds?.has(u.utteranceId) ?? false;
+              const cls = ['transcript-line', !u.isFinal ? 'is-partial' : null, anchored ? 'is-anchored' : null]
+                .filter(Boolean)
+                .join(' ');
+              const body = (
+                <>
                   {u.text}
-                  {!u.isFinal ? <span className="transcript-cursor" aria-hidden="true">▊</span> : null}
-                </span>{' '}
-              </Fragment>
-            ))}
+                  {!u.isFinal ? (
+                    <span className="transcript-cursor" aria-hidden="true">
+                      ▊
+                    </span>
+                  ) : null}
+                </>
+              );
+              if (anchored && onAnchorClick !== undefined) {
+                return (
+                  <Fragment key={u.utteranceId}>
+                    <button
+                      type="button"
+                      className={`${cls} transcript-anchor`}
+                      onClick={() => onAnchorClick(u.utteranceId)}
+                      title="Show the AI summary generated here"
+                    >
+                      {body}
+                    </button>{' '}
+                  </Fragment>
+                );
+              }
+              return (
+                <Fragment key={u.utteranceId}>
+                  <span className={cls}>{body}</span>{' '}
+                </Fragment>
+              );
+            })}
           </p>
         </div>
       ))}
