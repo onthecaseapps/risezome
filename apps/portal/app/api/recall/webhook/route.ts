@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { Webhook, WebhookVerificationError } from 'svix';
 import { createServiceRoleClient } from '../../../_lib/supabase-server';
 import { diagnosticForSubCode, statusForEvent } from '../../../_lib/bot-status-mapping';
+import { inngest } from '../../../../src/inngest/client';
 
 /**
  * Recall.ai bot lifecycle webhook receiver.
@@ -157,6 +158,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // On call_ended, ping the bot-worker to flush. Fire-and-forget.
   if (newStatus === 'completed') {
     void notifyBotWorkerEnd(meeting.meeting_id as string);
+    // Kick off the whole-meeting AI recap (U7). Best-effort — a failed
+    // enqueue must not fail the webhook; the recap is a review-page nicety.
+    void inngest
+      .send({
+        name: 'risezome/meeting.recap-requested',
+        data: { meetingId: meeting.meeting_id as string, orgId: meeting.org_id as string },
+      })
+      .catch((err: unknown) => {
+
+        console.error('[recall.webhook] recap enqueue failed:', err);
+      });
   }
 
   return NextResponse.json({
