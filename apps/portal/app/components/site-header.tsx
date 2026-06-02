@@ -16,24 +16,18 @@ export function SiteHeader(): React.ReactElement {
         <Link href="/" className="flex items-center gap-2.5" aria-label="Risezome home">
           <Wordmark size="lg" />
         </Link>
-        <nav className="flex items-center gap-4 text-sm sm:gap-5">
+        {/* Minimal nav: the "Request early access" CTA lives in the hero (and
+            blog-post footers), so the header stays uncluttered — just wayfinding
+            links that fit comfortably on mobile. */}
+        <nav className="flex items-center gap-5 text-sm">
           {!onHome ? (
             <Link href="/" className="font-medium text-muted transition-colors hover:text-fg">
               Home
             </Link>
           ) : null}
-          <Link
-            href="/blog"
-            className="hidden font-medium text-muted transition-colors hover:text-fg sm:inline"
-          >
+          <Link href="/blog" className="font-medium text-muted transition-colors hover:text-fg">
             Blog
           </Link>
-          <a
-            href="/#waitlist"
-            className="rounded-lg bg-accent px-3.5 py-2 font-medium text-accent-fg shadow-sm transition-opacity hover:opacity-90"
-          >
-            Request early access
-          </a>
         </nav>
       </div>
     </header>
