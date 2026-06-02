@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { getBrowserClient } from './supabase-browser';
-import type { AppAction } from '@risezome/hud-ui';
+import type { AppAction, TranscriptUtterance } from '@risezome/hud-ui';
 
 /**
  * Subscribe to a meeting's Realtime channel + dispatch broadcast
@@ -248,10 +248,34 @@ export function dispatchBroadcast(
         dispatch({ type: 'gap', gap: payload['gap'] as never });
       }
       return;
-    // transcript.data / transcript.partial_data: not reduced today.
+    case 'transcript.data':
+    case 'transcript.partial_data': {
+      const utterance = toTranscriptUtterance(payload, eventType === 'transcript.data');
+      if (utterance !== null) dispatch({ type: 'transcriptUtterance', utterance });
+      return;
+    }
     default:
       return;
   }
+}
+
+/**
+ * Map a transcript.* broadcast payload (utteranceToEventPayload from the
+ * bot-worker) into the reducer's TranscriptUtterance. `isFinalFromType`
+ * is the authority for finality (transcript.data = final), falling back to
+ * the payload flag. Returns null when the payload is missing required fields.
+ */
+function toTranscriptUtterance(
+  payload: Record<string, unknown>,
+  isFinalFromType: boolean,
+): TranscriptUtterance | null {
+  const utteranceId = payload['utteranceId'];
+  const text = payload['text'];
+  if (typeof utteranceId !== 'string' || typeof text !== 'string') return null;
+  const speaker = typeof payload['speaker'] === 'string' ? payload['speaker'] : null;
+  const startMs = typeof payload['startMs'] === 'number' ? payload['startMs'] : 0;
+  const revision = typeof payload['revision'] === 'number' ? payload['revision'] : 0;
+  return { utteranceId, text, speaker, isFinal: isFinalFromType, startMs, revision };
 }
 
 async function reconnectFetch(args: {

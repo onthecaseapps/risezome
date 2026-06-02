@@ -5,7 +5,20 @@ import type {
   SynthesisDeltaEvent,
   SynthesisDoneEvent,
   SynthesisStartEvent,
+  TranscriptUtterance,
 } from '../src/types.js';
+
+function mkUtterance(over: Partial<TranscriptUtterance> = {}): TranscriptUtterance {
+  return {
+    utteranceId: 'p1::1000',
+    text: 'hello there',
+    speaker: 'Alice',
+    isFinal: false,
+    startMs: 1000,
+    revision: 0,
+    ...over,
+  };
+}
 
 function mkCard(over: Partial<CardEvent> = {}): CardEvent {
   return {
@@ -542,5 +555,78 @@ describe('appStateReducer', () => {
       expect(s.syntheses.get('pinned')?.sourceCardIds).toContain('c1');
       expect(s.cards.has('c1')).toBe(true);
     });
+  });
+});
+
+describe('appStateReducer — transcript (U3)', () => {
+  it('adds a partial utterance to the transcript', () => {
+    const s = appStateReducer(initialAppState, {
+      type: 'transcriptUtterance',
+      utterance: mkUtterance(),
+    });
+    expect(s.transcript.size).toBe(1);
+    const u = s.transcript.get('p1::1000');
+    expect(u?.isFinal).toBe(false);
+    expect(u?.speaker).toBe('Alice');
+  });
+
+  it('a final replaces its partial in place (same utteranceId)', () => {
+    let s = appStateReducer(initialAppState, {
+      type: 'transcriptUtterance',
+      utterance: mkUtterance({ text: 'hello', isFinal: false, revision: 0 }),
+    });
+    s = appStateReducer(s, {
+      type: 'transcriptUtterance',
+      utterance: mkUtterance({ text: 'hello world.', isFinal: true, revision: 1 }),
+    });
+    expect(s.transcript.size).toBe(1);
+    const u = s.transcript.get('p1::1000');
+    expect(u?.isFinal).toBe(true);
+    expect(u?.text).toBe('hello world.');
+  });
+
+  it('a replayed partial does NOT overwrite an already-final utterance (reconnect-idempotent)', () => {
+    let s = appStateReducer(initialAppState, {
+      type: 'transcriptUtterance',
+      utterance: mkUtterance({ text: 'final text', isFinal: true, revision: 2 }),
+    });
+    const next = appStateReducer(s, {
+      type: 'transcriptUtterance',
+      utterance: mkUtterance({ text: 'stale partial', isFinal: false, revision: 1 }),
+    });
+    expect(next).toBe(s);
+    expect(next.transcript.get('p1::1000')?.text).toBe('final text');
+  });
+
+  it('a duplicate replay (same finality + revision) is a no-op', () => {
+    const s = appStateReducer(initialAppState, {
+      type: 'transcriptUtterance',
+      utterance: mkUtterance({ isFinal: true, revision: 3 }),
+    });
+    const next = appStateReducer(s, {
+      type: 'transcriptUtterance',
+      utterance: mkUtterance({ isFinal: true, revision: 3 }),
+    });
+    expect(next).toBe(s);
+  });
+
+  it('distinct utteranceIds both appear', () => {
+    let s = appStateReducer(initialAppState, {
+      type: 'transcriptUtterance',
+      utterance: mkUtterance({ utteranceId: 'p1::1000', startMs: 1000 }),
+    });
+    s = appStateReducer(s, {
+      type: 'transcriptUtterance',
+      utterance: mkUtterance({ utteranceId: 'p2::2000', startMs: 2000, speaker: 'Bob' }),
+    });
+    expect(s.transcript.size).toBe(2);
+  });
+
+  it('keeps a null speaker without erroring', () => {
+    const s = appStateReducer(initialAppState, {
+      type: 'transcriptUtterance',
+      utterance: mkUtterance({ speaker: null }),
+    });
+    expect(s.transcript.get('p1::1000')?.speaker).toBeNull();
   });
 });

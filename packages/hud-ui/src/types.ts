@@ -122,6 +122,22 @@ export interface SynthesisRetractedEvent {
   readonly reason: 'source-retracted' | 'meeting-ended' | 'manual-dismiss';
 }
 
+/**
+ * One transcript utterance on the live/review surfaces. A partial and its
+ * later final share the same `utteranceId` (Recall identity is
+ * `participantId::startMs`); the reducer merges them by id, last-revision-wins,
+ * with a final never downgraded back to a partial. `speaker` is the Recall
+ * participant name (null when the platform didn't attribute it).
+ */
+export interface TranscriptUtterance {
+  readonly utteranceId: string;
+  readonly text: string;
+  readonly speaker: string | null;
+  readonly isFinal: boolean;
+  readonly startMs: number;
+  readonly revision: number;
+}
+
 export type ServerMessage =
   | { type: 'hello'; version: string }
   | { type: 'card'; card: CardEvent }

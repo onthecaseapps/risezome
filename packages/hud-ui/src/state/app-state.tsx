@@ -19,6 +19,7 @@ import type {
   SynthesisErrorEvent,
   SynthesisRetractedEvent,
   SynthesisStartEvent,
+  TranscriptUtterance,
 } from '../types';
 /**
  * Connection status reported by the transport layer (daemon WS in
@@ -67,6 +68,10 @@ export interface AppState {
   readonly gaps: ReadonlyMap<string, GapEvent>;
   /** Insertion-ordered map keyed by synthesisId. */
   readonly syntheses: ReadonlyMap<string, SynthesisRecord>;
+  /** Live transcript, keyed by utteranceId (a partial and its final share an
+   *  id). Insertion-ordered; render-time sort by startMs handles the rare
+   *  out-of-order arrival. */
+  readonly transcript: ReadonlyMap<string, TranscriptUtterance>;
   /** Updated only on synthesisDone — feeds the sr-only aria-live announce region. */
   readonly lastSynthesisAnnounce: string | null;
   /** Count of consecutive synthesis errors / refusals since the last
@@ -90,6 +95,7 @@ export const initialAppState: AppState = {
   cards: new Map(),
   gaps: new Map(),
   syntheses: new Map(),
+  transcript: new Map(),
   lastSynthesisAnnounce: null,
   synthesisFailureStreak: 0,
 };
@@ -109,7 +115,8 @@ export type AppAction =
   | { type: 'synthesisDone'; done: SynthesisDoneEvent }
   | { type: 'synthesisError'; error: SynthesisErrorEvent }
   | { type: 'synthesisRetracted'; retracted: SynthesisRetractedEvent }
-  | { type: 'synthesisPinned'; synthesisId: string; pinned: boolean; pinnedAt: string | null };
+  | { type: 'synthesisPinned'; synthesisId: string; pinned: boolean; pinnedAt: string | null }
+  | { type: 'transcriptUtterance'; utterance: TranscriptUtterance };
 
 function cloneMap<K, V>(m: ReadonlyMap<K, V>): Map<K, V> {
   return new Map(m);
@@ -318,6 +325,27 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
         pinnedAt: action.pinnedAt,
       });
       return { ...state, syntheses };
+    }
+
+    case 'transcriptUtterance': {
+      const incoming = action.utterance;
+      const existing = state.transcript.get(incoming.utteranceId);
+      if (existing !== undefined) {
+        // A final is authoritative — never let a (replayed) partial overwrite
+        // it. Replay-idempotency is the same invariant the synthesis guards on
+        // this surface uphold: the Realtime reconnect re-delivers utterances.
+        if (existing.isFinal && !incoming.isFinal) return state;
+        // Same finality: last-revision-wins; a stale or duplicate replay
+        // (revision <=) is dropped, keeping reconnect idempotent.
+        if (existing.isFinal === incoming.isFinal && incoming.revision <= existing.revision) {
+          return state;
+        }
+      }
+      // Map.set preserves insertion order on update, so a final replaces its
+      // partial in place; the panel sorts by startMs for display.
+      const transcript = cloneMap(state.transcript);
+      transcript.set(incoming.utteranceId, incoming);
+      return { ...state, transcript };
     }
 
     default: {
