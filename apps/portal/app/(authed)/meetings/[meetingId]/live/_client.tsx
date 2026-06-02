@@ -11,6 +11,7 @@ import {
   SynthesisActionsProvider,
   SynthesisAnnounce,
   SynthesisStream,
+  LiveTranscriptPanel,
   SYNTHESIS_PAUSED_THRESHOLD,
   initialAppState,
   useAppDispatch,
@@ -21,6 +22,7 @@ import {
   type CardRecord,
   type SynthesisActions,
   type SynthesisRecord,
+  type TranscriptUtterance,
 } from '@risezome/hud-ui';
 import {
   useRealtimeMeetingChannel,
@@ -48,6 +50,7 @@ interface Props {
   startedAtIso: string | null;
   initialCards: CardEvent[];
   initialSyntheses: InitialSynthesis[];
+  initialTranscript: TranscriptUtterance[];
 }
 
 /**
@@ -64,8 +67,8 @@ interface Props {
  */
 export function LiveMeetingClient(props: Props): ReactElement {
   const seeded = useMemo<AppState>(
-    () => seedState(props.initialCards, props.initialSyntheses, props.status),
-    [props.initialCards, props.initialSyntheses, props.status],
+    () => seedState(props.initialCards, props.initialSyntheses, props.initialTranscript, props.status),
+    [props.initialCards, props.initialSyntheses, props.initialTranscript, props.status],
   );
 
   // Failed meetings don't need Realtime — the bot never connected. Render
@@ -205,6 +208,7 @@ function RealtimeWrapper({
 function seedState(
   cards: CardEvent[],
   syntheses: InitialSynthesis[],
+  transcript: TranscriptUtterance[],
   status: MeetingStatus,
 ): AppState {
   const cardMap = new Map<string, CardRecord>();
@@ -233,12 +237,18 @@ function seedState(
     });
   }
 
+  const transcriptMap = new Map<string, TranscriptUtterance>();
+  for (const u of transcript) {
+    transcriptMap.set(u.utteranceId, u);
+  }
+
   return {
     ...initialAppState,
     status: 'disconnected',
     meeting: status === 'recording' ? 'live' : 'idle',
     cards: cardMap,
     syntheses: synthMap,
+    transcript: transcriptMap,
   };
 }
 
@@ -263,7 +273,7 @@ function RecordingShell({
   const isPaused = state.synthesisFailureStreak >= SYNTHESIS_PAUSED_THRESHOLD;
 
   return (
-    <div className="mx-auto flex h-dvh max-w-3xl flex-col px-6 py-6">
+    <div className="mx-auto flex h-dvh max-w-6xl flex-col px-6 py-6">
       <header className="mb-4 flex items-center justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -290,9 +300,17 @@ function RecordingShell({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
-        <PinnedSynthesesSection />
-        <SynthesisStream />
+      {/* Transcript on the left, AI Summary cards on the right. Stacks
+          (transcript above cards) on narrow viewports. */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 md:grid-cols-2">
+        <section className="flex min-h-0 flex-col">
+          <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">Transcript</h2>
+          <LiveTranscriptPanel />
+        </section>
+        <section className="flex min-h-0 flex-col overflow-y-auto pr-2 [scrollbar-gutter:stable]">
+          <PinnedSynthesesSection />
+          <SynthesisStream />
+        </section>
       </div>
 
       <SynthesisAnnouncer />

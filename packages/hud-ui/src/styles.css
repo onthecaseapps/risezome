@@ -1107,6 +1107,11 @@ body {
   overflow-y: auto;
   font-size: 14px;
   line-height: 1.55;
+  /* Fills a bounded flex column (the live left pane) so the panel itself is
+     the scroll container the auto-scroll targets. In a non-flex parent (the
+     static review transcript) flex/min-height are inert and it flows. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .transcript-empty {
   align-items: center;

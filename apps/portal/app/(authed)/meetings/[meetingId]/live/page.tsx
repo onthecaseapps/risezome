@@ -7,6 +7,7 @@ import type {
   CardEvent,
   CardTrigger,
   SynthesisErrorCode,
+  TranscriptUtterance,
 } from '@risezome/hud-ui';
 
 /**
@@ -73,10 +74,11 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
     }
   }
 
-  // Cards + syntheses are only relevant in the recording state. Skip the
-  // fetch for joining/launching so the joining shell renders fast.
+  // Cards + syntheses + transcript are only relevant in the recording state.
+  // Skip the fetch for joining/launching so the joining shell renders fast.
   let initialCards: CardEvent[] = [];
   let initialSyntheses: InitialSynthesis[] = [];
+  let initialTranscript: TranscriptUtterance[] = [];
 
   if (status === 'recording') {
     const { data: cardRows } = await supabase
@@ -150,6 +152,33 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
         }
         return out;
       });
+
+    // Seed the prior transcript (finals only) so a reload mid-meeting restores
+    // what was already said; the live channel + reconnect-replay keep it
+    // current. Partials are transient and intentionally not seeded.
+    const { data: transcriptRows } = await supabase
+      .from('meeting_events')
+      .select('payload')
+      .eq('meeting_id', meetingId)
+      .eq('org_id', orgId)
+      .eq('type', 'transcript.data')
+      .order('event_id', { ascending: true });
+    initialTranscript = (transcriptRows ?? []).flatMap((row): TranscriptUtterance[] => {
+      const p = (row.payload as Record<string, unknown> | null) ?? {};
+      const utteranceId = p['utteranceId'];
+      const text = p['text'];
+      if (typeof utteranceId !== 'string' || typeof text !== 'string') return [];
+      return [
+        {
+          utteranceId,
+          text,
+          speaker: typeof p['speaker'] === 'string' ? (p['speaker'] as string) : null,
+          isFinal: true,
+          startMs: typeof p['startMs'] === 'number' ? (p['startMs'] as number) : 0,
+          revision: typeof p['revision'] === 'number' ? (p['revision'] as number) : 0,
+        },
+      ];
+    });
   }
 
   return (
@@ -163,6 +192,7 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
       startedAtIso={meeting.started_at as string | null}
       initialCards={initialCards}
       initialSyntheses={initialSyntheses}
+      initialTranscript={initialTranscript}
     />
   );
 }
