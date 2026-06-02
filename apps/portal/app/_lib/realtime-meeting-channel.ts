@@ -52,6 +52,9 @@ export interface ChannelState {
   liveMeetingStatus: BroadcastedStatus | null;
 }
 
+/** How often the live page polls meeting_events for new content (ms). */
+const CONTENT_POLL_MS = 2500;
+
 export function useRealtimeMeetingChannel(opts: UseRealtimeMeetingChannelOpts): ChannelState {
   const { meetingId, orgId, dispatch } = opts;
   const lastSeenRef = useRef<number>(opts.initialLastEventId ?? 0);
@@ -126,6 +129,32 @@ export function useRealtimeMeetingChannel(opts: UseRealtimeMeetingChannelOpts): 
       cancelled = true;
       if (channel !== null) void supabase.removeChannel(channel);
     };
+  }, [meetingId, orgId, dispatch]);
+
+  // Content poll. Realtime broadcast delivery to the browser has proven
+  // unreliable in practice: the bot-worker's sends succeed (broadcasted: true),
+  // but live events often don't reach the subscribed channel — only the
+  // on-subscribe reconnect-fetch delivered them, so cards / syntheses /
+  // transcript appeared only on a manual refresh. Poll meeting_events on a
+  // short interval and replay anything new through the same reconnect path so
+  // the live page updates within a couple of seconds on its own. Idempotent:
+  // each poll fetches only event_id > lastSeen, and the reducer is replay-safe.
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void reconnectFetch({
+        orgId,
+        meetingId,
+        afterEventId: lastSeenRef.current,
+        dispatch,
+        onMaxEventId: (id) => {
+          if (id > lastSeenRef.current) lastSeenRef.current = id;
+        },
+        onMeetingStatus: (live) => {
+          setState((s) => (s.liveMeetingStatus === live ? s : { ...s, liveMeetingStatus: live }));
+        },
+      });
+    }, CONTENT_POLL_MS);
+    return () => window.clearInterval(interval);
   }, [meetingId, orgId, dispatch]);
 
   // Polling fallback for status transitions. The Realtime broadcast +
