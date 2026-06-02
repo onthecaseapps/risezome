@@ -25,6 +25,9 @@ export interface InitialSynthesis {
   citations: NormalizedCitation[];
   pinned: boolean;
   pinnedAt: string | null;
+  /** The transcript utterance that triggered this synthesis (U6). Null for
+   *  rows written before U6. Used to show the question above the answer. */
+  triggerUtteranceId?: string | null;
   usage?: {
     inputTokens: number;
     outputTokens: number;
@@ -87,6 +90,7 @@ export function mapSynthesisRow(s: Record<string, unknown>): InitialSynthesis {
     pinned: (s['pinned'] as boolean | null) ?? false,
     pinnedAt: (s['pinned_at'] as string | null) ?? null,
   };
+  if (s['trigger_utterance_id'] != null) out.triggerUtteranceId = s['trigger_utterance_id'] as string;
   if (s['stop_reason'] != null) out.stopReason = s['stop_reason'] as string;
   if (s['error_code'] != null) out.errorCode = s['error_code'] as SynthesisErrorCode;
   if (s['error_message'] != null) out.errorMessage = s['error_message'] as string;

@@ -230,6 +230,7 @@ function seedState(
       citations: s.citations,
       pinned: s.pinned ?? false,
       pinnedAt: s.pinnedAt ?? null,
+      ...(s.triggerUtteranceId != null ? { triggerUtteranceId: s.triggerUtteranceId } : {}),
       ...(s.stopReason !== undefined ? { stopReason: s.stopReason } : {}),
       ...(s.ttftMs !== undefined ? { ttftMs: s.ttftMs } : {}),
       ...(s.latencyMs !== undefined ? { latencyMs: s.latencyMs } : {}),

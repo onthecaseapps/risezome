@@ -59,11 +59,14 @@ export interface TranscriptPanelProps {
   /** Stick-to-bottom as new utterances arrive (live). Off for the static
    *  review transcript. Default false. */
   readonly autoScroll?: boolean;
-  /** Utterances that triggered an AI summary — rendered highlighted + clickable
+  /** Utterances that triggered an AI summary — rendered underlined + clickable
    *  (review page). */
   readonly anchoredUtteranceIds?: ReadonlySet<string>;
   /** Invoked when a highlighted (anchored) utterance is clicked. */
   readonly onAnchorClick?: (utteranceId: string) => void;
+  /** The anchored utterance whose synthesis is currently open — rendered with
+   *  an outlined, tinted box (review page pagination/selection). */
+  readonly activeUtteranceId?: string | null;
 }
 
 export function TranscriptPanel({
@@ -71,6 +74,7 @@ export function TranscriptPanel({
   autoScroll = false,
   anchoredUtteranceIds,
   onAnchorClick,
+  activeUtteranceId,
 }: TranscriptPanelProps): ReactElement {
   const scrollRef = useRef<HTMLDivElement>(null);
   // Stick to bottom only while the user is already near the bottom, so reading
@@ -113,7 +117,14 @@ export function TranscriptPanel({
             <p className="transcript-lines" key={pi}>
               {para.map((u) => {
                 const anchored = anchoredUtteranceIds?.has(u.utteranceId) ?? false;
-                const cls = ['transcript-line', !u.isFinal ? 'is-partial' : null, anchored ? 'is-anchored' : null]
+                const active =
+                  anchored && activeUtteranceId != null && u.utteranceId === activeUtteranceId;
+                const cls = [
+                  'transcript-line',
+                  !u.isFinal ? 'is-partial' : null,
+                  anchored ? 'is-anchored' : null,
+                  active ? 'is-active' : null,
+                ]
                   .filter(Boolean)
                   .join(' ');
                 const body = (
@@ -134,8 +145,12 @@ export function TranscriptPanel({
                         className={`${cls} transcript-anchor`}
                         onClick={() => onAnchorClick(u.utteranceId)}
                         title="Show the summary generated here"
+                        aria-pressed={active}
                       >
                         {body}
+                        <span className="transcript-anchor-spark" aria-hidden="true">
+                          <AnchorSparkle />
+                        </span>
                       </button>{' '}
                     </Fragment>
                   );
@@ -151,6 +166,15 @@ export function TranscriptPanel({
         </div>
       ))}
     </div>
+  );
+}
+
+/** Small sparkle marking an anchored question (one that produced an answer). */
+function AnchorSparkle(): ReactElement {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 3l1.7 4.5L18 9l-4.3 1.5L12 15l-1.7-4.5L6 9l4.3-1.5z" />
+    </svg>
   );
 }
 

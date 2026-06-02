@@ -70,6 +70,10 @@ export interface SynthesisStartEvent {
   readonly synthesisId: string;
   readonly sourceCardIds: readonly string[];
   readonly traceId: string;
+  /** The transcript utterance that triggered this synthesis (U6). Lets the
+   *  UI show the question above the answer. Optional/null for events from
+   *  before this field existed. */
+  readonly triggerUtteranceId?: string | null;
 }
 
 export interface SynthesisDeltaEvent {

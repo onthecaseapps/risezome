@@ -88,6 +88,12 @@ export function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactEle
     phase !== 'done',
   );
 
+  // Resolve the question (triggering utterance) from the transcript so the
+  // card can show it above the answer. Absent on pre-U6 syntheses or when the
+  // utterance isn't in state.
+  const question =
+    syn.triggerUtteranceId != null ? state.transcript.get(syn.triggerUtteranceId)?.text : undefined;
+
   return (
     <SynthesisCard
       synthesisId={syn.synthesisId}
@@ -96,6 +102,7 @@ export function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactEle
       sources={sources}
       citationRecords={syn.citations}
       pinned={syn.pinned}
+      {...(question !== undefined ? { question } : {})}
     />
   );
 }

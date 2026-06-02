@@ -56,6 +56,10 @@ export interface SynthesisCardProps {
    *  the button hides. */
   readonly pinned?: boolean;
   readonly entering?: boolean;
+  /** The question (triggering utterance) that produced this answer. When
+   *  provided, renders above the answer card. Resolved by the caller from
+   *  the synthesis's triggerUtteranceId + the transcript. */
+  readonly question?: string;
 }
 
 interface ExpansionState {
@@ -86,6 +90,7 @@ export function SynthesisCard({
   citationRecords,
   pinned = false,
   entering = false,
+  question,
 }: SynthesisCardProps): ReactElement {
   const className = [
     'card',
@@ -145,52 +150,65 @@ export function SynthesisCard({
 
   return (
     <SynthesisCardActivateContext.Provider value={activate}>
-      <article
-        className={className}
-        data-kind="synthesis"
-        data-synthesis-id={synthesisId}
-        data-phase={phase}
-        data-pinned={pinned ? 'true' : 'false'}
-        aria-busy={ariaBusy}
-      >
-        <div className="synthesis-header">
-          <span className="ai-label">
+      {/* Card + sources are one logical unit but two visual blocks: the answer
+          lives in the `.card.synthesis` <article>, the cited sources sit
+          OUTSIDE it as a sibling <section> below. Both stay under the activate
+          provider + this component's expansion state, so clicking an inline
+          [N] chip in the answer still highlights its source below. */}
+      <div className="synthesis-block">
+        {question !== undefined && question.length > 0 && (
+          <header className="synthesis-question">
             <SparkleGlyph />
-            Summary
-          </span>
-          <span className="synthesis-grounded">
-            grounded in {groundedCount} {groundedCount === 1 ? 'source' : 'sources'}
-          </span>
-          {phase === 'done' && (
-            <PinButton
-              synthesisId={synthesisId}
-              pinned={pinned}
-              {...(synthesisActions.pin !== undefined ? { pin: synthesisActions.pin } : {})}
-              {...(synthesisActions.unpin !== undefined ? { unpin: synthesisActions.unpin } : {})}
-            />
-          )}
-        </div>
-        <div className="synthesis-body" aria-live={ariaLive}>
-          {phase === 'placeholder' ? (
-            <SkeletonBars />
-          ) : (
-            <>
-              {answer}
-              {phase === 'streaming' && (
-                <span className="synthesis-cursor" aria-hidden="true">
-                  ▊
-                </span>
-              )}
-            </>
-          )}
-        </div>
-
-        {phase === 'placeholder' && sources.length > 0 && (
-          <PlaceholderSourceTitles sources={sources} />
+            <span className="synthesis-question-text">{question}</span>
+          </header>
         )}
+        <article
+          className={className}
+          data-kind="synthesis"
+          data-synthesis-id={synthesisId}
+          data-phase={phase}
+          data-pinned={pinned ? 'true' : 'false'}
+          aria-busy={ariaBusy}
+        >
+          <div className="synthesis-header">
+            <span className="ai-label">
+              <SparkleGlyph />
+              Summary
+            </span>
+            <span className="synthesis-grounded">
+              grounded in {groundedCount} {groundedCount === 1 ? 'source' : 'sources'}
+            </span>
+            {phase === 'done' && (
+              <PinButton
+                synthesisId={synthesisId}
+                pinned={pinned}
+                {...(synthesisActions.pin !== undefined ? { pin: synthesisActions.pin } : {})}
+                {...(synthesisActions.unpin !== undefined ? { unpin: synthesisActions.unpin } : {})}
+              />
+            )}
+          </div>
+          <div className="synthesis-body" aria-live={ariaLive}>
+            {phase === 'placeholder' ? (
+              <SkeletonBars />
+            ) : (
+              <>
+                {answer}
+                {phase === 'streaming' && (
+                  <span className="synthesis-cursor" aria-hidden="true">
+                    ▊
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+
+          {phase === 'placeholder' && sources.length > 0 && (
+            <PlaceholderSourceTitles sources={sources} />
+          )}
+        </article>
 
         {isDone && citedSources.length > 0 && (
-          <div className="synthesis-sources">
+          <section className="synthesis-sources" aria-label="Sources">
             <div className="synthesis-sources-label">
               Sources ({String(citedSources.length)})
             </div>
@@ -212,9 +230,9 @@ export function SynthesisCard({
                 );
               })}
             </div>
-          </div>
+          </section>
         )}
-      </article>
+      </div>
     </SynthesisCardActivateContext.Provider>
   );
 }

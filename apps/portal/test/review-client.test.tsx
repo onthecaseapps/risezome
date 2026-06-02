@@ -59,12 +59,15 @@ describe('ReviewClient (U8)', () => {
     expect(screen.getByText(/could not be generated/i)).toBeInTheDocument();
   });
 
-  it('only the anchored utterance is clickable; clicking opens its synthesis card', async () => {
+  it('defaults to showing the first surfaced answer; the anchored utterance is clickable + active', async () => {
     const user = userEvent.setup();
     const { container } = renderReview({ anchorMap: { q1: 's1' } });
     expect(container.querySelectorAll('.transcript-anchor')).toHaveLength(1);
-    // Before any click, the right pane shows the hint.
-    expect(screen.getByText(/click a highlighted moment/i)).toBeInTheDocument();
+    // Defaults to the first summary card (no click needed) and marks its
+    // anchored question active in the transcript.
+    expect(screen.getByText(/uses Claude/i)).toBeInTheDocument();
+    expect(container.querySelector('.transcript-anchor.is-active')).not.toBeNull();
+    // The anchored utterance is still clickable; its card stays open.
     await user.click(screen.getByText(/do we use AI/i));
     expect(screen.getByText(/uses Claude/i)).toBeInTheDocument();
   });

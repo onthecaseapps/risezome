@@ -1035,7 +1035,14 @@ async function runSynthesisAndBroadcast(args: {
           meetingId: args.meetingId,
           orgId: args.orgId,
           type: 'synthesisStart',
-          payload: { start: { synthesisId, sourceCardIds: args.surfacedCardIds, traceId: args.traceId } },
+          payload: {
+            start: {
+              synthesisId,
+              sourceCardIds: args.surfacedCardIds,
+              traceId: args.traceId,
+              triggerUtteranceId: args.utteranceId,
+            },
+          },
         });
         await persistAndBroadcast(args.db, {
           meetingId: args.meetingId,

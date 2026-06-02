@@ -55,6 +55,10 @@ export interface SynthesisRecord {
   /** ISO timestamp of the most recent pin action. Null when unpinned.
    *  Used by PinnedSynthesesSection for pin-time DESC ordering. */
   readonly pinnedAt: string | null;
+  /** The transcript utterance that triggered this synthesis (U6). Used to
+   *  show the question above the answer; resolved to text via the transcript
+   *  map. Absent on syntheses written before this field existed. */
+  readonly triggerUtteranceId?: string | null;
 }
 
 export type MeetingMode = 'idle' | 'live';
@@ -241,6 +245,9 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
         citations: [],
         pinned: false,
         pinnedAt: null,
+        ...(action.start.triggerUtteranceId != null
+          ? { triggerUtteranceId: action.start.triggerUtteranceId }
+          : {}),
       };
       syntheses.set(action.start.synthesisId, rec);
       return { ...state, syntheses };

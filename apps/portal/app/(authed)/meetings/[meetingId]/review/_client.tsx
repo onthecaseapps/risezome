@@ -58,6 +58,7 @@ function seedState(
       citations: s.citations,
       pinned: s.pinned,
       pinnedAt: s.pinnedAt,
+      ...(s.triggerUtteranceId != null ? { triggerUtteranceId: s.triggerUtteranceId } : {}),
       ...(s.stopReason !== undefined ? { stopReason: s.stopReason } : {}),
       ...(s.ttftMs !== undefined ? { ttftMs: s.ttftMs } : {}),
       ...(s.latencyMs !== undefined ? { latencyMs: s.latencyMs } : {}),
@@ -78,62 +79,137 @@ export function ReviewClient(props: ReviewClientProps): ReactElement {
   );
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8">
-      <header className="mb-6">
+    <div className="mx-auto flex min-h-dvh w-full flex-col lg:max-w-[80%]">
+      <header className="border-b border-border px-6 py-5 sm:px-8">
         <a href="/upcoming" className="text-xs text-muted hover:text-fg">
           ← Upcoming
         </a>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">{props.title}</h1>
-        <p className="mt-1.5 text-sm text-muted">
-          <StatusBadge status={props.status} /> · {formatRange(props.startedAtIso, props.endedAtIso)}
-        </p>
+        <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">{props.title}</h1>
+          <span className="text-sm text-muted">
+            <StatusBadge status={props.status} /> · {formatRange(props.startedAtIso, props.endedAtIso)}
+          </span>
+        </div>
       </header>
 
-      <RecapSection text={props.recapText} status={props.recapStatus} />
-
-      {props.initialTranscript.length === 0 ? (
-        <p className="text-sm text-muted">No transcript was captured for this meeting.</p>
-      ) : (
-        <AppStateProvider initial={seeded}>
-          <ReviewBody anchorMap={props.anchorMap} transcript={props.initialTranscript} />
-        </AppStateProvider>
-      )}
+      {/* Meeting recap on top (full width, divider below), then a split view:
+          transcript on the left, surfaced answers on the right, divided by a
+          rule. AppStateProvider is transparent (context only), so the recap
+          section and the split grid are direct flex children of the column. */}
+      <AppStateProvider initial={seeded}>
+        <section className="border-b border-border px-6 py-6 sm:px-8">
+          <h2 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted">
+            Meeting recap
+          </h2>
+          <RecapBody text={props.recapText} status={props.recapStatus} />
+        </section>
+        <ReviewSplit anchorMap={props.anchorMap} transcript={props.initialTranscript} />
+      </AppStateProvider>
     </div>
   );
 }
 
-function ReviewBody({
+function ReviewSplit({
   anchorMap,
   transcript,
 }: {
   anchorMap: Record<string, string>;
   transcript: TranscriptUtterance[];
 }): ReactElement {
-  const [activeSynthesisId, setActiveSynthesisId] = useState<string | null>(null);
   const anchored = useMemo(() => new Set(Object.keys(anchorMap)), [anchorMap]);
+  // Surfaced answers in transcript order — one entry per anchored question.
+  // Drives the SURFACED pagination and links it to the transcript highlight.
+  const ordered = useMemo(() => {
+    const sorted = [...transcript].sort((a, b) => a.startMs - b.startMs);
+    const list: { utteranceId: string; synthesisId: string }[] = [];
+    for (const u of sorted) {
+      const sid = anchorMap[u.utteranceId];
+      if (sid !== undefined) list.push({ utteranceId: u.utteranceId, synthesisId: sid });
+    }
+    return list;
+  }, [transcript, anchorMap]);
+
+  const count = ordered.length;
+  const [activeIndex, setActiveIndex] = useState(0);
+  const safeIndex = count === 0 ? -1 : Math.min(activeIndex, count - 1);
+  const active = safeIndex >= 0 ? ordered[safeIndex] : undefined;
+
+  const col = 'min-w-0 px-6 py-6 sm:px-8';
+  const label = 'text-xs font-medium uppercase tracking-wider text-muted';
 
   return (
-    <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
-      <section className="min-w-0">
-        <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">Transcript</h2>
-        <TranscriptPanel
-          utterances={transcript}
-          anchoredUtteranceIds={anchored}
-          onAnchorClick={(utteranceId) => setActiveSynthesisId(anchorMap[utteranceId] ?? null)}
-        />
-      </section>
-      <section className="min-w-0 md:sticky md:top-8 md:self-start">
-        <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">Summary</h2>
-        {activeSynthesisId !== null ? (
-          <ActiveSynthesis synthesisId={activeSynthesisId} />
+    <div className="grid flex-1 grid-cols-1 divide-y divide-border lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] lg:divide-x lg:divide-y-0">
+      <section className={col}>
+        <h2 className={`mb-3 ${label}`}>Transcript</h2>
+        {transcript.length === 0 ? (
+          <p className="text-sm text-muted">No transcript was captured for this meeting.</p>
         ) : (
-          <p className="rounded-xl border border-dashed border-border bg-card/40 px-4 py-6 text-sm text-muted">
-            {anchored.size > 0
-              ? 'Click a highlighted moment in the transcript to see the summary it generated.'
-              : 'No summaries were generated in this meeting.'}
-          </p>
+          <TranscriptPanel
+            utterances={transcript}
+            anchoredUtteranceIds={anchored}
+            onAnchorClick={(utteranceId) => {
+              const idx = ordered.findIndex((o) => o.utteranceId === utteranceId);
+              if (idx >= 0) setActiveIndex(idx);
+            }}
+            activeUtteranceId={active?.utteranceId ?? null}
+          />
         )}
       </section>
+
+      {/* Surfaced panel reads as a distinct surface via a subtle card tint. */}
+      <section className={`${col} bg-card/40`}>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className={label}>Surfaced</h2>
+          {count > 1 ? (
+            <Stepper
+              index={safeIndex}
+              count={count}
+              onPrev={() => setActiveIndex((i) => Math.max(0, Math.min(i, count - 1) - 1))}
+              onNext={() => setActiveIndex((i) => Math.min(count - 1, i + 1))}
+            />
+          ) : null}
+        </div>
+        {active !== undefined ? (
+          <ActiveSynthesis synthesisId={active.synthesisId} />
+        ) : (
+          <p className="text-sm text-muted">No summaries were generated in this meeting.</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+/** SURFACED 1 / N pager. Clamped (no wrap); arrows disable at the ends. */
+function Stepper({
+  index,
+  count,
+  onPrev,
+  onNext,
+}: {
+  index: number;
+  count: number;
+  onPrev: () => void;
+  onNext: () => void;
+}): ReactElement {
+  const btn =
+    'inline-flex h-6 w-6 items-center justify-center rounded-md border border-border bg-card text-muted transition-colors hover:text-fg hover:border-accent/40 disabled:opacity-40 disabled:hover:text-muted disabled:hover:border-border';
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted">
+      <button type="button" className={btn} onClick={onPrev} disabled={index <= 0} aria-label="Previous answer">
+        ‹
+      </button>
+      <span className="tabular-nums">
+        {index + 1} / {count}
+      </span>
+      <button
+        type="button"
+        className={btn}
+        onClick={onNext}
+        disabled={index >= count - 1}
+        aria-label="Next answer"
+      >
+        ›
+      </button>
     </div>
   );
 }
@@ -145,23 +221,13 @@ function ActiveSynthesis({ synthesisId }: { synthesisId: string }): ReactElement
   return <SynthesisStreamItem syn={record} />;
 }
 
-function RecapSection({ text, status }: { text: string | null; status: RecapStatus }): ReactElement {
-  let body: ReactNode;
-  if (status === 'done' && text !== null && text.length > 0) {
-    body = <RecapMarkdown text={text} />;
-  } else if (status === 'generating') {
-    body = <p className="text-sm text-muted">Generating the meeting recap…</p>;
-  } else if (status === 'failed') {
-    body = <p className="text-sm text-muted">The recap could not be generated for this meeting.</p>;
-  } else {
-    body = <p className="text-sm text-muted">No recap available for this meeting.</p>;
-  }
-  return (
-    <section className="mb-8 rounded-xl border border-accent/30 bg-accent-soft/30 p-5">
-      <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-accent">Meeting recap</div>
-      {body}
-    </section>
-  );
+function RecapBody({ text, status }: { text: string | null; status: RecapStatus }): ReactElement {
+  if (status === 'done' && text !== null && text.length > 0) return <RecapMarkdown text={text} />;
+  if (status === 'generating')
+    return <p className="text-sm text-muted">Generating the meeting recap…</p>;
+  if (status === 'failed')
+    return <p className="text-sm text-muted">The recap could not be generated for this meeting.</p>;
+  return <p className="text-sm text-muted">No recap available for this meeting.</p>;
 }
 
 /**
