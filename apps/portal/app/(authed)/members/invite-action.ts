@@ -21,6 +21,11 @@ export async function createInviteAction(
   const roleRaw = formData.get('role');
   const role = roleRaw === 'manager' ? 'manager' : 'member';
   const canInviteBot = formData.get('can_invite_bot') === 'true';
+  const nameRaw = formData.get('name');
+  // The recipient label so a manager can tell which pending link is whose.
+  // Optional, trimmed, capped; null when blank.
+  const name =
+    typeof nameRaw === 'string' && nameRaw.trim().length > 0 ? nameRaw.trim().slice(0, 80) : null;
 
   const token = randomBytes(32).toString('hex');
   const service = createServiceRoleClient();
@@ -30,6 +35,7 @@ export async function createInviteAction(
     role,
     can_invite_bot: canInviteBot,
     created_by: user.id,
+    name,
   });
   if (error !== null) {
     return { ok: false, error: error.message };
