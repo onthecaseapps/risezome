@@ -114,7 +114,7 @@ export function TranscriptPanel({
                       type="button"
                       className={`${cls} transcript-anchor`}
                       onClick={() => onAnchorClick(u.utteranceId)}
-                      title="Show the AI summary generated here"
+                      title="Show the summary generated here"
                     >
                       {body}
                     </button>{' '}

@@ -72,7 +72,7 @@ describe('ReviewClient (U8)', () => {
   it('with no syntheses, shows the no-summaries hint and no anchors', () => {
     const { container } = renderReview({ initialSyntheses: [], anchorMap: {} });
     expect(container.querySelectorAll('.transcript-anchor')).toHaveLength(0);
-    expect(screen.getByText(/no ai summaries were generated/i)).toBeInTheDocument();
+    expect(screen.getByText(/no summaries were generated/i)).toBeInTheDocument();
   });
 
   it('handles a meeting with no transcript', () => {

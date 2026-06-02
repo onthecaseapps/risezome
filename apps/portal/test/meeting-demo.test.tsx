@@ -79,7 +79,7 @@ describe('MeetingDemo playback', () => {
     // AI Summary, not as a standalone card during streaming.
     advance(2000);
     expect(live.getByText(/status of the auth migration PR/i)).toBeInTheDocument();
-    expect(live.getByText(/AI Summary/i)).toBeInTheDocument();
+    expect(live.getByText(/Summary/i)).toBeInTheDocument();
     expect(live.queryByText('Auth migration to OAuth2 (#482)')).not.toBeInTheDocument();
 
     // By ~6s the synthesis has finished: AI Summary + citations + Sources grid.
@@ -93,12 +93,12 @@ describe('MeetingDemo playback', () => {
     render(<MeetingDemo />);
     const live = within(screen.getByTestId('demo-live'));
     advance(11000);
-    expect(live.getByText(/AI Summary/i)).toBeInTheDocument();
+    expect(live.getByText(/Summary/i)).toBeInTheDocument();
 
     // Land just past the loop boundary but before the first event (300ms) of
     // the new cycle: the scene is reset and empty again.
     advance(TIMELINE_DURATION_MS - 11000 + 150);
-    expect(live.queryByText(/AI Summary/i)).not.toBeInTheDocument();
+    expect(live.queryByText(/Summary/i)).not.toBeInTheDocument();
     expect(live.queryByText(/where are we on the auth migration/i)).not.toBeInTheDocument();
   });
 });

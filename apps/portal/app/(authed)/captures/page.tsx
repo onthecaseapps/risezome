@@ -174,7 +174,7 @@ function CaptureRowCard({ capture }: { capture: CaptureRow }): ReactElement {
           {capture.status === 'completed' ? (
             <span>
               {duration.length > 0 ? `${duration} · ` : ''}
-              {capture.synthesis_count} {capture.synthesis_count === 1 ? 'AI summary' : 'AI summaries'}
+              {capture.synthesis_count} {capture.synthesis_count === 1 ? 'summary' : 'summaries'}
             </span>
           ) : capture.error_message !== null ? (
             <span className="truncate text-rose-400">{capture.error_message}</span>

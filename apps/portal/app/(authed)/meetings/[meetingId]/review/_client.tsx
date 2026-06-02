@@ -123,14 +123,14 @@ function ReviewBody({
         />
       </section>
       <section className="min-w-0 md:sticky md:top-8 md:self-start">
-        <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">AI Summary</h2>
+        <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">Summary</h2>
         {activeSynthesisId !== null ? (
           <ActiveSynthesis synthesisId={activeSynthesisId} />
         ) : (
           <p className="rounded-xl border border-dashed border-border bg-card/40 px-4 py-6 text-sm text-muted">
             {anchored.size > 0
-              ? 'Click a highlighted moment in the transcript to see the AI summary it generated.'
-              : 'No AI summaries were generated in this meeting.'}
+              ? 'Click a highlighted moment in the transcript to see the summary it generated.'
+              : 'No summaries were generated in this meeting.'}
           </p>
         )}
       </section>

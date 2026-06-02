@@ -286,7 +286,7 @@ function RecordingShell({
                 aria-live="polite"
                 title="No successful synthesis in the last few retrievals — check the bot worker / Anthropic key."
               >
-                AI summaries paused
+                Summaries paused
               </span>
             )}
           </div>

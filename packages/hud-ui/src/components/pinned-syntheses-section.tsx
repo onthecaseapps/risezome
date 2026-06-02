@@ -43,7 +43,7 @@ export function PinnedSynthesesSection(): ReactElement {
   });
 
   return (
-    <section className="pinned-syntheses" aria-label="Pinned AI summaries">
+    <section className="pinned-syntheses" aria-label="Pinned summaries">
       <header className="pinned-syntheses-header">
         <span className="pinned-syntheses-label">
           Pinned ({String(pinned.length)})

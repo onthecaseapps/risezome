@@ -156,7 +156,7 @@ export function SynthesisCard({
         <div className="synthesis-header">
           <span className="ai-label">
             <SparkleGlyph />
-            AI Summary
+            Summary
           </span>
           <span className="synthesis-grounded">
             grounded in {groundedCount} {groundedCount === 1 ? 'source' : 'sources'}

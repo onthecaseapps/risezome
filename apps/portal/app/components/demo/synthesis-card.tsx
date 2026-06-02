@@ -22,7 +22,7 @@ export function SynthesisCard({
 
   return (
     <article className={className}>
-      <span className="ai-label">AI Summary</span>
+      <span className="ai-label">Summary</span>
       <div className="synthesis-body" aria-live="off">
         {synthesis.text}
         {streaming && (

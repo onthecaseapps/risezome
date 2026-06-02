@@ -77,7 +77,7 @@ const synthesis: DemoSynthesis = {
 describe('SynthesisCard', () => {
   it('renders the AI Summary label, citation chips, and a Sources(n) grid when done', () => {
     render(<SynthesisCard synthesis={synthesis} />);
-    expect(screen.getByText(/AI Summary/i)).toBeInTheDocument();
+    expect(screen.getByText(/Summary/i)).toBeInTheDocument();
     expect(screen.getByText('[1]')).toBeInTheDocument();
     expect(screen.getByText('[2]')).toBeInTheDocument();
     expect(screen.getByText('Sources (3)')).toBeInTheDocument();
