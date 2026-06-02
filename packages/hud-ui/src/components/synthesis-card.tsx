@@ -269,20 +269,14 @@ function SparkleGlyph(): ReactElement {
 }
 
 function PinOutlineGlyph(): ReactElement {
+  // Fill-based (not stroke) so it renders reliably — stroke-only glyphs show
+  // invisibly faint in the portal, while fill glyphs (e.g. the sparkle) render.
+  // Unpinned reads as "inactive" via reduced opacity + the button's muted
+  // color; the pinned glyph is solid + accent-colored.
   return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M12 17v5" />
-      <path d="M9 10.5V4h6v6.5l3 3.5H6l3-3.5z" />
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" opacity="0.65">
+      <path d="M9 10.5V4h6v6.5l3 3.5v1H6v-1l3-3.5z" />
+      <path d="M11.4 16h1.2v6h-1.2z" />
     </svg>
   );
 }

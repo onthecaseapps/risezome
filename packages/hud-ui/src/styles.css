@@ -38,6 +38,13 @@
   /* U4: subtle wash so the synthesis card reads as "the answer layer"
      without being garish. Light: 4% of the accent color. */
   --synthesis-tint: rgba(51, 97, 255, 0.04);
+  /* Synthesis "answer layer" shadow: accent halo ring + a soft floating drop.
+     Light mode uses a periwinkle-tinted drop (not near-black) so the card
+     lifts gently instead of casting the heavy muddy halo a dark-tuned shadow
+     produces on a light surface. */
+  --synthesis-shadow:
+    0 0 0 4px color-mix(in srgb, var(--accent) 8%, transparent),
+    0 10px 30px rgba(51, 97, 255, 0.1);
   --gap-fg: #b35200;
   --error: #b30000;
   --code-bg: #f4f5f8;
@@ -101,6 +108,10 @@
   /* U4 dark: brighter wash because dark backgrounds need more lift to
      read as a distinct layer. 6% of the dark accent. */
   --synthesis-tint: rgba(107, 138, 255, 0.06);
+  /* Dark: the original floating drop reads correctly against a dark surface. */
+  --synthesis-shadow:
+    0 0 0 4px color-mix(in srgb, var(--accent) 8%, transparent),
+    0 18px 50px rgba(10, 11, 20, 0.18);
   --gap-fg: #ffb070;
   --error: #ff6b6b;
   --code-bg: #0c0e12;
@@ -503,10 +514,9 @@ body {
 .card.synthesis {
   border-color: var(--accent);
   /* Soft periwinkle halo + floating drop so the synthesis card reads as
-     "the answer layer" (matches the AI Summary Card design). */
-  box-shadow:
-    0 0 0 4px color-mix(in srgb, var(--accent) 8%, transparent),
-    0 18px 50px rgba(10, 11, 20, 0.18);
+     "the answer layer" (matches the AI Summary Card design). Theme-aware:
+     light mode uses a tinted drop, dark mode the deeper near-black float. */
+  box-shadow: var(--synthesis-shadow);
   /* U4: subtle accent wash on top of the card surface. */
   background-color: var(--card-bg);
   background-image: linear-gradient(var(--synthesis-tint), var(--synthesis-tint));
