@@ -102,3 +102,53 @@ export function mapSynthesisRow(s: Record<string, unknown>): InitialSynthesis {
   }
   return out;
 }
+
+export interface AnchorSynthesis {
+  synthesisId: string;
+  /** The stored triggering utterance (U6). Null for rows written before U6. */
+  triggerUtteranceId: string | null;
+  /** Synthesis row created_at, in epoch ms — the basis for the time fallback. */
+  createdAtMs: number;
+}
+
+export interface UtteranceTime {
+  utteranceId: string;
+  /** The transcript.data event created_at, in epoch ms. */
+  tMs: number;
+}
+
+/**
+ * Build the review page's `utteranceId → synthesisId` anchor map.
+ *
+ * Prefer the stored trigger utterance (U6, exact). For rows written before U6
+ * (trigger null), fall back to the transcript utterance whose timestamp is the
+ * latest at-or-before the synthesis was created — i.e. the question that was
+ * just spoken when retrieval fired. This is far more accurate than anchoring to
+ * a cited card's surfacing utterance: a card may have been surfaced by an
+ * earlier window, and many syntheses cite the same card, which collapsed
+ * distinct answers onto one anchor.
+ *
+ * Syntheses are processed in `createdAtMs` order; the first to claim an
+ * utterance wins (collisions are rare once the anchor is time-based).
+ */
+export function resolveSynthesisAnchors(
+  syntheses: readonly AnchorSynthesis[],
+  utterances: readonly UtteranceTime[],
+): Record<string, string> {
+  const sorted = [...utterances].sort((a, b) => a.tMs - b.tMs);
+  const ordered = [...syntheses].sort((a, b) => a.createdAtMs - b.createdAtMs);
+  const map: Record<string, string> = {};
+  for (const s of ordered) {
+    let utteranceId = s.triggerUtteranceId;
+    if (utteranceId === null) {
+      let best: string | null = null;
+      for (const u of sorted) {
+        if (u.tMs <= s.createdAtMs) best = u.utteranceId;
+        else break;
+      }
+      utteranceId = best;
+    }
+    if (utteranceId !== null && !(utteranceId in map)) map[utteranceId] = s.synthesisId;
+  }
+  return map;
+}

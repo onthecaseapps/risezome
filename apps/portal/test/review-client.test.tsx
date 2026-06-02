@@ -5,7 +5,10 @@ import type { TranscriptUtterance } from '@risezome/hud-ui';
 import { ReviewClient, type ReviewClientProps } from '../app/(authed)/meetings/[meetingId]/review/_client';
 import {
   normalizeCitations,
+  resolveSynthesisAnchors,
+  type AnchorSynthesis,
   type InitialSynthesis,
+  type UtteranceTime,
 } from '../app/(authed)/meetings/[meetingId]/_synthesis-seed';
 
 const TRANSCRIPT: TranscriptUtterance[] = [
@@ -109,5 +112,45 @@ describe('normalizeCitations (R8 — old rows render correctly)', () => {
 
   it('drops out-of-range legacy ranks', () => {
     expect(normalizeCitations([3], ['only-one'], 'x')).toEqual([]);
+  });
+});
+
+describe('resolveSynthesisAnchors', () => {
+  const utterances: UtteranceTime[] = [
+    { utteranceId: 'u-ai', tMs: 1000 },
+    { utteranceId: 'u-github', tMs: 2000 },
+    { utteranceId: 'u-plans', tMs: 3000 },
+  ];
+
+  it('uses the stored trigger utterance when present (U6)', () => {
+    const syn: AnchorSynthesis[] = [{ synthesisId: 's1', triggerUtteranceId: 'u-plans', createdAtMs: 1500 }];
+    expect(resolveSynthesisAnchors(syn, utterances)).toEqual({ 'u-plans': 's1' });
+  });
+
+  it('anchors a null-trigger synthesis to the utterance spoken just before it', () => {
+    // Two syntheses fired right after two different questions → two distinct,
+    // correct anchors (no collision onto a shared cited card).
+    const syn: AnchorSynthesis[] = [
+      { synthesisId: 's-ai', triggerUtteranceId: null, createdAtMs: 1100 },
+      { synthesisId: 's-plans', triggerUtteranceId: null, createdAtMs: 3100 },
+    ];
+    expect(resolveSynthesisAnchors(syn, utterances)).toEqual({
+      'u-ai': 's-ai',
+      'u-plans': 's-plans',
+    });
+  });
+
+  it('first synthesis (by created time) claims a shared utterance', () => {
+    const syn: AnchorSynthesis[] = [
+      { synthesisId: 'first', triggerUtteranceId: null, createdAtMs: 2200 },
+      { synthesisId: 'second', triggerUtteranceId: null, createdAtMs: 2300 },
+    ];
+    // Both resolve to u-github (latest <= createdAt); earliest wins.
+    expect(resolveSynthesisAnchors(syn, utterances)).toEqual({ 'u-github': 'first' });
+  });
+
+  it('drops a synthesis with no utterance before it and no trigger', () => {
+    const syn: AnchorSynthesis[] = [{ synthesisId: 's', triggerUtteranceId: null, createdAtMs: 500 }];
+    expect(resolveSynthesisAnchors(syn, utterances)).toEqual({});
   });
 });

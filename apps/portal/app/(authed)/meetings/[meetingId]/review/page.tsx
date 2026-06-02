@@ -3,7 +3,12 @@ import { notFound } from 'next/navigation';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServerClient } from '../../../../_lib/supabase-server';
 import type { CardEvent, CardTrigger, TranscriptUtterance } from '@risezome/hud-ui';
-import { mapSynthesisRow, type InitialSynthesis } from '../_synthesis-seed';
+import {
+  mapSynthesisRow,
+  resolveSynthesisAnchors,
+  type InitialSynthesis,
+  type UtteranceTime,
+} from '../_synthesis-seed';
 import { ReviewClient, type RecapStatus } from './_client';
 
 /**
@@ -46,30 +51,33 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
     }
   }
 
-  // Full transcript (finals), ordered.
+  // Full transcript (finals), ordered. Capture each utterance's event time so a
+  // pre-U6 synthesis (no stored trigger) can be anchored to the question spoken
+  // just before it fired.
   const { data: transcriptRows } = await supabase
     .from('meeting_events')
-    .select('payload')
+    .select('payload, created_at')
     .eq('meeting_id', meetingId)
     .eq('org_id', orgId)
     .eq('type', 'transcript.data')
     .order('event_id', { ascending: true });
-  const initialTranscript: TranscriptUtterance[] = (transcriptRows ?? []).flatMap((row) => {
+  const initialTranscript: TranscriptUtterance[] = [];
+  const utteranceTimes: UtteranceTime[] = [];
+  for (const row of transcriptRows ?? []) {
     const p = (row.payload as Record<string, unknown> | null) ?? {};
     const utteranceId = p['utteranceId'];
     const text = p['text'];
-    if (typeof utteranceId !== 'string' || typeof text !== 'string') return [];
-    return [
-      {
-        utteranceId,
-        text,
-        speaker: typeof p['speaker'] === 'string' ? (p['speaker'] as string) : null,
-        isFinal: true,
-        startMs: typeof p['startMs'] === 'number' ? (p['startMs'] as number) : 0,
-        revision: typeof p['revision'] === 'number' ? (p['revision'] as number) : 0,
-      },
-    ];
-  });
+    if (typeof utteranceId !== 'string' || typeof text !== 'string') continue;
+    initialTranscript.push({
+      utteranceId,
+      text,
+      speaker: typeof p['speaker'] === 'string' ? (p['speaker'] as string) : null,
+      isFinal: true,
+      startMs: typeof p['startMs'] === 'number' ? (p['startMs'] as number) : 0,
+      revision: typeof p['revision'] === 'number' ? (p['revision'] as number) : 0,
+    });
+    utteranceTimes.push({ utteranceId, tMs: new Date(row.created_at as string).getTime() });
+  }
 
   // Cards (non-retracted) → CardEvent for the synthesis cards' SOURCES, plus a
   // card_id → utterance_id index for the synthesis-anchor fallback.
@@ -81,9 +89,7 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
     .eq('meeting_id', meetingId)
     .is('retracted_at', null)
     .order('surfaced_at', { ascending: false });
-  const cardUtteranceById = new Map<string, string>();
   const initialCards: CardEvent[] = (cardRows ?? []).map((c) => {
-    if (typeof c.utterance_id === 'string') cardUtteranceById.set(c.card_id as string, c.utterance_id);
     return {
       cardId: c.card_id as string,
       docId: (c.doc_id as string | null) ?? '',
@@ -116,25 +122,18 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   const rows = (synthRows ?? []) as Record<string, unknown>[];
   const initialSyntheses: InitialSynthesis[] = rows.map((s) => mapSynthesisRow(s));
 
-  // Anchor map: utteranceId → synthesisId. Prefer the stored trigger; fall back
-  // to the first cited card's utterance for rows written before U6. First
-  // synthesis to claim an utterance wins.
-  const anchorMap: Record<string, string> = {};
-  for (const s of rows) {
-    const synthesisId = s['synthesis_id'] as string;
-    let utteranceId = typeof s['trigger_utterance_id'] === 'string' ? (s['trigger_utterance_id'] as string) : null;
-    if (utteranceId === null) {
-      const sourceCardIds = (s['source_card_ids'] as string[]) ?? [];
-      for (const cardId of sourceCardIds) {
-        const uid = cardUtteranceById.get(cardId);
-        if (uid !== undefined) {
-          utteranceId = uid;
-          break;
-        }
-      }
-    }
-    if (utteranceId !== null && !(utteranceId in anchorMap)) anchorMap[utteranceId] = synthesisId;
-  }
+  // Anchor map: utteranceId → synthesisId. Prefer the stored trigger (U6);
+  // fall back to the utterance spoken just before the synthesis fired (by time)
+  // for pre-U6 rows.
+  const anchorMap = resolveSynthesisAnchors(
+    rows.map((s) => ({
+      synthesisId: s['synthesis_id'] as string,
+      triggerUtteranceId:
+        typeof s['trigger_utterance_id'] === 'string' ? (s['trigger_utterance_id'] as string) : null,
+      createdAtMs: new Date(s['created_at'] as string).getTime(),
+    })),
+    utteranceTimes,
+  );
 
   return (
     <ReviewClient
