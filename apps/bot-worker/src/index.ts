@@ -375,25 +375,31 @@ async function handleMessage(
     }
   }
 
-  const eventType = adapted.utterance.isFinal ? 'transcript.data' : 'transcript.partial_data';
-  const result = await persistAndBroadcast(db, {
-    meetingId,
-    orgId,
-    type: eventType,
-    payload: utteranceToEventPayload(adapted.utterance),
-  });
-
-  logger.info(
-    {
+  // Only FINAL utterances are persisted + broadcast for the transcript.
+  // Recall's partial transcripts drift their start timestamps, so a partial and
+  // its final get different utteranceIds (participantId::startMs) and can't be
+  // merged — every partial would otherwise become permanent "still typing"
+  // clutter. Broadcasting + persisting every partial also floods Realtime (the
+  // live page stalled). Finals are the clean, durable running transcript; the
+  // live page updates as each utterance settles.
+  if (adapted.utterance.isFinal) {
+    const result = await persistAndBroadcast(db, {
       meetingId,
-      type: eventType,
-      eventId: result.eventId,
-      broadcasted: result.broadcasted,
-      speaker: adapted.utterance.speaker,
-      text: adapted.utterance.text.slice(0, 60),
-    },
-    'utterance',
-  );
+      orgId,
+      type: 'transcript.data',
+      payload: utteranceToEventPayload(adapted.utterance),
+    });
+    logger.info(
+      {
+        meetingId,
+        eventId: result.eventId,
+        broadcasted: result.broadcasted,
+        speaker: adapted.utterance.speaker,
+        text: adapted.utterance.text.slice(0, 60),
+      },
+      'utterance',
+    );
+  }
 
   // Retrieval only fires on FINAL utterances (we don't want partials
   // moving the rolling window each time a word changes). Also
