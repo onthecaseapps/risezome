@@ -248,34 +248,36 @@ export function dispatchBroadcast(
         dispatch({ type: 'gap', gap: payload['gap'] as never });
       }
       return;
-    case 'transcript.data':
-    case 'transcript.partial_data': {
-      const utterance = toTranscriptUtterance(payload, eventType === 'transcript.data');
+    case 'transcript.data': {
+      const utterance = toTranscriptUtterance(payload);
       if (utterance !== null) dispatch({ type: 'transcriptUtterance', utterance });
       return;
     }
+    // transcript.partial_data: intentionally ignored. The transcript renders
+    // only settled finals — Recall's partials drift their start timestamps, so
+    // they have no stable id to merge into their final and pile up as stuck
+    // "still typing" lines. The bot-worker no longer broadcasts partials, but
+    // meetings recorded before that change still have persisted partials that
+    // the reconnect-fetch replays; dropping them here keeps the transcript
+    // clean on those too.
     default:
       return;
   }
 }
 
 /**
- * Map a transcript.* broadcast payload (utteranceToEventPayload from the
- * bot-worker) into the reducer's TranscriptUtterance. `isFinalFromType`
- * is the authority for finality (transcript.data = final), falling back to
- * the payload flag. Returns null when the payload is missing required fields.
+ * Map a transcript.data broadcast payload (utteranceToEventPayload from the
+ * bot-worker) into the reducer's TranscriptUtterance. Only finals reach here.
+ * Returns null when the payload is missing required fields.
  */
-function toTranscriptUtterance(
-  payload: Record<string, unknown>,
-  isFinalFromType: boolean,
-): TranscriptUtterance | null {
+function toTranscriptUtterance(payload: Record<string, unknown>): TranscriptUtterance | null {
   const utteranceId = payload['utteranceId'];
   const text = payload['text'];
   if (typeof utteranceId !== 'string' || typeof text !== 'string') return null;
   const speaker = typeof payload['speaker'] === 'string' ? payload['speaker'] : null;
   const startMs = typeof payload['startMs'] === 'number' ? payload['startMs'] : 0;
   const revision = typeof payload['revision'] === 'number' ? payload['revision'] : 0;
-  return { utteranceId, text, speaker, isFinal: isFinalFromType, startMs, revision };
+  return { utteranceId, text, speaker, isFinal: true, startMs, revision };
 }
 
 async function reconnectFetch(args: {
