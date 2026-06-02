@@ -175,7 +175,7 @@ export function useRealtimeMeetingChannel(opts: UseRealtimeMeetingChannelOpts): 
  * Unknown event types are dropped silently — the bot-worker may emit
  * transcript.* messages we don't reduce yet.
  */
-function dispatchBroadcast(
+export function dispatchBroadcast(
   eventType: string,
   payload: Record<string, unknown>,
   dispatch: (action: AppAction) => void,
