@@ -543,6 +543,12 @@ export async function maybeRetrieveAndEmit(args: {
             // RAG. This decision is made HERE, before synthesis is invoked, so
             // a dropped result never emits a premature synthesisStart (KTD7).
             const decision = decideToolSource(skillResult);
+            // Build the tool source (the answer-affecting step) BEFORE the
+            // telemetry log, so a logger throw can't drop a valid result into
+            // the catch and misreport it as skill.failed.
+            if (decision.keep) {
+              toolSource = formatAsSource(skillResult, result.skillName, result.args);
+            }
             if (decision.status !== 'clean') {
               args.logger.warn(
                 {
@@ -556,9 +562,6 @@ export async function maybeRetrieveAndEmit(args: {
                 },
                 'skill.suspect',
               );
-            }
-            if (decision.keep) {
-              toolSource = formatAsSource(skillResult, result.skillName, result.args);
             }
           } catch (err) {
             const code =

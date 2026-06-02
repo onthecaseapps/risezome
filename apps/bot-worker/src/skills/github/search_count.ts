@@ -5,7 +5,7 @@ import { summarizeCount } from './count-summary.js';
 import { mapGithubError } from './error.js';
 import { searchIssuesCount, NO_GITHUB_SOURCE_SUMMARY, anyToken } from './live-helpers.js';
 import { ConnectorAuthError, RateLimitedError } from './connector-errors.js';
-import { resolvePerson } from './person.js';
+import { resolvePerson, type ResolvedPerson } from './person.js';
 import {
   collectRepoLabelUnion,
   partitionLabels,
@@ -111,8 +111,18 @@ export function buildSearchCountSkill(ctx: LiveSkillContext): Skill {
 
         if (typeof filter.author === 'string' && filter.author.length > 0) {
           const token = anyToken(access);
-          const resolved =
-            token !== null ? await resolvePerson(ctx.client, token, filter.author) : null;
+          let resolved: ResolvedPerson | null = null;
+          try {
+            resolved = token !== null ? await resolvePerson(ctx.client, token, filter.author) : null;
+          } catch (err) {
+            // Genuine auth/rate-limit propagate; a transient resolve failure
+            // just neutralizes the author (drop it, keep any label heals)
+            // instead of failing the whole skill.
+            const isAuth =
+              err instanceof ConnectorAuthError && (err.status === 401 || err.status === 403);
+            if (isAuth || err instanceof RateLimitedError) throw err;
+            resolved = null;
+          }
           if (resolved === null) {
             neutralized.push({ arg: 'author', value: filter.author });
             const { author: _dropped, ...rest } = cleaned;

@@ -76,7 +76,7 @@ function matchesDue(card: EnrichedCard, due: DueStatus | undefined, now: number)
  * applied by `filterCards` so callers that only need the board scope (e.g. the
  * board breakdown) can skip it.
  */
-export async function collectCards(
+async function collectCards(
   client: TrelloClient,
   access: TrelloAccess,
   filter: Pick<TrelloFilter, 'board'>,
@@ -91,7 +91,7 @@ export async function collectCards(
 }
 
 /** Apply the list/label/member/due predicates (board scope already applied). */
-export function filterCards(cards: readonly CollectedCard[], filter: TrelloFilter, now: number): CollectedCard[] {
+function filterCards(cards: readonly CollectedCard[], filter: TrelloFilter, now: number): CollectedCard[] {
   return cards.filter(
     ({ card }) =>
       matchesText(card.listName, filter.list) &&

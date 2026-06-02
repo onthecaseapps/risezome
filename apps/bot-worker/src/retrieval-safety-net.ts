@@ -1,8 +1,10 @@
-import type { SkillResult } from '@risezome/engine/skills';
+import type { SkillResult, SkillRecovery } from '@risezome/engine/skills';
 import { formatAsSource } from '@risezome/engine/skills';
 import type { SynthesisSource } from '@risezome/engine/synthesize';
 
-export type ToolRecoveryStatus = 'clean' | 'repaired' | 'unresolved';
+/** 'clean' = no recovery signal; otherwise the engine contract's status.
+ *  Tied to SkillRecovery['status'] so a new contract status surfaces here. */
+export type ToolRecoveryStatus = SkillRecovery['status'] | 'clean';
 
 export interface ToolSourceDecision {
   /** Whether the skill result should reach synthesis as the tool source. */
