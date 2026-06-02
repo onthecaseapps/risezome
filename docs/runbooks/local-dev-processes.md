@@ -1,6 +1,6 @@
 # Local dev processes
 
-Last updated: 2026-05-31
+Last updated: 2026-06-02
 
 The cloud app needs three long-running processes to function locally.
 Each in its own terminal; cleanup is `Ctrl-C` per terminal. Run from
@@ -39,18 +39,82 @@ curl -s http://localhost:8288/health
 curl -s http://localhost:8787/health    # → {"ok":true,"runtimes":N}
 ```
 
-## Optional: real Recall.ai bot
+## Optional: public access via the named Cloudflare tunnel
 
-The three processes above are enough for portal browsing, Inngest
+The three processes above are enough for local browsing, Inngest
 function dev (calendar sync, repo + issues indexers), and the
-bot-worker's `/local-debug` mic surface. A **real Recall.ai bot**
-connecting back to your laptop additionally needs a public hostname
-pointing at `:8787`:
+bot-worker's `/local-debug` mic surface. You need a **public hostname**
+for two things:
 
-- One-off: `cloudflared tunnel --url http://localhost:8787` and paste
-  the generated hostname into `apps/portal/.env.local` as
-  `BOT_WORKER_BASE_URL`, then restart the portal.
-- Named/stable: see [`persistent-bot-worker-tunnel.md`](persistent-bot-worker-tunnel.md).
+- **Sharing the marketing site / portal** with someone off your LAN
+  (e.g. a partner reviewing the landing page) → public hostname for `:3000`.
+- A **real Recall.ai bot** dialing back into your laptop → public
+  hostname for `:8787`.
+
+We run a single **named** Cloudflare tunnel (`risezome-dev`) that serves
+both, with **stable** hostnames that survive restarts/crashes (no more
+re-pasting random `*.trycloudflare.com` names):
+
+| Hostname | → local | Use |
+|----------|---------|-----|
+| `https://dev.risezome.app` | `:3000` | Portal + marketing site + blog (share this) |
+| `https://bot-worker-dev.risezome.app` | `:8787` | Bot-worker WS for real Recall bots |
+
+### Start it (not auto-started; run after a reboot)
+
+```bash
+cloudflared tunnel --config ~/.cloudflared/risezome-dev.yml run
+```
+
+Verify:
+
+```bash
+curl -s https://dev.risezome.app/            # marketing page HTML
+curl -s https://bot-worker-dev.risezome.app/health   # → {"ok":true,"runtimes":N}
+```
+
+### What it depends on (one-time setup, already done)
+
+- `cloudflared tunnel login` wrote `~/.cloudflared/cert.pem` (auth to the
+  `risezome.app` Cloudflare zone).
+- Tunnel `risezome-dev` (id `533ea0fe-…`); credentials at
+  `~/.cloudflared/533ea0fe-….json`. Recreate with
+  `cloudflared tunnel create risezome-dev` if lost.
+- DNS CNAMEs `dev` + `bot-worker-dev` → the tunnel, created with
+  `cloudflared tunnel route dns risezome-dev <hostname>`.
+- Ingress config at `~/.cloudflared/risezome-dev.yml` (maps the two
+  hostnames to `:3000` / `:8787`).
+
+### Gotchas
+
+- **Single-level subdomains only.** Cloudflare free Universal SSL covers
+  `risezome.app` and `*.risezome.app` (one level) but **not** a two-level
+  name like `app.dev.risezome.app` — that fails the TLS handshake
+  (`sslv3 alert handshake failure`). That's why the host is
+  `dev.risezome.app`, not `app.dev.risezome.app`.
+- **`allowedDevOrigins`.** Next dev blocks cross-origin `/_next` dev
+  assets, so the tunnel host must be listed in
+  `apps/portal/next.config.mjs` → `allowedDevOrigins` (currently
+  `['192.168.68.93', 'dev.risezome.app']`) or the page renders but never
+  hydrates (live demo + waitlist form dead). Editing this needs a portal
+  restart.
+- **`BOT_WORKER_BASE_URL`.** `apps/portal/.env.local` points at
+  `wss://bot-worker-dev.risezome.app` so Recall dials the stable host.
+  Restart the portal after changing it. (`BOT_WORKER_HTTP_URL` stays
+  `http://localhost:8787` — that's a same-machine call.)
+
+### One-off quick tunnel (fallback)
+
+If the named tunnel is unavailable, a disposable tunnel still works but
+gives a fresh random hostname each run (and you must re-paste it +
+restart the portal):
+
+```bash
+cloudflared tunnel --url http://localhost:8787   # or :3000
+```
+
+See [`persistent-bot-worker-tunnel.md`](persistent-bot-worker-tunnel.md)
+for the original named-tunnel background.
 
 ## Env-var checklist
 
