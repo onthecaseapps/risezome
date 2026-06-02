@@ -1,6 +1,6 @@
 ---
 title: "feat: Live meeting surfaces — upcoming liveness, live transcript, review rework"
-status: active
+status: completed
 date: 2026-06-01
 type: feat
 ---
