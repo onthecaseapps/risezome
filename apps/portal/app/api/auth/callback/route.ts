@@ -125,11 +125,21 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           .limit(1)
           .maybeSingle();
         if (membership !== null) {
-          const { inngest } = await import('../../../../src/inngest/client');
-          await inngest.send({
-            name: 'risezome/calendar.sync-requested',
-            data: { userId: user.id, orgId: membership.org_id as string, reason: 'sign-in' },
-          });
+          // Best-effort: a failed sync kickoff must NOT 500 the sign-in. If
+          // the Inngest endpoint is unreachable (e.g. the dev CLI isn't
+          // running locally, or a transient outage), the user still lands
+          // signed in — the 5-min calendar cron picks them up. Mirrors the
+          // soft-fail pattern used for the token encrypt/upsert above.
+          try {
+            const { inngest } = await import('../../../../src/inngest/client');
+            await inngest.send({
+              name: 'risezome/calendar.sync-requested',
+              data: { userId: user.id, orgId: membership.org_id as string, reason: 'sign-in' },
+            });
+          } catch (err) {
+
+            console.error('[auth.callback] calendar sync kickoff failed (sign-in still ok):', err);
+          }
         }
       }
     }
