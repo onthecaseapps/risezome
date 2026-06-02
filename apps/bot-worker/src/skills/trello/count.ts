@@ -2,8 +2,7 @@ import type { Skill, SkillContext, SkillResult } from '@risezome/engine/skills';
 import type { TrelloLiveContext } from './live-context.js';
 import { mapTrelloError } from './error.js';
 import {
-  collectCards,
-  filterCards,
+  collectFilterHealed,
   describeFilter,
   NO_TRELLO_SOURCE_SUMMARY,
   DUE_STATUSES,
@@ -40,12 +39,21 @@ export function buildTrelloCountSkill(ctx: TrelloLiveContext): Skill {
       try {
         const access = await ctx.resolve(skillCtx.orgId);
         if (access === null) return { kind: 'detail', summary: NO_TRELLO_SOURCE_SUMMARY };
-        const matched = filterCards(await collectCards(ctx.client, access, filter), filter, now);
+        const { matched, cleaned, recovery } = await collectFilterHealed(
+          ctx.client,
+          access,
+          filter,
+          now,
+        );
         const n = matched.length;
         return {
           kind: 'count',
-          summary: `${String(n)} card${n === 1 ? '' : 's'}${describeFilter(filter)}.`,
-          raw: { count: n, filter },
+          // Describe the CLEANED filter so the summary doesn't claim a scope
+          // ("assigned to Jraffe") that was neutralized; the caveat rides in
+          // `recovery.note`.
+          summary: `${String(n)} card${n === 1 ? '' : 's'}${describeFilter(cleaned)}.`,
+          raw: { count: n, filter: cleaned },
+          ...(recovery !== undefined && { recovery }),
         };
       } catch (err) {
         throw mapTrelloError(err, NAME);

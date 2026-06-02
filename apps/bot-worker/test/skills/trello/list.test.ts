@@ -13,10 +13,16 @@ describe('trello_list (live API)', () => {
     expect(addExport?.url).toBe('https://trello.com/c/c2');
   });
 
-  it('empty match → "No matching Trello cards" with the filter described, no items', async () => {
-    const result = await buildTrelloListSkill(trelloCtx([ROADMAP])).handler({ label: 'nonexistent' }, SKILL_CTX);
-    expect(result.summary).toBe('No matching Trello cards labeled nonexistent.');
+  it('empty match (valid filters, no card) → "No matching Trello cards" with the filter described, no items', async () => {
+    // Both 'Doing' and 'feature' are real, but no card in Doing carries the
+    // feature label — a genuine empty (not a misparse), so no recovery.
+    const result = await buildTrelloListSkill(trelloCtx([ROADMAP])).handler(
+      { list: 'Doing', label: 'feature' },
+      SKILL_CTX,
+    );
+    expect(result.summary).toBe('No matching Trello cards in Doing labeled feature.');
     expect(result.items).toBeUndefined();
+    expect(result.recovery).toBeUndefined();
   });
 
   it('caps the item list at the limit but reports the true total', async () => {

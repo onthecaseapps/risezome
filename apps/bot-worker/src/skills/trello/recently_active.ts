@@ -4,8 +4,7 @@ import { mapTrelloError } from './error.js';
 import { cardSubtitle } from './format.js';
 import { clampLimit } from './list.js';
 import {
-  collectCards,
-  filterCards,
+  collectFilterHealed,
   NO_TRELLO_SOURCE_SUMMARY,
   type TrelloFilter,
   type CollectedCard,
@@ -40,9 +39,14 @@ export function buildTrelloRecentlyActiveSkill(ctx: TrelloLiveContext): Skill {
       try {
         const access = await ctx.resolve(skillCtx.orgId);
         if (access === null) return { kind: 'detail', summary: NO_TRELLO_SOURCE_SUMMARY };
-        const matched = filterCards(await collectCards(ctx.client, access, filter), filter, now);
+        const { matched, cleaned, recovery } = await collectFilterHealed(
+          ctx.client,
+          access,
+          filter,
+          now,
+        );
         if (matched.length === 0) {
-          return { kind: 'list', summary: 'No matching Trello cards.' };
+          return { kind: 'list', summary: 'No matching Trello cards.', ...(recovery !== undefined && { recovery }) };
         }
         const sorted = [...matched].sort((a, b) => activityTime(b) - activityTime(a));
         const shown = sorted.slice(0, limit);
@@ -51,7 +55,8 @@ export function buildTrelloRecentlyActiveSkill(ctx: TrelloLiveContext): Skill {
           kind: 'list',
           summary: `${String(sorted.length)} recently active card${sorted.length === 1 ? '' : 's'}${cap}:`,
           items: shown.map(toRecentItem),
-          raw: { count: sorted.length, filter, limit },
+          raw: { count: sorted.length, filter: cleaned, limit },
+          ...(recovery !== undefined && { recovery }),
         };
       } catch (err) {
         throw mapTrelloError(err, NAME);

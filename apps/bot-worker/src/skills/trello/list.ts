@@ -1,10 +1,9 @@
-import type { Skill, SkillContext, SkillResult } from '@risezome/engine/skills';
+import type { Skill, SkillContext, SkillResult, SkillRecovery } from '@risezome/engine/skills';
 import type { TrelloLiveContext } from './live-context.js';
 import { mapTrelloError } from './error.js';
 import { cardItem } from './format.js';
 import {
-  collectCards,
-  filterCards,
+  collectFilterHealed,
   describeFilter,
   NO_TRELLO_SOURCE_SUMMARY,
   DUE_STATUSES,
@@ -45,8 +44,13 @@ export function buildTrelloListSkill(ctx: TrelloLiveContext): Skill {
       try {
         const access = await ctx.resolve(skillCtx.orgId);
         if (access === null) return { kind: 'detail', summary: NO_TRELLO_SOURCE_SUMMARY };
-        const matched = filterCards(await collectCards(ctx.client, access, filter), filter, now);
-        const desc = describeFilter(filter);
+        const { matched, cleaned, recovery } = await collectFilterHealed(
+          ctx.client,
+          access,
+          filter,
+          now,
+        );
+        const desc = describeFilter(cleaned);
         return formatCardList(
           matched,
           limit,
@@ -54,7 +58,8 @@ export function buildTrelloListSkill(ctx: TrelloLiveContext): Skill {
             empty: `No matching Trello cards${desc}.`,
             summary: (total, cap) => `${String(total)} matching card${total === 1 ? '' : 's'}${desc}${cap}:`,
           },
-          { count: matched.length, filter, limit },
+          { count: matched.length, filter: cleaned, limit },
+          recovery,
         );
       } catch (err) {
         throw mapTrelloError(err, NAME);
@@ -69,12 +74,19 @@ export function formatCardList(
   limit: number,
   opts: { empty: string; summary: (total: number, cap: string) => string },
   raw: unknown,
+  recovery?: SkillRecovery,
 ): SkillResult {
   const total = matched.length;
-  if (total === 0) return { kind: 'list', summary: opts.empty };
+  if (total === 0) return { kind: 'list', summary: opts.empty, ...(recovery !== undefined && { recovery }) };
   const shown = matched.slice(0, limit);
   const cap = total > limit ? ` (showing first ${String(limit)} of ${String(total)})` : '';
-  return { kind: 'list', summary: opts.summary(total, cap), items: shown.map(cardItem), raw };
+  return {
+    kind: 'list',
+    summary: opts.summary(total, cap),
+    items: shown.map(cardItem),
+    raw,
+    ...(recovery !== undefined && { recovery }),
+  };
 }
 
 export function clampLimit(arg: number | undefined): number {

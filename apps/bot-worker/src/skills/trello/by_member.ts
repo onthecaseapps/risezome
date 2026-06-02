@@ -1,10 +1,9 @@
-import type { Skill, SkillContext, SkillResult } from '@risezome/engine/skills';
+import type { Skill, SkillContext, SkillResult, SkillRecovery } from '@risezome/engine/skills';
 import type { TrelloLiveContext } from './live-context.js';
 import { mapTrelloError } from './error.js';
 import { formatCardList, clampLimit } from './list.js';
 import {
-  collectCards,
-  filterCards,
+  collectFilterHealed,
   NO_TRELLO_SOURCE_SUMMARY,
   type TrelloFilter,
 } from './filter.js';
@@ -43,7 +42,18 @@ export function buildTrelloByMemberSkill(ctx: TrelloLiveContext): Skill {
       try {
         const access = await ctx.resolve(skillCtx.orgId);
         if (access === null) return { kind: 'detail', summary: NO_TRELLO_SOURCE_SUMMARY };
-        const matched = filterCards(await collectCards(ctx.client, access, filter), filter, now);
+        const { matched, recovery: healed } = await collectFilterHealed(
+          ctx.client,
+          access,
+          filter,
+          now,
+        );
+        // by_member is fundamentally about the member; if the member itself was
+        // neutralized the answer can't be about them, so force 'unresolved'
+        // (drop to RAG) even if another scope survived (KTD8).
+        const memberBogus = healed?.neutralized?.some((n) => n.arg === 'member') ?? false;
+        const recovery: SkillRecovery | undefined =
+          memberBogus && healed !== undefined ? { ...healed, status: 'unresolved' } : healed;
         return formatCardList(
           matched,
           limit,
@@ -52,7 +62,8 @@ export function buildTrelloByMemberSkill(ctx: TrelloLiveContext): Skill {
             summary: (total, cap) =>
               `${member} is assigned to ${String(total)} card${total === 1 ? '' : 's'}${cap}:`,
           },
-          { member, count: matched.length, filter, limit },
+          { member, count: matched.length, limit },
+          recovery,
         );
       } catch (err) {
         throw mapTrelloError(err, NAME);

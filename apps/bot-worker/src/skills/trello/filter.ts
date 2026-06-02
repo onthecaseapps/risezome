@@ -1,3 +1,4 @@
+import type { SkillRecovery } from '@risezome/engine/skills';
 import type { TrelloClient, EnrichedCard } from './client.js';
 import type { TrelloAccess } from './source-resolver.js';
 
@@ -96,6 +97,145 @@ export function filterCards(cards: readonly CollectedCard[], filter: TrelloFilte
       (filter.member === undefined || card.members.some((m) => matchesText(m, filter.member))) &&
       matchesDue(card, filter.due, now),
   );
+}
+
+/**
+ * Substring-aware domain membership (plan KTD9). A value is "real" when some
+ * domain value CONTAINS it case-insensitively — mirroring `matchesText`, the
+ * predicate the filter itself uses. So a spoken "Alice" is real against a
+ * member named "Alice Smith" and is NOT wrongly neutralized. A value is bogus
+ * only when no domain value contains it.
+ */
+function existsInDomain(domain: readonly string[], needle: string): boolean {
+  const n = needle.toLowerCase();
+  return domain.some((v) => v.toLowerCase().includes(n));
+}
+
+export interface NeutralizedArg {
+  readonly arg: string;
+  readonly value: string;
+}
+
+/** Honest caveat from the neutralized Trello args. */
+export function buildTrelloNote(neutralized: readonly NeutralizedArg[]): string {
+  const phrases = neutralized.map((n) => {
+    switch (n.arg) {
+      case 'board':
+        return `no Trello board matching '${n.value}'`;
+      case 'list':
+        return `no list named '${n.value}'`;
+      case 'label':
+        return `no label '${n.value}'`;
+      case 'member':
+        return `no member matching '${n.value}'`;
+      default:
+        return `no '${n.value}'`;
+    }
+  });
+  const joined =
+    phrases.length === 1
+      ? phrases[0]!
+      : `${phrases.slice(0, -1).join(', ')} and ${phrases[phrases.length - 1]!}`;
+  const filterWord = neutralized.length > 1 ? 'those filters' : 'that filter';
+  return `There's ${joined} — ignoring ${filterWord}.`;
+}
+
+export interface HealedFilterResult {
+  readonly matched: CollectedCard[];
+  /** The filter after neutralizing any bogus args — drives the summary. */
+  readonly cleaned: TrelloFilter;
+  readonly recovery?: SkillRecovery;
+}
+
+/**
+ * Self-healing collect+filter (plan U3). Validates the free-text args against
+ * the live board domain, neutralizes bogus values, and returns the matched
+ * cards alongside a recovery signal:
+ *  - `board` validates against `access.boards` BEFORE collecting — a bogus
+ *    board would otherwise yield an empty card universe that makes every other
+ *    arg look bogus. A bogus board is dropped and the scope widens to all
+ *    boards (re-collect).
+ *  - `list`/`label`/`member` validate against the real names materialized on
+ *    the collected cards — zero extra API calls.
+ *  - KTD8: if a real scope survives → `'repaired'`; if neutralizing left the
+ *    query fully unscoped → `'unresolved'` (router drops to RAG).
+ * Validation only runs for args that are present, so the common path is
+ * unchanged (no recovery, same matched cards as before).
+ */
+export async function collectFilterHealed(
+  client: TrelloClient,
+  access: TrelloAccess,
+  filter: TrelloFilter,
+  now: number,
+): Promise<HealedFilterResult> {
+  const neutralized: NeutralizedArg[] = [];
+  let cleaned: TrelloFilter = filter;
+
+  if (cleaned.board !== undefined && cleaned.board.length > 0) {
+    if (!existsInDomain(access.boards.map((b) => b.name), cleaned.board)) {
+      neutralized.push({ arg: 'board', value: cleaned.board });
+      const { board: _dropped, ...rest } = cleaned;
+      cleaned = rest;
+    }
+  }
+
+  const collected = await collectCards(client, access, cleaned);
+
+  if (
+    cleaned.list !== undefined &&
+    cleaned.list.length > 0 &&
+    !existsInDomain(
+      collected.map((c) => c.card.listName),
+      cleaned.list,
+    )
+  ) {
+    neutralized.push({ arg: 'list', value: cleaned.list });
+    const { list: _dropped, ...rest } = cleaned;
+    cleaned = rest;
+  }
+  if (
+    cleaned.label !== undefined &&
+    cleaned.label.length > 0 &&
+    !existsInDomain(
+      collected.flatMap((c) => c.card.labels),
+      cleaned.label,
+    )
+  ) {
+    neutralized.push({ arg: 'label', value: cleaned.label });
+    const { label: _dropped, ...rest } = cleaned;
+    cleaned = rest;
+  }
+  if (
+    cleaned.member !== undefined &&
+    cleaned.member.length > 0 &&
+    !existsInDomain(
+      collected.flatMap((c) => c.card.members),
+      cleaned.member,
+    )
+  ) {
+    neutralized.push({ arg: 'member', value: cleaned.member });
+    const { member: _dropped, ...rest } = cleaned;
+    cleaned = rest;
+  }
+
+  const matched = filterCards(collected, cleaned, now);
+  if (neutralized.length === 0) return { matched, cleaned };
+
+  const stillScoped =
+    cleaned.board !== undefined ||
+    cleaned.list !== undefined ||
+    cleaned.label !== undefined ||
+    cleaned.member !== undefined ||
+    cleaned.due !== undefined;
+  return {
+    matched,
+    cleaned,
+    recovery: {
+      status: stillScoped ? 'repaired' : 'unresolved',
+      neutralized,
+      note: buildTrelloNote(neutralized),
+    },
+  };
 }
 
 /** Human description of the active filter, e.g. "in Doing labeled bug" — for summaries. */
