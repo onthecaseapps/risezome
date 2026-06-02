@@ -74,6 +74,7 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
       speaker: typeof p['speaker'] === 'string' ? (p['speaker'] as string) : null,
       isFinal: true,
       startMs: typeof p['startMs'] === 'number' ? (p['startMs'] as number) : 0,
+      endMs: typeof p['endMs'] === 'number' ? (p['endMs'] as number) : 0,
       revision: typeof p['revision'] === 'number' ? (p['revision'] as number) : 0,
     });
     utteranceTimes.push({ utteranceId, tMs: new Date(row.created_at as string).getTime() });

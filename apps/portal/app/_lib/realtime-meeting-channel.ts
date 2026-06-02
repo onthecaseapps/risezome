@@ -276,8 +276,9 @@ function toTranscriptUtterance(payload: Record<string, unknown>): TranscriptUtte
   if (typeof utteranceId !== 'string' || typeof text !== 'string') return null;
   const speaker = typeof payload['speaker'] === 'string' ? payload['speaker'] : null;
   const startMs = typeof payload['startMs'] === 'number' ? payload['startMs'] : 0;
+  const endMs = typeof payload['endMs'] === 'number' ? payload['endMs'] : startMs;
   const revision = typeof payload['revision'] === 'number' ? payload['revision'] : 0;
-  return { utteranceId, text, speaker, isFinal: true, startMs, revision };
+  return { utteranceId, text, speaker, isFinal: true, startMs, endMs, revision };
 }
 
 async function reconnectFetch(args: {

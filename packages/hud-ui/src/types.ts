@@ -135,6 +135,10 @@ export interface TranscriptUtterance {
   readonly speaker: string | null;
   readonly isFinal: boolean;
   readonly startMs: number;
+  /** Last word's end time (ms from call start). The gap from one utterance's
+   *  endMs to the next's startMs is the silence between them — a large gap is a
+   *  pause, which the transcript renders as a paragraph break. */
+  readonly endMs: number;
   readonly revision: number;
 }
 

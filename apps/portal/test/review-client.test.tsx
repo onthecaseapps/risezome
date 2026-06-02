@@ -12,8 +12,8 @@ import {
 } from '../app/(authed)/meetings/[meetingId]/_synthesis-seed';
 
 const TRANSCRIPT: TranscriptUtterance[] = [
-  { utteranceId: 'q1', text: 'do we use AI', speaker: 'Alice', isFinal: true, startMs: 1, revision: 0 },
-  { utteranceId: 'chat', text: 'nice weather today', speaker: 'Bob', isFinal: true, startMs: 2, revision: 0 },
+  { utteranceId: 'q1', text: 'do we use AI', speaker: 'Alice', isFinal: true, startMs: 1, endMs: 2, revision: 0 },
+  { utteranceId: 'chat', text: 'nice weather today', speaker: 'Bob', isFinal: true, startMs: 2, endMs: 3, revision: 0 },
 ];
 
 const SYNTHESIS: InitialSynthesis = {

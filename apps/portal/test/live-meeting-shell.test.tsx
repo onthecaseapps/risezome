@@ -19,7 +19,7 @@ import { LiveMeetingClient } from '../app/(authed)/meetings/[meetingId]/live/_cl
 import type { InitialSynthesis } from '../app/(authed)/meetings/[meetingId]/live/page';
 
 const TRANSCRIPT: TranscriptUtterance[] = [
-  { utteranceId: 'a', text: 'how does retrieval work', speaker: 'Alice', isFinal: true, startMs: 1, revision: 0 },
+  { utteranceId: 'a', text: 'how does retrieval work', speaker: 'Alice', isFinal: true, startMs: 1, endMs: 2, revision: 0 },
 ];
 
 const SYNTHESIS: InitialSynthesis[] = [

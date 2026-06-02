@@ -60,13 +60,13 @@ describe('dispatchBroadcast — meeting status liveness (U2)', () => {
     const h = harness();
     dispatchBroadcast(
       'transcript.data',
-      { utteranceId: 'u1', text: 'hello there', speaker: 'Alice', startMs: 100, revision: 0 },
+      { utteranceId: 'u1', text: 'hello there', speaker: 'Alice', startMs: 100, endMs: 1200, revision: 0 },
       h.dispatch,
       h.setState,
     );
     expect(h.dispatched).toContainEqual({
       type: 'transcriptUtterance',
-      utterance: { utteranceId: 'u1', text: 'hello there', speaker: 'Alice', isFinal: true, startMs: 100, revision: 0 },
+      utterance: { utteranceId: 'u1', text: 'hello there', speaker: 'Alice', isFinal: true, startMs: 100, endMs: 1200, revision: 0 },
     });
   });
 

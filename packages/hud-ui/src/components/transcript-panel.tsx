@@ -16,22 +16,40 @@ import type { TranscriptUtterance } from '../types';
  * (plan U8).
  */
 
+/** Silence (ms) between one utterance's end and the next's start that reads as
+ *  a pause — a new paragraph within the same speaker's block. */
+const PARAGRAPH_PAUSE_MS = 2500;
+
 interface SpeakerGroup {
   readonly speaker: string | null;
-  readonly utterances: readonly TranscriptUtterance[];
+  /** One speaker block can hold several paragraphs, split at pauses. */
+  readonly paragraphs: readonly (readonly TranscriptUtterance[])[];
 }
 
-/** Group consecutive utterances (sorted by startMs) under one speaker. */
+/**
+ * Group consecutive utterances (sorted by startMs) under one speaker, and
+ * within a speaker split into paragraphs at long pauses (gap from the previous
+ * utterance's endMs to this one's startMs ≥ PARAGRAPH_PAUSE_MS).
+ */
 function groupBySpeaker(utterances: readonly TranscriptUtterance[]): SpeakerGroup[] {
   const sorted = [...utterances].sort((a, b) => a.startMs - b.startMs);
-  const groups: SpeakerGroup[] = [];
+  const groups: { speaker: string | null; paragraphs: TranscriptUtterance[][] }[] = [];
+  let prev: TranscriptUtterance | null = null;
   for (const u of sorted) {
-    const last = groups[groups.length - 1];
-    if (last?.speaker === u.speaker) {
-      (last.utterances as TranscriptUtterance[]).push(u);
+    const group = groups[groups.length - 1];
+    const gapMs = prev === null ? 0 : u.startMs - prev.endMs;
+    const paused = gapMs >= PARAGRAPH_PAUSE_MS;
+    // Explicit undefined check (not optional chaining) so TS narrows `group` to
+    // defined in the else branches below.
+    // eslint-disable-next-line @typescript-eslint/prefer-optional-chain
+    if (group === undefined || group.speaker !== u.speaker) {
+      groups.push({ speaker: u.speaker, paragraphs: [[u]] });
+    } else if (paused) {
+      group.paragraphs.push([u]);
     } else {
-      groups.push({ speaker: u.speaker, utterances: [u] });
+      group.paragraphs[group.paragraphs.length - 1]!.push(u);
     }
+    prev = u;
   }
   return groups;
 }
@@ -91,43 +109,45 @@ export function TranscriptPanel({
       {groups.map((group, i) => (
         <div className="transcript-group" key={`${group.speaker ?? 'unknown'}-${String(i)}`}>
           <div className="transcript-speaker">{group.speaker ?? 'Unknown speaker'}</div>
-          <p className="transcript-lines">
-            {group.utterances.map((u) => {
-              const anchored = anchoredUtteranceIds?.has(u.utteranceId) ?? false;
-              const cls = ['transcript-line', !u.isFinal ? 'is-partial' : null, anchored ? 'is-anchored' : null]
-                .filter(Boolean)
-                .join(' ');
-              const body = (
-                <>
-                  {u.text}
-                  {!u.isFinal ? (
-                    <span className="transcript-cursor" aria-hidden="true">
-                      ▊
-                    </span>
-                  ) : null}
-                </>
-              );
-              if (anchored && onAnchorClick !== undefined) {
+          {group.paragraphs.map((para, pi) => (
+            <p className="transcript-lines" key={pi}>
+              {para.map((u) => {
+                const anchored = anchoredUtteranceIds?.has(u.utteranceId) ?? false;
+                const cls = ['transcript-line', !u.isFinal ? 'is-partial' : null, anchored ? 'is-anchored' : null]
+                  .filter(Boolean)
+                  .join(' ');
+                const body = (
+                  <>
+                    {u.text}
+                    {!u.isFinal ? (
+                      <span className="transcript-cursor" aria-hidden="true">
+                        ▊
+                      </span>
+                    ) : null}
+                  </>
+                );
+                if (anchored && onAnchorClick !== undefined) {
+                  return (
+                    <Fragment key={u.utteranceId}>
+                      <button
+                        type="button"
+                        className={`${cls} transcript-anchor`}
+                        onClick={() => onAnchorClick(u.utteranceId)}
+                        title="Show the summary generated here"
+                      >
+                        {body}
+                      </button>{' '}
+                    </Fragment>
+                  );
+                }
                 return (
                   <Fragment key={u.utteranceId}>
-                    <button
-                      type="button"
-                      className={`${cls} transcript-anchor`}
-                      onClick={() => onAnchorClick(u.utteranceId)}
-                      title="Show the summary generated here"
-                    >
-                      {body}
-                    </button>{' '}
+                    <span className={cls}>{body}</span>{' '}
                   </Fragment>
                 );
-              }
-              return (
-                <Fragment key={u.utteranceId}>
-                  <span className={cls}>{body}</span>{' '}
-                </Fragment>
-              );
-            })}
-          </p>
+              })}
+            </p>
+          ))}
         </div>
       ))}
     </div>

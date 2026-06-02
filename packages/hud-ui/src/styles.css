@@ -1139,6 +1139,11 @@ body {
   margin: 0;
   color: var(--fg);
 }
+/* A pause within a speaker's block renders as a new paragraph — give it a
+   clear gap so the break reads. */
+.transcript-group .transcript-lines + .transcript-lines {
+  margin-top: 0.6em;
+}
 /* In-flight partials read muted until they settle into a final. */
 .transcript-line.is-partial {
   color: var(--muted);

@@ -10,6 +10,7 @@ function u(over: Partial<TranscriptUtterance> = {}): TranscriptUtterance {
     speaker: 'Alice',
     isFinal: true,
     startMs: 1000,
+    endMs: 1500,
     revision: 0,
     ...over,
   };
@@ -87,5 +88,32 @@ describe('TranscriptPanel (U4)', () => {
     expect(anchors).toHaveLength(1); // only the anchored utterance
     (anchors[0] as HTMLButtonElement).click();
     expect(onAnchorClick).toHaveBeenCalledWith('anchored');
+  });
+
+  it('splits a speaker block into paragraphs at a long pause', () => {
+    const { container } = render(
+      <TranscriptPanel
+        utterances={[
+          u({ utteranceId: 'a', speaker: 'Alice', text: 'first thought', startMs: 0, endMs: 1000 }),
+          u({ utteranceId: 'b', speaker: 'Alice', text: 'after a pause', startMs: 4000, endMs: 5000 }),
+        ]}
+      />,
+    );
+    // One speaker block, but two paragraphs (gap 3s ≥ 2.5s pause threshold).
+    expect(container.querySelectorAll('.transcript-group')).toHaveLength(1);
+    expect(container.querySelectorAll('.transcript-lines')).toHaveLength(2);
+  });
+
+  it('keeps utterances in one paragraph when the gap is short', () => {
+    const { container } = render(
+      <TranscriptPanel
+        utterances={[
+          u({ utteranceId: 'a', speaker: 'Alice', text: 'one', startMs: 0, endMs: 1000 }),
+          u({ utteranceId: 'b', speaker: 'Alice', text: 'two', startMs: 1300, endMs: 2000 }),
+        ]}
+      />,
+    );
+    expect(container.querySelectorAll('.transcript-group')).toHaveLength(1);
+    expect(container.querySelectorAll('.transcript-lines')).toHaveLength(1);
   });
 });

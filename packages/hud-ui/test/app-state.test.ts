@@ -15,6 +15,7 @@ function mkUtterance(over: Partial<TranscriptUtterance> = {}): TranscriptUtteran
     speaker: 'Alice',
     isFinal: false,
     startMs: 1000,
+    endMs: 1500,
     revision: 0,
     ...over,
   };
