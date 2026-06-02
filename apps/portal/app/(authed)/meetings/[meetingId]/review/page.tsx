@@ -79,16 +79,40 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
     utteranceTimes.push({ utteranceId, tMs: new Date(row.created_at as string).getTime() });
   }
 
-  // Cards (non-retracted) → CardEvent for the synthesis cards' SOURCES, plus a
-  // card_id → utterance_id index for the synthesis-anchor fallback.
-  const { data: cardRows } = await supabase
-    .from('cards')
+  // Done syntheses → seed shape, oldest-first (chronological with the transcript).
+  const { data: synthRows } = await supabase
+    .from('syntheses')
     .select(
-      'card_id, doc_id, source, type, title, snippet, body, score, rank, metadata, surfaced_at, triggered_by, utterance_id, trace_id, url, retracted_at',
+      'synthesis_id, source_card_ids, accumulated_text, status, stop_reason, error_code, error_message, citations, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, ttft_ms, latency_ms, trace_id, pinned, pinned_at, trigger_utterance_id, retracted_at, created_at',
     )
     .eq('meeting_id', meetingId)
+    .eq('status', 'done')
     .is('retracted_at', null)
-    .order('surfaced_at', { ascending: false });
+    .order('created_at', { ascending: true });
+  const rows = (synthRows ?? []) as Record<string, unknown>[];
+  const initialSyntheses: InitialSynthesis[] = rows.map((s) => mapSynthesisRow(s));
+
+  // Cards the syntheses cite → CardEvent for the cards' SOURCES list. Fetched
+  // by id REGARDLESS of retraction: a cited card is frequently retracted by
+  // dedup churn during the meeting, but the completed answer still needs to
+  // render its source (otherwise "grounded in 0 sources" with dead chips —
+  // mirrors the live page keeping cited cards in reducer state). On review,
+  // cards appear only as a synthesis's sources, so non-cited cards are skipped.
+  const citedCardIds = Array.from(
+    new Set(rows.flatMap((s) => (s['source_card_ids'] as string[] | null) ?? [])),
+  );
+  const cardRows =
+    citedCardIds.length > 0
+      ? (
+          await supabase
+            .from('cards')
+            .select(
+              'card_id, doc_id, source, type, title, snippet, body, score, rank, metadata, surfaced_at, triggered_by, utterance_id, trace_id, url',
+            )
+            .eq('meeting_id', meetingId)
+            .in('card_id', citedCardIds)
+        ).data
+      : [];
   const initialCards: CardEvent[] = (cardRows ?? []).map((c) => {
     return {
       cardId: c.card_id as string,
@@ -108,19 +132,6 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
       ...(c.url !== null ? { url: c.url as string } : {}),
     };
   });
-
-  // Done syntheses → seed shape, oldest-first (chronological with the transcript).
-  const { data: synthRows } = await supabase
-    .from('syntheses')
-    .select(
-      'synthesis_id, source_card_ids, accumulated_text, status, stop_reason, error_code, error_message, citations, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, ttft_ms, latency_ms, trace_id, pinned, pinned_at, trigger_utterance_id, retracted_at, created_at',
-    )
-    .eq('meeting_id', meetingId)
-    .eq('status', 'done')
-    .is('retracted_at', null)
-    .order('created_at', { ascending: true });
-  const rows = (synthRows ?? []) as Record<string, unknown>[];
-  const initialSyntheses: InitialSynthesis[] = rows.map((s) => mapSynthesisRow(s));
 
   // Anchor map: utteranceId → synthesisId. Prefer the stored trigger (U6);
   // fall back to the utterance spoken just before the synthesis fired (by time)
