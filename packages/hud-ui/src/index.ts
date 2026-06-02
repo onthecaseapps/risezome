@@ -23,6 +23,11 @@ export { SourceCardExpanded } from './components/source-card-expanded';
 export { SynthesisAnnounce } from './components/synthesis-announce';
 export { SynthesisCard, type SynthesisPhase } from './components/synthesis-card';
 export { SynthesisStream } from './components/synthesis-stream';
+export {
+  TranscriptPanel,
+  LiveTranscriptPanel,
+  type TranscriptPanelProps,
+} from './components/transcript-panel';
 export { ThemeToggle } from './components/theme-toggle';
 
 // State

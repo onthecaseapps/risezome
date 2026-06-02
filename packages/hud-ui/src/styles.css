@@ -1098,3 +1098,48 @@ body {
     animation: pulse 1.6s ease-in-out infinite !important;
   }
 }
+
+/* ── Live / review transcript (U4) ─────────────────────────────────── */
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.transcript-empty {
+  align-items: center;
+  justify-content: center;
+  padding: 32px 0;
+  text-align: center;
+}
+.transcript-empty-hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+.transcript-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.transcript-speaker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.transcript-lines {
+  margin: 0;
+  color: var(--fg);
+}
+/* In-flight partials read muted until they settle into a final. */
+.transcript-line.is-partial {
+  color: var(--muted);
+}
+.transcript-cursor {
+  margin-left: 1px;
+  color: var(--accent);
+  opacity: 0.7;
+}
