@@ -18,7 +18,10 @@ export type DemoEvent =
       readonly kind: 'synthesisDone';
       readonly citations: readonly number[];
       readonly sources: readonly DemoCard[];
-    };
+    }
+  // Simulates the user clicking a source card to expand it (and highlight the
+  // cited quote). Only meaningful once synthesis is done.
+  | { readonly kind: 'expandSource'; readonly sourceId: string };
 
 export interface TimelineEntry {
   readonly atMs: number;
@@ -33,6 +36,8 @@ export interface DemoState {
     readonly streaming: boolean;
     readonly citations: readonly number[];
     readonly sources: readonly DemoCard[];
+    /** Source the user "clicked" to expand; null until the expand beat. */
+    readonly expandedSourceId: string | null;
   } | null;
 }
 
@@ -48,6 +53,7 @@ const PR_CARD: DemoCard = {
   type: 'pull-request',
   title: 'Auth migration to OAuth2 (#482)',
   snippet: 'Swaps the legacy session cookies for OAuth2 bearer tokens. 14 files changed.',
+  quote: 'Swaps the legacy session cookies for OAuth2 bearer tokens',
   meta: 'Open · review requested',
   rank: 1,
 };
@@ -105,22 +111,27 @@ export const TIMELINE: readonly TimelineEntry[] = [
   },
   // No intermediate raw cards — the question goes straight to AI synthesis.
   // The supporting sources still appear inside the AI Summary's Sources grid.
+  // synthesisStart leads the first delta by ~750ms so the empty-text
+  // "Gathering Context" step is actually visible in the caption.
   { atMs: 2300, event: { kind: 'synthesisStart' } },
-  { atMs: 2300, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[0]! } },
-  { atMs: 3100, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[1]! } },
-  { atMs: 3900, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[2]! } },
-  { atMs: 4700, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[3]! } },
+  { atMs: 3050, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[0]! } },
+  { atMs: 3650, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[1]! } },
+  { atMs: 4250, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[2]! } },
+  { atMs: 4850, event: { kind: 'synthesisDelta', delta: SYNTHESIS_CHUNKS[3]! } },
   {
     atMs: 5500,
     event: { kind: 'synthesisDone', citations: [1, 2, 3], sources: SYNTHESIS_SOURCES },
   },
+  // A beat to read the answer, then the user "clicks" the top source — it
+  // expands inline and highlights the cited quote.
+  { atMs: 6400, event: { kind: 'expandSource', sourceId: PR_CARD.id } },
 ];
 
 /** When the last event has fired; the player holds here before looping. */
 export const TIMELINE_END_MS: number = TIMELINE.reduce((max, e) => Math.max(max, e.atMs), 0);
 
-/** Hold on the finished scene (the completed AI Summary) before looping. */
-export const LOOP_HOLD_MS = 8000;
+/** Hold on the finished scene (answer + expanded source) before looping. */
+export const LOOP_HOLD_MS = 6000;
 
 /** Total cycle length including the end-hold. */
 export const TIMELINE_DURATION_MS: number = TIMELINE_END_MS + LOOP_HOLD_MS;
@@ -133,7 +144,10 @@ export function applyEvent(state: DemoState, event: DemoEvent): DemoState {
     case 'card':
       return { ...state, cards: [...state.cards, event.card] };
     case 'synthesisStart':
-      return { ...state, synthesis: { text: '', streaming: true, citations: [], sources: [] } };
+      return {
+        ...state,
+        synthesis: { text: '', streaming: true, citations: [], sources: [], expandedSourceId: null },
+      };
     case 'synthesisDelta': {
       if (state.synthesis === null) return state;
       return {
@@ -152,6 +166,11 @@ export function applyEvent(state: DemoState, event: DemoEvent): DemoState {
           sources: event.sources,
         },
       };
+    }
+    case 'expandSource': {
+      // Only after the answer is done — you can't click a source mid-stream.
+      if (state.synthesis === null || state.synthesis.streaming) return state;
+      return { ...state, synthesis: { ...state.synthesis, expandedSourceId: event.sourceId } };
     }
   }
 }
@@ -176,9 +195,32 @@ export function terminalState(): DemoState {
   return stateAtElapsed(Number.POSITIVE_INFINITY);
 }
 
+/**
+ * The pipeline step the scene is currently showing — surfaced as a caption
+ * under the demo so a visitor can read what's happening at each beat.
+ */
+export type DemoStep = 'transcribing' | 'gathering' | 'synthesizing' | 'viewing';
+
+export const STEP_LABEL: Record<DemoStep, string> = {
+  transcribing: 'Transcribing Meeting',
+  gathering: 'Gathering Context',
+  synthesizing: 'Synthesizing Answer',
+  viewing: 'Viewing Source Citation',
+};
+
+/** Derive the current step from demo state (pure — drives the caption). */
+export function stepFor(state: DemoState): DemoStep {
+  const s = state.synthesis;
+  if (s === null) return 'transcribing';
+  if (s.streaming) return s.text.length === 0 ? 'gathering' : 'synthesizing';
+  // Done: showing the answer, or — once a source is clicked — its citation.
+  return s.expandedSourceId !== null ? 'viewing' : 'synthesizing';
+}
+
 /** Convenience for tests/consumers wanting the finished synthesis shape. */
 export const FINAL_SYNTHESIS: DemoSynthesis = {
   text: SYNTHESIS_TEXT,
   citations: [1, 2, 3],
   sources: SYNTHESIS_SOURCES,
+  expandedSourceId: PR_CARD.id,
 };

@@ -66,7 +66,7 @@ describe('MeetingDemo playback', () => {
     expect(live.queryByText(/Priya:/)).not.toBeInTheDocument();
   });
 
-  it('streams the transcript then goes straight to the cited AI Summary (no raw cards)', () => {
+  it('streams the AI Summary, then auto-expands the top source with a highlighted quote', () => {
     render(<MeetingDemo />);
     const live = within(screen.getByTestId('demo-live'));
 
@@ -77,16 +77,43 @@ describe('MeetingDemo playback', () => {
     // The question lands and synthesis begins (~2.3s) — but no intermediate
     // raw cards surface; the source title only shows up inside the finished
     // AI Summary, not as a standalone card during streaming.
-    advance(2000);
-    expect(live.getByText(/status of the auth migration PR/i)).toBeInTheDocument();
+    advance(2000); // ~2.7s
     expect(live.getByText(/Summary/i)).toBeInTheDocument();
     expect(live.queryByText('Auth migration to OAuth2 (#482)')).not.toBeInTheDocument();
 
-    // By ~6s the synthesis has finished: AI Summary + citations + Sources grid.
-    advance(4000);
+    // By ~6s the synthesis has finished: citations render INLINE (no trailing
+    // chip row) and the Sources list shows, but the cards are still collapsed
+    // (titles only — the snippet/quote isn't revealed yet).
+    advance(3300); // ~6.0s (synthesisDone at 5.5s, expand at 6.6s)
     expect(live.getByText('[1]')).toBeInTheDocument();
     expect(live.getByText(/Sources \(3\)/)).toBeInTheDocument();
     expect(live.getByText('Auth migration to OAuth2 (#482)')).toBeInTheDocument();
+    expect(
+      live.queryByText('Swaps the legacy session cookies for OAuth2 bearer tokens'),
+    ).not.toBeInTheDocument();
+
+    // ~7s: the top source auto-expands, revealing its snippet with the cited
+    // quote highlighted.
+    advance(1000); // ~7.0s
+    expect(
+      live.getByText('Swaps the legacy session cookies for OAuth2 bearer tokens'),
+    ).toBeInTheDocument();
+  });
+
+  it('captions each pipeline step at the bottom of the demo', () => {
+    render(<MeetingDemo />);
+
+    advance(700); // transcript streaming, no synthesis yet
+    expect(screen.getByText('Transcribing Meeting')).toBeInTheDocument();
+
+    advance(2000); // ~2.7s — synthesis started, no text yet (retrieving)
+    expect(screen.getByText('Gathering Context')).toBeInTheDocument();
+
+    advance(1100); // ~3.8s — answer text streaming
+    expect(screen.getByText('Synthesizing Answer')).toBeInTheDocument();
+
+    advance(3500); // ~7.3s — top source expanded, citation highlighted
+    expect(screen.getByText('Viewing Source Citation')).toBeInTheDocument();
   });
 
   it('loops back to an empty scene after the end-hold', () => {

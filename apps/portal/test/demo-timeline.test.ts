@@ -6,6 +6,7 @@ import {
   SYNTHESIS_TEXT,
   applyEvent,
   stateAtElapsed,
+  stepFor,
   terminalState,
   type DemoState,
 } from '../app/components/demo/demo-timeline';
@@ -34,6 +35,17 @@ describe('applyEvent (pure reducer)', () => {
   it('ignores synthesis deltas that arrive before a start (no crash, no-op)', () => {
     const s = applyEvent(INITIAL_STATE, { kind: 'synthesisDelta', delta: 'orphan' });
     expect(s.synthesis).toBeNull();
+  });
+
+  it('expands a source only after the synthesis is done', () => {
+    let s: DemoState = INITIAL_STATE;
+    s = applyEvent(s, { kind: 'synthesisStart' });
+    // Clicking while streaming is a no-op.
+    s = applyEvent(s, { kind: 'expandSource', sourceId: 'pr-482' });
+    expect(s.synthesis?.expandedSourceId).toBeNull();
+    s = applyEvent(s, { kind: 'synthesisDone', citations: [1], sources: [] });
+    s = applyEvent(s, { kind: 'expandSource', sourceId: 'pr-482' });
+    expect(s.synthesis?.expandedSourceId).toBe('pr-482');
   });
 
   it('does not mutate the input state', () => {
@@ -70,12 +82,36 @@ describe('stateAtElapsed (cursor fold)', () => {
     expect(end.synthesis?.citations).toEqual([1, 2, 3]);
     // Supporting sources still live inside the AI Summary.
     expect(end.synthesis?.sources).toHaveLength(3);
+    // The terminal scene has the top source expanded (the click-to-expand beat).
+    expect(end.synthesis?.expandedSourceId).toBe('pr-482');
   });
 
   it('reduced-motion end-state equals re-playing the whole timeline event-by-event', () => {
     let folded: DemoState = INITIAL_STATE;
     for (const entry of TIMELINE) folded = applyEvent(folded, entry.event);
     expect(terminalState()).toEqual(folded);
+  });
+
+  it('maps each scene to its caption step', () => {
+    // Empty / transcript-only → transcribing.
+    expect(stepFor(INITIAL_STATE)).toBe('transcribing');
+    let s: DemoState = applyEvent(INITIAL_STATE, {
+      kind: 'transcript',
+      line: { id: 'a', speaker: 'P', text: 'q' },
+    });
+    expect(stepFor(s)).toBe('transcribing');
+    // Synthesis started but no text yet → gathering context.
+    s = applyEvent(s, { kind: 'synthesisStart' });
+    expect(stepFor(s)).toBe('gathering');
+    // Text streaming → synthesizing.
+    s = applyEvent(s, { kind: 'synthesisDelta', delta: 'Answer' });
+    expect(stepFor(s)).toBe('synthesizing');
+    // Done but no source clicked yet → still synthesizing (answer presented).
+    s = applyEvent(s, { kind: 'synthesisDone', citations: [1], sources: [] });
+    expect(stepFor(s)).toBe('synthesizing');
+    // A source is expanded → viewing the citation.
+    s = applyEvent(s, { kind: 'expandSource', sourceId: 'pr-482' });
+    expect(stepFor(s)).toBe('viewing');
   });
 
   it('loops cleanly — resetting to t=0 reproduces the first events on re-advance', () => {

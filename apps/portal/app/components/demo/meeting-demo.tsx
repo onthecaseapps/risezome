@@ -7,8 +7,10 @@ import { Transcript } from './transcript';
 import { SynthesisCard } from './synthesis-card';
 import {
   INITIAL_STATE,
+  STEP_LABEL,
   TIMELINE_DURATION_MS,
   stateAtElapsed,
+  stepFor,
   terminalState,
   type DemoState,
 } from './demo-timeline';
@@ -43,6 +45,7 @@ function SynthesisBlock({
         text: synthesis.text,
         citations: synthesis.citations,
         sources: synthesis.sources,
+        expandedSourceId: synthesis.expandedSourceId,
       }}
       streaming={synthesis.streaming}
       entering={entering}
@@ -143,6 +146,15 @@ export function MeetingDemo(): React.ReactElement {
             {state.synthesis !== null && <SynthesisBlock synthesis={state.synthesis} entering />}
           </div>
         </div>
+      </div>
+
+      {/* Step caption: names the pipeline stage the scene is currently showing.
+          Keyed on the step so each change re-triggers the fade-in. */}
+      <div className="demo-step" aria-live="polite">
+        <span className="demo-step-dot" aria-hidden="true" />
+        <span key={stepFor(state)} className="demo-step-label">
+          {STEP_LABEL[stepFor(state)]}
+        </span>
       </div>
     </div>
   );

@@ -17,6 +17,9 @@ export interface DemoCard {
   /** Muted secondary line (e.g. a doc heading "## Phase 1.5 - …"). */
   readonly docHeading?: string;
   readonly snippet: string;
+  /** Substring of `snippet` to highlight when the card is expanded (the
+   *  cited quote). Mirrors the live page's click-to-expand quote highlight. */
+  readonly quote?: string;
   /** 1 = top match (accent "Top match" label); otherwise "Match". */
   readonly rank: number;
   /** Optional source metadata shown in the header (e.g. "Open · review requested"). */
@@ -36,4 +39,6 @@ export interface DemoSynthesis {
   readonly citations: readonly number[];
   /** Source cards consolidated beneath the answer. */
   readonly sources: readonly DemoCard[];
+  /** Id of the source currently expanded (click-to-expand demo), or null. */
+  readonly expandedSourceId?: string | null;
 }

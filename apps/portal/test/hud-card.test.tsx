@@ -75,19 +75,73 @@ const synthesis: DemoSynthesis = {
 };
 
 describe('SynthesisCard', () => {
-  it('renders the AI Summary label, citation chips, and a Sources(n) grid when done', () => {
+  it('renders the AI Summary with inline citation chips and a Sources(n) list when done', () => {
     render(<SynthesisCard synthesis={synthesis} />);
     expect(screen.getByText(/Summary/i)).toBeInTheDocument();
-    expect(screen.getByText('[1]')).toBeInTheDocument();
-    expect(screen.getByText('[2]')).toBeInTheDocument();
+    // Citations are inline chips in the answer text — no trailing citation row.
+    expect(screen.getByText('[1]')).toHaveClass('cite-inline');
+    expect(screen.getByText('[2]')).toHaveClass('cite-inline');
     expect(screen.getByText('Sources (3)')).toBeInTheDocument();
     expect(screen.getByText('Auth migration to OAuth2')).toBeInTheDocument();
   });
 
-  it('withholds citations and sources while streaming and shows a cursor', () => {
+  it('streams inline citations but withholds the sources, and shows a cursor', () => {
     const { container } = render(<SynthesisCard synthesis={synthesis} streaming />);
-    expect(screen.queryByText('[1]')).not.toBeInTheDocument();
+    // Inline citations are part of the answer and stream with the text.
+    expect(screen.getByText('[1]')).toHaveClass('cite-inline');
+    // Sources stay hidden until the answer is done.
     expect(screen.queryByText(/^Sources/)).not.toBeInTheDocument();
     expect(container.querySelector('.synthesis-cursor')).toBeInTheDocument();
+  });
+
+  it('expands the clicked source: reveals its snippet with the cited quote highlighted and lights its inline chip', () => {
+    const expandable: DemoSynthesis = {
+      text: 'PR #482 swaps cookies for tokens [1].',
+      citations: [1],
+      sources: [
+        {
+          id: 's1',
+          source: 'github',
+          type: 'pull-request',
+          title: 'Auth migration to OAuth2',
+          rank: 1,
+          snippet: 'Swaps cookies for tokens. 14 files changed.',
+          quote: 'Swaps cookies for tokens',
+        },
+      ],
+      expandedSourceId: 's1',
+    };
+    render(<SynthesisCard synthesis={expandable} />);
+
+    // The cited quote is wrapped in a highlight mark.
+    const mark = screen.getByText('Swaps cookies for tokens');
+    expect(mark.tagName).toBe('MARK');
+    expect(mark).toHaveClass('hl');
+
+    // The matching inline [1] chip lights up while its source is expanded.
+    expect(screen.getByText('[1]')).toHaveClass('cite-inline', 'is-active');
+  });
+
+  it('keeps a source collapsed (snippet hidden) until it is the expanded one', () => {
+    const collapsed: DemoSynthesis = {
+      text: 'PR #482 [1].',
+      citations: [1],
+      sources: [
+        {
+          id: 's1',
+          source: 'github',
+          type: 'pull-request',
+          title: 'Auth migration to OAuth2',
+          rank: 1,
+          snippet: 'Swaps cookies for tokens.',
+          quote: 'Swaps cookies for tokens',
+        },
+      ],
+      expandedSourceId: null,
+    };
+    render(<SynthesisCard synthesis={collapsed} />);
+    expect(screen.getByText('Auth migration to OAuth2')).toBeInTheDocument();
+    expect(screen.queryByText('Swaps cookies for tokens')).not.toBeInTheDocument();
+    expect(screen.getByText('[1]')).not.toHaveClass('is-active');
   });
 });
