@@ -25,7 +25,6 @@ interface CaptureRow {
   error_code: string | null;
   error_message: string | null;
   calendar_event_id: string | null;
-  card_count: number;
   synthesis_count: number;
   title: string;
 }
@@ -56,24 +55,17 @@ export default async function CapturesPage(): Promise<ReactElement> {
     created_at: string;
   }>;
 
-  // Bulk-fetch titles + per-meeting card/synthesis counts. Two more
-  // round-trips, but at 100-meeting cap the total is small.
+  // Bulk-fetch titles + per-meeting synthesis (AI summary) counts. Two
+  // round-trips, but at the 100-meeting cap the total is small.
   const meetingIds = meetings.map((m) => m.meeting_id);
   const calendarEventIds = meetings
     .map((m) => m.calendar_event_id)
     .filter((id): id is string => id !== null);
 
-  const [titlesResult, cardsResult, synthsResult] = await Promise.all([
+  const [titlesResult, synthsResult] = await Promise.all([
     calendarEventIds.length > 0
       ? supabase.from('calendar_events').select('id, title').in('id', calendarEventIds)
       : Promise.resolve({ data: [] as Array<{ id: string; title: string }> }),
-    meetingIds.length > 0
-      ? supabase
-          .from('cards')
-          .select('meeting_id')
-          .in('meeting_id', meetingIds)
-          .is('retracted_at', null)
-      : Promise.resolve({ data: [] as Array<{ meeting_id: string }> }),
     meetingIds.length > 0
       ? supabase
           .from('syntheses')
@@ -87,11 +79,6 @@ export default async function CapturesPage(): Promise<ReactElement> {
   const titleByEventId = new Map(
     (titlesResult.data ?? []).map((r) => [r.id as string, (r.title as string) ?? '']),
   );
-  const cardCountByMeeting = new Map<string, number>();
-  for (const row of cardsResult.data ?? []) {
-    const id = row.meeting_id as string;
-    cardCountByMeeting.set(id, (cardCountByMeeting.get(id) ?? 0) + 1);
-  }
   const synthCountByMeeting = new Map<string, number>();
   for (const row of synthsResult.data ?? []) {
     const id = row.meeting_id as string;
@@ -107,7 +94,6 @@ export default async function CapturesPage(): Promise<ReactElement> {
     error_code: m.error_code,
     error_message: m.error_message,
     calendar_event_id: m.calendar_event_id,
-    card_count: cardCountByMeeting.get(m.meeting_id) ?? 0,
     synthesis_count: synthCountByMeeting.get(m.meeting_id) ?? 0,
     title:
       m.title.length > 0
@@ -165,6 +151,7 @@ function EmptyState(): ReactElement {
 }
 
 function CaptureRowCard({ capture }: { capture: CaptureRow }): ReactElement {
+  const duration = formatDuration(capture.started_at, capture.ended_at);
   return (
     <a
       href={`/meetings/${capture.meeting_id}/review`}
@@ -176,7 +163,6 @@ function CaptureRowCard({ capture }: { capture: CaptureRow }): ReactElement {
         ) : (
           <span className="text-sm text-muted">—</span>
         )}
-        <span>{formatDuration(capture.started_at, capture.ended_at)}</span>
       </div>
 
       <div className="min-w-0 flex-1">
@@ -186,16 +172,10 @@ function CaptureRowCard({ capture }: { capture: CaptureRow }): ReactElement {
         </div>
         <div className="mt-1 flex items-center gap-2 text-xs text-muted">
           {capture.status === 'completed' ? (
-            <>
-              <span>
-                {capture.card_count} card{capture.card_count === 1 ? '' : 's'}
-              </span>
-              {capture.synthesis_count > 0 ? (
-                <span>
-                  · {capture.synthesis_count} synthesis{capture.synthesis_count === 1 ? '' : 'es'}
-                </span>
-              ) : null}
-            </>
+            <span>
+              {duration.length > 0 ? `${duration} · ` : ''}
+              {capture.synthesis_count} {capture.synthesis_count === 1 ? 'AI summary' : 'AI summaries'}
+            </span>
           ) : capture.error_message !== null ? (
             <span className="truncate text-rose-400">{capture.error_message}</span>
           ) : capture.error_code !== null ? (
