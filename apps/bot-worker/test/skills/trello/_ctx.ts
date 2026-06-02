@@ -71,7 +71,7 @@ export function trelloFetch(boards: readonly BoardFixture[]): typeof fetch {
       default:
         throw new Error(`unhandled resource: ${url}`);
     }
-  }) as typeof fetch;
+  });
 }
 
 export function trelloCtx(boards: readonly BoardFixture[], accessBoards?: TrelloAccess['boards']): TrelloLiveContext {

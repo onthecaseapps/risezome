@@ -70,7 +70,7 @@ export function buildTrelloSourceResolver(deps: { db: SupabaseClient }): TrelloS
     if (connError !== null) {
       throw new Error(`trello_connections lookup failed for org ${orgId}: ${connError.message}`);
     }
-    const token = (connData as { token: string } | null)?.token;
+    const token = (connData)?.token;
     if (token === undefined || token.length === 0) return null;
 
     return { token, boards };

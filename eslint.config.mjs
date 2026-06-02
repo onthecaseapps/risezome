@@ -20,6 +20,7 @@ export default tseslint.config(
       // tsconfig project (the type-aware parser can't resolve them).
       '**/vitest.config.ts',
       'apps/daemon/scripts/**',
+      'apps/bot-worker/scripts/**',
       '**/ws-probe.mjs',
     ],
   },

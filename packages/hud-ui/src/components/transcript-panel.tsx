@@ -27,7 +27,7 @@ function groupBySpeaker(utterances: readonly TranscriptUtterance[]): SpeakerGrou
   const groups: SpeakerGroup[] = [];
   for (const u of sorted) {
     const last = groups[groups.length - 1];
-    if (last !== undefined && last.speaker === u.speaker) {
+    if (last?.speaker === u.speaker) {
       (last.utterances as TranscriptUtterance[]).push(u);
     } else {
       groups.push({ speaker: u.speaker, utterances: [u] });

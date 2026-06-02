@@ -586,7 +586,7 @@ describe('appStateReducer — transcript (U3)', () => {
   });
 
   it('a replayed partial does NOT overwrite an already-final utterance (reconnect-idempotent)', () => {
-    let s = appStateReducer(initialAppState, {
+    const s = appStateReducer(initialAppState, {
       type: 'transcriptUtterance',
       utterance: mkUtterance({ text: 'final text', isFinal: true, revision: 2 }),
     });

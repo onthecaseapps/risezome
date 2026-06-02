@@ -33,7 +33,7 @@ describe('TrelloClient', () => {
 
   it('maps a 401 to ConnectorAuthError without leaking the token', async () => {
     const fetchImpl: typeof fetch = (() =>
-      Promise.resolve(new Response('nope', { status: 401 }))) as typeof fetch;
+      Promise.resolve(new Response('nope', { status: 401 })));
     const client = new TrelloClient({ apiKey: 'secret-key', fetchImpl });
     await expect(client.fetchEnrichedCards('b1', 'secret-token')).rejects.toBeInstanceOf(ConnectorAuthError);
     await expect(client.fetchEnrichedCards('b1', 'secret-token')).rejects.toMatchObject({ status: 401 });
@@ -47,7 +47,7 @@ describe('TrelloClient', () => {
           status: 429,
           headers: { 'x-rate-limit-api-token-interval-ms': '1' },
         }),
-      )) as typeof fetch;
+      ));
     const client = new TrelloClient({ apiKey: 'k', fetchImpl, sleep: async () => {} });
     await expect(client.fetchEnrichedCards('b1', 'tok')).rejects.toBeInstanceOf(RateLimitedError);
   });
