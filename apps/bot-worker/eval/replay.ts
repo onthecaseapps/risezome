@@ -8,6 +8,15 @@
  * src/corpus-eval.ts (shared with the dev-page endpoints); this file is the CLI
  * wrapper + report formatting.
  *
+ * SCOPE: this harness exercises the RAG/corpus path ONLY. It does NOT run the
+ * router classifier or live skills (github_count, trello_count, ...), so it
+ * cannot catch a skill-argument-misparse regression. Skill self-healing
+ * regressions (the "open case issues" → bogus-label class) are gated by
+ * deterministic unit tests instead — see test/skills/github/search_count.test.ts
+ * and test/skills/trello/{count,by_member}.test.ts (per the eval-regression
+ * convention: replay-skipped paths get unit tests). Extending replay to cover
+ * the skill path is a known, deferred gap.
+ *
  * Usage (from apps/bot-worker):
  *   pnpm tsx --env-file=.env eval/replay.ts <orgId> [--metrics]
  *   # or set RISEZOME_EVAL_ORG_ID
