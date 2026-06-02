@@ -6,7 +6,7 @@ import {
 import { GithubClient } from '../../../src/skills/github/client.js';
 import type { LiveSkillContext } from '../../../src/skills/github/live-context.js';
 import type { GithubAccess } from '../../../src/skills/github/source-resolver.js';
-import { SKILL_CTX, liveCtxNoSource } from './_live-ctx.js';
+import { SKILL_CTX, liveCtxNoSource, jsonResponse } from './_live-ctx.js';
 
 describe('buildSearchQualifiers', () => {
   it('empty filter → empty qualifiers (repo: is prepended by the caller)', () => {
@@ -45,6 +45,7 @@ describe('buildSearchQualifiers', () => {
 function ctxReturning(
   totalByRepo: Record<string, number>,
   capture?: (url: string) => void,
+  repoLabels: string[] = ['bug', 'phase-2', 'enhancement'],
 ): { ctx: LiveSkillContext; access: GithubAccess } {
   const access: GithubAccess = {
     installations: [
@@ -54,6 +55,15 @@ function ctxReturning(
   const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
     const url = typeof input === 'string' ? input : input.toString();
     capture?.(url);
+    // Self-heal validates labels via /repos/{owner}/{name}/labels.
+    if (url.includes('/labels')) {
+      return Promise.resolve(
+        new Response(JSON.stringify(repoLabels.map((name) => ({ name }))), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }
     // Sum any total counts whose repo qualifier appears in the query.
     const decoded = decodeURIComponent(url).replace(/\+/g, ' ');
     let total = 0;
@@ -145,5 +155,150 @@ describe('github_count (live Search API)', () => {
       SKILL_CTX,
     );
     expect(result.summary).toContain('No GitHub repository is connected');
+  });
+});
+
+describe('github_count self-healing (U2)', () => {
+  it('AE1: a bogus label with a surviving scope → repaired (not 0)', async () => {
+    // repo labels are [bug, enhancement]; "case" doesn't exist.
+    const { ctx } = ctxReturning({ 'acme/widget': 12 }, undefined, ['bug', 'enhancement']);
+    const result = await buildSearchCountSkill(ctx).handler(
+      { type: 'issue', state: 'open', labels: ['case'] },
+      SKILL_CTX,
+    );
+    expect(result.recovery?.status).toBe('repaired');
+    expect(result.recovery?.neutralized).toEqual([{ arg: 'labels', value: 'case' }]);
+    expect(result.recovery?.note).toContain("'case'");
+    // Count reflects the surviving type/state scope, not a misleading 0.
+    expect(result.summary).toBe('12 open issues.');
+  });
+
+  it('KTD8: a bogus label that was the ONLY filter → unresolved (unscoped)', async () => {
+    const { ctx } = ctxReturning({ 'acme/widget': 300 }, undefined, ['bug', 'enhancement']);
+    const result = await buildSearchCountSkill(ctx).handler({ labels: ['case'] }, SKILL_CTX);
+    expect(result.recovery?.status).toBe('unresolved');
+  });
+
+  it('AE2: a valid label → no recovery, plain count', async () => {
+    const { ctx } = ctxReturning({ 'acme/widget': 2 }, undefined, ['bug', 'enhancement']);
+    const result = await buildSearchCountSkill(ctx).handler(
+      { type: 'issue', state: 'open', labels: ['bug'] },
+      SKILL_CTX,
+    );
+    expect(result.recovery).toBeUndefined();
+    expect(result.summary).toBe("2 open issues labeled 'bug'.");
+  });
+
+  it('AE3/R7: a valid label that genuinely matches zero → count 0, no recovery', async () => {
+    const { ctx } = ctxReturning({ 'acme/widget': 0 }, undefined, ['bug', 'enhancement']);
+    const result = await buildSearchCountSkill(ctx).handler(
+      { type: 'issue', state: 'open', labels: ['bug'] },
+      SKILL_CTX,
+    );
+    expect(result.recovery).toBeUndefined();
+    expect(result.summary).toBe('No matching issues.');
+  });
+
+  it('KTD6: a label real in ANY connected repo is valid (union, not intersection)', async () => {
+    // widget has [bug]; gadget has [frontend]. "frontend" is valid via union.
+    const access: GithubAccess = {
+      installations: [
+        {
+          installationId: 1,
+          token: 't1',
+          repos: [
+            { owner: 'acme', name: 'widget' },
+            { owner: 'acme', name: 'gadget' },
+          ],
+        },
+      ],
+    };
+    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/repos/acme/widget/labels')) {
+        return Promise.resolve(jsonResponse([{ name: 'bug' }]));
+      }
+      if (url.includes('/repos/acme/gadget/labels')) {
+        return Promise.resolve(jsonResponse([{ name: 'frontend' }]));
+      }
+      return Promise.resolve(jsonResponse({ total_count: 7 }));
+    });
+    const ctx: LiveSkillContext = {
+      client: new GithubClient({ fetchImpl }),
+      resolve: async () => access,
+    };
+    const result = await buildSearchCountSkill(ctx).handler(
+      { state: 'open', labels: ['frontend'] },
+      SKILL_CTX,
+    );
+    expect(result.recovery).toBeUndefined();
+  });
+
+  it('AE5: a bogus author with a surviving scope → author neutralized, repaired', async () => {
+    const access: GithubAccess = {
+      installations: [{ installationId: 1, token: 't1', repos: [{ owner: 'acme', name: 'widget' }] }],
+    };
+    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/users/frobnicate')) {
+        return Promise.resolve(new Response('not found', { status: 404 }));
+      }
+      if (url.includes('/search/users')) {
+        return Promise.resolve(jsonResponse({ items: [] }));
+      }
+      return Promise.resolve(jsonResponse({ total_count: 9 }));
+    });
+    const ctx: LiveSkillContext = {
+      client: new GithubClient({ fetchImpl }),
+      resolve: async () => access,
+    };
+    const result = await buildSearchCountSkill(ctx).handler(
+      { type: 'issue', state: 'open', author: 'frobnicate' },
+      SKILL_CTX,
+    );
+    expect(result.recovery?.status).toBe('repaired');
+    expect(result.recovery?.neutralized).toEqual([{ arg: 'author', value: 'frobnicate' }]);
+    expect(result.summary).toBe('9 open issues.');
+  });
+
+  it('fetches /labels once per repo when a label arg is present (memoized within the call)', async () => {
+    let labelFetches = 0;
+    const { ctx } = ctxReturning({ 'acme/widget': 2 }, (url) => {
+      if (url.includes('/labels')) labelFetches += 1;
+    });
+    await buildSearchCountSkill(ctx).handler({ labels: ['bug'] }, SKILL_CTX);
+    expect(labelFetches).toBe(1);
+  });
+
+  it('a failed /labels fetch degrades to unresolved (RAG fallback), not a crash', async () => {
+    const access: GithubAccess = {
+      installations: [{ installationId: 1, token: 't1', repos: [{ owner: 'acme', name: 'widget' }] }],
+    };
+    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/labels')) {
+        return Promise.resolve(new Response('boom', { status: 500 }));
+      }
+      return Promise.resolve(jsonResponse({ total_count: 5 }));
+    });
+    const ctx: LiveSkillContext = {
+      client: new GithubClient({ fetchImpl }),
+      resolve: async () => access,
+    };
+    const result = await buildSearchCountSkill(ctx).handler({ labels: ['bug'] }, SKILL_CTX);
+    expect(result.recovery?.status).toBe('unresolved');
+  });
+
+  it('R2 common path: a safe-enum-only query issues NO /labels fetch and no recovery', async () => {
+    let labelFetches = 0;
+    const { ctx } = ctxReturning({ 'acme/widget': 3 }, (url) => {
+      if (url.includes('/labels')) labelFetches += 1;
+    });
+    const result = await buildSearchCountSkill(ctx).handler(
+      { type: 'issue', state: 'open' },
+      SKILL_CTX,
+    );
+    expect(labelFetches).toBe(0);
+    expect(result.recovery).toBeUndefined();
   });
 });

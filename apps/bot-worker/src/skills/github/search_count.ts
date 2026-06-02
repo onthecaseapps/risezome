@@ -1,9 +1,16 @@
-import type { Skill, SkillContext, SkillResult } from '@risezome/engine/skills';
+import type { Skill, SkillContext, SkillResult, SkillRecovery } from '@risezome/engine/skills';
 import type { LiveSkillContext } from './live-context.js';
 import type { GithubFilter } from './filter.js';
 import { summarizeCount } from './count-summary.js';
 import { mapGithubError } from './error.js';
-import { searchIssuesCount, NO_GITHUB_SOURCE_SUMMARY } from './live-helpers.js';
+import { searchIssuesCount, NO_GITHUB_SOURCE_SUMMARY, anyToken } from './live-helpers.js';
+import { resolvePerson } from './person.js';
+import {
+  collectRepoLabelUnion,
+  partitionLabels,
+  buildGithubNote,
+  type NeutralizedArg,
+} from './self-heal.js';
 
 const NAME = 'github_count';
 
@@ -58,12 +65,69 @@ export function buildSearchCountSkill(ctx: LiveSkillContext): Skill {
         if (access === null) {
           return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
         }
-        const qualifiers = buildSearchQualifiers(filter);
+
+        // Self-heal free-text args against the live domain (plan U2). Only
+        // fires when a risky arg is present, so safe-enum-only queries pay
+        // nothing (R2). A bogus value is neutralized and surfaced honestly.
+        const neutralized: NeutralizedArg[] = [];
+        let cleaned: GithubFilter = filter;
+
+        if (filter.labels?.some((l) => l.length > 0) === true) {
+          try {
+            const union = await collectRepoLabelUnion(ctx.client, access);
+            const { valid, bogus } = partitionLabels(filter.labels, union);
+            if (bogus.length > 0) {
+              const { labels: _dropped, ...rest } = cleaned;
+              cleaned = valid.length > 0 ? { ...rest, labels: valid } : rest;
+              for (const value of bogus) neutralized.push({ arg: 'labels', value });
+            }
+          } catch {
+            // Can't verify the labels right now → don't answer on an
+            // unverified domain; hand off to RAG (KTD5/KTD6).
+            return {
+              kind: 'count',
+              summary: 'Could not verify the requested GitHub labels right now.',
+              recovery: {
+                status: 'unresolved',
+                note: 'Could not verify the requested GitHub labels against the connected repositories.',
+              },
+            };
+          }
+        }
+
+        if (typeof filter.author === 'string' && filter.author.length > 0) {
+          const token = anyToken(access);
+          const resolved =
+            token !== null ? await resolvePerson(ctx.client, token, filter.author) : null;
+          if (resolved === null) {
+            neutralized.push({ arg: 'author', value: filter.author });
+            const { author: _dropped, ...rest } = cleaned;
+            cleaned = rest;
+          } else if (resolved.login !== filter.author) {
+            // Canonicalize to the real login (not a neutralization).
+            cleaned = { ...cleaned, author: resolved.login };
+          }
+        }
+
+        const qualifiers = buildSearchQualifiers(cleaned);
         const count = await searchIssuesCount(ctx.client, access, qualifiers);
+
+        if (neutralized.length === 0) {
+          return { kind: 'count', summary: summarizeCount(count, cleaned), raw: { count, qualifiers } };
+        }
+
+        // KTD8: if neutralizing left the query fully unscoped (whole-repo),
+        // the broadened count would mislead — mark unresolved so the router
+        // drops to RAG. Otherwise a real scope survives → repaired + caveat.
+        const recovery: SkillRecovery =
+          qualifiers.length === 0
+            ? { status: 'unresolved', neutralized, note: buildGithubNote(neutralized) }
+            : { status: 'repaired', neutralized, note: buildGithubNote(neutralized) };
         return {
           kind: 'count',
-          summary: summarizeCount(count, filter),
-          raw: { count, qualifiers, filter },
+          summary: summarizeCount(count, cleaned),
+          raw: { count, qualifiers, neutralized },
+          recovery,
         };
       } catch (err) {
         throw mapGithubError(err, NAME);
