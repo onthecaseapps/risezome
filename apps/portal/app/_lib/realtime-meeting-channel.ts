@@ -63,42 +63,68 @@ export function useRealtimeMeetingChannel(opts: UseRealtimeMeetingChannelOpts): 
   useEffect(() => {
     const supabase = getBrowserClient();
     const topic = `meeting:${orgId}:${meetingId}`;
-    const channel = supabase.channel(topic, { config: { private: true } });
 
     setState((s) => ({ ...s, status: 'connecting' }));
 
-    channel.on('broadcast', { event: '*' }, (event) => {
-      const eventType = event.event;
-      const payload = (event.payload ?? {}) as Record<string, unknown>;
-      const eventId = typeof payload['eventId'] === 'number' ? (payload['eventId'] as number) : null;
-      if (eventId !== null && eventId > lastSeenRef.current) {
-        lastSeenRef.current = eventId;
-      }
-      dispatchBroadcast(eventType, payload, dispatch, setState);
-    });
+    // The channel is created + subscribed AFTER the realtime socket has the
+    // user's JWT (see below), so hold a ref for the cleanup closure.
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
 
-    channel.subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') {
-        setState((s) => ({ ...s, status: 'subscribed' }));
-        await reconnectFetch({
-          orgId,
-          meetingId,
-          afterEventId: lastSeenRef.current,
-          dispatch,
-          onMaxEventId: (id) => {
-            if (id > lastSeenRef.current) lastSeenRef.current = id;
-          },
-          onMeetingStatus: (live) => {
-            setState((s) => (s.liveMeetingStatus === live ? s : { ...s, liveMeetingStatus: live }));
-          },
-        });
-      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        setState((s) => ({ ...s, status: 'errored' }));
+    void (async () => {
+      // Private channels authorize against the realtime.messages RLS policy
+      // using the caller's JWT. createBrowserClient (@supabase/ssr) hydrates
+      // the session from cookies ASYNCHRONOUSLY, so subscribing immediately
+      // races: the socket can authorize the private topic before the JWT is
+      // attached → auth.uid() is null → RLS rejects → CHANNEL_ERROR. That
+      // failure killed BOTH live deltas and the reconnect-fetch recovery, so
+      // the live HUD stayed empty even though cards/syntheses were durable in
+      // meeting_events (the status-poll fallback below masked it by flipping
+      // the shell to recording). Load the session and set the realtime auth
+      // token explicitly BEFORE subscribing so authorization is deterministic.
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (token !== undefined) {
+        await supabase.realtime.setAuth(token);
       }
-    });
+      if (cancelled) return;
+
+      channel = supabase.channel(topic, { config: { private: true } });
+
+      channel.on('broadcast', { event: '*' }, (event) => {
+        const eventType = event.event;
+        const payload = (event.payload ?? {}) as Record<string, unknown>;
+        const eventId = typeof payload['eventId'] === 'number' ? (payload['eventId'] as number) : null;
+        if (eventId !== null && eventId > lastSeenRef.current) {
+          lastSeenRef.current = eventId;
+        }
+        dispatchBroadcast(eventType, payload, dispatch, setState);
+      });
+
+      channel.subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          setState((s) => ({ ...s, status: 'subscribed' }));
+          await reconnectFetch({
+            orgId,
+            meetingId,
+            afterEventId: lastSeenRef.current,
+            dispatch,
+            onMaxEventId: (id) => {
+              if (id > lastSeenRef.current) lastSeenRef.current = id;
+            },
+            onMeetingStatus: (live) => {
+              setState((s) => (s.liveMeetingStatus === live ? s : { ...s, liveMeetingStatus: live }));
+            },
+          });
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setState((s) => ({ ...s, status: 'errored' }));
+        }
+      });
+    })();
 
     return () => {
-      void supabase.removeChannel(channel);
+      cancelled = true;
+      if (channel !== null) void supabase.removeChannel(channel);
     };
   }, [meetingId, orgId, dispatch]);
 
