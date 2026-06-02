@@ -153,23 +153,46 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
 
     case 'cardRetracted': {
       if (!state.cards.has(action.retracted.cardId)) return state;
-      const cards = cloneMap(state.cards);
-      cards.delete(action.retracted.cardId);
-      // Cascade: drop UNPINNED syntheses citing the retracted card.
-      // S2 from review: pinned syntheses survive the cascade so a user's
-      // explicit "keep this on screen" intent isn't silently overridden
-      // by retrieval pipeline churn. The expanded-source view for the
-      // missing card will render a "source no longer available" state
-      // on the next click (the cardId is still in sourceCardIds; the
-      // SourceCardExpanded simply doesn't get the CardEvent at render
-      // time so it shows the empty state).
+      // Cascade: drop only STILL-STREAMING, unpinned syntheses citing the
+      // retracted card. A streaming answer that loses a source mid-generation
+      // is stale and should go; a COMPLETED answer must survive — it was
+      // already rendered, and source cards routinely rotate out of the live
+      // window. Without the `streaming` guard, the Realtime reconnect-replay
+      // fast-forwards every historical window-eviction cardRetracted in one
+      // pass and cascades away all but the newest summary (the seeded feed
+      // "flashes then collapses to one"). Pinned syntheses already survive
+      // (explicit keep-on-screen intent); this gives done syntheses the same
+      // protection.
       const syntheses = cloneMap(state.syntheses);
       let cascaded = false;
       for (const [id, syn] of syntheses) {
-        if (syn.sourceCardIds.includes(action.retracted.cardId) && !syn.pinned) {
+        if (syn.streaming && !syn.pinned && syn.sourceCardIds.includes(action.retracted.cardId)) {
           syntheses.delete(id);
           cascaded = true;
         }
+      }
+      const survivingSyntheses = cascaded ? syntheses : state.syntheses;
+      // Keep a retracted card in state while a SURVIVING synthesis still cites
+      // it, so that answer keeps rendering its SOURCES list + "grounded in N"
+      // count. On the live page cards appear ONLY as a synthesis's sources (no
+      // standalone card stream), and prod retracts a prior card whenever dedup
+      // churn re-issues the same doc under a new cardId — without this, every
+      // completed answer whose source got re-surfaced drops to "grounded in 0
+      // sources" with dead inline chips. Drop the card only once nothing cites
+      // it. (The debug page never emits cardRetracted, so its apply-once stream
+      // is unaffected — this just brings prod to the same durable behaviour.)
+      let stillCited = false;
+      for (const syn of survivingSyntheses.values()) {
+        if (syn.sourceCardIds.includes(action.retracted.cardId)) {
+          stillCited = true;
+          break;
+        }
+      }
+      let cards: typeof state.cards = state.cards;
+      if (!stillCited) {
+        const next = cloneMap(state.cards);
+        next.delete(action.retracted.cardId);
+        cards = next;
       }
       return { ...state, cards, syntheses: cascaded ? syntheses : state.syntheses };
     }
@@ -219,6 +242,15 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
     case 'synthesisDelta': {
       const existing = state.syntheses.get(action.delta.synthesisId);
       if (existing === undefined) return state;
+      // S6 (replay-on-reconnect) idempotency, mirroring the synthesisStart
+      // guard above: a synthesis that has already completed (streaming=false
+      // — hydrated from the initial DB seed, or finalized live) must NOT
+      // accept further deltas. Without this, the Realtime channel's
+      // reconnect-replay re-appends the full answer on top of the seeded
+      // text and the card renders doubled. Deltas only ever apply while a
+      // synthesis is actively streaming — the same apply-once behaviour the
+      // direct-WS debug page gets for free.
+      if (!existing.streaming) return state;
       const syntheses = cloneMap(state.syntheses);
       syntheses.set(action.delta.synthesisId, {
         ...existing,

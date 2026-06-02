@@ -100,6 +100,56 @@ describe('appStateReducer', () => {
     expect(s.syntheses.size).toBe(0);
   });
 
+  it('cardRetracted does NOT cascade to a COMPLETED synthesis (survives source rotation)', () => {
+    // Regression: window cards rotate out constantly; a finished AI summary
+    // must stay on screen when a cited card is retracted. On the live page the
+    // reconnect-replay fast-forwards every historical cardRetracted in one
+    // pass — without this, the whole seeded feed flashes then collapses to the
+    // single newest summary.
+    let s = appStateReducer(initialAppState, { type: 'card', card: mkCard() });
+    s = appStateReducer(s, {
+      type: 'synthesisStart',
+      start: { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' },
+    });
+    s = appStateReducer(s, { type: 'synthesisDelta', delta: { synthesisId: 'syn1', delta: 'Answer.' } });
+    s = appStateReducer(s, {
+      type: 'synthesisDone',
+      done: {
+        synthesisId: 'syn1',
+        stopReason: 'end_turn',
+        citations: [{ rank: 1, cardId: 'c1', position: 0 }],
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
+        ttftMs: 0,
+        latencyMs: 0,
+      },
+    });
+    s = appStateReducer(s, {
+      type: 'cardRetracted',
+      retracted: { cardId: 'c1', reason: 'verifier-downgraded' },
+    });
+    // Completed synthesis survives AND keeps its cited card so it can still
+    // render its SOURCES list + "grounded in N" count (no "0 sources").
+    expect(s.syntheses.has('syn1')).toBe(true);
+    expect(s.syntheses.get('syn1')?.accumulatedText).toBe('Answer.');
+    expect(s.cards.has('c1')).toBe(true);
+  });
+
+  it('cardRetracted drops the card once no surviving synthesis cites it', () => {
+    // A streaming synthesis citing the card is cascaded away → nothing cites
+    // the card anymore → the card is removed (no leak).
+    let s = appStateReducer(initialAppState, { type: 'card', card: mkCard() });
+    s = appStateReducer(s, {
+      type: 'synthesisStart',
+      start: { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' },
+    });
+    s = appStateReducer(s, {
+      type: 'cardRetracted',
+      retracted: { cardId: 'c1', reason: 'verifier-downgraded' },
+    });
+    expect(s.syntheses.has('syn1')).toBe(false);
+    expect(s.cards.has('c1')).toBe(false);
+  });
+
   it('meetingStarted/meetingEnded flips the meeting mode', () => {
     const s1 = appStateReducer(initialAppState, { type: 'meetingStarted' });
     expect(s1.meeting).toBe('live');
@@ -186,6 +236,35 @@ describe('appStateReducer', () => {
     expect(syn?.streaming).toBe(false);
     expect(syn?.citations).toEqual([{ rank: 1, cardId: 'c1', position: 0, quote: 'verbatim' }]);
     expect(s.lastSynthesisAnnounce).toBe('Body');
+  });
+
+  it('synthesisDelta is a no-op once a synthesis is done (S6 replay guard — no doubling)', () => {
+    // Regression: on the live page the channel's reconnect-replay re-delivers
+    // synthesisStart/Delta/Done for a synthesis already hydrated from the DB
+    // seed. The replayed delta must NOT re-append the full answer (which made
+    // the card render doubled). Deltas only apply while streaming.
+    const start: SynthesisStartEvent = { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' };
+    let s = appStateReducer(initialAppState, { type: 'synthesisStart', start });
+    s = appStateReducer(s, { type: 'synthesisDelta', delta: { synthesisId: 'syn1', delta: 'The full answer.' } });
+    s = appStateReducer(s, {
+      type: 'synthesisDone',
+      done: {
+        synthesisId: 'syn1',
+        stopReason: 'end_turn',
+        citations: [],
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
+        ttftMs: 0,
+        latencyMs: 0,
+      },
+    });
+    expect(s.syntheses.get('syn1')?.accumulatedText).toBe('The full answer.');
+    // Replayed delta on the completed synthesis — must be dropped, not appended.
+    const replayed = appStateReducer(s, {
+      type: 'synthesisDelta',
+      delta: { synthesisId: 'syn1', delta: 'The full answer.' },
+    });
+    expect(replayed).toBe(s);
+    expect(replayed.syntheses.get('syn1')?.accumulatedText).toBe('The full answer.');
   });
 
   it('synthesisError removes the synthesis (matches main.ts removeSynthesis)', () => {
@@ -454,14 +533,14 @@ describe('appStateReducer', () => {
         retracted: { cardId: 'c1', reason: 'verifier-downgraded' },
       });
 
-      // Card gone; unpinned synthesis cascaded; pinned synthesis SURVIVES.
-      expect(s.cards.size).toBe(0);
+      // Unpinned (streaming) synthesis cascaded away; pinned synthesis SURVIVES
+      // and still cites c1 — so the card is RETAINED (not orphaned) and the
+      // pinned answer keeps rendering its source rather than dropping to
+      // "grounded in 0 sources".
       expect(s.syntheses.has('unpinned')).toBe(false);
       expect(s.syntheses.has('pinned')).toBe(true);
-      // Pinned synthesis still tracks the retracted cardId in sourceCardIds;
-      // the SourceCardExpanded for it will render an empty / "source no
-      // longer available" state since the card itself is gone from state.
       expect(s.syntheses.get('pinned')?.sourceCardIds).toContain('c1');
+      expect(s.cards.has('c1')).toBe(true);
     });
   });
 });
