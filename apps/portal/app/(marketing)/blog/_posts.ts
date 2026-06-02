@@ -65,7 +65,7 @@ export const POSTS: readonly BlogPost[] = [
         text: `That gap, between a question being asked and the answer arriving, is small in clock time and enormous in cost. Closing it during the call, instead of after, changes the economics of the meeting itself. Here's why timing is the whole game.`,
       },
 
-      { kind: 'heading', id: 'four-words', text: 'The most expensive four words in a meeting' },
+      { kind: 'heading', id: 'five-words', text: 'The most expensive five words in a meeting' },
       {
         kind: 'para',
         text: `"I'll get back to you." It sounds responsible. It is, in practice, the moment a meeting starts leaking value. The question that prompted it was *live*: the right people were in the room, the context was loaded, the decision was one fact away from being made. Defer the answer and all of that has to be rebuilt later, usually by fewer people, often by the wrong ones.`,
@@ -82,7 +82,7 @@ export const POSTS: readonly BlogPost[] = [
       },
       {
         kind: 'para',
-        text: `Attention researchers have a number for how long it takes to fully re-engage with a task after an interruption: it's measured in the tens of minutes, not seconds. A meeting can't afford that, so people don't actually dig. They defer, which puts you right back at the four most expensive words.`,
+        text: `Attention researchers have a number for how long it takes to fully re-engage with a task after an interruption: it's measured in the tens of minutes, not seconds. A meeting can't afford that, so people don't actually dig. They defer, which puts you right back at the five most expensive words.`,
       },
       {
         kind: 'stats',
