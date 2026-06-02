@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { Wordmark } from './wordmark';
 
 export function SiteFooter(): React.ReactElement {
@@ -12,6 +13,9 @@ export function SiteFooter(): React.ReactElement {
           </span>
         </div>
         <div className="flex items-center gap-6 text-sm text-muted">
+          <Link href="/blog" className="transition-colors hover:text-fg">
+            Blog
+          </Link>
           <a
             href="mailto:rizesome@onthecaseapps.com"
             className="transition-colors hover:text-fg"
