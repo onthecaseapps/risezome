@@ -1,6 +1,6 @@
 ---
 title: "feat: Self-healing skills + router safety-net for messy-speech robustness"
-status: active
+status: completed
 date: 2026-06-02
 type: feat
 origin: docs/brainstorms/2026-06-02-skills-rag-robustness-requirements.md
