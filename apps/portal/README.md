@@ -147,6 +147,13 @@ triggered by the `risezome/source.index-requested` event. The install-callback
 fans out one event per granted repo; user-initiated Reindex (U5d) emits the
 same event.
 
+Beyond chunk + embed, the indexer enriches each document at index time with
+**Claude contextualization** (a situating sentence prepended to every chunk)
+and a **per-document summary** chunk, via Anthropic Haiku — so the indexer
+path needs `ANTHROPIC_API_KEY`, not just `VOYAGE_API_KEY`. See the canonical
+[retrieval pipeline doc](../../docs/architecture/retrieval-pipeline.md#1-index-time--building-the-corpus)
+for the full index-time pipeline.
+
 **Voyage API key** (`VOYAGE_API_KEY`): create at
 [https://dash.voyageai.com/api-keys](https://dash.voyageai.com/api-keys).
 Paid plan recommended once you exceed the free-tier 10k TPM. Server-only.

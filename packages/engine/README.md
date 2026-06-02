@@ -8,19 +8,27 @@ Lifted from `apps/daemon/src/` so the two surfaces don't drift.
 
 ```
 src/
-├── chunker/      # text + code chunking (used by the indexers)
-├── embed/        # Voyage embedder + cache + contract
-├── synthesize/   # Anthropic synthesizer + citation parsing + prompt
-├── relevance/    # heuristic-gated LLM relevance classifier (skip filler)
-├── router/       # tool-vs-RAG router classifier (heuristic + Anthropic)
-├── skills/       # skill contract (SkillContext/SkillResult) + registry
-├── summarize/    # rolling-window summarizer (Anthropic)
-├── transcribe/   # transcript provider contract (used by the legacy daemon)
-└── types.ts      # canonical types (CanonicalDoc, CanonicalChunk, ...)
+├── chunker/        # text + code chunking (used by the indexers)
+├── contextualize/  # Contextual Retrieval: per-chunk situating context (Anthropic)
+├── summarize-doc/  # per-document fact-dense summary → is_summary chunk (Anthropic)
+├── embed/          # Voyage embedder + cache + contract + rerank-2.5 client
+├── query-expand/   # CRAG on-miss query expansion (Anthropic term expansion)
+├── query-route/    # query-complexity routing (gates CRAG expansion)
+├── parent-doc/     # child→parent expansion strategy (whole-doc or window)
+├── synthesize/     # Anthropic synthesizer + citation parsing/verification + prompt
+├── relevance/      # heuristic-gated LLM relevance classifier (skip filler)
+├── router/         # tool-vs-RAG router classifier (heuristic + Anthropic)
+├── skills/         # self-healing skill contract (SkillResult.recovery) + registry
+├── summarize/      # rolling-window meeting summarizer (Anthropic)
+├── eval/           # RAGAS-style metrics + LLM judge for the eval harness
+├── transcribe/     # transcript provider contract (used by the legacy daemon)
+└── types.ts        # canonical types (CanonicalDoc, CanonicalChunk, ...)
 ```
 
 Each directory is a separate package export (e.g. `@risezome/engine/chunker`,
-`@risezome/engine/router`).
+`@risezome/engine/router`). How these compose into the live index-time and
+query-time pipeline is documented in
+[`docs/architecture/retrieval-pipeline.md`](../../docs/architecture/retrieval-pipeline.md).
 
 ## Stateless by design
 

@@ -1,12 +1,24 @@
 ---
 title: "feat: Claude-augmented corpus retrieval & synthesis (phased)"
 type: feat
-status: active
+status: completed
 date: 2026-06-01
 origin: docs/brainstorms/2026-06-01-corpus-retrieval-improvements-requirements.md
 ---
 
 # Claude-Augmented Corpus Retrieval & Synthesis
+
+> **Status note (2026-06-02):** Phases 0–3 shipped — U1–U6, U8, U9 are in
+> production. **U10 is closed as right-sized**: rather than the planned eager
+> `{single-shot | expansion | parent-doc}` path classifier, the shipped design is
+> lazy escalation — run the cheap path, escalate to CRAG expansion only on a miss
+> **or** a low-confidence first pass (`isLowConfidenceHits`); rerank + parent-doc
+> are cheap enough to stay always-on. **U7 (routing manifest / source pre-routing)
+> is deliberately deferred** (scale optimization; high-risk silent-prune failure
+> mode; rerank is a cheaper precision lever). **U11 (LazyGraphRAG) is deferred**
+> (see `2026-06-01-003-spike-lazygraphrag-decision.md`). This plan is now a
+> design/spec record — the canonical description of what actually shipped lives
+> in [`docs/architecture/retrieval-pipeline.md`](../architecture/retrieval-pipeline.md).
 
 ## Summary
 

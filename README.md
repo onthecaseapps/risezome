@@ -17,16 +17,18 @@ Three runtime tiers, plus Supabase as the shared data plane:
 
 Indexing runs in the background and fills the corpus; the live meeting path reads that same corpus on every utterance. The rolling summary window (dotted arrows) feeds the router, the relevance gate, and the synthesizer with meeting context.
 
+> The diagram below is the high-level shape. For the **detailed, current-state pipeline** — every index-time and query-time stage, all filtering/gating, thresholds, and feature flags — see [`docs/architecture/retrieval-pipeline.md`](docs/architecture/retrieval-pipeline.md).
+
 ```mermaid
 flowchart TB
   subgraph IDX["Indexing · Inngest background jobs (portal)"]
     direction LR
     SRC["Connected sources<br/>GitHub · Trello · Jira · Confluence"]
-    IXR["Per-kind indexers<br/>reconcile (delta / full)<br/>chunk + Voyage embed"]
+    IXR["Per-kind indexers<br/>reconcile (delta / full)<br/>chunk → contextualize → summarize → Voyage embed"]
     SRC --> IXR
   end
 
-  CORPUS[("Corpus — Postgres / pgvector<br/>docs · doc_chunks · corpus_chunk_embeddings")]
+  CORPUS[("Corpus — Postgres / pgvector<br/>docs · doc_chunks (contextual + is_summary) · corpus_chunk_embeddings")]
   IXR -->|"upsert · prune stale"| CORPUS
 
   CAL["Calendar sync → user toggles bot on<br/>Inngest launches Recall.ai bot"]
@@ -40,10 +42,10 @@ flowchart TB
     SUMW["Rolling summary window<br/>emit_meeting_summary<br/>fires async (~15 utt / 120s)"]
     ROUTER{"Router classifier<br/>skill vs RAG"}
     EMB["Embed transcript window<br/>(Voyage)"]
-    RET["Vector search → context cards"]
-    SKILL["Run skill<br/>GitHub / corpus lookup"]
+    RET["Hybrid search (vector + FTS → RRF)<br/>→ rerank → CRAG on-miss → parent-doc"]
+    SKILL["Run skill + self-heal<br/>→ safety-net (keep repaired / drop unresolved)"]
     REL{"Relevance gate<br/>heuristic → LLM"}
-    SYN["Synthesize with Claude<br/>sources: skill result + cards<br/>stream cited answer"]
+    SYN["Synthesize with Claude<br/>sources: skill result + cards<br/>grounded-or-nothing, cited"]
 
     UTT --> SUMW
     UTT --> ROUTER
@@ -54,7 +56,7 @@ flowchart TB
     REL -->|"relevant"| SYN
   end
 
-  CORPUS -->|"vector search"| RET
+  CORPUS -->|"hybrid search"| RET
   SUMW -.->|"current topic · open questions"| ROUTER
   SUMW -.->|"current topic · open questions"| REL
   SUMW -.->|"summary + recent transcript"| SYN
@@ -70,12 +72,12 @@ flowchart TB
 1. The portal syncs Google Calendar; a user toggles the bot on for a meeting.
 2. An Inngest function launches a **Recall.ai** bot just before start and records a `meetings` row.
 3. The bot joins the call and streams transcripts to the **bot-worker** over a JWT-authenticated WebSocket. Transcription is done by **Deepgram streaming configured inside Recall** (our Deepgram key, low-latency mode) — Recall runs with `retention: null` so it never stores transcripts or recordings (ZDR posture).
-4. Each final utterance is embedded via **Voyage**, matched against the **pgvector** corpus, optionally answered by a **skill** (GitHub/corpus lookups via a router classifier), gated for relevance, and **synthesized** by **Claude** with inline citations. A rolling **summary window** gives the router, relevance gate, and synthesizer ongoing meeting context.
+4. Each final utterance is embedded via **Voyage** and matched against the **pgvector** corpus through a multi-stage retrieval pipeline — **hybrid search** (vector + full-text, fused with RRF), then optional **rerank** (Voyage rerank-2.5), **CRAG** on-miss query expansion, and **parent-document** expansion. Tool-shaped utterances are answered by a **skill** (GitHub/Trello/corpus lookups via a router classifier); skills **self-heal** mis-heard arguments and a **router safety-net** drops an unverifiable result back to RAG before synthesis. The result is gated for relevance and **synthesized** by **Claude** under a strict grounded-or-nothing rule with verified inline citations. A rolling **summary window** gives the router, relevance gate, and synthesizer ongoing meeting context. Full detail: [`docs/architecture/retrieval-pipeline.md`](docs/architecture/retrieval-pipeline.md).
 5. Cards and synthesis stream to the portal **live page** over Supabase Realtime; everything persists for post-meeting review.
 
 ### Corpus & connectors
 
-Source connectors are indexed by per-kind Inngest functions into a shared corpus (`docs` / `doc_chunks` / `corpus_chunk_embeddings`), chunked by `@risezome/engine/chunker` and embedded with Voyage:
+Source connectors are indexed by per-kind Inngest functions into a shared corpus (`docs` / `doc_chunks` / `corpus_chunk_embeddings`): chunked by `@risezome/engine/chunker`, enriched at index time with **Claude contextualization** (a situating sentence prepended to each chunk) and a **per-document summary** chunk, then embedded with Voyage (text → `voyage-3-large`, code → `voyage-code-3`):
 
 - **GitHub** — repo files + issues/PRs (GitHub App, per-org installation)
 - **Trello** — boards, lists, cards (org-level token)
@@ -83,7 +85,7 @@ Source connectors are indexed by per-kind Inngest functions into a shared corpus
 
 ### Packages
 
-- `@risezome/engine` — shared core: chunker, embeddings, synthesizer, relevance + router classifiers, skill contract/registry, rolling summarizer.
+- `@risezome/engine` — shared core: chunker, contextualizer + doc-summarizer, embeddings + reranker, hybrid-search/query-expansion (CRAG) + query-routing, parent-doc expansion, synthesizer (with citation verification), relevance + router classifiers, self-healing skill contract/registry, rolling summarizer, eval (RAGAS) harness.
 - `@risezome/hud-ui` — React components for the live HUD (cards, synthesis card, citations), used by the portal.
 - `@risezome/shared-types` — cross-package types.
 
@@ -107,6 +109,7 @@ To stand up the three local dev processes (portal, Inngest CLI, bot-worker) afte
 
 ## Documentation
 
+- [`docs/architecture/retrieval-pipeline.md`](docs/architecture/retrieval-pipeline.md) — **canonical** end-to-end description of the index-time + query-time pipeline, including all filtering/gating, thresholds, and feature flags.
 - [AGENTS.md](AGENTS.md) — conventions and guardrails for agents and humans.
 - [`docs/runbooks/`](docs/runbooks/) — operational runbooks (e.g. the bot-worker tunnel).
 - [`docs/plans/archive/`](docs/plans/archive/) and [`docs/brainstorms/archive/`](docs/brainstorms/archive/) — historical implementation plans and product framing for shipped/superseded work.

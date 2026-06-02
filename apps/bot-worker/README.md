@@ -16,17 +16,24 @@ Per active meeting the service:
 - Adapts the Recall transcript format (`transcript.data` /
   `transcript.partial_data`) into the engine's `Utterance` shape and
   maintains a rolling transcript window + rolling summary per meeting.
-- On each final utterance: embeds the window (Voyage), retrieves the top
-  matches from the org's pgvector corpus, optionally routes the query to a
-  skill (router classifier + skill registry), and synthesizes a cited
-  answer (Claude) gated by the relevance classifier.
+- On each final utterance (after a cadence gate): embeds the window
+  (Voyage) and runs the multi-stage retrieval pipeline — hybrid search
+  (vector + FTS → RRF), optional rerank (Voyage rerank-2.5), CRAG on-miss
+  expansion, and parent-document expansion — optionally routes the query
+  to a self-healing skill (router classifier + skill registry, with a
+  safety-net that drops an unverifiable result back to RAG), gates for
+  relevance, and synthesizes a cited answer (Claude) under a
+  grounded-or-nothing rule with citation verification.
 - Persists `meeting_events`, `cards`, and `syntheses` to Postgres and
   broadcasts the same events to Supabase Realtime on the meeting channel,
   which the portal's live page subscribes to.
 
-The portal's Inngest launcher issues the JWT and tells Recall to connect
-here. See [the architecture overview](../../README.md) for the end-to-end
-flow.
+The orchestration entry point is `src/retrieval.ts`. **For the full,
+current-state description of every stage, gate, threshold, and feature
+flag, see the canonical
+[`docs/architecture/retrieval-pipeline.md`](../../docs/architecture/retrieval-pipeline.md)**
+(this section is intentionally a summary so it doesn't drift). The portal's
+Inngest launcher issues the JWT and tells Recall to connect here.
 
 ## Local dev
 
@@ -43,6 +50,22 @@ Required env vars:
   Realtime broadcast (service-role; server-only).
 - `VOYAGE_API_KEY`, `ANTHROPIC_API_KEY` — enable retrieval embeddings and
   synthesis/classification respectively.
+
+Optional pipeline feature flags (see the
+[pipeline doc](../../docs/architecture/retrieval-pipeline.md#6-feature-flags)
+for full semantics). All default off/neutral in code; set them to enable a
+stage:
+
+- `RISEZOME_RERANK_ENABLED` — Voyage rerank-2.5 after RRF (needs `VOYAGE_API_KEY`).
+- `RISEZOME_PARENT_DOC_ENABLED` — parent-document expansion; tune with
+  `RISEZOME_PARENT_DOC_CAP_CHARS` (default 6000) and
+  `RISEZOME_PARENT_DOC_WINDOW` (default 1).
+- `RISEZOME_CRAG_ENABLED` — CRAG query expansion on a miss **or** a
+  low-confidence first pass (needs `ANTHROPIC_API_KEY`);
+  `RISEZOME_CRAG_STRONG_DISTANCE` (default 0.30) sets the low-confidence cutoff.
+- `RISEZOME_VECTOR_DISTANCE_FLOOR` — vector relevance floor in RRF (default 0.45).
+- `RISEZOME_KEY_TERMS_BOOST` — append rolling-summary key terms to the embedding query.
+- `TRELLO_API_KEY` — enables the live Trello skills.
 
 To expose to a real Recall.ai bot during development, tunnel localhost:
 
