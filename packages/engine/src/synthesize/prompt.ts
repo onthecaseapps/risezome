@@ -109,6 +109,8 @@ BEHAVIOR RULES FOR THE ANSWER BODY (follow every one):
 
 11. NO EM-DASHES OR EN-DASHES. Never use the "—" (em-dash) or "–" (en-dash) characters anywhere in your output. Use a period, a comma, parentheses, or "to"/"and" instead. Ordinary hyphens in compound words (for example "low-latency", "object-storage") are fine.
 
+12. DO NOT STATE A FLAGGED-UNCERTAIN RESULT AS A PLAIN FACT. A source whose header is marked "[UNCERTAIN: ...]" and whose body starts with a "Note:" line has been REPAIRED: one of its filters did not exist and was dropped, so its number answers a BROADER query than was asked. Never present that number as if it answered the original question exactly. Surface the caveat in your own words FIRST, then give the number, for example "there is no 'case' label, so across all open issues there are 47 [1]". Lean on the other sources where they help. A confident "47 open case issues" off a repaired source is exactly the confidently-wrong answer this rule exists to prevent.
+
 The examples below are about a fictional boat-rental marketplace called Marina. They exist ONLY to show the format: a recent-transcript window (when present), the sources, and a correctly-cited answer that leads with a STATUS line. Never reuse Marina's facts in a real answer.`;
 
 interface FewShot {
@@ -345,7 +347,11 @@ export function buildSystemPrefix(): SystemBlock[] {
  *  model judges relevance from the matched excerpt but can draw on the full
  *  context for detail. Otherwise fall back to the plain single-block form. */
 function renderSource(s: SynthesisSource): string {
-  const head = `[${String(s.rank)}] ${s.title}`;
+  // Self-healing (U5): a repaired tool source carries a leading "Note:" caveat
+  // in its body; flag it on the header too so the model can't miss that its
+  // numbers reflect an adjusted query (behavior rule 12).
+  const flag = s.suspect === true ? ' [UNCERTAIN: read the Note before stating its numbers]' : '';
+  const head = `[${String(s.rank)}] ${s.title}${flag}`;
   if (s.focus !== undefined && s.focus.length > 0 && s.focus !== s.text) {
     return (
       `${head}\n` +

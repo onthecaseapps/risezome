@@ -72,6 +72,25 @@ describe('buildUserMessage', () => {
     expect(out).toContain('Most recent line: what ai models');
     expect(out).toContain('Sources:');
   });
+
+  // --- Self-healing: suspect/repaired tool source (U5) ---
+
+  it('flags a suspect tool source with an [UNCERTAIN] marker and keeps its caveat', () => {
+    const suspect: SynthesisSource = {
+      rank: 0,
+      title: 'Tool: github_count({"labels":["case"]})',
+      text: "Note: There's no 'case' label — showing all open issues.\n\n47 open issues.",
+      suspect: true,
+    };
+    const out = buildUserMessage('how many open case issues', [suspect]);
+    expect(out).toContain('[UNCERTAIN: read the Note before stating its numbers]');
+    expect(out).toContain("Note: There's no 'case' label");
+  });
+
+  it('renders a non-suspect source unchanged (no UNCERTAIN marker)', () => {
+    const out = buildUserMessage('post meeting summary view', SAMPLE_SOURCES);
+    expect(out).not.toContain('UNCERTAIN');
+  });
 });
 
 describe('parseSynthesisOutput — new [N: "quote"] format', () => {
@@ -427,6 +446,12 @@ describe('buildSystemPrefix', () => {
     const blocks = buildSystemPrefix();
     const combined = blocks.map((b) => b.text).join('');
     expect(combined.length).toBeGreaterThanOrEqual(HAIKU_CACHE_MIN_CHAR_PROXY);
+  });
+
+  it('carries the suspect-result honesty rule (U5) so a repaired number is never stated bare', () => {
+    const combined = buildSystemPrefix().map((b) => b.text).join('');
+    expect(combined).toContain('DO NOT STATE A FLAGGED-UNCERTAIN RESULT AS A PLAIN FACT');
+    expect(combined).toContain('[UNCERTAIN');
   });
 
   it('anchors the model on both STATUS tags', () => {
