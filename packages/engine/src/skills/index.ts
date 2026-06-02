@@ -13,6 +13,7 @@ export {
   type SkillResultKind,
   type SkillResultItem,
   type SkillRecovery,
+  type NeutralizedArg,
   type SkillExecutionCode,
   type AnthropicToolDef,
   type JsonSchema,

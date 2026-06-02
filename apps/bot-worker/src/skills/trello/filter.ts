@@ -1,6 +1,8 @@
-import type { SkillRecovery } from '@risezome/engine/skills';
+import type { SkillRecovery, NeutralizedArg } from '@risezome/engine/skills';
 import type { TrelloClient, EnrichedCard } from './client.js';
 import type { TrelloAccess } from './source-resolver.js';
+
+export type { NeutralizedArg };
 
 /**
  * Shared filter grammar + card collection for the live Trello skills. Trello has
@@ -107,13 +109,11 @@ export function filterCards(cards: readonly CollectedCard[], filter: TrelloFilte
  * only when no domain value contains it.
  */
 function existsInDomain(domain: readonly string[], needle: string): boolean {
-  const n = needle.toLowerCase();
+  const n = needle.trim().toLowerCase();
+  // A whitespace-only needle isn't a real filter — don't neutralize it (and
+  // don't let the untrimmed `includes` divergence from matchesText bite).
+  if (n.length === 0) return true;
   return domain.some((v) => v.toLowerCase().includes(n));
-}
-
-export interface NeutralizedArg {
-  readonly arg: string;
-  readonly value: string;
 }
 
 /** Honest caveat from the neutralized Trello args. */
@@ -137,7 +137,7 @@ export function buildTrelloNote(neutralized: readonly NeutralizedArg[]): string 
       ? phrases[0]!
       : `${phrases.slice(0, -1).join(', ')} and ${phrases[phrases.length - 1]!}`;
   const filterWord = neutralized.length > 1 ? 'those filters' : 'that filter';
-  return `There's ${joined} — ignoring ${filterWord}.`;
+  return `There's ${joined}; ignoring ${filterWord}.`;
 }
 
 export interface HealedFilterResult {

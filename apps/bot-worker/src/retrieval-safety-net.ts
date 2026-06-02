@@ -34,10 +34,24 @@ export function decideToolSource(skillResult: SkillResult): ToolSourceDecision {
 }
 
 /**
+ * Prepend a kept tool source at `[0]` (cited as [1]); RAG cards follow. A null
+ * tool source (dropped or absent) leaves RAG-only. This is the single merge
+ * primitive `retrieval.ts` uses in production; `buildMergedSources` composes it
+ * with the decide + format steps for end-to-end characterization.
+ */
+export function mergeToolSource(
+  toolSource: SynthesisSource | null,
+  ragSources: readonly SynthesisSource[],
+): SynthesisSource[] {
+  return toolSource !== null ? [toolSource, ...ragSources] : [...ragSources];
+}
+
+/**
  * Assemble the sources synthesis runs over, applying the safety-net decision.
- * A kept tool result sits at `[0]` (cited as [1]); RAG cards follow. A dropped
- * (`'unresolved'`) result leaves RAG-only. Pure — used to characterize the
- * `mergedSources` seam in `retrieval.ts` without the whole pipeline.
+ * A kept tool result sits at `[0]`; a dropped (`'unresolved'`) result leaves
+ * RAG-only. Composes the same three primitives the production path uses
+ * (`decideToolSource` + `formatAsSource` + `mergeToolSource`), so the test that
+ * exercises this exercises the real seam.
  */
 export function buildMergedSources(
   skillResult: SkillResult | null,
@@ -45,9 +59,9 @@ export function buildMergedSources(
   skillArgs: Record<string, unknown>,
   ragSources: readonly SynthesisSource[],
 ): { readonly mergedSources: SynthesisSource[]; readonly status: ToolRecoveryStatus | 'none' } {
-  if (skillResult === null) return { mergedSources: [...ragSources], status: 'none' };
+  if (skillResult === null) return { mergedSources: mergeToolSource(null, ragSources), status: 'none' };
   const decision = decideToolSource(skillResult);
-  if (!decision.keep) return { mergedSources: [...ragSources], status: decision.status };
+  if (!decision.keep) return { mergedSources: mergeToolSource(null, ragSources), status: decision.status };
   const toolSource = formatAsSource(skillResult, skillName, skillArgs);
-  return { mergedSources: [toolSource, ...ragSources], status: decision.status };
+  return { mergedSources: mergeToolSource(toolSource, ragSources), status: decision.status };
 }

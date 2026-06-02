@@ -12,9 +12,12 @@
  * Validation fires only when the risky arg is present, so the safe-enum-only
  * common path pays nothing (plan R2).
  */
+import type { NeutralizedArg } from '@risezome/engine/skills';
 import type { GithubClient } from './client.js';
 import type { GithubAccess } from './source-resolver.js';
 import { authForToken } from './live-helpers.js';
+
+export type { NeutralizedArg };
 
 /** Page size + bound for the repo-labels fetch. Most repos carry well under
  *  100 labels; the bound stops a pathological repo from fanning out forever. */
@@ -32,32 +35,47 @@ interface GithubLabel {
  * it exists in ANY connected repo (union semantics, plan KTD6) — so a label
  * real in repo B isn't neutralized because repo A lacks it.
  *
+ * Returns the label union plus a `complete` flag: `false` when any repo filled
+ * all `MAX_LABEL_PAGES` without a short final page, meaning its label set may be
+ * truncated. The caller must NOT neutralize an unmatched label against an
+ * incomplete domain — a real late-alphabet label in a >500-label repo would
+ * otherwise be confidently (and wrongly) dropped.
+ *
  * Throws if a fetch fails; the caller degrades that to an `'unresolved'`
  * recovery (drop to RAG) rather than answering on an unverified domain.
  */
 export async function collectRepoLabelUnion(
   client: GithubClient,
   access: GithubAccess,
-): Promise<Set<string>> {
+): Promise<{ readonly labels: Set<string>; readonly complete: boolean }> {
   const union = new Set<string>();
+  let complete = true;
   for (const inst of access.installations) {
     const auth = authForToken(inst.token);
     for (const repo of inst.repos) {
+      let repoComplete = false;
       for (let page = 1; page <= MAX_LABEL_PAGES; page += 1) {
         const labels = await client.getJson<GithubLabel[]>(
           auth,
           `/repos/${repo.owner}/${repo.name}/labels`,
           { per_page: String(LABEL_PAGE_SIZE), page: String(page) },
         );
-        if (!Array.isArray(labels)) break;
+        if (!Array.isArray(labels)) {
+          repoComplete = true;
+          break;
+        }
         for (const l of labels) {
           if (typeof l.name === 'string') union.add(l.name.toLowerCase());
         }
-        if (labels.length < LABEL_PAGE_SIZE) break;
+        if (labels.length < LABEL_PAGE_SIZE) {
+          repoComplete = true;
+          break;
+        }
       }
+      if (!repoComplete) complete = false;
     }
   }
-  return union;
+  return { labels: union, complete };
 }
 
 /**
@@ -72,21 +90,16 @@ export function partitionLabels(
   const valid: string[] = [];
   const bogus: string[] = [];
   for (const label of provided) {
-    if (label.length === 0) continue;
+    if (label.trim().length === 0) continue;
     if (union.has(label.toLowerCase())) valid.push(label);
     else bogus.push(label);
   }
   return { valid, bogus };
 }
 
-export interface NeutralizedArg {
-  readonly arg: string;
-  readonly value: string;
-}
-
 /**
  * Compose an honest caveat from the neutralized args, e.g.
- * "There's no GitHub label 'case' — ignoring that filter."
+ * "There's no GitHub label 'case'; ignoring that filter."
  */
 export function buildGithubNote(neutralized: readonly NeutralizedArg[]): string {
   const labels = neutralized.filter((n) => n.arg === 'labels').map((n) => n.value);
@@ -95,7 +108,7 @@ export function buildGithubNote(neutralized: readonly NeutralizedArg[]): string 
   if (labels.length > 0) parts.push(`no GitHub label ${quoteList(labels)}`);
   if (authors.length > 0) parts.push(`no GitHub user matching ${quoteList(authors)}`);
   const filterWord = parts.length > 1 ? 'those filters' : 'that filter';
-  return `There's ${parts.join(' and ')} — ignoring ${filterWord}.`;
+  return `There's ${parts.join(' and ')}; ignoring ${filterWord}.`;
 }
 
 function quoteList(values: readonly string[]): string {

@@ -44,13 +44,42 @@ export interface SkillResultItem {
  *    filter so the re-run is unscoped, or a validation fetch failed). The
  *    router drops the tool source and falls back to RAG.
  */
+/** An argument the skill neutralized during self-healing. The `value` is a
+ *  free-text token extracted from meeting speech, so treat it as untrusted
+ *  wherever it crosses into a prompt (see `sanitizeNote`). */
+export interface NeutralizedArg {
+  readonly arg: string;
+  readonly value: string;
+}
+
 export interface SkillRecovery {
   readonly status: 'repaired' | 'unresolved';
   /** Args dropped during healing — telemetry + the basis for `note`. */
-  readonly neutralized?: readonly { readonly arg: string; readonly value: string }[];
+  readonly neutralized?: readonly NeutralizedArg[];
   /** Honest caveat surfaced to synthesis, e.g.
-   *  "There's no 'case' label — showing all open issues." */
+   *  "There's no 'case' label; showing all open issues." */
   readonly note: string;
+}
+
+/**
+ * The recovery note embeds a free-text argument value that originated from
+ * meeting speech (a mis-extracted label/member). It is the one part of a tool
+ * source the synthesizer reads that is neither model- nor domain-controlled,
+ * so before it reaches the LLM: collapse newlines and control characters (a
+ * crafted value could otherwise forge prompt structure such as a fake
+ * "STATUS:" line or a self-verifying citation), normalize em/en dashes to a
+ * hyphen (synthesis output rule 11 forbids them, and rule 12 has the model
+ * paraphrase this note), and cap the length.
+ */
+const NOTE_MAX_CHARS = 200;
+export function sanitizeNote(note: string): string {
+  const flattened = note
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .replace(/[\u2014\u2013]/g, '-')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return flattened.length > NOTE_MAX_CHARS ? `${flattened.slice(0, NOTE_MAX_CHARS)}...` : flattened;
 }
 
 export interface SkillResult {
@@ -199,7 +228,7 @@ export function formatAsSource(
   // (possibly broadened) number. Absent on the common path → byte-identical
   // to the pre-U1 output, preserving the tuned-summary snapshot tests.
   if (result.recovery !== undefined) {
-    lines.push(`Note: ${result.recovery.note}`, '');
+    lines.push(`Note: ${sanitizeNote(result.recovery.note)}`, '');
   }
   lines.push(result.summary);
   if (result.items !== undefined && result.items.length > 0) {

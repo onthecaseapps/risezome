@@ -20,4 +20,25 @@ describe('trello_recently_active (live API)', () => {
     expect(result.summary).toBe('4 recently active cards (showing 2 most recent of 4):');
     expect(result.items?.map((i) => i.title)).toEqual(['Fix login', 'Write docs']);
   });
+
+  describe('self-healing (U3)', () => {
+    it('a bogus member that is the only filter → unresolved (recovery surfaced on the list result)', async () => {
+      const result = await buildTrelloRecentlyActiveSkill(trelloCtx([ROADMAP])).handler(
+        { member: 'Jraffe' },
+        SKILL_CTX,
+      );
+      expect(result.recovery?.status).toBe('unresolved');
+    });
+
+    it('a bogus member with a surviving scope → repaired, with the recent cards of that scope', async () => {
+      const result = await buildTrelloRecentlyActiveSkill(trelloCtx([ROADMAP])).handler(
+        { list: 'Backlog', member: 'Jraffe' },
+        SKILL_CTX,
+      );
+      expect(result.recovery?.status).toBe('repaired');
+      expect(result.recovery?.neutralized).toEqual([{ arg: 'member', value: 'Jraffe' }]);
+      // Backlog cards by recency.
+      expect(result.items?.map((i) => i.title)).toEqual(['Write docs', 'Add export']);
+    });
+  });
 });

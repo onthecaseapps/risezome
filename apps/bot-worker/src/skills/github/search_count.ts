@@ -4,6 +4,7 @@ import type { GithubFilter } from './filter.js';
 import { summarizeCount } from './count-summary.js';
 import { mapGithubError } from './error.js';
 import { searchIssuesCount, NO_GITHUB_SOURCE_SUMMARY, anyToken } from './live-helpers.js';
+import { ConnectorAuthError, RateLimitedError } from './connector-errors.js';
 import { resolvePerson } from './person.js';
 import {
   collectRepoLabelUnion,
@@ -74,16 +75,29 @@ export function buildSearchCountSkill(ctx: LiveSkillContext): Skill {
 
         if (filter.labels?.some((l) => l.length > 0) === true) {
           try {
-            const union = await collectRepoLabelUnion(ctx.client, access);
-            const { valid, bogus } = partitionLabels(filter.labels, union);
-            if (bogus.length > 0) {
-              const { labels: _dropped, ...rest } = cleaned;
-              cleaned = valid.length > 0 ? { ...rest, labels: valid } : rest;
-              for (const value of bogus) neutralized.push({ arg: 'labels', value });
+            const { labels: union, complete } = await collectRepoLabelUnion(ctx.client, access);
+            // Only neutralize against a COMPLETE domain. If a repo's label set
+            // was truncated at the page cap, an unmatched label might be real,
+            // so leave the filter as-is rather than confidently dropping it.
+            if (complete) {
+              const { valid, bogus } = partitionLabels(filter.labels, union);
+              if (bogus.length > 0) {
+                const { labels: _dropped, ...rest } = cleaned;
+                cleaned = valid.length > 0 ? { ...rest, labels: valid } : rest;
+                for (const value of bogus) neutralized.push({ arg: 'labels', value });
+              }
             }
-          } catch {
-            // Can't verify the labels right now → don't answer on an
-            // unverified domain; hand off to RAG (KTD5/KTD6).
+          } catch (err) {
+            // Genuine auth (401/403) and rate-limit failures are real,
+            // actionable errors — let them propagate to mapGithubError
+            // (skill.failed with a typed code) rather than masquerade as a
+            // label misparse. The client wraps ALL non-OK statuses (incl. 5xx)
+            // in ConnectorAuthError, so gate on the status, not just the type.
+            const isAuth =
+              err instanceof ConnectorAuthError && (err.status === 401 || err.status === 403);
+            if (isAuth || err instanceof RateLimitedError) throw err;
+            // Any other (transient, e.g. 5xx/network) failure: can't verify the
+            // domain → don't answer on it; hand off to RAG (KTD5/KTD6).
             return {
               kind: 'count',
               summary: 'Could not verify the requested GitHub labels right now.',

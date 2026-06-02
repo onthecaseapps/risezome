@@ -28,7 +28,7 @@ import {
   formatAsSource,
 } from '@risezome/engine/skills';
 import { type SkillRegistry } from '@risezome/engine/skills';
-import { decideToolSource } from './retrieval-safety-net';
+import { decideToolSource, mergeToolSource } from './retrieval-safety-net';
 import type { MeetingSummary } from '@risezome/engine/summarize';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { persistAndBroadcast } from './db.js';
@@ -654,8 +654,7 @@ export async function maybeRetrieveAndEmit(args: {
         // Tool result, when present, takes source[0]; cards follow at
         // [1..N]. The synthesizer's prompt cites by 1-indexed array
         // position, so [1] is the tool and [2..N] are the cards.
-        const mergedSources =
-          toolSource !== null ? [toolSource, ...synthesisSources] : synthesisSources;
+        const mergedSources = mergeToolSource(toolSource, synthesisSources);
         void runSynthesisAndBroadcast({
           synthesizer: args.synthesizer,
           utterance: queryText,

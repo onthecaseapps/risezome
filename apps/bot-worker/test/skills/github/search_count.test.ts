@@ -301,4 +301,76 @@ describe('github_count self-healing (U2)', () => {
     expect(labelFetches).toBe(0);
     expect(result.recovery).toBeUndefined();
   });
+
+  it('multi-label partial: a valid + a bogus label → bogus dropped, valid survives in the query, repaired', async () => {
+    let seen = '';
+    const { ctx } = ctxReturning({ 'acme/widget': 2 }, (url) => (seen = url), ['bug', 'enhancement']);
+    const result = await buildSearchCountSkill(ctx).handler(
+      { type: 'issue', state: 'open', labels: ['bug', 'case'] },
+      SKILL_CTX,
+    );
+    expect(result.recovery?.status).toBe('repaired');
+    expect(result.recovery?.neutralized).toEqual([{ arg: 'labels', value: 'case' }]);
+    // The surviving valid label is still in the Search query.
+    expect(decodeURIComponent(seen).replace(/\+/g, ' ')).toContain('label:"bug"');
+    expect(decodeURIComponent(seen).replace(/\+/g, ' ')).not.toContain('label:"case"');
+  });
+
+  it('author canonicalization: a resolvable author is rewritten to its real login, no recovery', async () => {
+    let seen = '';
+    const access: GithubAccess = {
+      installations: [{ installationId: 1, token: 't1', repos: [{ owner: 'acme', name: 'widget' }] }],
+    };
+    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/users/Jamie')) return Promise.resolve(new Response('nf', { status: 404 }));
+      if (url.includes('/search/users')) return Promise.resolve(jsonResponse({ items: [{ login: 'jamie-dev' }] }));
+      seen = url;
+      return Promise.resolve(jsonResponse({ total_count: 4 }));
+    });
+    const ctx: LiveSkillContext = { client: new GithubClient({ fetchImpl }), resolve: async () => access };
+    const result = await buildSearchCountSkill(ctx).handler(
+      { type: 'issue', state: 'open', author: 'Jamie' },
+      SKILL_CTX,
+    );
+    expect(result.recovery).toBeUndefined();
+    expect(decodeURIComponent(seen).replace(/\+/g, ' ')).toContain('author:jamie-dev');
+  });
+
+  it('incomplete domain (label set truncated at the page cap) → an unmatched label is NOT neutralized', async () => {
+    // Every /labels page returns a FULL page of 100 (none named 'wontfix'),
+    // so the union never short-circuits → complete=false. A real-but-unseen
+    // label must NOT be confidently dropped.
+    const hundred = Array.from({ length: 100 }, (_v, i) => ({ name: `label-${String(i)}` }));
+    const access: GithubAccess = {
+      installations: [{ installationId: 1, token: 't1', repos: [{ owner: 'acme', name: 'widget' }] }],
+    };
+    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/labels')) return Promise.resolve(jsonResponse(hundred));
+      return Promise.resolve(jsonResponse({ total_count: 3 }));
+    });
+    const ctx: LiveSkillContext = { client: new GithubClient({ fetchImpl }), resolve: async () => access };
+    const result = await buildSearchCountSkill(ctx).handler(
+      { type: 'issue', state: 'open', labels: ['wontfix'] },
+      SKILL_CTX,
+    );
+    // Domain was incomplete → no confident neutralization.
+    expect(result.recovery).toBeUndefined();
+  });
+
+  it('a 401 from the /labels fetch propagates as a skill failure (not a silent misparse)', async () => {
+    const access: GithubAccess = {
+      installations: [{ installationId: 1, token: 't1', repos: [{ owner: 'acme', name: 'widget' }] }],
+    };
+    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/labels')) return Promise.resolve(new Response('no', { status: 401 }));
+      return Promise.resolve(jsonResponse({ total_count: 1 }));
+    });
+    const ctx: LiveSkillContext = { client: new GithubClient({ fetchImpl }), resolve: async () => access };
+    await expect(
+      buildSearchCountSkill(ctx).handler({ type: 'issue', labels: ['bug'] }, SKILL_CTX),
+    ).rejects.toMatchObject({ executionCode: 'auth-error' });
+  });
 });
