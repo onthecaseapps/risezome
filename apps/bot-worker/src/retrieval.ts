@@ -28,6 +28,7 @@ import {
   formatAsSource,
 } from '@risezome/engine/skills';
 import { type SkillRegistry } from '@risezome/engine/skills';
+import { decideToolSource } from './retrieval-safety-net';
 import type { MeetingSummary } from '@risezome/engine/summarize';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { persistAndBroadcast } from './db.js';
@@ -536,7 +537,29 @@ export async function maybeRetrieveAndEmit(args: {
               },
               'skill.done',
             );
-            toolSource = formatAsSource(skillResult, result.skillName, result.args);
+            // Router safety-net (U4): a self-healed result the skill marked
+            // 'unresolved' (KTD8 — misparse left the query unscoped, or a
+            // validation fetch failed) is dropped so synthesis falls back to
+            // RAG. This decision is made HERE, before synthesis is invoked, so
+            // a dropped result never emits a premature synthesisStart (KTD7).
+            const decision = decideToolSource(skillResult);
+            if (decision.status !== 'clean') {
+              args.logger.warn(
+                {
+                  meetingId: args.meetingId,
+                  utteranceId: args.utteranceId,
+                  skillName: result.skillName,
+                  status: decision.status,
+                  ...(skillResult.recovery?.neutralized !== undefined && {
+                    neutralized: skillResult.recovery.neutralized,
+                  }),
+                },
+                'skill.suspect',
+              );
+            }
+            if (decision.keep) {
+              toolSource = formatAsSource(skillResult, result.skillName, result.args);
+            }
           } catch (err) {
             const code =
               err instanceof SkillExecutionError ? err.executionCode : 'execution-error';
