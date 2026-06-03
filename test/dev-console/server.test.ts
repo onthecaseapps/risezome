@@ -16,11 +16,11 @@ let handle: ConsoleHandle;
 let root: string;
 
 function setup(
-  opts: { mode?: 'local' | 'hosted'; defs?: ProcDef[] } = {},
+  opts: { mode?: 'local' | 'hosted'; defs?: ProcDef[]; sbScript?: string } = {},
 ): Promise<{ base: string }> {
   root = mkdtempSync(join(tmpdir(), 'console-srv-'));
   const fakeSb = join(root, 'fake-supabase');
-  writeFileSync(fakeSb, FAKE_SB);
+  writeFileSync(fakeSb, opts.sbScript ?? FAKE_SB);
   chmodSync(fakeSb, 0o755);
   const fakeUseEnv = join(root, 'fake-use-env');
   writeFileSync(fakeUseEnv, FAKE_USEENV);
@@ -52,6 +52,7 @@ interface Item {
 interface StateResp {
   items: Item[];
   mode?: string;
+  activity?: string | null;
 }
 async function getJson<T>(url: string): Promise<T> {
   return (await fetch(url)).json() as Promise<T>;
@@ -169,5 +170,27 @@ describe('dev-console server', () => {
     const s = await getJson<StateResp>(`${base}/api/state`);
     expect(s.items.find((i: Item) => i.name === 'supabase')).toBeDefined();
     expect(s.mode).toBe('local');
+  });
+
+  it('exposes the current action via state.activity during a long start, null when idle', async () => {
+    // A supabase shim whose `start` blocks, so the activity banner is observable
+    // while POST /api/all/start is still in flight.
+    const slowSb = `#!/usr/bin/env bash
+case "$1" in
+  status) exit 1 ;;
+  start) sleep 1; echo "sb up"; exit 0 ;;
+  *) echo "sb $*"; exit 0 ;;
+esac
+`;
+    const { base } = await setup({ mode: 'local', sbScript: slowSb });
+    expect((await getJson<StateResp>(`${base}/api/state`)).activity ?? null).toBeNull();
+
+    const startReq = post(`${base}/api/all/start`); // do not await — it blocks on `supabase start`
+    await waitFor(async () => {
+      const a = (await getJson<StateResp>(`${base}/api/state`)).activity;
+      return typeof a === 'string' && /supabase/i.test(a);
+    });
+    await startReq;
+    expect((await getJson<StateResp>(`${base}/api/state`)).activity ?? null).toBeNull();
   });
 });

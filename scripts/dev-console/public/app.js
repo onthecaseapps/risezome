@@ -7,6 +7,8 @@ const configForm = document.getElementById('config');
 const tagInput = document.getElementById('tag');
 const modeSelect = document.getElementById('mode');
 const configStatus = document.getElementById('config-status');
+const activityBar = document.getElementById('activity');
+const activityText = document.getElementById('activity-text');
 
 const cards = new Map(); // name -> { root, badge, pid, logs, stream, atBottom }
 
@@ -35,6 +37,7 @@ function ensureCard(name) {
         <button data-act="start">start</button>
         <button data-act="stop">stop</button>
         <button data-act="restart">restart</button>
+        <button data-expand title="Expand to full screen">⤢</button>
       </span>
     </div>
     <pre class="logs"></pre>`;
@@ -43,6 +46,7 @@ function ensureCard(name) {
   const badge = root.querySelector('.badge');
   const pid = root.querySelector('.proc-pid');
   const logs = root.querySelector('.logs');
+  const expandBtn = root.querySelector('button[data-expand]');
 
   card = { root, badge, pid, logs, stream: null, atBottom: true };
 
@@ -53,6 +57,7 @@ function ensureCard(name) {
       );
     });
   });
+  expandBtn.addEventListener('click', () => toggleExpand(card, expandBtn));
   logs.addEventListener('scroll', () => {
     card.atBottom = logs.scrollTop + logs.clientHeight >= logs.scrollHeight - 4;
   });
@@ -87,6 +92,32 @@ function paintBadge(card, state) {
   card.badge.textContent = state;
 }
 
+function toggleExpand(card, btn) {
+  const expanding = !card.root.classList.contains('expanded');
+  // Only one card expanded at a time.
+  for (const other of cards.values()) {
+    other.root.classList.remove('expanded');
+    const b = other.root.querySelector('button[data-expand]');
+    if (b) {
+      b.textContent = '⤢';
+      b.title = 'Expand to full screen';
+    }
+  }
+  if (expanding) {
+    card.root.classList.add('expanded');
+    btn.textContent = '⤡';
+    btn.title = 'Collapse';
+    card.logs.scrollTop = card.logs.scrollHeight;
+  }
+  document.body.classList.toggle('has-expanded', expanding);
+}
+
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape') return;
+  const open = [...cards.values()].find((c) => c.root.classList.contains('expanded'));
+  if (open) toggleExpand(open, open.root.querySelector('button[data-expand]'));
+});
+
 function reconcileCards(names) {
   for (const [name, card] of cards) {
     if (!names.includes(name)) {
@@ -97,8 +128,18 @@ function reconcileCards(names) {
   }
 }
 
+function paintActivity(activity) {
+  if (activity) {
+    activityText.textContent = activity;
+    activityBar.hidden = false;
+  } else {
+    activityBar.hidden = true;
+  }
+}
+
 async function refreshState() {
   const state = await api('/api/state');
+  paintActivity(state.activity);
   const items = state.items ?? [];
   reconcileCards(items.map((i) => i.name));
   for (const item of items) {
@@ -128,6 +169,9 @@ configForm.addEventListener('submit', (ev) => {
 document.querySelectorAll('button[data-all]').forEach((btn) => {
   btn.addEventListener('click', () => {
     btn.disabled = true;
+    // The POST resolves only when the (possibly minutes-long) op finishes, so
+    // poll quickly meanwhile to surface the activity banner.
+    setTimeout(() => void refreshState(), 200);
     void api(`/api/all/${btn.dataset.all}`, 'POST')
       .then(refreshState)
       .finally(() => {

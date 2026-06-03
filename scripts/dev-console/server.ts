@@ -55,6 +55,10 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     ...(opts.supabaseCommand !== undefined ? { command: opts.supabaseCommand } : {}),
   });
   let lastMode: 'local' | 'hosted' = opts.mode;
+  // Human-readable description of the long-running action the console is
+  // currently performing (e.g. "Starting Supabase…"), surfaced in /api/state so
+  // the UI can show a banner. null when idle.
+  let activity: string | null = null;
 
   const server = createServer((req, res) => {
     handle(req, res).catch((err: unknown) => {
@@ -75,7 +79,7 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       return serveStatic('styles.css', 'text/css', res);
 
     if (method === 'GET' && path === '/api/state')
-      return sendJson(res, 200, { items: await states(), mode: lastMode });
+      return sendJson(res, 200, { items: await states(), mode: lastMode, activity });
 
     if (method === 'GET' && path === '/api/config') {
       return sendJson(res, 200, { tag: readTag(opts.repoRoot), mode: lastMode });
@@ -87,7 +91,13 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       if (mode !== 'local' && mode !== 'hosted')
         return sendJson(res, 400, { ok: false, error: 'mode must be local|hosted' });
       if (tag.length === 0) return sendJson(res, 400, { ok: false, error: 'tag required' });
-      const result = await runUseEnv(opts, tag, mode);
+      activity = `Applying environment (tag ${tag}, ${mode})…`;
+      let result;
+      try {
+        result = await runUseEnv(opts, tag, mode);
+      } finally {
+        activity = null;
+      }
       lastMode = mode;
       return sendJson(res, result.code === 0 ? 200 : 500, {
         ok: result.code === 0,
@@ -105,12 +115,25 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
 
     const allMatch = /^\/api\/all\/(start|stop)$/.exec(path);
     if (method === 'POST' && allMatch !== null) {
-      if (allMatch[1] === 'start') {
-        if (lastMode === 'local') await supabase.start();
-        manager.startAll();
-      } else {
-        await manager.stopAll();
-        if (lastMode === 'local') await supabase.stop();
+      try {
+        if (allMatch[1] === 'start') {
+          if (lastMode === 'local') {
+            activity =
+              'Starting Supabase — first run pulls Docker images, this can take a few minutes…';
+            await supabase.start();
+          }
+          activity = 'Launching portal · inngest · bot-worker…';
+          manager.startAll();
+        } else {
+          activity = 'Stopping all processes…';
+          await manager.stopAll();
+          if (lastMode === 'local') {
+            activity = 'Stopping Supabase containers…';
+            await supabase.stop();
+          }
+        }
+      } finally {
+        activity = null;
       }
       return sendJson(res, 200, { ok: true, items: await states() });
     }
@@ -123,21 +146,35 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
   }
 
   async function controlItem(name: string, action: string, res: ServerResponse): Promise<void> {
-    if (name === SUPABASE) {
-      if (action === 'start') await supabase.start();
-      else if (action === 'stop') await supabase.stop();
-      else {
-        await supabase.stop();
-        await supabase.start();
+    try {
+      if (name === SUPABASE) {
+        if (action === 'start') {
+          activity = 'Starting Supabase…';
+          await supabase.start();
+        } else if (action === 'stop') {
+          activity = 'Stopping Supabase…';
+          await supabase.stop();
+        } else {
+          activity = 'Restarting Supabase…';
+          await supabase.stop();
+          await supabase.start();
+        }
+        return sendJson(res, 200, { ok: true, items: await states() });
+      }
+      if (!manager.has(name))
+        return sendJson(res, 404, { ok: false, error: `unknown process: ${name}` });
+      if (action === 'start') manager.start(name);
+      else if (action === 'stop') {
+        activity = `Stopping ${name}…`;
+        await manager.stop(name);
+      } else {
+        activity = `Restarting ${name}…`;
+        await manager.restart(name);
       }
       return sendJson(res, 200, { ok: true, items: await states() });
+    } finally {
+      activity = null;
     }
-    if (!manager.has(name))
-      return sendJson(res, 404, { ok: false, error: `unknown process: ${name}` });
-    if (action === 'start') manager.start(name);
-    else if (action === 'stop') await manager.stop(name);
-    else await manager.restart(name);
-    return sendJson(res, 200, { ok: true, items: await states() });
   }
 
   function streamLogs(name: string, req: IncomingMessage, res: ServerResponse): void {
@@ -148,13 +185,23 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       'cache-control': 'no-cache',
       connection: 'keep-alive',
     });
+    // Open comment so the browser's EventSource fires `onopen` immediately, even
+    // before the process has emitted anything.
+    res.write(': open\n\n');
+    res.flushHeaders?.();
     const send = (line: string): void => {
       res.write(`data: ${JSON.stringify(renderLine(line))}\n\n`);
     };
     for (const line of tail(name)) send(line);
     const onLine = (line: string): void => send(line);
     manager.on(`line:${name}`, onLine);
-    req.on('close', () => manager.off(`line:${name}`, onLine));
+    // Keep the stream alive across idle gaps (a process can be quiet for minutes).
+    const heartbeat = setInterval(() => res.write(': ping\n\n'), 15_000);
+    heartbeat.unref?.();
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      manager.off(`line:${name}`, onLine);
+    });
   }
 
   function tail(name: string): string[] {
