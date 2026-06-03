@@ -1,6 +1,10 @@
-// Dev-console browser client (plan U5). Dumb renderer: the server ships
-// pre-rendered { html, level } log payloads over SSE and JSON state snapshots;
-// this file only wires controls and paints. No build step, no dependencies.
+// Dev-console browser client. Dumb renderer: ONE EventSource (/api/events)
+// carries periodic state snapshots + every process's pre-rendered { html, level }
+// log lines tagged by name. A single multiplexed connection avoids the browser's
+// ~6-connections-per-host limit that starved per-pane streams during a long
+// start-all. Control actions are plain fetch POSTs. No build step, no deps.
+
+const CONSOLE = '__console__';
 
 const procs = document.getElementById('procs');
 const configForm = document.getElementById('config');
@@ -10,7 +14,7 @@ const configStatus = document.getElementById('config-status');
 const activityBar = document.getElementById('activity');
 const activityText = document.getElementById('activity-text');
 
-const cards = new Map(); // name -> { root, badge, pid, logs, stream, atBottom }
+const cards = new Map(); // name -> { root, badge, pid, logs, atBottom }
 
 async function api(path, method = 'GET', body) {
   const opts = { method };
@@ -22,6 +26,33 @@ async function api(path, method = 'GET', body) {
   return res.json().catch(() => ({}));
 }
 
+// Append a pre-rendered log line to a pane, trimming history and autoscrolling.
+function appendLog(pane, payload) {
+  const line = document.createElement('span');
+  line.className = `log-line ${payload.level ?? 'info'}`;
+  line.innerHTML = `${payload.html ?? ''}\n`;
+  pane.logs.appendChild(line);
+  while (pane.logs.childElementCount > 2000) pane.logs.removeChild(pane.logs.firstChild);
+  if (pane.atBottom) pane.logs.scrollTop = pane.logs.scrollHeight;
+}
+
+// Track whether a log pane is scrolled to the bottom (so new lines autoscroll
+// only when the user hasn't scrolled up to read history).
+function trackScroll(pane) {
+  pane.logs.addEventListener('scroll', () => {
+    pane.atBottom = pane.logs.scrollTop + pane.logs.clientHeight >= pane.logs.scrollHeight - 4;
+  });
+}
+
+// ── Console panel (pinned at top): orchestration steps + tunnel setup ─────────
+const consolePane = {
+  root: document.getElementById('console-panel'),
+  logs: document.getElementById('console-logs'),
+  atBottom: true,
+};
+trackScroll(consolePane);
+
+// ── Process panes ─────────────────────────────────────────────────────────────
 function ensureCard(name) {
   let card = cards.get(name);
   if (card) return card;
@@ -48,43 +79,19 @@ function ensureCard(name) {
   const logs = root.querySelector('.logs');
   const expandBtn = root.querySelector('button[data-expand]');
 
-  card = { root, badge, pid, logs, stream: null, atBottom: true };
+  card = { root, badge, pid, logs, atBottom: true };
 
   root.querySelectorAll('button[data-act]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      void api(`/api/proc/${encodeURIComponent(name)}/${btn.dataset.act}`, 'POST').then(
-        refreshState,
-      );
+      void api(`/api/proc/${encodeURIComponent(name)}/${btn.dataset.act}`, 'POST');
     });
   });
   expandBtn.addEventListener('click', () => toggleExpand(card, expandBtn));
-  logs.addEventListener('scroll', () => {
-    card.atBottom = logs.scrollTop + logs.clientHeight >= logs.scrollHeight - 4;
-  });
+  trackScroll(card);
 
   procs.appendChild(root);
   cards.set(name, card);
-  openStream(name, card);
   return card;
-}
-
-function openStream(name, card) {
-  const es = new EventSource(`/api/logs/${encodeURIComponent(name)}`);
-  es.onmessage = (ev) => {
-    let payload;
-    try {
-      payload = JSON.parse(ev.data);
-    } catch {
-      return;
-    }
-    const line = document.createElement('span');
-    line.className = `log-line ${payload.level ?? 'info'}`;
-    line.innerHTML = `${payload.html ?? ''}\n`;
-    card.logs.appendChild(line);
-    while (card.logs.childElementCount > 1000) card.logs.removeChild(card.logs.firstChild);
-    if (card.atBottom) card.logs.scrollTop = card.logs.scrollHeight;
-  };
-  card.stream = es;
 }
 
 function paintBadge(card, state) {
@@ -121,7 +128,6 @@ document.addEventListener('keydown', (ev) => {
 function reconcileCards(names) {
   for (const [name, card] of cards) {
     if (!names.includes(name)) {
-      card.stream?.close();
       card.root.remove();
       cards.delete(name);
     }
@@ -137,8 +143,7 @@ function paintActivity(activity) {
   }
 }
 
-async function refreshState() {
-  const state = await api('/api/state');
+function applyState(state) {
   paintActivity(state.activity);
   const items = state.items ?? [];
   reconcileCards(items.map((i) => i.name));
@@ -149,6 +154,26 @@ async function refreshState() {
   }
 }
 
+// ── Single multiplexed event stream ───────────────────────────────────────────
+function connectEvents() {
+  const es = new EventSource('/api/events');
+  es.onmessage = (ev) => {
+    let msg;
+    try {
+      msg = JSON.parse(ev.data);
+    } catch {
+      return;
+    }
+    if (msg.type === 'state') {
+      applyState(msg);
+    } else if (msg.type === 'log') {
+      if (msg.name === CONSOLE) appendLog(consolePane, msg);
+      else appendLog(ensureCard(msg.name), msg);
+    }
+  };
+}
+
+// ── Config + bulk controls ────────────────────────────────────────────────────
 async function loadConfig() {
   const cfg = await api('/api/config');
   if (typeof cfg.tag === 'string') tagInput.value = cfg.tag;
@@ -161,7 +186,6 @@ configForm.addEventListener('submit', (ev) => {
   void api('/api/config', 'POST', { tag: tagInput.value.trim(), mode: modeSelect.value }).then(
     (r) => {
       configStatus.textContent = r.ok ? `applied (${r.mode})` : `error: ${r.error ?? 'failed'}`;
-      void refreshState();
     },
   );
 });
@@ -169,17 +193,12 @@ configForm.addEventListener('submit', (ev) => {
 document.querySelectorAll('button[data-all]').forEach((btn) => {
   btn.addEventListener('click', () => {
     btn.disabled = true;
-    // The POST resolves only when the (possibly minutes-long) op finishes, so
-    // poll quickly meanwhile to surface the activity banner.
-    setTimeout(() => void refreshState(), 200);
-    void api(`/api/all/${btn.dataset.all}`, 'POST')
-      .then(refreshState)
-      .finally(() => {
-        btn.disabled = false;
-      });
+    // Progress (steps + state) streams over /api/events while this resolves.
+    void api(`/api/all/${btn.dataset.all}`, 'POST').finally(() => {
+      btn.disabled = false;
+    });
   });
 });
 
 void loadConfig();
-void refreshState();
-setInterval(() => void refreshState(), 2000);
+connectEvents();

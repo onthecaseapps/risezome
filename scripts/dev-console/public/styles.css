@@ -120,6 +120,21 @@ button:disabled {
   }
 }
 
+/* Pinned orchestration log — shows what step the console is on + tunnel setup. */
+.console-panel {
+  margin: 16px 16px 0;
+}
+.console-panel .proc-name {
+  color: var(--accent);
+}
+.console-sub {
+  margin-left: auto;
+  font-size: 11px;
+}
+.console-panel .logs {
+  height: 160px;
+}
+
 .procs {
   display: grid;
   grid-template-columns: 1fr;

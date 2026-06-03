@@ -46,9 +46,13 @@ Then open **http://localhost:4317** and:
    need to do the one-time `cloudflared tunnel login` first; if cloudflared is
    missing or not authenticated, the tunnel pane tells you exactly what to run and
    the rest of the stack still comes up.
-3. **Watch logs** per process — ANSI colors are preserved and error/warn lines
-   are tinted. Logs also persist to `.dev-logs/<name>.log` (gitignored) so a
-   process that outlives the console can still be `grep`-ed.
+3. **Watch logs** — a pinned **Console** panel at the top shows what step the
+   console is on (starting Supabase, tunnel setup, launching) plus the tunnel
+   creation output, and each process has its own pane below (⤢ expands one to
+   full screen, Esc collapses). ANSI colors are preserved and error/warn lines
+   tinted. Everything streams over a single connection, and logs persist to
+   `.dev-logs/<name>.log` (gitignored) so a process that outlives the console can
+   still be `grep`-ed.
 
 The console binds `127.0.0.1` only and has no auth — it's a localhost dev tool.
 It's the **parent** process: Ctrl-C (or closing it) tears down everything it

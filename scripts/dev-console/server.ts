@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import { spawn } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ProcessManager, type ProcDef, type ProcStatus } from './process-manager';
@@ -17,6 +17,9 @@ import { renderLine } from './ansi';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(HERE, 'public');
 const SUPABASE = 'supabase';
+// Pseudo-stream name for the console's own orchestration log (steps + tunnel
+// setup output), rendered in the dedicated Console panel.
+const CONSOLE = '__console__';
 
 export interface ConsoleOptions {
   readonly repoRoot: string;
@@ -64,6 +67,23 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
   // the UI can show a banner. null when idle.
   let activity: string | null = null;
 
+  // Append a line to the console's own orchestration log: emits to the CONSOLE
+  // stream (the Console panel) and persists so it replays on reconnect.
+  function logConsole(line: string): void {
+    manager.emit(`line:${CONSOLE}`, line);
+    try {
+      appendFileSync(join(opts.logDir, 'console.log'), line + '\n');
+    } catch {
+      /* log dir went away (teardown) — emit only */
+    }
+  }
+  // Set the current step: drives the banner (activity) and records it in the
+  // Console panel. Pass null to clear the banner (no log line).
+  function setStep(msg: string | null): void {
+    activity = msg;
+    if (msg !== null) logConsole(`▶ ${msg}`);
+  }
+
   const server = createServer((req, res) => {
     handle(req, res).catch((err: unknown) => {
       sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -95,7 +115,7 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       if (mode !== 'local' && mode !== 'hosted')
         return sendJson(res, 400, { ok: false, error: 'mode must be local|hosted' });
       if (tag.length === 0) return sendJson(res, 400, { ok: false, error: 'tag required' });
-      activity = `Applying environment (tag ${tag}, ${mode})…`;
+      setStep(`Applying environment (tag ${tag}, ${mode})…`);
       let result;
       try {
         result = await runUseEnv(opts, tag, mode);
@@ -122,27 +142,30 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       try {
         if (allMatch[1] === 'start') {
           if (lastMode === 'local') {
-            activity =
-              'Starting Supabase — first run pulls Docker images, this can take a few minutes…';
+            setStep(
+              'Starting Supabase — first run pulls Docker images, this can take a few minutes…',
+            );
             await supabase.start();
           }
-          activity = 'Setting up your cloudflared tunnel…';
+          setStep('Setting up your cloudflared tunnel…');
           await ensureTunnel();
-          activity = 'Launching portal · inngest · bot-worker · tunnel…';
+          setStep('Launching portal · inngest · bot-worker · tunnel…');
           manager.startAll();
         } else {
-          activity = 'Stopping all processes…';
+          setStep('Stopping all processes…');
           await manager.stopAll();
           if (lastMode === 'local') {
-            activity = 'Stopping Supabase containers…';
+            setStep('Stopping Supabase containers…');
             await supabase.stop();
           }
         }
       } finally {
-        activity = null;
+        setStep(null);
       }
       return sendJson(res, 200, { ok: true, items: await states() });
     }
+
+    if (method === 'GET' && path === '/api/events') return streamEvents(req, res);
 
     const logMatch = /^\/api\/logs\/([^/]+)$/.exec(path);
     if (method === 'GET' && logMatch !== null)
@@ -155,13 +178,13 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     try {
       if (name === SUPABASE) {
         if (action === 'start') {
-          activity = 'Starting Supabase…';
+          setStep('Starting Supabase…');
           await supabase.start();
         } else if (action === 'stop') {
-          activity = 'Stopping Supabase…';
+          setStep('Stopping Supabase…');
           await supabase.stop();
         } else {
-          activity = 'Restarting Supabase…';
+          setStep('Restarting Supabase…');
           await supabase.stop();
           await supabase.start();
         }
@@ -172,20 +195,22 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       // The tunnel needs its per-dev cloudflared config to exist before it can
       // run — create it on demand when (re)starting the tunnel.
       if (name === 'tunnel' && (action === 'start' || action === 'restart')) {
-        activity = 'Setting up your cloudflared tunnel…';
+        setStep('Setting up your cloudflared tunnel…');
         await ensureTunnel();
       }
-      if (action === 'start') manager.start(name);
-      else if (action === 'stop') {
-        activity = `Stopping ${name}…`;
+      if (action === 'start') {
+        setStep(`Starting ${name}…`);
+        manager.start(name);
+      } else if (action === 'stop') {
+        setStep(`Stopping ${name}…`);
         await manager.stop(name);
       } else {
-        activity = `Restarting ${name}…`;
+        setStep(`Restarting ${name}…`);
         await manager.restart(name);
       }
       return sendJson(res, 200, { ok: true, items: await states() });
     } finally {
-      activity = null;
+      setStep(null);
     }
   }
 
@@ -217,8 +242,8 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
   }
 
   function tail(name: string): string[] {
-    if (name === SUPABASE) {
-      const p = join(opts.logDir, 'supabase.log');
+    if (name === SUPABASE || name === CONSOLE) {
+      const p = join(opts.logDir, `${name === SUPABASE ? 'supabase' : 'console'}.log`);
       if (!existsSync(p)) return [];
       const lines = readFileSync(p, 'utf8').split('\n');
       if (lines.at(-1) === '') lines.pop();
@@ -227,17 +252,70 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     return manager.tail(name, 200);
   }
 
+  /** All stream names the UI can show, in display order (console first). */
+  function streamNames(): string[] {
+    return [CONSOLE, ...(lastMode === 'local' ? [SUPABASE] : []), ...manager.names()];
+  }
+
+  /**
+   * Single multiplexed event stream for the UI: one SSE connection carries
+   * periodic state snapshots plus every process's log lines (tagged by name),
+   * so the browser never hits its ~6-connections-per-host limit (which starved
+   * the old per-pane streams + state poll during a long start-all).
+   */
+  async function streamEvents(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+    res.write(': open\n\n');
+    res.flushHeaders?.();
+    const send = (obj: unknown): boolean => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+    // State first so the client has panes before log lines arrive, then replay
+    // each stream's tail.
+    send({ type: 'state', items: await states(), mode: lastMode, activity });
+    for (const name of streamNames()) {
+      for (const line of tail(name)) send({ type: 'log', name, ...renderLine(line) });
+    }
+
+    // Live: subscribe to every stream's line events.
+    const handlers = new Map<string, (line: string) => void>();
+    for (const name of [CONSOLE, SUPABASE, ...manager.names()]) {
+      const h = (line: string): void => void send({ type: 'log', name, ...renderLine(line) });
+      manager.on(`line:${name}`, h);
+      handlers.set(name, h);
+    }
+
+    let closed = false;
+    const pushState = async (): Promise<void> => {
+      if (closed) return;
+      send({ type: 'state', items: await states(), mode: lastMode, activity });
+    };
+    const stateTimer = setInterval(() => void pushState(), 1200);
+    const heartbeat = setInterval(() => res.write(': ping\n\n'), 15_000);
+    heartbeat.unref?.();
+    stateTimer.unref?.();
+    req.on('close', () => {
+      closed = true;
+      clearInterval(stateTimer);
+      clearInterval(heartbeat);
+      for (const [name, h] of handlers) manager.off(`line:${name}`, h);
+    });
+  }
+
   /**
    * Ensure the per-developer cloudflared tunnel exists (create it if missing),
-   * streaming progress into the tunnel's log pane. Resolves with the script's
-   * exit code; non-zero (cloudflared missing / not authenticated / failure) just
-   * means the tunnel won't start this round — the actionable message is already
-   * in its log. Skipped when no tag is set.
+   * streaming progress into the Console panel. Resolves with the script's exit
+   * code; non-zero (cloudflared missing / not authenticated / failure) just means
+   * the tunnel won't start this round — the actionable message is already in the
+   * Console log. Skipped when no tag is set.
    */
   function ensureTunnel(): Promise<number> {
     const tag = opts.tag ?? readTag(opts.repoRoot);
     if (tag.length === 0) {
-      manager.emit('line:tunnel', '[tunnel] no developer tag set — apply a tag first.');
+      logConsole('[tunnel] no developer tag set — apply a tag first.');
       return Promise.resolve(2);
     }
     const command = opts.ensureTunnelCmd?.command ?? 'bash';
@@ -252,10 +330,7 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       try {
         child = spawn(command, args, { cwd: opts.repoRoot, stdio: ['ignore', 'pipe', 'pipe'] });
       } catch (err) {
-        manager.emit(
-          'line:tunnel',
-          `[tunnel] ensure failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        logConsole(`[tunnel] ensure failed: ${err instanceof Error ? err.message : String(err)}`);
         resolve(-1);
         return;
       }
@@ -264,7 +339,7 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
         buf += chunk.toString('utf8');
         let idx = buf.indexOf('\n');
         while (idx !== -1) {
-          manager.emit('line:tunnel', buf.slice(0, idx));
+          logConsole(buf.slice(0, idx));
           buf = buf.slice(idx + 1);
           idx = buf.indexOf('\n');
         }
@@ -272,11 +347,13 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       child.stdout?.on('data', onData);
       child.stderr?.on('data', onData);
       child.on('error', (err) => {
-        manager.emit('line:tunnel', `[tunnel] ${err.message}`);
+        logConsole(`[tunnel] ${err.message}`);
         resolve(-1);
       });
       child.on('close', (code) => {
-        if (buf.length > 0) manager.emit('line:tunnel', buf);
+        if (buf.length > 0) logConsole(buf);
+        if (code !== 0)
+          logConsole(`[tunnel] setup exited ${String(code)} — tunnel will not start this round.`);
         resolve(code ?? -1);
       });
     });

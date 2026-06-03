@@ -96,6 +96,42 @@ async function readSse(url: string, ms: number): Promise<string[]> {
   return lines;
 }
 
+interface EventMsg {
+  type: string;
+  name?: string;
+  html?: string;
+  items?: Item[];
+  activity?: string | null;
+}
+async function readEvents(url: string, ms: number): Promise<EventMsg[]> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  const msgs: EventMsg[] = [];
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i: number;
+      while ((i = buf.indexOf('\n\n')) !== -1) {
+        const evt = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const m = /^data: (.*)$/m.exec(evt);
+        if (m) msgs.push(JSON.parse(m[1]!) as EventMsg);
+      }
+    }
+  } catch {
+    /* aborted */
+  } finally {
+    clearTimeout(timer);
+  }
+  return msgs;
+}
+
 describe('dev-console server', () => {
   it('starts a process via the API; /api/state reflects running', async () => {
     const { base } = await setup();
@@ -104,6 +140,17 @@ describe('dev-console server', () => {
       const s = await getJson<StateResp>(`${base}/api/state`);
       return s.items.find((i: Item) => i.name === 'echoer')?.state === 'running';
     });
+  });
+
+  it('multiplexes state snapshots and tagged logs over a single /api/events stream', async () => {
+    const { base } = await setup();
+    const events = readEvents(`${base}/api/events`, 1000);
+    await new Promise((r) => setTimeout(r, 100)); // let the stream connect
+    await post(`${base}/api/proc/echoer/start`);
+    const msgs = await events;
+    expect(msgs.some((m) => m.type === 'state' && Array.isArray(m.items))).toBe(true);
+    const log = msgs.find((m) => m.type === 'log' && m.name === 'echoer');
+    expect(log?.html).toContain('hi');
   });
 
   it('streams a process log over SSE, replaying the tail', async () => {
