@@ -19,7 +19,7 @@
  * calibrate against the AE1/AE2 fixtures before changing in production.
  */
 export const GAP_MERGE_MAX_DISTANCE = (() => {
-  const raw = process.env['RISEZOME_GAP_MERGE_MAX_DISTANCE'];
+  const raw = process.env.RISEZOME_GAP_MERGE_MAX_DISTANCE;
   const parsed = raw === undefined ? NaN : Number.parseFloat(raw);
   return Number.isFinite(parsed) ? parsed : 0.22;
 })();
@@ -41,7 +41,7 @@ export function cosineDistance(a: readonly number[], b: readonly number[]): numb
   return 1 - dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-export function meanVector(vectors: ReadonlyArray<readonly number[]>): number[] {
+export function meanVector(vectors: readonly (readonly number[])[]): number[] {
   if (vectors.length === 0) return [];
   const dim = vectors[0]!.length;
   const acc = new Array<number>(dim).fill(0);
@@ -70,10 +70,10 @@ export interface DedupGroup<T> {
  * a new group. Centroids are recomputed as members are added.
  */
 export function dedupeWithinBatch<T>(
-  items: ReadonlyArray<Embedded<T>>,
+  items: readonly Embedded<T>[],
   maxDistance: number = GAP_MERGE_MAX_DISTANCE,
-): Array<DedupGroup<T>> {
-  const groups: Array<{ members: T[]; vectors: number[][]; centroid: number[] }> = [];
+): DedupGroup<T>[] {
+  const groups: { members: T[]; vectors: number[][]; centroid: number[] }[] = [];
   for (const { item, vector } of items) {
     let placed = false;
     for (const g of groups) {
@@ -103,7 +103,7 @@ export interface GapCandidate {
  */
 export function findMergeTarget(
   centroid: readonly number[],
-  candidates: ReadonlyArray<GapCandidate>,
+  candidates: readonly GapCandidate[],
   maxDistance: number = GAP_MERGE_MAX_DISTANCE,
 ): string | null {
   let best: { gapId: string; distance: number } | null = null;

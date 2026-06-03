@@ -20,7 +20,7 @@ import { cosineDistance, dedupeWithinBatch, type Embedded } from './merge.js';
  * topical buckets, not "same question". Env-overridable.
  */
 export const SECTION_ASSIGN_MAX_DISTANCE = (() => {
-  const raw = process.env['RISEZOME_GAP_SECTION_MAX_DISTANCE'];
+  const raw = process.env.RISEZOME_GAP_SECTION_MAX_DISTANCE;
   const parsed = raw === undefined ? NaN : Number.parseFloat(raw);
   return Number.isFinite(parsed) ? parsed : 0.45;
 })();
@@ -47,8 +47,8 @@ export interface Placement {
  * `maxDistance`, else Uncategorized. Does not mutate sections.
  */
 export function assignSections(
-  gaps: ReadonlyArray<GapToPlace>,
-  sections: ReadonlyArray<SectionRef>,
+  gaps: readonly GapToPlace[],
+  sections: readonly SectionRef[],
   maxDistance: number = SECTION_ASSIGN_MAX_DISTANCE,
 ): Placement[] {
   return gaps.map((g) => {
@@ -77,11 +77,11 @@ export type SectionNamer = (questions: readonly string[]) => Promise<string>;
  * company). The `namer` turns a cluster's questions into a short section name.
  */
 export async function proposeSections(
-  uncategorized: ReadonlyArray<GapToPlace>,
+  uncategorized: readonly GapToPlace[],
   namer: SectionNamer,
   maxDistance: number = SECTION_ASSIGN_MAX_DISTANCE,
 ): Promise<ProposedSection[]> {
-  const embedded: Array<Embedded<GapToPlace>> = uncategorized.map((g) => ({
+  const embedded: Embedded<GapToPlace>[] = uncategorized.map((g) => ({
     item: g,
     vector: g.vector,
   }));
