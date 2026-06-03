@@ -53,6 +53,8 @@ interface StateResp {
   items: Item[];
   mode?: string;
   activity?: string | null;
+  resetOnStart?: boolean;
+  links?: { label: string; url: string }[];
 }
 async function getJson<T>(url: string): Promise<T> {
   return (await fetch(url)).json() as Promise<T>;
@@ -210,6 +212,33 @@ describe('dev-console server', () => {
     });
     expect(r.status).toBe(400);
     expect(existsSync(join(root, '.dev-tag'))).toBe(false);
+  });
+
+  it('reset-on-start toggle defaults off and is reflected in state after POST', async () => {
+    const { base } = await setup();
+    expect((await getJson<StateResp>(`${base}/api/state`)).resetOnStart).toBe(false);
+    const r = await fetch(`${base}/api/reset-on-start`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: true }),
+    });
+    expect(r.status).toBe(200);
+    expect((await getJson<StateResp>(`${base}/api/state`)).resetOnStart).toBe(true);
+  });
+
+  it('links lists URLs for running known tools', async () => {
+    const { base } = await setup({
+      defs: [{ name: 'portal', command: 'bash', args: ['-c', 'sleep 30'], cwd: '.', order: 2 }],
+    });
+    expect((await getJson<StateResp>(`${base}/api/state`)).links).toEqual([]); // nothing up yet
+    await post(`${base}/api/proc/portal/start`);
+    await waitFor(
+      async () =>
+        (await getJson<StateResp>(`${base}/api/state`)).items.find((i) => i.name === 'portal')
+          ?.state === 'running',
+    );
+    const links = (await getJson<StateResp>(`${base}/api/state`)).links ?? [];
+    expect(links.some((l) => l.url === 'http://localhost:3000')).toBe(true);
   });
 
   it('local mode includes Supabase in state', async () => {

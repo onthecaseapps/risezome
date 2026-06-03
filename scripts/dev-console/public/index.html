@@ -21,6 +21,13 @@
         <button type="submit">Apply</button>
         <span id="config-status" class="muted"></span>
       </form>
+      <label
+        class="reset-toggle"
+        title="When on, a cold Supabase start wipes + re-seeds the DB. Off keeps your local data."
+      >
+        <input type="checkbox" id="reset-on-start" />
+        reset DB on start
+      </label>
       <div class="all-controls">
         <button data-all="start">Start all</button>
         <button data-all="stop">Stop all</button>
@@ -31,6 +38,14 @@
       <span class="spinner"></span>
       <span id="activity-text"></span>
     </div>
+
+    <section class="proc links-panel" id="links-panel">
+      <div class="proc-head">
+        <span class="proc-name">Links</span>
+        <span class="muted console-sub">URLs for running tools</span>
+      </div>
+      <div class="links" id="links"><span class="muted">nothing running yet</span></div>
+    </section>
 
     <section class="proc console-panel" id="console-panel">
       <div class="proc-head">

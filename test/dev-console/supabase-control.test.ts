@@ -13,6 +13,7 @@ case "$1" in
   status) exit \${FAKE_SB_STATUS:-1} ;;
   start) echo "Started supabase"; exit 0 ;;
   db) echo "Resetting database"; exit 0 ;;
+  migration) echo "Applying migrations"; exit 0 ;;
   stop) echo "Stopped supabase"; exit 0 ;;
   *) echo "unknown $*"; exit 0 ;;
 esac
@@ -50,7 +51,7 @@ describe('SupabaseControl', () => {
     expect(await sb.statusIsUp()).toBe(false);
   });
 
-  it('start when stopped runs start THEN db reset; state running; output logged', async () => {
+  it('start (default) when stopped runs start THEN migration up — keeps data, no reset', async () => {
     process.env.FAKE_SB_STATUS = '1'; // not up
     const lines: string[] = [];
     const sb = make(lines);
@@ -58,8 +59,20 @@ describe('SupabaseControl', () => {
     expect(sb.state).toBe('running');
     const log = readFileSync(join(dir, 'supabase.log'), 'utf8');
     expect(log).toContain('Started supabase');
-    expect(log).toContain('Resetting database'); // reset ran on fresh start
+    expect(log).toContain('Applying migrations'); // migration up, not reset
+    expect(log).not.toContain('Resetting database');
     expect(lines.join('\n')).toContain('Started supabase');
+  });
+
+  it('start(true) when stopped runs db reset — wipes + re-seeds', async () => {
+    process.env.FAKE_SB_STATUS = '1'; // not up
+    const lines: string[] = [];
+    const sb = make(lines);
+    await sb.start(true);
+    expect(sb.state).toBe('running');
+    const log = readFileSync(join(dir, 'supabase.log'), 'utf8');
+    expect(log).toContain('Resetting database');
+    expect(log).not.toContain('Applying migrations');
   });
 
   it('start when already up does NOT reset (no data wipe)', async () => {

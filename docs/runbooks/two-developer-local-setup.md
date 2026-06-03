@@ -46,7 +46,14 @@ Then open **http://localhost:4317** and:
    need to do the one-time `cloudflared tunnel login` first; if cloudflared is
    missing or not authenticated, the tunnel pane tells you exactly what to run and
    the rest of the stack still comes up.
-3. **Watch logs** — a pinned **Console** panel at the top shows what step the
+3. **Open a tool** — the **Links** panel at the top lists clickable URLs for
+   every tool that's up (portal, Inngest, bot-worker health, Supabase Studio/API
+   in local mode, and your tunnel hostnames once it's running).
+4. **Reset DB on start** (top-bar toggle, default **off**) — off means a cold
+   Supabase start runs `supabase migration up` (applies new migrations, **keeps
+   your local data**); on means `supabase db reset` (wipes + re-seeds). A stack
+   that's already running is never touched either way.
+5. **Watch logs** — a pinned **Console** panel at the top shows what step the
    console is on (starting Supabase, tunnel setup, launching) plus the tunnel
    creation output, and each process has its own pane below (⤢ expands one to
    full screen, Esc collapses). ANSI colors are preserved and error/warn lines
@@ -174,8 +181,10 @@ well-known local demo keys). In hosted mode they come from your `.env.dev`.
   `RISEZOME_RUN_RLS_TESTS=1` is set — skipped ≠ passed. To actually exercise RLS:
   `pnpm dev <tag> local` (or `supabase start`), then
   `RISEZOME_RUN_RLS_TESTS=1 pnpm --filter @risezome/portal test`.
-- **`supabase db reset` wipes local data.** `pnpm dev` only resets when it had to
-  _start_ the stack fresh; it never resets a stack you're already running.
+- **`supabase db reset` wipes local data.** The dev console only resets on a cold
+  start when the **"reset DB on start"** toggle is on (default off → it runs
+  `migration up` and keeps your data); `pnpm dev` resets only when it had to
+  _start_ the stack fresh. Neither ever resets a stack that's already running.
 - **After pulling new migrations**, re-apply to your target: local →
   `supabase db reset` (re-applies migrations), hosted → `supabase db push`. Otherwise your
   schema drifts from the code.

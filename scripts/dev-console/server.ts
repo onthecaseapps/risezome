@@ -66,6 +66,9 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
   // currently performing (e.g. "Starting Supabase…"), surfaced in /api/state so
   // the UI can show a banner. null when idle.
   let activity: string | null = null;
+  // When true, a cold Supabase start runs `db reset` (wipes + re-seeds) instead
+  // of `migration up` (keeps data). Default off so stop/start preserves local data.
+  let resetOnStart = false;
 
   // Append a line to the console's own orchestration log: emits to the CONSOLE
   // stream (the Console panel) and persists so it replays on reconnect.
@@ -102,8 +105,25 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     if (method === 'GET' && path === '/styles.css')
       return serveStatic('styles.css', 'text/css', res);
 
-    if (method === 'GET' && path === '/api/state')
-      return sendJson(res, 200, { items: await states(), mode: lastMode, activity });
+    if (method === 'GET' && path === '/api/state') {
+      const items = await states();
+      return sendJson(res, 200, {
+        items,
+        mode: lastMode,
+        activity,
+        resetOnStart,
+        links: links(items),
+      });
+    }
+
+    if (method === 'POST' && path === '/api/reset-on-start') {
+      const body = await readBody(req);
+      resetOnStart = body.enabled === true;
+      logConsole(
+        `▶ Reset DB on start: ${resetOnStart ? 'ON — next cold start wipes + re-seeds' : 'OFF — keeping local data'}`,
+      );
+      return sendJson(res, 200, { ok: true, resetOnStart });
+    }
 
     if (method === 'GET' && path === '/api/config') {
       return sendJson(res, 200, { tag: readTag(opts.repoRoot), mode: lastMode });
@@ -145,7 +165,7 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
             setStep(
               'Starting Supabase — first run pulls Docker images, this can take a few minutes…',
             );
-            await supabase.start();
+            await supabase.start(resetOnStart);
           }
           setStep('Setting up your cloudflared tunnel…');
           await ensureTunnel();
@@ -179,14 +199,14 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       if (name === SUPABASE) {
         if (action === 'start') {
           setStep('Starting Supabase…');
-          await supabase.start();
+          await supabase.start(resetOnStart);
         } else if (action === 'stop') {
           setStep('Stopping Supabase…');
           await supabase.stop();
         } else {
           setStep('Restarting Supabase…');
           await supabase.stop();
-          await supabase.start();
+          await supabase.start(resetOnStart);
         }
         return sendJson(res, 200, { ok: true, items: await states() });
       }
@@ -275,7 +295,15 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
 
     // State first so the client has panes before log lines arrive, then replay
     // each stream's tail.
-    send({ type: 'state', items: await states(), mode: lastMode, activity });
+    const initial = await states();
+    send({
+      type: 'state',
+      items: initial,
+      mode: lastMode,
+      activity,
+      resetOnStart,
+      links: links(initial),
+    });
     for (const name of streamNames()) {
       for (const line of tail(name)) send({ type: 'log', name, ...renderLine(line) });
     }
@@ -291,7 +319,8 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     let closed = false;
     const pushState = async (): Promise<void> => {
       if (closed) return;
-      send({ type: 'state', items: await states(), mode: lastMode, activity });
+      const items = await states();
+      send({ type: 'state', items, mode: lastMode, activity, resetOnStart, links: links(items) });
     };
     const stateTimer = setInterval(() => void pushState(), 1200);
     const heartbeat = setInterval(() => res.write(': ping\n\n'), 15_000);
@@ -357,6 +386,26 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
         resolve(code ?? -1);
       });
     });
+  }
+
+  /** URLs for the tools currently up, for the Links panel. */
+  function links(items: readonly ItemStatus[]): { label: string; url: string }[] {
+    const tag = opts.tag ?? readTag(opts.repoRoot);
+    const up = (name: string): boolean => items.find((i) => i.name === name)?.state === 'running';
+    const out: { label: string; url: string }[] = [];
+    if (up('portal')) out.push({ label: 'Portal', url: 'http://localhost:3000' });
+    if (up('inngest')) out.push({ label: 'Inngest dev', url: 'http://localhost:8288' });
+    if (up('bot-worker'))
+      out.push({ label: 'Bot-worker health', url: 'http://localhost:8787/health' });
+    if (lastMode === 'local' && up(SUPABASE)) {
+      out.push({ label: 'Supabase Studio', url: 'http://localhost:54323' });
+      out.push({ label: 'Supabase API', url: 'http://localhost:54321' });
+    }
+    if (up('tunnel') && tag.length > 0) {
+      out.push({ label: 'Portal (tunnel)', url: `https://dev-${tag}.risezome.app` });
+      out.push({ label: 'Bot-worker (tunnel)', url: `https://bot-worker-dev-${tag}.risezome.app` });
+    }
+    return out;
   }
 
   async function states(): Promise<ItemStatus[]> {

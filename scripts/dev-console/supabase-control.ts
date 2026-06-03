@@ -49,7 +49,16 @@ export class SupabaseControl {
     return this.state;
   }
 
-  async start(): Promise<void> {
+  /**
+   * Cold-start the local stack. On a fresh start we bring the schema up to date;
+   * `reset` chooses how:
+   *   - reset=false (default): `supabase migration up` — applies any new
+   *     migrations, KEEPS existing local data.
+   *   - reset=true: `supabase db reset` — wipes the DB, re-applies migrations +
+   *     seed. Use when you want a clean slate.
+   * An already-running stack is left untouched either way (no surprise wipes).
+   */
+  async start(reset = false): Promise<void> {
     if (this.state === 'starting') return;
     const alreadyUp = await this.statusIsUp();
     if (alreadyUp) {
@@ -69,8 +78,13 @@ export class SupabaseControl {
       this.state = 'stopped';
       return;
     }
-    this.#line('[console] applying migrations + seed (supabase db reset)…');
-    await this.#run(['db', 'reset']);
+    if (reset) {
+      this.#line('[console] resetting DB (supabase db reset) — wipes local data, re-seeds…');
+      await this.#run(['db', 'reset']);
+    } else {
+      this.#line('[console] applying new migrations (supabase migration up) — keeping local data…');
+      await this.#run(['migration', 'up']);
+    }
     this.state = 'running';
   }
 

@@ -13,6 +13,8 @@ const modeSelect = document.getElementById('mode');
 const configStatus = document.getElementById('config-status');
 const activityBar = document.getElementById('activity');
 const activityText = document.getElementById('activity-text');
+const linksEl = document.getElementById('links');
+const resetToggle = document.getElementById('reset-on-start');
 
 const cards = new Map(); // name -> { root, badge, pid, logs, atBottom }
 
@@ -143,8 +145,35 @@ function paintActivity(activity) {
   }
 }
 
+function paintLinks(links) {
+  const list = links ?? [];
+  if (list.length === 0) {
+    linksEl.innerHTML = '<span class="muted">nothing running yet</span>';
+    return;
+  }
+  linksEl.replaceChildren(
+    ...list.map((l) => {
+      const a = document.createElement('a');
+      a.href = l.url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.className = 'link';
+      a.innerHTML = `<span class="link-label"></span><span class="link-url"></span>`;
+      a.querySelector('.link-label').textContent = l.label;
+      a.querySelector('.link-url').textContent = l.url;
+      return a;
+    }),
+  );
+}
+
+let resetTouched = false; // don't fight the user mid-edit with server snapshots
+
 function applyState(state) {
   paintActivity(state.activity);
+  paintLinks(state.links);
+  if (!resetTouched && typeof state.resetOnStart === 'boolean') {
+    resetToggle.checked = state.resetOnStart;
+  }
   const items = state.items ?? [];
   reconcileCards(items.map((i) => i.name));
   for (const item of items) {
@@ -188,6 +217,11 @@ configForm.addEventListener('submit', (ev) => {
       configStatus.textContent = r.ok ? `applied (${r.mode})` : `error: ${r.error ?? 'failed'}`;
     },
   );
+});
+
+resetToggle.addEventListener('change', () => {
+  resetTouched = true;
+  void api('/api/reset-on-start', 'POST', { enabled: resetToggle.checked });
 });
 
 document.querySelectorAll('button[data-all]').forEach((btn) => {

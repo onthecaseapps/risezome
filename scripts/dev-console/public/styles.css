@@ -120,6 +120,50 @@ button:disabled {
   }
 }
 
+.reset-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.reset-toggle input {
+  margin: 0;
+}
+
+/* Links panel — clickable URLs for the tools that are up. */
+.links-panel {
+  margin: 16px 16px 0;
+}
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+}
+.link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  text-decoration: none;
+}
+.link:hover {
+  border-color: var(--accent);
+}
+.link-label {
+  color: #fff;
+  font-weight: 600;
+}
+.link-url {
+  color: var(--accent);
+  font-size: 11px;
+}
+
 /* Pinned orchestration log — shows what step the console is on + tunnel setup. */
 .console-panel {
   margin: 16px 16px 0;
