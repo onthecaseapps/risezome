@@ -143,24 +143,26 @@ if (!stackReachable && !FORCE) {
       expect(await canSelectGap(nonParticipant, gapId)).toBe(true);
     });
 
-    it('the assignee can SELECT and resolve; a non-assignee non-manager cannot update', async () => {
+    it('the assignee can SELECT but cannot directly PATCH the gap (no client UPDATE policy)', async () => {
       const gapId = await seedGap({ assignee: nonParticipant.id });
       expect(await canSelectGap(nonParticipant, gapId)).toBe(true);
 
-      // assignee resolves
-      const resolve = await nonParticipant.client
+      // The assignee resolves via the service-role server action, NOT a direct
+      // client write. A direct PATCH must be denied — otherwise an assignee
+      // could escalate a private gap org-wide by PATCHing shared_with_org.
+      await nonParticipant.client
         .from('knowledge_gaps')
-        .update({ status: 'resolved' })
+        .update({ status: 'resolved', shared_with_org: true })
         .eq('gap_id', gapId);
-      expect(resolve.error).toBeNull();
       const { data: after } = await admin
         .from('knowledge_gaps')
-        .select('status')
+        .select('status, shared_with_org')
         .eq('gap_id', gapId)
         .single();
-      expect(after?.status).toBe('resolved');
+      expect(after?.status).toBe('open'); // unchanged — RLS denied the write
+      expect(after?.shared_with_org).toBe(false);
 
-      // participant (not assignee, not manager) cannot update — row unchanged
+      // A plain participant likewise cannot directly update.
       await participant.client
         .from('knowledge_gaps')
         .update({ status: 'dismissed' })
@@ -170,7 +172,7 @@ if (!stackReachable && !FORCE) {
         .select('status')
         .eq('gap_id', gapId)
         .single();
-      expect(still?.status).toBe('resolved');
+      expect(still?.status).toBe('open');
     });
 
     it('a manager can SELECT every gap in the org, even without a viewer row', async () => {

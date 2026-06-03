@@ -20,6 +20,14 @@ export const assembleKnowledgeGapsFn = inngest.createFunction(
     name: 'Assemble knowledge gaps from a meeting',
     concurrency: [{ key: 'event.data.meetingId', limit: 1 }],
     retries: 3,
+    onFailure: ({ event }) => {
+      // Retries exhausted: the meeting's misses stay unprocessed (processed_at
+      // is null) and won't re-fire on their own. Surface it so an exhausted
+      // assembly is observable rather than silently dropped from the library.
+      const original = (event as unknown as { data: { event?: { data?: { meetingId?: string } } } }).data;
+      const meetingId = original.event?.data?.meetingId;
+      console.error(`[knowledge-gaps] assembly failed after retries for meeting=${String(meetingId)}`);
+    },
     triggers: [{ event: 'risezome/meeting.gaps-requested' }],
   },
   async ({ event, step }) => {

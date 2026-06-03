@@ -117,7 +117,11 @@ create table public.gap_occurrences (
   reason             text         not null check (reason in ('no_hits','refusal','ungrounded')),
   asked_at           timestamptz  not null default now(),
   created_at         timestamptz  not null default now(),
-  unique (meeting_id, utterance_id)
+  -- NULLS NOT DISTINCT (PG15+) so a null utterance_id still collides on retry —
+  -- otherwise Postgres treats each null as distinct and the assembly RPC's
+  -- ON CONFLICT DO NOTHING never fires for null-utterance misses, double-counting
+  -- frequency and spuriously resurfacing closed gaps (KTD4 idempotency backstop).
+  unique nulls not distinct (meeting_id, utterance_id)
 );
 
 create index gap_occurrences_gap_id_idx on public.gap_occurrences (gap_id);

@@ -55,18 +55,14 @@ create policy "view gaps you can see"
   to authenticated
   using (public.can_view_gap(gap_id));
 
--- UPDATE: a manager (any curation) or the assignee (resolve/dismiss their own).
--- Column-level scoping (assignee may change status but not assignment/section)
--- is enforced in the manager-gated server actions, not RLS — acceptable
--- pre-launch since the only client write path is those actions.
-create policy "managers and assignees update gaps"
-  on public.knowledge_gaps for update
-  to authenticated
-  using (public.is_org_manager(org_id) or assignee_id = (select auth.uid()))
-  with check (public.is_org_manager(org_id) or assignee_id = (select auth.uid()));
-
--- No INSERT/DELETE policy: gaps are created by the assembly job and deleted by
--- the manual merge action, both via the service role.
+-- No client UPDATE/INSERT/DELETE policy. Every gap mutation — resolve, dismiss,
+-- assign, share-with-org, section moves, manual merge, and assembly — goes
+-- through a service-role server action (or the assembly job) that enforces the
+-- manager-or-assignee permission in application code. Exposing a client UPDATE
+-- policy here would let a non-manager assignee bypass those actions and PATCH
+-- privileged columns (shared_with_org, assignee_id, section_id) directly via
+-- PostgREST, escalating a private gap org-wide. Service role bypasses RLS, so
+-- the actions are unaffected by the absence of a client policy.
 
 ------------------------------------------------------------
 -- gap_occurrences / gap_viewers — visible iff the parent gap is visible

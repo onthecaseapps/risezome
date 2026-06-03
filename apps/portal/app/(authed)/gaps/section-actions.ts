@@ -224,14 +224,26 @@ export async function mergeGapsAction(targetGapId: string, sourceGapId: string):
     if (viewErr !== null) return { ok: false, error: viewErr.message };
   }
 
-  // Recompute A.frequency from its (now combined) occurrence count.
+  // Recompute A's frequency + ask-window from its (now combined) occurrences —
+  // B may have carried an earlier first ask or a later last ask.
   const { count: freq } = await service
     .from('gap_occurrences')
     .select('occurrence_id', { count: 'exact', head: true })
     .eq('gap_id', targetGapId);
+  const { data: span } = await service
+    .from('gap_occurrences')
+    .select('asked_at')
+    .eq('gap_id', targetGapId)
+    .order('asked_at', { ascending: true });
+  const askedAts = (span ?? []).map((o) => o.asked_at as string);
+  const update: Record<string, unknown> = { frequency: freq ?? 0 };
+  if (askedAts.length > 0) {
+    update['first_asked_at'] = askedAts[0];
+    update['last_asked_at'] = askedAts[askedAts.length - 1];
+  }
   const { error: freqErr } = await service
     .from('knowledge_gaps')
-    .update({ frequency: freq ?? 0 })
+    .update(update)
     .eq('gap_id', targetGapId);
   if (freqErr !== null) return { ok: false, error: freqErr.message };
 

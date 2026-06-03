@@ -16,6 +16,7 @@
  * idempotent on (meeting_id, utterance_id), so a retry never double-counts.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { VoyageEmbedder } from '@risezome/engine/embed';
 import {
@@ -31,6 +32,12 @@ import {
 } from '@risezome/engine/gaps';
 
 const SECTION_COLORS = ['indigo', 'emerald', 'sky', 'amber', 'rose', 'violet', 'teal', 'slate'];
+
+/** Voyage voyage-3-large dimensionality; the knowledge_gaps.embedding column is vector(1024). */
+const EMBEDDING_DIM = 1024;
+
+/** Bound the Haiku section-namer call so a hung Anthropic connection degrades to the fallback. */
+const NAMER_TIMEOUT_MS = 10_000;
 
 export interface MissRow {
   readonly miss_id: number;
@@ -171,6 +178,16 @@ export async function assembleKnowledgeGaps(args: {
   let resurfaced = 0;
   const touchedGapIds: string[] = [];
   for (const g of groups) {
+    // A missing/short embedding would serialize to '[]' and throw on the RPC's
+    // ::vector(1024) cast, wedging the whole meeting on every retry. Skip the
+    // bad group (its misses still get marked processed below) rather than let
+    // one bad vector poison every other miss in the meeting.
+    if (g.centroid.length !== EMBEDDING_DIM) {
+      console.warn(
+        `[knowledge-gaps] skipping group with bad embedding dim=${String(g.centroid.length)} meeting=${meetingId}`,
+      );
+      continue;
+    }
     const { data, error } = await service.rpc('assemble_gap_occurrence_group', {
       p_org_id: orgId,
       p_meeting_id: meetingId,
@@ -273,7 +290,7 @@ async function reclusterSections(args: {
   const proposed = await proposeSections(stillUncategorized, sectionNamer);
   for (let i = 0; i < proposed.length; i++) {
     const sec = proposed[i]!;
-    const sectionId = `sec_${cryptoRandom()}`;
+    const sectionId = `sec_${randomUUID()}`;
     const color = SECTION_COLORS[i % SECTION_COLORS.length]!;
     const { error: secErr } = await service.from('knowledge_gap_sections').insert({
       section_id: sectionId,
@@ -292,17 +309,17 @@ export async function createNotification(
   service: SupabaseClient,
   n: { userId: string; orgId: string; type: 'gap_assigned' | 'gap_resurfaced'; gapId: string; actorId?: string },
 ): Promise<void> {
-  await service.from('notifications').insert({
+  const { error } = await service.from('notifications').insert({
     user_id: n.userId,
     org_id: n.orgId,
     type: n.type,
     gap_id: n.gapId,
     ...(n.actorId !== undefined && { actor_id: n.actorId }),
   });
-}
-
-function cryptoRandom(): string {
-  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  // A dropped notification is not self-healing; surface it rather than swallow.
+  if (error !== null) {
+    console.warn(`[knowledge-gaps] notification insert failed (${n.type}, gap=${n.gapId}): ${error.message}`);
+  }
 }
 
 const NAMER_MODEL = 'claude-haiku-4-5';
@@ -323,6 +340,7 @@ export function makeSectionNamer(apiKey: string, fetchImpl: typeof fetch = fetch
           'x-api-key': apiKey,
           'anthropic-version': ANTHROPIC_VERSION,
         },
+        signal: AbortSignal.timeout(NAMER_TIMEOUT_MS),
         body: JSON.stringify({
           model: NAMER_MODEL,
           max_tokens: 16,

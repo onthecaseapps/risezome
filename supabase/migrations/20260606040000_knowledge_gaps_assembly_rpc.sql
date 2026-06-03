@@ -102,7 +102,13 @@ begin
       last_asked_at = now(),
       status = case when v_resurfaced then 'open' else status end,
       reopened_after_close = case when v_resurfaced then true else reopened_after_close end,
-      reopened_at = case when v_resurfaced then now() else reopened_at end
+      reopened_at = case when v_resurfaced then now() else reopened_at end,
+      -- Clear the prior closure record when reopening, so the gap doesn't carry
+      -- a stale resolved/dismissed-by stamp.
+      resolved_by = case when v_resurfaced then null else resolved_by end,
+      resolved_at = case when v_resurfaced then null else resolved_at end,
+      dismissed_by = case when v_resurfaced then null else dismissed_by end,
+      dismissed_at = case when v_resurfaced then null else dismissed_at end
   where knowledge_gaps.gap_id = v_gap_id;
 
   return query select v_gap_id, v_created, v_resurfaced, v_assignee;

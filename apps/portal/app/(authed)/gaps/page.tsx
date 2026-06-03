@@ -155,12 +155,16 @@ export default async function GapsPage(): Promise<ReactElement> {
     .order('joined_at', { ascending: true });
   const members: OrgMember[] = [];
   const nameById = new Map<string, string>();
+  // One paged listUsers call instead of an N+1 getUserById loop over members.
+  const authNames = new Map<string, string>();
+  const { data: authList } = await service.auth.admin.listUsers({ perPage: 1000 });
+  for (const u of authList?.users ?? []) {
+    const meta = (u.user_metadata ?? {}) as Record<string, unknown>;
+    authNames.set(u.id, typeof meta['full_name'] === 'string' ? (meta['full_name'] as string) : (u.email ?? u.id));
+  }
   for (const m of memberRows ?? []) {
     const userId = m.user_id as string;
-    const { data: u } = await service.auth.admin.getUserById(userId);
-    const email = u?.user?.email ?? userId;
-    const meta = (u?.user?.user_metadata ?? {}) as Record<string, unknown>;
-    const name = typeof meta['full_name'] === 'string' ? (meta['full_name'] as string) : email;
+    const name = authNames.get(userId) ?? userId;
     nameById.set(userId, name);
     members.push({ userId, name, role: m.role as string });
   }

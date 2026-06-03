@@ -94,14 +94,32 @@ export async function assignGapAction(gapId: string, assigneeUserId: string): Pr
   if (!ctx.isManager) return { ok: false, error: 'forbidden' };
 
   const service = createServiceRoleClient();
+
+  // The assignee must be a member of this org — assignment grants gap_viewers
+  // visibility, so assigning an arbitrary (cross-org) user UUID would leak the
+  // gap to a non-member.
+  const { data: membership } = await service
+    .from('org_members')
+    .select('user_id')
+    .eq('org_id', ctx.orgId)
+    .eq('user_id', assigneeUserId)
+    .maybeSingle();
+  if (membership === null) return { ok: false, error: 'not_a_member' };
+
   const now = new Date().toISOString();
   const update: Record<string, unknown> = {
     assignee_id: assigneeUserId,
     assigned_by: ctx.userId,
     assigned_at: now,
   };
-  // Assigning forces a closed gap back to open (lifecycle).
-  if (gap.status === 'resolved' || gap.status === 'dismissed') update['status'] = 'open';
+  // Assigning forces a closed gap back to open, clearing the stale closure stamp.
+  if (gap.status === 'resolved' || gap.status === 'dismissed') {
+    update['status'] = 'open';
+    update['resolved_by'] = null;
+    update['resolved_at'] = null;
+    update['dismissed_by'] = null;
+    update['dismissed_at'] = null;
+  }
 
   const { error: updErr } = await service.from('knowledge_gaps').update(update).eq('gap_id', gapId);
   if (updErr !== null) return { ok: false, error: updErr.message };
@@ -114,13 +132,16 @@ export async function assignGapAction(gapId: string, assigneeUserId: string): Pr
 
   // R12: in-app notification. Don't notify a self-assignment.
   if (assigneeUserId !== ctx.userId) {
-    await service.from('notifications').insert({
+    const { error: notifyErr } = await service.from('notifications').insert({
       user_id: assigneeUserId,
       org_id: ctx.orgId,
       type: 'gap_assigned',
       gap_id: gapId,
       actor_id: ctx.userId,
     });
+    if (notifyErr !== null) {
+      console.warn(`[gaps] assignment notification failed (gap=${gapId}): ${notifyErr.message}`);
+    }
   }
 
   revalidatePath('/gaps');
