@@ -1053,17 +1053,21 @@ function defaultSidecarPath(): string {
   const fromEnv = process.env.RISEZOME_SIDECAR_PATH;
   if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
 
+  // Per-platform default binary. macOS captures via the Swift/CoreAudio sidecar
+  // (BlackHole loopback for system audio); Linux via the PulseAudio C sidecar.
+  const rel =
+    process.platform === 'darwin'
+      ? 'sidecars/macos/build/risezome-sidecar-macos'
+      : 'sidecars/linux/build/risezome-sidecar-linux';
+
   // Walk up from this source file's location to find the repo root
   // (the directory containing the `sidecars/` folder). pnpm's dev
   // script sets cwd to apps/bot-worker/, not the repo root, so a
   // naive cwd-relative resolution misses by one directory.
-  //
-  // .../apps/bot-worker/src/debug/local-debug-ws.ts → walk up to
-  // .../risezome/ (5 hops), then sidecars/linux/build/risezome-sidecar-linux.
   const here = fileURLToPath(import.meta.url);
   let dir = resolve(here, '..');
   for (let i = 0; i < 8; i++) {
-    const candidate = resolve(dir, 'sidecars/linux/build/risezome-sidecar-linux');
+    const candidate = resolve(dir, rel);
     if (existsSync(candidate)) return candidate;
     const parent = resolve(dir, '..');
     if (parent === dir) break;
@@ -1071,10 +1075,9 @@ function defaultSidecarPath(): string {
   }
 
   // Last resort: cwd-relative. If we land here the resulting error
-  // message ("ENOENT … apps/bot-worker/sidecars/…") is the signal
-  // that walk-up found nothing — set RISEZOME_SIDECAR_PATH or build
-  // the sidecar binary at sidecars/linux/build/risezome-sidecar-linux.
-  return resolve(process.cwd(), 'sidecars/linux/build/risezome-sidecar-linux');
+  // message ("ENOENT …") is the signal that walk-up found nothing — set
+  // RISEZOME_SIDECAR_PATH or build the sidecar binary at the path above.
+  return resolve(process.cwd(), rel);
 }
 
 async function computeFileSha256(path: string): Promise<string> {
