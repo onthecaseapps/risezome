@@ -38,6 +38,8 @@ export default tseslint.config(
             '*.config.mjs',
             'apps/hud/build.config.mjs',
             'test/*.test.ts',
+            'test/dev-console/*.test.ts',
+            'scripts/dev-console/*.ts',
           ],
         },
         tsconfigRootDir: import.meta.dirname,
