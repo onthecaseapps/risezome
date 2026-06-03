@@ -38,6 +38,7 @@ export async function markRecordingIfFirst(
     .from('meetings')
     .update({ status: 'recording', started_at: new Date().toISOString() })
     .eq('meeting_id', args.meetingId)
+    .eq('org_id', args.orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     .in('status', ['launching', 'awaiting_recall', 'joining', 'waiting_room'])
     .select('meeting_id');
   if (error !== null) {

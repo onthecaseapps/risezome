@@ -113,6 +113,47 @@ if (!stackReachable && !FORCE) {
       if (m.data) await admin.from('meetings').delete().eq('meeting_id', m.data.meeting_id);
     });
 
+    it('U1: a service-role meeting UPDATE scoped by (meeting_id, org_id) is a no-op across orgs', async () => {
+      // Defense-in-depth: service-role bypasses RLS, so the bot-worker status
+      // flip (db.ts markRecordingIfFirst) and the recall webhook UPDATE both
+      // scope by org_id explicitly. A forged/wrong org_id must touch 0 rows.
+      const seed = await admin
+        .from('meetings')
+        .insert({
+          org_id: orgId,
+          user_id: launcher.id,
+          conference_url: 'https://zoom.us/j/test-u1-orgscope',
+          status: 'launching',
+        })
+        .select('meeting_id')
+        .single();
+      expect(seed.error).toBeNull();
+      const meetingId = (seed.data as { meeting_id: string }).meeting_id;
+      const otherOrg = '00000000-0000-0000-0000-0000000000ff'; // a different org
+
+      // Correct meeting_id but wrong org → 0 rows updated, status unchanged.
+      const wrongOrg = await admin
+        .from('meetings')
+        .update({ status: 'recording' })
+        .eq('meeting_id', meetingId)
+        .eq('org_id', otherOrg)
+        .select('meeting_id');
+      expect(wrongOrg.error).toBeNull();
+      expect(wrongOrg.data ?? []).toHaveLength(0);
+
+      // Correct (meeting_id, org_id) → exactly the one row updates.
+      const rightOrg = await admin
+        .from('meetings')
+        .update({ status: 'recording' })
+        .eq('meeting_id', meetingId)
+        .eq('org_id', orgId)
+        .select('meeting_id');
+      expect(rightOrg.error).toBeNull();
+      expect(rightOrg.data ?? []).toHaveLength(1);
+
+      await admin.from('meetings').delete().eq('meeting_id', meetingId);
+    });
+
     it('F1: the synthesized answer is stored encrypted — no plaintext column, decrypt round-trips', async () => {
       const meeting = await admin
         .from('meetings')

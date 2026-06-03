@@ -1082,7 +1082,8 @@ async function runSynthesisAndBroadcast(args: {
             cache_creation_tokens: chunk.usage.cacheCreationTokens,
             latency_ms: latencyMs,
           })
-          .eq('synthesis_id', synthesisId);
+          .eq('synthesis_id', synthesisId)
+          .eq('org_id', args.orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
 
         // Grounded: reveal the whole answer in one shot — start, a single full
         // delta, then done — so a complete, cited synthesis appears at once

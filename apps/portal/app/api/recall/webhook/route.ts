@@ -134,7 +134,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const { error: updateErr } = await service
     .from('meetings')
     .update(update)
-    .eq('meeting_id', meeting.meeting_id);
+    .eq('meeting_id', meeting.meeting_id)
+    .eq('org_id', meeting.org_id); // defense-in-depth: service-role bypasses RLS, scope by the org resolved from the bot_id lookup
   if (updateErr !== null) {
     console.error('[recall.webhook] meeting update failed:', updateErr);
     return new NextResponse('DB error', { status: 500 });
