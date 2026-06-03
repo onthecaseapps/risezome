@@ -134,6 +134,10 @@ export async function maybeRetrieveAndEmit(args: {
    *  refused/ungrounded). Used to close the loop: the answer is never spoken,
    *  so feeding it to the summarizer is how an answered open question retires. */
   onGroundedAnswer?: (text: string) => void;
+  /** Called when a synthesis is requested (the relevance gate passed and an
+   *  answer is being produced). The rolling summary only serves answering, so
+   *  this is the demand signal that lazily refreshes it if it's stale. */
+  onSynthesisRequested?: () => void;
   /** Optional LLM relevance classifier. Used ONLY for `ambiguous`
    *  heuristic results — `clearly_filler` short-circuits without an
    *  API call, `clearly_substantive` always synthesizes. When unset,
@@ -675,6 +679,9 @@ export async function maybeRetrieveAndEmit(args: {
         // [1..N]. The synthesizer's prompt cites by 1-indexed array
         // position, so [1] is the tool and [2..N] are the cards.
         const mergedSources = mergeToolSource(toolSource, synthesisSources);
+        // A question is being answered — lazily refresh the rolling summary if
+        // it's stale (demand-driven; async, doesn't block this synthesis).
+        args.onSynthesisRequested?.();
         void runSynthesisAndBroadcast({
           synthesizer: args.synthesizer,
           utterance: queryText,

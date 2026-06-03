@@ -434,6 +434,12 @@ async function handleMessage(
       ...(runtime.summarizer !== null
         ? { onGroundedAnswer: (text: string) => runtime.summarizer!.recordAssistantAnswer(text) }
         : {}),
+      // Demand-driven rolling summary: a question is being answered → refresh
+      // the summary if it's stale (no-op otherwise; never in a question-less
+      // meeting).
+      ...(runtime.summarizer !== null
+        ? { onSynthesisRequested: () => runtime.summarizer!.refreshIfStale() }
+        : {}),
       logger,
     });
     if (retrievalResult.emitted > 0 || retrievalResult.skipped !== undefined) {

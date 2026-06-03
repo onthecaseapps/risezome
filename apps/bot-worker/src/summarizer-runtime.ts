@@ -1,117 +1,65 @@
 /**
- * Per-meeting rolling-summary runtime.
+ * Per-meeting rolling-summary runtime — DEMAND-DRIVEN.
  *
- * Holds the rolling utterance buffer, capped transcript, pause-debounced
- * trigger, in-flight guard, and the lastSummary slot for a single
- * meeting. Both the debug WS path and the Recall production path
- * instantiate one of these per meeting — no global state, no
- * cross-meeting leakage.
+ * The rolling summary exists to give synthesis (and the router/relevance
+ * classifiers) long-range meeting context: current_topic, open_questions,
+ * key_terms, and a prose recap. Its only real consumer is a question being
+ * answered — so the summary is refreshed lazily, not on a clock.
+ *
+ * It does NOT run on a timer or an utterance cadence. The owner calls
+ * `refreshIfStale()` at the moment a synthesis is requested; the summary only
+ * re-runs if it is older than `refreshStalenessMs` (or has never run). A
+ * meeting with no questions never pays for a summary; a chatty Q&A refreshes at
+ * most once per staleness window instead of every ~2 minutes.
+ *
+ * The refresh is asynchronous and best-effort: it does NOT block the in-flight
+ * synthesis (which already captured `getLastSummary()` for its recentContext).
+ * The fresh summary lands for the NEXT question, so an answer never waits on a
+ * summary call. The triggering utterance is recorded before retrieval runs, so
+ * a refresh fired from the synthesis path sees the question that prompted it.
  *
  * Lifecycle:
  *   const rt = new MeetingSummarizerRuntime({ summarizer, onSummaryUpdated })
- *   rt.recordUtterance("...")  // call per final utterance
- *   rt.recordUtterance("...")
- *   ...                         // summarizer fires asynchronously when
- *                               // cadence + rate-cap conditions hold
- *   rt.dispose()                // call when the meeting ends
- *
- * Trigger conditions (every recordUtterance schedules a check after a
- * pause-debounce delay D; the timer re-checks):
- *   utterancesSinceLast >= N  OR  (now - lastSummaryAt) >= M
- *   AND (now - lastSummaryAt) >= rateCapMs   (hard wall-clock floor)
- *   AND !inFlight                            (no concurrent summary call)
- *
- * Cold-start variant: until the first summary lands, lower thresholds
- * apply (N=5, M=30s, D=8s by default) so the first 1-2 minutes of a
- * meeting establish framing context faster. After the first summary
- * fires, cadence reverts to steady-state defaults.
- *
- * Re-arm-on-skip rule: if the timer fires but the in-flight guard
- * rejects, no state mutates and no retry is scheduled — the next
- * utterance's recordUtterance schedules a fresh setTimeout, which
- * picks the trigger back up. If no further utterances arrive, no
- * stale state persists.
- *
- * Mid-flight summary refresh is non-coordinated by design: in-flight
- * synthesis calls hold whatever `lastSummary` value they captured at
- * recentContext-build time. The next synthesis reads the new one. The
- * runtime owner is responsible for that atomic read at call-site (see
- * U3 in the rolling-meeting-summary plan).
+ *   rt.recordUtterance("...")     // per final utterance — accumulates only
+ *   rt.refreshIfStale()           // when a synthesis is requested
+ *   rt.getLastSummary()           // atomic read at recentContext-build time
+ *   rt.dispose()                  // when the meeting ends
  */
 
-import type {
-  MeetingSummary,
-  Summarizer,
-  SummarizerInput,
-} from '@risezome/engine/summarize';
+import type { MeetingSummary, Summarizer, SummarizerInput } from '@risezome/engine/summarize';
 
-export interface SummarizerCadence {
-  /** Trigger if this many utterances arrived since the last summary. */
-  readonly utterancesThreshold: number;
-  /** Trigger if this many ms elapsed since the last summary. */
-  readonly timeThresholdMs: number;
-  /** Pause-debounce: timer arms D ms after each utterance; rolling. */
-  readonly pauseDebounceMs: number;
-}
-
-export interface MeetingSummarizerRuntimeOptions {
-  readonly summarizer: Summarizer;
-  /** Fires when a new summary lands. The runtime owner uses this to
-   *  broadcast (debug WS) or store + log (Recall production). */
-  readonly onSummaryUpdated: (summary: MeetingSummary, at: number) => void;
-  /** Optional error sink. Refusals + provider errors are non-fatal; the
-   *  prior `lastSummary` is retained. */
-  readonly onSummarizerError?: (err: unknown) => void;
-  /** Override the clock (tests). */
-  readonly now?: () => number;
-  /** Override the timer (tests with vitest fake timers don't need this;
-   *  it's here for explicit-injection tests that don't want to mock
-   *  global setTimeout). */
-  readonly setTimeoutImpl?: (cb: () => void, ms: number) => unknown;
-  readonly clearTimeoutImpl?: (handle: unknown) => void;
-  /** Cadence after the first summary has fired. */
-  readonly steadyStateCadence?: SummarizerCadence;
-  /** Cadence before the first summary has fired (faster framing). */
-  readonly coldStartCadence?: SummarizerCadence;
-  /** Hard wall-clock floor between summary calls. Independent of
-   *  cadence — even if both N and M trigger, calls are spaced by at
-   *  least this many ms. Default 60_000. */
-  readonly rateCapMs?: number;
-  /** Sliding-window cap on the transcript fed to the summarizer.
-   *  Default 20_000. When the transcript grows past this, the head is
-   *  trimmed; prior summary carry-forward (in the prompt) preserves
-   *  facts that aged out. */
-  readonly transcriptCharCap?: number;
-}
-
-export const DEFAULT_STEADY_CADENCE: SummarizerCadence = {
-  utterancesThreshold: 15,
-  timeThresholdMs: 120_000,
-  pauseDebounceMs: 10_000,
-};
-
-export const DEFAULT_COLD_START_CADENCE: SummarizerCadence = {
-  utterancesThreshold: 5,
-  timeThresholdMs: 30_000,
-  pauseDebounceMs: 8_000,
-};
-
-export const DEFAULT_RATE_CAP_MS = 60_000;
+/** Minimum age of the current summary before a synthesis-driven refresh
+ *  re-runs it. A fresher summary is reused as-is. Default 5 minutes. */
+export const DEFAULT_REFRESH_STALENESS_MS = 300_000;
+/** Sliding-window cap on the transcript fed to the summarizer; the head is
+ *  trimmed past this and prior-summary carry-forward preserves aged-out facts. */
 export const DEFAULT_TRANSCRIPT_CHAR_CAP = 20_000;
 /** How many recent grounded assistant answers to carry into the summarizer so
  *  it can retire questions it has already answered (close-the-loop). */
 export const RESOLVED_ANSWERS_CAP = 8;
+
+export interface MeetingSummarizerRuntimeOptions {
+  readonly summarizer: Summarizer;
+  /** Fires when a new summary lands. The owner broadcasts (debug WS) or
+   *  stores + logs (Recall production). */
+  readonly onSummaryUpdated: (summary: MeetingSummary, at: number) => void;
+  /** Optional error sink. Refusals + provider errors are non-fatal; the prior
+   *  `lastSummary` is retained. */
+  readonly onSummarizerError?: (err: unknown) => void;
+  /** Override the clock (tests). */
+  readonly now?: () => number;
+  /** Min age before a synthesis-driven refresh re-runs the summary. Default 5m. */
+  readonly refreshStalenessMs?: number;
+  /** Transcript sliding-window cap. Default 20_000 chars. */
+  readonly transcriptCharCap?: number;
+}
 
 export class MeetingSummarizerRuntime {
   readonly #summarizer: Summarizer;
   readonly #onSummaryUpdated: (summary: MeetingSummary, at: number) => void;
   readonly #onError: ((err: unknown) => void) | undefined;
   readonly #now: () => number;
-  readonly #setTimeout: (cb: () => void, ms: number) => unknown;
-  readonly #clearTimeout: (handle: unknown) => void;
-  readonly #steadyState: SummarizerCadence;
-  readonly #coldStart: SummarizerCadence;
-  readonly #rateCapMs: number;
+  readonly #refreshStalenessMs: number;
   readonly #transcriptCharCap: number;
 
   #transcript = '';
@@ -119,14 +67,11 @@ export class MeetingSummarizerRuntime {
    *  RESOLVED_ANSWERS_CAP. Fed to the summarizer so an on-screen answer
    *  retires the open question that prompted it (close-the-loop). */
   #resolvedAnswers: string[] = [];
-  #utterancesSinceLast = 0;
   #lastSummary: MeetingSummary | null = null;
-  /** Wall-clock at which the last summary completed. 0 before the
-   *  first call — the rate cap interprets this as "no prior call,
-   *  rate cap inactive." */
+  /** Wall-clock at which the last summary completed; 0 before the first call
+   *  (interpreted as "never summarized" → always stale). */
   #lastSummaryAt = 0;
   #inFlight = false;
-  #pendingTimer: unknown = null;
   #disposed = false;
 
   constructor(options: MeetingSummarizerRuntimeOptions) {
@@ -134,36 +79,26 @@ export class MeetingSummarizerRuntime {
     this.#onSummaryUpdated = options.onSummaryUpdated;
     this.#onError = options.onSummarizerError;
     this.#now = options.now ?? Date.now;
-    this.#setTimeout = options.setTimeoutImpl ?? ((cb, ms) => setTimeout(cb, ms));
-    this.#clearTimeout = options.clearTimeoutImpl ?? ((h) => {
-      if (h !== null && h !== undefined) clearTimeout(h as ReturnType<typeof setTimeout>);
-    });
-    this.#steadyState = options.steadyStateCadence ?? DEFAULT_STEADY_CADENCE;
-    this.#coldStart = options.coldStartCadence ?? DEFAULT_COLD_START_CADENCE;
-    this.#rateCapMs = options.rateCapMs ?? DEFAULT_RATE_CAP_MS;
+    this.#refreshStalenessMs = options.refreshStalenessMs ?? DEFAULT_REFRESH_STALENESS_MS;
     this.#transcriptCharCap = options.transcriptCharCap ?? DEFAULT_TRANSCRIPT_CHAR_CAP;
   }
 
   /**
-   * Record a finalized utterance. Cheap and synchronous — appends to
-   * the transcript, increments the counter, and arms the pause-debounce
-   * timer. Actual summarizer invocation happens later, asynchronously.
+   * Record a finalized utterance. Cheap + synchronous — just appends to the
+   * capped transcript window. Does NOT trigger a summary (that's demand-driven
+   * via refreshIfStale).
    */
   recordUtterance(text: string): void {
     if (this.#disposed) return;
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
-
     this.#appendToTranscript(trimmed);
-    this.#utterancesSinceLast += 1;
-    this.#armPauseDebounce();
   }
 
   /**
    * Record a grounded answer the assistant just showed on-screen, so the next
-   * summary can drop the open question it resolved (close-the-loop). The
-   * answer is never spoken, so it never reaches the transcript on its own.
-   * Cheap + synchronous; keeps only the most recent RESOLVED_ANSWERS_CAP.
+   * summary can drop the open question it resolved (close-the-loop). The answer
+   * is never spoken, so it never reaches the transcript on its own.
    */
   recordAssistantAnswer(text: string): void {
     if (this.#disposed) return;
@@ -175,25 +110,34 @@ export class MeetingSummarizerRuntime {
     }
   }
 
-  /** Read the latest summary atomically. Returns null before the first
-   *  summary has fired. Callers MUST read this once at the point where
-   *  they construct downstream context (recentContext for synthesis,
-   *  context for classifier); they MUST NOT re-read it across the
-   *  async boundary or they introduce torn reads. */
+  /**
+   * Refresh the summary IF it's stale — called when a synthesis is requested.
+   * The summary only feeds answering, so this is the only thing that should
+   * make it run. No-ops when: disposed, a refresh is already in flight, there's
+   * no transcript yet, or the current summary is younger than the staleness
+   * window. Async — the refreshed summary lands for the next question.
+   */
+  refreshIfStale(): void {
+    if (this.#disposed || this.#inFlight) return;
+    if (this.#transcript.length === 0) return;
+    const stale =
+      this.#lastSummaryAt === 0 || this.#now() - this.#lastSummaryAt >= this.#refreshStalenessMs;
+    if (!stale) return;
+    this.#fire();
+  }
+
+  /** Read the latest summary atomically. Null before the first summary fires.
+   *  Callers MUST read this once at the point they build downstream context
+   *  (recentContext for synthesis) and MUST NOT re-read across an async
+   *  boundary. */
   getLastSummary(): MeetingSummary | null {
     return this.#lastSummary;
   }
 
-  /** Cancel any pending pause-debounce timer and mark the runtime
-   *  disposed. Subsequent recordUtterance calls are no-ops. In-flight
-   *  summarizer calls will resolve normally but their results are
-   *  ignored (no callback fires after dispose). */
+  /** Mark disposed. In-flight summarizer calls resolve normally but their
+   *  results are ignored (no callback fires after dispose). */
   dispose(): void {
     this.#disposed = true;
-    if (this.#pendingTimer !== null) {
-      this.#clearTimeout(this.#pendingTimer);
-      this.#pendingTimer = null;
-    }
   }
 
   #appendToTranscript(text: string): void {
@@ -203,65 +147,14 @@ export class MeetingSummarizerRuntime {
       this.#transcript = `${this.#transcript}\n${text}`;
     }
     if (this.#transcript.length > this.#transcriptCharCap) {
-      // Slide the head off, but keep the recent N chars. Lose alignment
-      // on the trimmed-off line — that content is the summarizer's
-      // problem to carry forward via prior_summary.
       this.#transcript = this.#transcript.slice(this.#transcript.length - this.#transcriptCharCap);
     }
-  }
-
-  #armPauseDebounce(): void {
-    if (this.#pendingTimer !== null) {
-      this.#clearTimeout(this.#pendingTimer);
-      this.#pendingTimer = null;
-    }
-    const cadence = this.#currentCadence();
-    this.#pendingTimer = this.#setTimeout(() => {
-      this.#pendingTimer = null;
-      this.#maybeFire();
-    }, cadence.pauseDebounceMs);
-  }
-
-  #currentCadence(): SummarizerCadence {
-    return this.#lastSummary === null ? this.#coldStart : this.#steadyState;
-  }
-
-  #maybeFire(): void {
-    if (this.#disposed) return;
-    if (this.#inFlight) return;
-
-    const cadence = this.#currentCadence();
-    const now = this.#now();
-
-    // Cadence trigger: enough utterances, OR enough time since last
-    // summary. On the very first call (lastSummaryAt === 0), the time
-    // condition fires whenever the transcript has any content — that's
-    // the "first summary fires aggressively" path from the plan.
-    const sinceLastMs = this.#lastSummaryAt === 0 ? Number.POSITIVE_INFINITY : now - this.#lastSummaryAt;
-    const cadenceTrigger =
-      this.#utterancesSinceLast >= cadence.utterancesThreshold ||
-      sinceLastMs >= cadence.timeThresholdMs;
-    if (!cadenceTrigger) return;
-
-    // Hard rate cap: never call faster than rateCapMs after the prior
-    // call completed. Skipped on the very first call.
-    if (this.#lastSummaryAt !== 0 && now - this.#lastSummaryAt < this.#rateCapMs) return;
-
-    if (this.#transcript.length === 0) return;
-
-    this.#fire();
   }
 
   #fire(): void {
     this.#inFlight = true;
     const transcriptSnapshot = this.#transcript;
     const priorSummarySnapshot = this.#lastSummary;
-    // Reset the per-window counter at fire time. If the call fails we
-    // accept the counter loss — the next batch's count gets us back to
-    // a trigger soon enough, and re-firing on a refused summary would
-    // amplify cost on a misbehaving model.
-    this.#utterancesSinceLast = 0;
-
     const resolvedAnswersSnapshot =
       this.#resolvedAnswers.length > 0 ? [...this.#resolvedAnswers] : undefined;
     const input: SummarizerInput = {
@@ -281,8 +174,9 @@ export class MeetingSummarizerRuntime {
       (err: unknown) => {
         this.#inFlight = false;
         if (this.#disposed) return;
-        // Retain prior lastSummary unchanged. Bump lastSummaryAt so we
-        // don't immediately re-fire against a broken summarizer.
+        // Retain prior lastSummary unchanged. Bump lastSummaryAt so a broken
+        // summarizer isn't hammered on the next question (it stays "fresh" for
+        // the staleness window before another attempt).
         this.#lastSummaryAt = this.#now();
         if (this.#onError !== undefined) this.#onError(err);
       },

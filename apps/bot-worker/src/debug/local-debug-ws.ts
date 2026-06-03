@@ -287,6 +287,10 @@ export async function handleLocalDebugWs(
     // the pipeline starts) so a mid-stream summary refresh can't
     // produce a torn read — the in-flight call keeps the summary it
     // captured at start; the next call picks up the new one.
+    // A synthesis is about to fire → lazily refresh the rolling summary if
+    // stale (demand-driven; async, benefits the next utterance). Read
+    // lastSummary AFTER, atomically, so this call's context is the prior one.
+    summarizerRuntime.refreshIfStale();
     const lastSummaryAtBuild = summarizerRuntime.getLastSummary();
     const recentContext = [
       ...(lastSummaryAtBuild !== null && lastSummaryAtBuild.summary.length > 0
