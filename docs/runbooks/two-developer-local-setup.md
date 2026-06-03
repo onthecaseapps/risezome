@@ -22,6 +22,37 @@ Ports are unchanged: portal `:3000`, Inngest `:8288`, bot-worker `:8787`. Two
 developers on two machines don't collide on ports — the collisions this setup
 removes are the shared **Supabase**, **tunnel**, and **Recall** surfaces.
 
+## Dev console (web UI)
+
+`pnpm console` is the point-and-click counterpart to `pnpm dev`: a local web page
+to configure the tag + Supabase mode, start/stop/restart each tool, and watch
+each process's live, color-coded logs.
+
+```bash
+pnpm console            # serves http://localhost:4317 (override with DEV_CONSOLE_PORT)
+```
+
+Then open **http://localhost:4317** and:
+
+1. **Set tag + Supabase mode** in the top bar and click **Apply** — this runs the
+   same `use-env.sh` the CLI uses (rewrites the active env, remembers the tag in
+   `.dev-tag`). Applying a change while processes are running requires a
+   **restart** of those processes, since env is read at boot — use each row's
+   **restart** button.
+2. **Start / stop / restart** any process, or **Start all / Stop all** (Supabase
+   first in local mode, tunnel last, reverse on stop). The tunnel row is skipped
+   automatically when you have no `~/.cloudflared/risezome-dev-<tag>.yml`.
+3. **Watch logs** per process — ANSI colors are preserved and error/warn lines
+   are tinted. Logs also persist to `.dev-logs/<name>.log` (gitignored) so a
+   process that outlives the console can still be `grep`-ed.
+
+The console binds `127.0.0.1` only and has no auth — it's a localhost dev tool.
+It's the **parent** process: Ctrl-C (or closing it) tears down everything it
+started. Processes you started outside the console (or that survived a console
+restart) still read as **running** via a port check, but their live log only
+resumes for output the console itself captures — stop-all before quitting is the
+clean path.
+
 ## One-time setup
 
 ### 1. Your env files

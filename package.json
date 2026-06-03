@@ -11,6 +11,7 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "dev": "bash scripts/dev.sh",
+    "console": "tsx scripts/dev-console/server.ts",
     "env:use": "bash scripts/use-env.sh",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
@@ -29,6 +30,7 @@
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.4.2",
+    "tsx": "^4.22.3",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0",
     "vitest": "^2.1.8"

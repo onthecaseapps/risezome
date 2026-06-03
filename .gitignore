@@ -11,6 +11,9 @@ build/
 .env.*.local
 .env.dev
 .dev-tag
+.dev-logs/
+# sed -i.bak / editor backups (env edits leave .env.bak, .env.local.bak, …)
+*.bak
 
 coverage/
 .nyc_output/
