@@ -35,7 +35,9 @@ function cleanQuestion(input: unknown): GoldenQuestion | null {
   const o = input as Record<string, unknown>;
   if (typeof o.q !== 'string' || o.q.trim().length === 0) return null;
   const strArray = (v: unknown): readonly string[] | undefined =>
-    Array.isArray(v) && v.length > 0 && v.every((x): x is string => typeof x === 'string') ? v : undefined;
+    Array.isArray(v) && v.length > 0 && v.every((x): x is string => typeof x === 'string')
+      ? v
+      : undefined;
   const must = strArray(o.must_surface);
   const expect = strArray(o.expect_answer_contains);
   return {
@@ -69,32 +71,40 @@ export function registerEvalRoutes(instance: FastifyInstance, cfg: EvalRouteConf
     }
   };
 
-  instance.get<{ Params: { jwt: string } }>('/local-debug-eval/:jwt/questions', async (req, reply) => {
-    const a = await auth(req.params.jwt, reply);
-    if (a === null) return;
-    await reply.send({ questions: loadGoldenSet() });
-  });
+  instance.get<{ Params: { jwt: string } }>(
+    '/local-debug-eval/:jwt/questions',
+    async (req, reply) => {
+      const a = await auth(req.params.jwt, reply);
+      if (a === null) return;
+      await reply.send({ questions: loadGoldenSet() });
+    },
+  );
 
-  instance.post<{ Params: { jwt: string } }>('/local-debug-eval/:jwt/questions', async (req, reply) => {
-    const a = await auth(req.params.jwt, reply);
-    if (a === null) return;
-    const q = cleanQuestion(req.body);
-    if (q === null) {
-      await reply.code(400).send({ error: 'a non-empty "q" is required' });
-      return;
-    }
-    appendGoldenQuestion(q);
-    await reply.send({ ok: true, questions: loadGoldenSet() });
-  });
+  instance.post<{ Params: { jwt: string } }>(
+    '/local-debug-eval/:jwt/questions',
+    async (req, reply) => {
+      const a = await auth(req.params.jwt, reply);
+      if (a === null) return;
+      const q = cleanQuestion(req.body);
+      if (q === null) {
+        await reply.code(400).send({ error: 'a non-empty "q" is required' });
+        return;
+      }
+      appendGoldenQuestion(q);
+      await reply.send({ ok: true, questions: loadGoldenSet() });
+    },
+  );
 
-  instance.post<{ Params: { jwt: string }; Body: { question?: unknown; metrics?: boolean; orgId?: string } }>(
+  instance.post<{ Params: { jwt: string }; Body: { question?: unknown; metrics?: boolean } }>(
     '/local-debug-eval/:jwt/run',
     async (req, reply) => {
       const a = await auth(req.params.jwt, reply);
       if (a === null) return;
       if (
-        cfg.voyageKey === undefined || cfg.voyageKey.length === 0 ||
-        cfg.anthropicKey === undefined || cfg.anthropicKey.length === 0
+        cfg.voyageKey === undefined ||
+        cfg.voyageKey.length === 0 ||
+        cfg.anthropicKey === undefined ||
+        cfg.anthropicKey.length === 0
       ) {
         await reply.code(500).send({ error: 'VOYAGE_API_KEY / ANTHROPIC_API_KEY unset' });
         return;
@@ -108,7 +118,10 @@ export function registerEvalRoutes(instance: FastifyInstance, cfg: EvalRouteConf
         db: cfg.db,
         embedder: new VoyageEmbedder({ apiKey: cfg.voyageKey }),
         synthesizer: new AnthropicSynthesizer({ apiKey: cfg.anthropicKey }),
-        orgId: typeof req.body?.orgId === 'string' && req.body.orgId.length > 0 ? req.body.orgId : a.orgId,
+        // SECURITY: the org is the JWT-verified caller org ONLY. Never trust a
+        // client-supplied org (a member of org A must not query org B's corpus
+        // by passing its id). See security plan U1 / S1.
+        orgId: a.orgId,
         judge: req.body?.metrics === true ? makeAnthropicJudge({ apiKey: cfg.anthropicKey }) : null,
       };
       const view = await evaluateQuestion(deps, question);

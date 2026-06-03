@@ -11,11 +11,10 @@ import { signBotWsJwt } from '../../../_lib/bot-ws-jwt';
 
 function httpBase(): string {
   const raw =
-    process.env['BOT_WORKER_BASE_URL'] ?? process.env['BOT_WORKER_HTTP_URL'] ?? 'http://localhost:8787';
-  return raw
-    .replace(/^wss:/, 'https:')
-    .replace(/^ws:/, 'http:')
-    .replace(/\/$/, '');
+    process.env['BOT_WORKER_BASE_URL'] ??
+    process.env['BOT_WORKER_HTTP_URL'] ??
+    'http://localhost:8787';
+  return raw.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace(/\/$/, '');
 }
 
 async function mintToken(orgId: string): Promise<string | null> {
@@ -34,15 +33,19 @@ function passThrough(res: Response, text: string): NextResponse {
 export async function GET(): Promise<Response> {
   const { orgId } = await requireAuthedUserWithOrg();
   const token = await mintToken(orgId);
-  if (token === null) return NextResponse.json({ error: 'BOT_WORKER_SECRET unset' }, { status: 500 });
-  const res = await fetch(`${httpBase()}/local-debug-eval/${token}/questions`, { cache: 'no-store' });
+  if (token === null)
+    return NextResponse.json({ error: 'BOT_WORKER_SECRET unset' }, { status: 500 });
+  const res = await fetch(`${httpBase()}/local-debug-eval/${token}/questions`, {
+    cache: 'no-store',
+  });
   return passThrough(res, await res.text());
 }
 
 export async function POST(req: Request): Promise<Response> {
   const { orgId } = await requireAuthedUserWithOrg();
   const token = await mintToken(orgId);
-  if (token === null) return NextResponse.json({ error: 'BOT_WORKER_SECRET unset' }, { status: 500 });
+  if (token === null)
+    return NextResponse.json({ error: 'BOT_WORKER_SECRET unset' }, { status: 500 });
 
   const body = (await req.json()) as { action?: string; question?: unknown; metrics?: boolean };
   const base = httpBase();
@@ -51,7 +54,9 @@ export async function POST(req: Request): Promise<Response> {
     const res = await fetch(`${base}/local-debug-eval/${token}/run`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ question: body.question, metrics: body.metrics === true, orgId }),
+      // org is carried by the minted JWT only — never forwarded in the body
+      // (the bot-worker derives org from the verified token). See security U1.
+      body: JSON.stringify({ question: body.question, metrics: body.metrics === true }),
       cache: 'no-store',
     });
     return passThrough(res, await res.text());
