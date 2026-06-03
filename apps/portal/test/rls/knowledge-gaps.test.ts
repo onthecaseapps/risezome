@@ -62,7 +62,6 @@ if (!stackReachable && !FORCE) {
     let nonParticipant: TestUser; // member of org A, NOT a viewer
     let outsider: TestUser; // member of org B
     let orgA: string;
-    let orgB: string;
     let meetingA: string;
 
     beforeAll(async () => {
@@ -77,7 +76,8 @@ if (!stackReachable && !FORCE) {
       orgA = await createOrgWithMember(admin, 'Gaps Org A', manager.id, 'manager');
       await addMember(admin, orgA, participant.id, 'member');
       await addMember(admin, orgA, nonParticipant.id, 'member');
-      orgB = await createOrgWithMember(admin, 'Gaps Org B', outsider.id, 'manager');
+      // Outsider belongs to a different org entirely (cross-org isolation).
+      await createOrgWithMember(admin, 'Gaps Org B', outsider.id, 'manager');
 
       const { data: mtg, error: mtgErr } = await admin
         .from('meetings')

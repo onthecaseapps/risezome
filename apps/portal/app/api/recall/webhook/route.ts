@@ -169,6 +169,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         console.error('[recall.webhook] recap enqueue failed:', err);
       });
+    // Assemble knowledge gaps from this meeting's misses (U6). Best-effort —
+    // a failed enqueue must not fail the webhook.
+    void inngest
+      .send({
+        name: 'risezome/meeting.gaps-requested',
+        data: { meetingId: meeting.meeting_id as string, orgId: meeting.org_id as string },
+      })
+      .catch((err: unknown) => {
+        console.error('[recall.webhook] gaps enqueue failed:', err);
+      });
   }
 
   return NextResponse.json({

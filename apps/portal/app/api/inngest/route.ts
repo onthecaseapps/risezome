@@ -8,6 +8,7 @@ import { syncCalendarFn, syncAllCalendarsCron } from '../../../src/inngest/funct
 import { launchBotFn } from '../../../src/inngest/functions/launch-bot';
 import { reapStaleMeetingsCron } from '../../../src/inngest/functions/reap-stale-meetings';
 import { generateMeetingRecapFn } from '../../../src/inngest/functions/generate-meeting-recap';
+import { assembleKnowledgeGapsFn } from '../../../src/inngest/functions/assemble-knowledge-gaps';
 
 /**
  * Inngest function registry, exposed at /api/inngest.
@@ -32,5 +33,6 @@ export const { GET, POST, PUT } = serve({
     launchBotFn,
     reapStaleMeetingsCron,
     generateMeetingRecapFn,
+    assembleKnowledgeGapsFn,
   ],
 });
