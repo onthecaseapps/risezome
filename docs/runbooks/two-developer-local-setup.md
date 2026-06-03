@@ -45,12 +45,16 @@ Fill in your secrets. Notes:
 
 **Local stack (recommended, free, fully isolated per machine):**
 `pnpm dev` runs `supabase start` (needs Docker) and `supabase db reset`
-(migrations + seed). Then sign in at http://localhost:3000 with the seeded user:
+(applies the migrations; the seed is empty). The stack comes up with the
+schema and no rows — sign in at http://localhost:3000 with **Google** (the
+same flow as prod) and onboard normally (create a workspace, connect sources),
+generating real local data.
 
-```
-email:    dev@risezome.test
-password: devpassword
-```
+Google sign-in against the local stack needs your `GOOGLE_OAUTH_CLIENT_ID` /
+`GOOGLE_OAUTH_CLIENT_SECRET` in `apps/portal/.env.dev` (the local
+`supabase/config.toml` wires the Google provider from those env vars), and your
+Google OAuth client must allow the local redirect
+`http://localhost:3000/api/auth/callback`.
 
 **Hosted (your own project):** create a Supabase project, then:
 
@@ -122,7 +126,7 @@ well-known local demo keys). In hosted mode they come from your `.env.dev`.
 - **`supabase db reset` wipes local data.** `pnpm dev` only resets when it had to
   _start_ the stack fresh; it never resets a stack you're already running.
 - **After pulling new migrations**, re-apply to your target: local →
-  `supabase db reset` (re-seeds), hosted → `supabase db push`. Otherwise your
+  `supabase db reset` (re-applies migrations), hosted → `supabase db push`. Otherwise your
   schema drifts from the code.
 - **Restart after env / `next.config.mjs` changes** — both the portal and the
   bot-worker read env at boot; `allowedDevOrigins` is build-time.
