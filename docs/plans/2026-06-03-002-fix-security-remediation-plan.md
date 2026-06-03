@@ -1,7 +1,7 @@
 ---
 title: "fix: Security remediation — credentials, isolation, encryption (P0–P3)"
 type: fix
-status: active
+status: completed
 date: 2026-06-03
 depth: deep
 ---
