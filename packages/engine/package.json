@@ -62,6 +62,10 @@
       "types": "./dist/query-route/index.d.ts",
       "default": "./dist/query-route/index.js"
     },
+    "./gaps": {
+      "types": "./dist/gaps/index.d.ts",
+      "default": "./dist/gaps/index.js"
+    },
     "./parent-doc": {
       "types": "./dist/parent-doc/index.d.ts",
       "default": "./dist/parent-doc/index.js"

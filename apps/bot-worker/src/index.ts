@@ -50,6 +50,7 @@ import {
   type RetrievalRuntime,
 } from './retrieval.js';
 import { MeetingSummarizerRuntime } from './summarizer-runtime.js';
+import { recordMiss } from './gap-capture.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 interface PerMeetingRuntime {
@@ -440,6 +441,11 @@ async function handleMessage(
       ...(runtime.summarizer !== null
         ? { onSynthesisRequested: () => runtime.summarizer!.refreshIfStale() }
         : {}),
+      // Knowledge-gap capture (U3): a question the copilot attempted but
+      // couldn't ground is recorded as a raw miss for post-meeting assembly.
+      onMiss: (miss) => {
+        void recordMiss(db, miss, logger);
+      },
       logger,
     });
     if (retrievalResult.emitted > 0 || retrievalResult.skipped !== undefined) {

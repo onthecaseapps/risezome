@@ -12,6 +12,7 @@ import { expandWinnersToParents, parentDocEnabled, dedupeByDoc, type WinningChun
 import { optionalQueryExpander } from './query-expand';
 import { augmentQuery } from '@risezome/engine/query-expand';
 import { shouldExpandOnMiss } from '@risezome/engine/query-route';
+import { shouldRecordMiss, type MissRecord } from '@risezome/engine/gaps';
 import {
   classifyRelevanceHeuristic,
   type RelevanceClassifier,
@@ -138,6 +139,12 @@ export async function maybeRetrieveAndEmit(args: {
    *  answer is being produced). The rolling summary only serves answering, so
    *  this is the demand signal that lazily refreshes it if it's stale. */
   onSynthesisRequested?: () => void;
+  /** Called when the copilot attempted a question but couldn't ground an
+   *  answer — zero-hit retrieval, refusal, or ungrounded suppression. Records a
+   *  knowledge-gap miss (U3). The no_hits branch gates on the relevance
+   *  heuristic so filler never becomes a gap (AE6); refusal/ungrounded fire from
+   *  inside synthesis, already past the relevance gate. */
+  onMiss?: (miss: MissRecord) => void;
   /** Optional LLM relevance classifier. Used ONLY for `ambiguous`
    *  heuristic results — `clearly_filler` short-circuits without an
    *  API call, `clearly_substantive` always synthesizes. When unset,
@@ -332,6 +339,22 @@ export async function maybeRetrieveAndEmit(args: {
   }
 
   if (hits.length === 0) {
+    // Knowledge-gap capture (U3): a substantive question that retrieved nothing
+    // after CRAG is a genuine miss. This branch returns BEFORE the relevance
+    // gate below, so re-apply the cheap heuristic here — a clearly-filler
+    // utterance that happened to retrieve nothing is not a gap (AE6).
+    if (
+      args.onMiss !== undefined &&
+      shouldRecordMiss({ reason: 'no_hits', relevance: classifyRelevanceHeuristic(args.utteranceText) })
+    ) {
+      args.onMiss({
+        verbatimQuestion: args.utteranceText,
+        utteranceId: args.utteranceId,
+        meetingId: args.meetingId,
+        orgId: args.orgId,
+        reason: 'no_hits',
+      });
+    }
     return { emitted: 0, skipped: 'no_hits' };
   }
 
@@ -694,6 +717,7 @@ export async function maybeRetrieveAndEmit(args: {
           db: args.db,
           ...(recentContext.length > 0 && { recentContext }),
           ...(args.onGroundedAnswer !== undefined && { onGroundedAnswer: args.onGroundedAnswer }),
+          ...(args.onMiss !== undefined && { onMiss: args.onMiss }),
           logger: args.logger,
         });
       }
@@ -864,6 +888,10 @@ async function runSynthesisAndBroadcast(args: {
   recentContext?: readonly string[];
   /** Close-the-loop: invoked with the grounded answer body on success. */
   onGroundedAnswer?: (text: string) => void;
+  /** Knowledge-gap capture (U3): invoked when the answer is refused or
+   *  suppressed-for-grounding. Already past the relevance gate, so always a
+   *  recordable miss (AE6). */
+  onMiss?: (miss: MissRecord) => void;
   logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void };
 }): Promise<void> {
   const synthesisId = `synth_${randomUUID()}`;
@@ -950,6 +978,15 @@ async function runSynthesisAndBroadcast(args: {
             { synthesisId, meetingId: args.meetingId, latencyMs },
             'synthesis.refusal',
           );
+          // A substantive question the copilot attempted and refused — a gap.
+          args.onMiss?.({
+            verbatimQuestion: args.utterance,
+            utteranceId: args.utteranceId,
+            meetingId: args.meetingId,
+            orgId: args.orgId,
+            reason: 'refusal',
+            sourcesSearched: args.sources.map((s) => s.title),
+          });
           return;
         }
 
@@ -1017,6 +1054,15 @@ async function runSynthesisAndBroadcast(args: {
             { synthesisId, meetingId: args.meetingId, latencyMs, droppedQuoted },
             'synthesis.ungrounded',
           );
+          // An answer was produced but cited nothing groundable — a gap.
+          args.onMiss?.({
+            verbatimQuestion: args.utterance,
+            utteranceId: args.utteranceId,
+            meetingId: args.meetingId,
+            orgId: args.orgId,
+            reason: 'ungrounded',
+            sourcesSearched: args.sources.map((s) => s.title),
+          });
           return;
         }
 
