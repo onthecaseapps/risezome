@@ -77,6 +77,13 @@ if [ "$START_SUPABASE" -eq 1 ]; then
   if ! command -v supabase >/dev/null 2>&1; then
     echo "dev: supabase CLI not found — install it or pass --no-supabase" >&2; exit 1
   fi
+  # supabase/config.toml wires the Google auth provider via env(...) — export
+  # those vars (from the generated portal env) so `supabase start` configures
+  # local Google sign-in. Without this the local provider gets an empty client.
+  for _k in GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET; do
+    _v="$(grep "^${_k}=" "$ROOT/apps/portal/.env.local" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+    [ -n "$_v" ] && export "${_k}=${_v}"
+  done
   if (cd "$ROOT" && supabase status >/dev/null 2>&1); then
     echo "dev: local Supabase already running — leaving it (not resetting your data)."
   else
