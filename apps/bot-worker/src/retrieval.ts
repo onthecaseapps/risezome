@@ -1,27 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { type VoyageEmbedder } from '@risezome/engine/embed';
-import type {
-  Synthesizer,
-  SynthesisSource,
-  SynthesisUsage,
-} from '@risezome/engine/synthesize';
+import type { Synthesizer, SynthesisSource, SynthesisUsage } from '@risezome/engine/synthesize';
 import { parseSynthesisOutput, verifyCitations } from '@risezome/engine/synthesize';
 import { hybridSearch, isLowConfidenceHits } from './corpus-search';
 import { optionalReranker } from './reranker';
-import { expandWinnersToParents, parentDocEnabled, dedupeByDoc, type WinningChunk } from './parent-doc';
+import {
+  expandWinnersToParents,
+  parentDocEnabled,
+  dedupeByDoc,
+  type WinningChunk,
+} from './parent-doc';
 import { optionalQueryExpander } from './query-expand';
 import { augmentQuery } from '@risezome/engine/query-expand';
 import { shouldExpandOnMiss } from '@risezome/engine/query-route';
 import { shouldRecordMiss, type MissRecord } from '@risezome/engine/gaps';
-import {
-  classifyRelevanceHeuristic,
-  type RelevanceClassifier,
-} from '@risezome/engine/relevance';
-import {
-  type Classifier,
-  ClassifierProviderError,
-  isToolShaped,
-} from '@risezome/engine/router';
+import { classifyRelevanceHeuristic, type RelevanceClassifier } from '@risezome/engine/relevance';
+import { type Classifier, ClassifierProviderError, isToolShaped } from '@risezome/engine/router';
 import {
   type Skill,
   type SkillContext,
@@ -206,10 +200,7 @@ export async function maybeRetrieveAndEmit(args: {
     isToolShaped(args.utteranceText);
   if (routerEligible) {
     classifierController = new AbortController();
-    classifierTimeoutHandle = setTimeout(
-      () => classifierController?.abort(),
-      RELEVANCE_TIMEOUT_MS,
-    );
+    classifierTimeoutHandle = setTimeout(() => classifierController?.abort(), RELEVANCE_TIMEOUT_MS);
     classifierStartedAt = Date.now();
     const hasContext =
       args.lastSummary !== undefined &&
@@ -303,7 +294,9 @@ export async function maybeRetrieveAndEmit(args: {
         const terms = await expander(queryText);
         const augmented = augmentQuery(queryText, terms);
         if (augmented !== queryText) {
-          const expandedEmbed = await args.embedder.embed({ items: [{ text: augmented, domain: 'text' }] });
+          const expandedEmbed = await args.embedder.embed({
+            items: [{ text: augmented, domain: 'text' }],
+          });
           const expandedVec = expandedEmbed.vectors[0]?.vector;
           if (expandedVec !== undefined) {
             const expandedHits = await hybridSearch(args.db, {
@@ -345,7 +338,10 @@ export async function maybeRetrieveAndEmit(args: {
     // utterance that happened to retrieve nothing is not a gap (AE6).
     if (
       args.onMiss !== undefined &&
-      shouldRecordMiss({ reason: 'no_hits', relevance: classifyRelevanceHeuristic(args.utteranceText) })
+      shouldRecordMiss({
+        reason: 'no_hits',
+        relevance: classifyRelevanceHeuristic(args.utteranceText),
+      })
     ) {
       args.onMiss({
         verbatimQuestion: args.utteranceText,
@@ -407,10 +403,12 @@ export async function maybeRetrieveAndEmit(args: {
     : hits;
   const winners: WinningChunk[] = sourceHits.flatMap((h) => {
     const c = chunkById.get(h.chunk_id);
-    return c === undefined ? [] : [{ chunkId: h.chunk_id, docId: c.doc_id, position: c.position, text: c.text }];
+    return c === undefined
+      ? []
+      : [{ chunkId: h.chunk_id, docId: c.doc_id, position: c.position, text: c.text }];
   });
   const expandedByChunk = parentDocEnabled()
-    ? await expandWinnersToParents(args.db, winners)
+    ? await expandWinnersToParents(args.db, args.orgId, winners)
     : new Map<string, string>();
 
   const traceId = randomUUID();
@@ -608,8 +606,7 @@ export async function maybeRetrieveAndEmit(args: {
               );
             }
           } catch (err) {
-            const code =
-              err instanceof SkillExecutionError ? err.executionCode : 'execution-error';
+            const code = err instanceof SkillExecutionError ? err.executionCode : 'execution-error';
             args.logger.warn(
               {
                 meetingId: args.meetingId,
@@ -668,21 +665,22 @@ export async function maybeRetrieveAndEmit(args: {
         'synthesis.skipped.filler',
       );
     } else {
-      const shouldSkip = heuristic === 'ambiguous' && args.relevanceClassifier !== undefined
-        ? await classifyLlmAndDecide({
-            classifier: args.relevanceClassifier,
-            utterance: args.utteranceText,
-            meetingId: args.meetingId,
-            utteranceId: args.utteranceId,
-            ...(args.lastSummary !== undefined && {
-              context: {
-                current_topic: args.lastSummary.current_topic,
-                open_questions: args.lastSummary.open_questions,
-              },
-            }),
-            logger: args.logger,
-          })
-        : false;
+      const shouldSkip =
+        heuristic === 'ambiguous' && args.relevanceClassifier !== undefined
+          ? await classifyLlmAndDecide({
+              classifier: args.relevanceClassifier,
+              utterance: args.utteranceText,
+              meetingId: args.meetingId,
+              utteranceId: args.utteranceId,
+              ...(args.lastSummary !== undefined && {
+                context: {
+                  current_topic: args.lastSummary.current_topic,
+                  open_questions: args.lastSummary.open_questions,
+                },
+              }),
+              logger: args.logger,
+            })
+          : false;
       if (shouldSkip) {
         // Already logged inside classifyLlmAndDecide.
       } else {
@@ -997,7 +995,10 @@ async function runSynthesisAndBroadcast(args: {
         // sources.length, but defensive belt-and-suspenders).
         // Drop fabricated quoted citations (quote not present in the cited
         // source) before mapping to cardIds — grounding safety net.
-        const { verified, droppedQuoted, downgradedToBare } = verifyCitations(parsed.citations, args.sources);
+        const { verified, droppedQuoted, downgradedToBare } = verifyCitations(
+          parsed.citations,
+          args.sources,
+        );
         if (droppedQuoted > 0 || downgradedToBare > 0) {
           args.logger.warn(
             { synthesisId, meetingId: args.meetingId, droppedQuoted, downgradedToBare },

@@ -47,7 +47,8 @@ function envOptions(): ParentExpandOptions {
   const radius = Number(process.env.RISEZOME_PARENT_DOC_WINDOW);
   return {
     capChars: Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : DEFAULT_CAP_CHARS,
-    windowRadius: Number.isFinite(radius) && radius >= 0 ? Math.floor(radius) : DEFAULT_WINDOW_RADIUS,
+    windowRadius:
+      Number.isFinite(radius) && radius >= 0 ? Math.floor(radius) : DEFAULT_WINDOW_RADIUS,
   };
 }
 
@@ -67,6 +68,7 @@ export interface WinningChunk {
  */
 export async function expandWinnersToParents(
   db: SupabaseClient,
+  orgId: string,
   winners: readonly WinningChunk[],
 ): Promise<Map<string, string>> {
   const byChild = new Map<string, string>(winners.map((w) => [w.chunkId, w.text]));
@@ -77,6 +79,7 @@ export async function expandWinnersToParents(
   const { data: rows, error } = await db
     .from('doc_chunks')
     .select('doc_id, position, text')
+    .eq('org_id', orgId) // U11: redundant org scope (defense-in-depth)
     .in('doc_id', docIds)
     .eq('is_summary', false);
   if (error !== null || rows === null) return byChild; // degrade to child-only

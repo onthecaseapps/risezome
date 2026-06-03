@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { fuseRrf, hybridSearch, isLowConfidenceHits, type HybridHit } from '../src/corpus-search.js';
+import {
+  fuseRrf,
+  hybridSearch,
+  isLowConfidenceHits,
+  type HybridHit,
+} from '../src/corpus-search.js';
 import type { Reranker } from '@risezome/engine/embed';
 
 const hit = (over: Partial<HybridHit>): HybridHit => ({
@@ -27,14 +32,16 @@ describe('isLowConfidenceHits — CRAG escalation trigger', () => {
   it('is low-confidence when every hit is a vector-only near-miss beyond strong distance', () => {
     // Distances 0.4 / 0.44 survive the 0.45 relevance floor but clear neither
     // the FTS-grounded nor the close-vector (0.30) bar → worth expanding.
-    expect(
-      isLowConfidenceHits([hit({ distance: 0.4 }), hit({ distance: 0.44 })]),
-    ).toBe(true);
+    expect(isLowConfidenceHits([hit({ distance: 0.4 }), hit({ distance: 0.44 })])).toBe(true);
   });
 
   it('is confident if even one of several hits is strong', () => {
     expect(
-      isLowConfidenceHits([hit({ distance: 0.44 }), hit({ distance: 0.2 }), hit({ distance: 0.41 })]),
+      isLowConfidenceHits([
+        hit({ distance: 0.44 }),
+        hit({ distance: 0.2 }),
+        hit({ distance: 0.41 }),
+      ]),
     ).toBe(false);
   });
 });
@@ -64,22 +71,27 @@ describe('fuseRrf — reciprocal rank fusion + relevance floor', () => {
   });
 
   it('keeps a vector-only hit within the distance floor', () => {
-    const out = fuseRrf([{ chunk_id: 'Z', distance: 0.2 }], [], { limit: 3, vectorDistanceFloor: 0.45 });
+    const out = fuseRrf([{ chunk_id: 'Z', distance: 0.2 }], [], {
+      limit: 3,
+      vectorDistanceFloor: 0.45,
+    });
     expect(out.map((h) => h.chunk_id)).toEqual(['Z']);
   });
 
   it('drops a vector-only hit beyond the floor (weak-tail noise)', () => {
-    const out = fuseRrf([{ chunk_id: 'X', distance: 0.9 }], [], { limit: 3, vectorDistanceFloor: 0.45 });
+    const out = fuseRrf([{ chunk_id: 'X', distance: 0.9 }], [], {
+      limit: 3,
+      vectorDistanceFloor: 0.45,
+    });
     expect(out).toEqual([]);
   });
 
   it('a far vector hit SURVIVES when it also matches lexically', () => {
     // distance 0.9 > floor, but an FTS match makes it eligible.
-    const out = fuseRrf(
-      [{ chunk_id: 'X', distance: 0.9 }],
-      [{ chunk_id: 'X', rank: 0.8 }],
-      { limit: 3, vectorDistanceFloor: 0.45 },
-    );
+    const out = fuseRrf([{ chunk_id: 'X', distance: 0.9 }], [{ chunk_id: 'X', rank: 0.8 }], {
+      limit: 3,
+      vectorDistanceFloor: 0.45,
+    });
     expect(out.map((h) => h.chunk_id)).toEqual(['X']);
     expect(out[0]!.ftsMatched).toBe(true);
   });
@@ -122,12 +134,20 @@ function mockDb(
   return {
     rpc: (name: string) =>
       Promise.resolve(
-        name === 'search_corpus_vector' ? { data: vector, error: null } : { data: fts, error: null },
+        name === 'search_corpus_vector'
+          ? { data: vector, error: null }
+          : { data: fts, error: null },
       ),
     from: () => ({
       select: () => ({
-        in: (_col: string, ids: string[]) =>
-          Promise.resolve({ data: ids.map((id) => ({ chunk_id: id, text: texts[id] ?? '' })), error: null }),
+        // U11: the rerank text-fetch now scopes by org_id before .in(chunk_id).
+        eq: () => ({
+          in: (_col: string, ids: string[]) =>
+            Promise.resolve({
+              data: ids.map((id) => ({ chunk_id: id, text: texts[id] ?? '' })),
+              error: null,
+            }),
+        }),
       }),
     }),
   } as unknown as SupabaseClient;
@@ -144,7 +164,9 @@ describe('hybridSearch — reranker integration', () => {
   it('reorders the fused pool by rerank score and truncates to limit', async () => {
     // Rerank pushes C (index 2 in the fused pool) to the top.
     const reranker: Reranker = async (_q, docs) =>
-      docs.map((_d, i) => ({ index: i, score: i === 2 ? 9 : i === 0 ? 1 : 0 })).sort((a, b) => b.score - a.score);
+      docs
+        .map((_d, i) => ({ index: i, score: i === 2 ? 9 : i === 0 ? 1 : 0 }))
+        .sort((a, b) => b.score - a.score);
     const out = await hybridSearch(mockDb(vector, [], texts), {
       orgId: 'o',
       queryVectorLiteral: '[0]',

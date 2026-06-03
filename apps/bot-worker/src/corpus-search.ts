@@ -122,12 +122,19 @@ export function fuseRrf(
     e.score += 1 / (k + i + 1);
   });
 
-  return [...byId.entries()]
-    // Floor: lexical matches always pass; vector-only must be close enough.
-    .filter(([, e]) => e.ftsMatched || (e.distance !== null && e.distance <= floor))
-    .map(([chunk_id, e]) => ({ chunk_id, distance: e.distance, score: e.score, ftsMatched: e.ftsMatched }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, opts.limit);
+  return (
+    [...byId.entries()]
+      // Floor: lexical matches always pass; vector-only must be close enough.
+      .filter(([, e]) => e.ftsMatched || (e.distance !== null && e.distance <= floor))
+      .map(([chunk_id, e]) => ({
+        chunk_id,
+        distance: e.distance,
+        score: e.score,
+        ftsMatched: e.ftsMatched,
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, opts.limit)
+  );
 }
 
 export interface HybridSearchParams {
@@ -172,8 +179,14 @@ export async function hybridSearch(
       p_limit: candidateLimit,
     }),
   ]);
-  const vecRes = vecRaw as unknown as { data: VectorCandidate[] | null; error: { message: string } | null };
-  const ftsRes = ftsRaw as unknown as { data: FtsCandidate[] | null; error: { message: string } | null };
+  const vecRes = vecRaw as unknown as {
+    data: VectorCandidate[] | null;
+    error: { message: string } | null;
+  };
+  const ftsRes = ftsRaw as unknown as {
+    data: FtsCandidate[] | null;
+    error: { message: string } | null;
+  };
 
   if (vecRes.error !== null) {
     params.logger?.warn({ err: vecRes.error }, 'corpus-search.vector.failed');
@@ -201,12 +214,15 @@ export async function hybridSearch(
   const { data: rows, error: textErr } = await db
     .from('doc_chunks')
     .select('chunk_id, text')
+    .eq('org_id', params.orgId) // U11: redundant org scope (defense-in-depth; db.ts convention)
     .in('chunk_id', ids);
   if (textErr !== null || rows === null) {
     params.logger?.warn({ err: textErr }, 'corpus-search.rerank.text-fetch-failed');
     return fused.slice(0, params.limit);
   }
-  const textById = new Map((rows as { chunk_id: string; text: string }[]).map((r) => [r.chunk_id, r.text]));
+  const textById = new Map(
+    (rows as { chunk_id: string; text: string }[]).map((r) => [r.chunk_id, r.text]),
+  );
   const documents = fused.map((h) => textById.get(h.chunk_id) ?? '');
   try {
     const ranked = await params.reranker(params.queryText, documents, { topK: params.limit });

@@ -19,7 +19,12 @@ import {
 import { scoreRagas, type Judge, type RagasScores } from '@risezome/engine/eval';
 import { hybridSearch } from './corpus-search.js';
 import { optionalReranker } from './reranker.js';
-import { expandWinnersToParents, parentDocEnabled, dedupeByDoc, type WinningChunk } from './parent-doc.js';
+import {
+  expandWinnersToParents,
+  parentDocEnabled,
+  dedupeByDoc,
+  type WinningChunk,
+} from './parent-doc.js';
 
 // ── Golden set ──────────────────────────────────────────────────────────
 
@@ -130,8 +135,19 @@ export function scoreQuestion(
 ): QuestionResult {
   const { recall, surfaced, missed } = computeRecall(retrieved, question.must_surface);
   const answerContainsAll = evaluateAnswer(answer, question.expect_answer_contains);
-  const pass = question.expect_refusal === true ? isRefusal : !isRefusal && answerContainsAll !== false;
-  return { q: question.q, retrieved, recall, surfaced, missed, answer, isRefusal, answerContainsAll, pass };
+  const pass =
+    question.expect_refusal === true ? isRefusal : !isRefusal && answerContainsAll !== false;
+  return {
+    q: question.q,
+    retrieved,
+    recall,
+    surfaced,
+    missed,
+    answer,
+    isRefusal,
+    answerContainsAll,
+    pass,
+  };
 }
 
 export interface ReplaySummary {
@@ -147,8 +163,16 @@ export function summarize(results: readonly QuestionResult[]): ReplaySummary {
   const total = results.length;
   const passed = results.filter((r) => r.pass).length;
   const recalls = results.map((r) => r.recall).filter((r): r is number => r !== null);
-  const meanRecall = recalls.length > 0 ? recalls.reduce((a, b) => a + b, 0) / recalls.length : null;
-  return { total, passed, failed: total - passed, passRate: total > 0 ? passed / total : 0, meanRecall, results };
+  const meanRecall =
+    recalls.length > 0 ? recalls.reduce((a, b) => a + b, 0) / recalls.length : null;
+  return {
+    total,
+    passed,
+    failed: total - passed,
+    passRate: total > 0 ? passed / total : 0,
+    meanRecall,
+    results,
+  };
 }
 
 // ── Pipeline + rich intermediates ───────────────────────────────────────
@@ -251,6 +275,7 @@ export async function evaluateQuestion(
   const { data: chunkRows } = await deps.db
     .from('doc_chunks')
     .select('chunk_id, doc_id, text, position, is_summary')
+    .eq('org_id', deps.orgId) // U11: redundant org scope (defense-in-depth)
     .in('chunk_id', chunkIds);
   const chunkById = new Map(
     (chunkRows ?? []).map((c) => [
@@ -264,7 +289,11 @@ export async function evaluateQuestion(
     ]),
   );
   const docIds = [...new Set([...chunkById.values()].map((c) => c.docId))];
-  const { data: docRows } = await deps.db.from('docs').select('id, title').in('id', docIds);
+  const { data: docRows } = await deps.db
+    .from('docs')
+    .select('id, title')
+    .eq('org_id', deps.orgId) // U11: redundant org scope (defense-in-depth)
+    .in('id', docIds);
   const titleById = new Map((docRows ?? []).map((d) => [d.id as string, d.title as string]));
 
   // U8: collapse same-doc chunks to the best-ranked, then parent-expand.
@@ -273,10 +302,12 @@ export async function evaluateQuestion(
     : hits;
   const winners: WinningChunk[] = sourceHits.flatMap((h) => {
     const c = chunkById.get(h.chunk_id);
-    return c === undefined ? [] : [{ chunkId: h.chunk_id, docId: c.docId, position: c.position, text: c.text }];
+    return c === undefined
+      ? []
+      : [{ chunkId: h.chunk_id, docId: c.docId, position: c.position, text: c.text }];
   });
   const expandedByChunk = parentDocEnabled()
-    ? await expandWinnersToParents(deps.db, winners)
+    ? await expandWinnersToParents(deps.db, deps.orgId, winners)
     : new Map<string, string>();
 
   const retrieved: RetrievedDoc[] = [];

@@ -727,7 +727,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
         : [{ chunkId: h.chunk_id, docId: c.doc_id, position: c.position, text: c.text }];
     });
     const expandedByChunk = parentDocEnabled()
-      ? await expandWinnersToParents(args.db, winners)
+      ? await expandWinnersToParents(args.db, args.orgId, winners)
       : new Map<string, string>();
 
     for (let i = 0; i < sourceHits.length; i++) {
