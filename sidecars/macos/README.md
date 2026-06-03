@@ -98,22 +98,12 @@ Audio frames on stdout are `[role tag u8][len u32 BE][PCM bytes]`, one per 20 ms
 (320 samples / 640 bytes), 16 kHz mono Int16LE — byte-identical to the Linux
 sidecar.
 
-## Manual smoke test
+## Testing
 
-```bash
-echo '{"type":"nonce","nonce":"deadbeef"}' \
-  | ./build/risezome-sidecar-macos --role=mic \
-  > /tmp/risezome-capture.pcm 2> /tmp/risezome-capture.log
-```
-
-Speak for a few seconds, then `Ctrl-C`. Verify:
-
-- `/tmp/risezome-capture.log` contains `{"type":"hello","sidecarVersion":"0.1.0-macos","nonceEcho":"deadbeef"}` then `{"type":"started", ...}`.
-- `/tmp/risezome-capture.pcm` is non-empty.
-- Strip the 5-byte frame headers and play with `ffmpeg -f s16le -ar 16000 -ac 1 -i <stripped>.pcm out.wav` to verify audibility.
-
-For `--role=system`, play audio through the Multi-Output Device first, then run
-the same command with `--role=system`.
+Follow **[TESTING.md](./TESTING.md)** — a step-by-step guide that builds the
+binary, proves it captures mic and system (BlackHole) audio standalone, and then
+verifies it end-to-end through the Live-mic debug page, with a troubleshooting
+table for the common macOS permission/loopback issues.
 
 ## Constraints
 
