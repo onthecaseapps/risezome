@@ -1,6 +1,7 @@
 import { chunkFile } from '@risezome/engine/chunker';
 import { inngest, type IndexMode } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
+import { decryptToken } from '../../../app/_lib/token-crypto';
 import { requireTrelloApiKey, TrelloAuthError } from '../../../app/_lib/trello';
 import {
   fetchBoardCards,
@@ -34,9 +35,11 @@ export const indexTrelloFn = inngest.createFunction(
     triggers: [{ event: 'risezome/trello.index-requested' }],
   },
   async ({ event, step }) => {
-    const { orgId, sourceId, mode } = (event as unknown as {
-      data: { orgId: string; sourceId: string; mode?: IndexMode };
-    }).data;
+    const { orgId, sourceId, mode } = (
+      event as unknown as {
+        data: { orgId: string; sourceId: string; mode?: IndexMode };
+      }
+    ).data;
 
     const ctx = await step.run('load-source', async () => {
       const service = createServiceRoleClient();
@@ -47,27 +50,47 @@ export const indexTrelloFn = inngest.createFunction(
         .eq('org_id', orgId)
         .single();
       if (error !== null || source === null) {
-        throw new Error(`trello source not found: org=${orgId} source=${sourceId} (${error?.message ?? 'no row'})`);
+        throw new Error(
+          `trello source not found: org=${orgId} source=${sourceId} (${error?.message ?? 'no row'})`,
+        );
       }
-      if (source.kind !== 'trello' || source.connection_id === null || source.external_id === null) {
+      if (
+        source.kind !== 'trello' ||
+        source.connection_id === null ||
+        source.external_id === null
+      ) {
         throw new Error(`source ${sourceId} is not an indexable Trello board`);
-      }
-      const { data: conn, error: connErr } = await service
-        .from('trello_connections')
-        .select('token')
-        .eq('id', source.connection_id as string)
-        .single();
-      if (connErr !== null || conn === null) {
-        throw new Error(`trello connection missing for source ${sourceId}`);
       }
       await service
         .from('sources')
         .update({ status: 'indexing', status_message: null, indexed_files: 0, total_files: null })
         .eq('id', sourceId);
-      return { boardId: source.external_id as string, token: conn.token as string };
+      // U4: do NOT return the token from this memoized step — Inngest persists
+      // step return values as run state, which would put the secret at rest
+      // outside our DB/redaction boundary. Return only the connection id; the
+      // token is resolved + decrypted fresh below (un-memoized).
+      return {
+        boardId: source.external_id as string,
+        connectionId: source.connection_id as string,
+      };
     });
 
-    const trello: TrelloClientOptions = { token: ctx.token, apiKey: requireTrelloApiKey() };
+    // Resolve the decrypted Trello token outside any memoized step so it never
+    // lands in Inngest run state (U3 decrypt + U4 no-persist).
+    const trelloToken = await (async (): Promise<string> => {
+      const service = createServiceRoleClient();
+      const { data: conn, error: connErr } = await service
+        .from('trello_connections')
+        .select('token_enc')
+        .eq('id', ctx.connectionId)
+        .single();
+      if (connErr !== null || conn === null || conn.token_enc === null) {
+        throw new Error(`trello connection missing for source ${sourceId}`);
+      }
+      return decryptToken(service, conn.token_enc as string);
+    })();
+
+    const trello: TrelloClientOptions = { token: trelloToken, apiKey: requireTrelloApiKey() };
 
     const result = await runConnectorIndex<TrelloCard>({
       step,
@@ -99,6 +122,11 @@ export const indexTrelloFn = inngest.createFunction(
       },
     });
 
-    return { sourceId, cards: result.items, chunks: result.chunks, ...(result.error !== undefined && { error: result.error }) };
+    return {
+      sourceId,
+      cards: result.items,
+      chunks: result.chunks,
+      ...(result.error !== undefined && { error: result.error }),
+    };
   },
 );

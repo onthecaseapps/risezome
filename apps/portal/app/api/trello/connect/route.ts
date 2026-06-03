@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceRoleClient } from '../../../_lib/supabase-server';
 import { fetchTrelloMember, requireTrelloApiKey, TrelloAuthError } from '../../../_lib/trello';
+import { encryptToken } from '../../../_lib/token-crypto';
 
 /**
  * Finish the Trello connect flow. The client callback page POSTs `{ token,
@@ -59,19 +60,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'trello_member_lookup_failed' }, { status: 502 });
   }
 
-  const { error: upsertErr } = await service
-    .from('trello_connections')
-    .upsert(
-      {
-        org_id: orgId,
-        token,
-        member_id: member.id,
-        username: member.username,
-        expires_at: null,
-        connected_at: new Date().toISOString(),
-      },
-      { onConflict: 'org_id' },
-    );
+  const tokenEnc = await encryptToken(service, token); // U3: encrypt at rest
+  const { error: upsertErr } = await service.from('trello_connections').upsert(
+    {
+      org_id: orgId,
+      token_enc: tokenEnc,
+      member_id: member.id,
+      username: member.username,
+      expires_at: null,
+      connected_at: new Date().toISOString(),
+    },
+    { onConflict: 'org_id' },
+  );
   if (upsertErr !== null) {
     return NextResponse.json({ error: 'trello_store_failed' }, { status: 500 });
   }

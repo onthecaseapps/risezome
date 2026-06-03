@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { decryptToken } from '../../token-crypto.js';
 
 /**
  * Per-org Trello access, resolved at skill-call time from the meeting's orgId.
@@ -63,15 +64,17 @@ export function buildTrelloSourceResolver(deps: { db: SupabaseClient }): TrelloS
     // the token by connection id — the indexer's exact join — rather than by org.
     const { data: connData, error: connError } = await deps.db
       .from('trello_connections')
-      .select('token')
+      .select('token_enc')
       .in('id', Array.from(connectionIds))
       .limit(1)
       .maybeSingle();
     if (connError !== null) {
       throw new Error(`trello_connections lookup failed for org ${orgId}: ${connError.message}`);
     }
-    const token = (connData)?.token;
-    if (token === undefined || token.length === 0) return null;
+    const tokenEnc: unknown = connData?.token_enc;
+    if (typeof tokenEnc !== 'string' || tokenEnc.length === 0) return null;
+    const token = await decryptToken(deps.db, tokenEnc); // U3: token stored encrypted
+    if (token.length === 0) return null;
 
     return { token, boards };
   };

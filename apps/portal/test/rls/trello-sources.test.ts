@@ -22,6 +22,8 @@ const SUPABASE_URL = process.env['SUPABASE_URL'] ?? 'http://127.0.0.1:54321';
 const SUPABASE_ANON_KEY = process.env['SUPABASE_ANON_KEY'] ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
 const FORCE = process.env['RISEZOME_RUN_RLS_TESTS'] === '1';
+// Encryption key for the pgcrypto token round-trip (U3).
+const TOKEN_KEY = 'rls-trello-test-key-' + 'k'.repeat(40);
 
 interface TestUser {
   readonly id: string;
@@ -63,9 +65,19 @@ if (!stackReachable && !FORCE) {
       userA = await createTestUser(admin, 'rls-trello-a@example.com');
       orgA = await createOrgWithMember(admin, 'Trello Org A', userA.id, 'manager');
 
+      // Token is stored encrypted (U3): encrypt via the pgcrypto helper first.
+      const { data: tokEnc } = await admin.rpc('encrypt_refresh_token', {
+        plaintext: 'tok_secret_abc',
+        key: TOKEN_KEY,
+      });
       const { data: conn, error: connErr } = await admin
         .from('trello_connections')
-        .insert({ org_id: orgA, token: 'tok_secret_abc', member_id: 'm1', username: 'acme' })
+        .insert({
+          org_id: orgA,
+          token_enc: tokEnc as unknown as string,
+          member_id: 'm1',
+          username: 'acme',
+        })
         .select('id')
         .single();
       if (connErr !== null || conn === null) {
@@ -120,10 +132,26 @@ if (!stackReachable && !FORCE) {
     });
 
     it('a member CANNOT read trello_connections (service-role only)', async () => {
-      const { data, error } = await userA.client.from('trello_connections').select('id, token');
+      const { data, error } = await userA.client.from('trello_connections').select('id');
       // RLS with no policy returns empty for the authenticated client (no error).
       expect(error).toBeNull();
       expect(data ?? []).toEqual([]);
+    });
+
+    it('stores the token encrypted at rest — no plaintext column, decrypt round-trips (U3)', async () => {
+      const plaintextSel = await admin.from('trello_connections').select('token');
+      expect(plaintextSel.error).not.toBeNull(); // plaintext column is gone
+
+      const { data: row } = await admin
+        .from('trello_connections')
+        .select('token_enc')
+        .eq('id', connectionId)
+        .single();
+      const dec = await admin.rpc('decrypt_refresh_token', {
+        ciphertext: (row as { token_enc: string }).token_enc,
+        key: TOKEN_KEY,
+      });
+      expect(dec.data).toBe('tok_secret_abc');
     });
   });
 }
