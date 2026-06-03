@@ -34,6 +34,7 @@ cp apps/bot-worker/.env.example  apps/bot-worker/.env.dev
 ```
 
 Fill in your secrets. Notes:
+
 - `BOT_WORKER_SECRET` must be the **same value** in both files.
 - Leave `RISEZOME_DEV_ORIGIN` / `BOT_WORKER_BASE_URL` unset — they're derived
   from your tag by `pnpm dev`.
@@ -102,24 +103,24 @@ end-meeting button to fire recap/gaps locally.
 
 The same Supabase values are written under each surface's expected var names:
 
-| Surface | URL var | Key var(s) |
-|---|---|---|
-| Portal browser/SSR | `NEXT_PUBLIC_SUPABASE_URL` | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` |
-| Portal service-role | `NEXT_PUBLIC_SUPABASE_URL` | `SUPABASE_SECRET_KEY` |
-| Bot-worker | `SUPABASE_URL` | `SUPABASE_SECRET_KEY` |
-| RLS tests | `SUPABASE_URL` | `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` |
+| Surface             | URL var                    | Key var(s)                                       |
+| ------------------- | -------------------------- | ------------------------------------------------ |
+| Portal browser/SSR  | `NEXT_PUBLIC_SUPABASE_URL` | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`           |
+| Portal service-role | `NEXT_PUBLIC_SUPABASE_URL` | `SUPABASE_SECRET_KEY`                            |
+| Bot-worker          | `SUPABASE_URL`             | `SUPABASE_SECRET_KEY`                            |
+| RLS tests           | `SUPABASE_URL`             | `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` |
 
 In local mode these come from the running `supabase start` stack (or the
 well-known local demo keys). In hosted mode they come from your `.env.dev`.
 
 ## Footguns
 
-- **RLS tests silently skip** unless a local Supabase stack is up *and*
+- **RLS tests silently skip** unless a local Supabase stack is up _and_
   `RISEZOME_RUN_RLS_TESTS=1` is set — skipped ≠ passed. To actually exercise RLS:
   `pnpm dev <tag> local` (or `supabase start`), then
   `RISEZOME_RUN_RLS_TESTS=1 pnpm --filter @risezome/portal test`.
 - **`supabase db reset` wipes local data.** `pnpm dev` only resets when it had to
-  *start* the stack fresh; it never resets a stack you're already running.
+  _start_ the stack fresh; it never resets a stack you're already running.
 - **After pulling new migrations**, re-apply to your target: local →
   `supabase db reset` (re-seeds), hosted → `supabase db push`. Otherwise your
   schema drifts from the code.

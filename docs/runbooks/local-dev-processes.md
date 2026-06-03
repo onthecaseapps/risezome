@@ -8,11 +8,11 @@ the repo root unless noted.
 
 ## The three processes
 
-| # | Process | Command | Port | Notes |
-|---|---------|---------|------|-------|
-| 1 | **Portal** (Next.js) | `pnpm --filter @risezome/portal dev` | `:3000` | Web app + Inngest endpoint at `/api/inngest`. Needs `apps/portal/.env.local`. |
-| 2 | **Inngest dev CLI** | `npx inngest-cli@latest dev` | `:8288` | Auto-discovers functions from the portal endpoint. Dashboard at `http://localhost:8288`. Start **after** the portal so discovery succeeds on first poll. |
-| 3 | **Bot-worker** (Fastify) | `pnpm --filter @risezome/bot-worker dev` | `:8787` | Long-lived WS server for the Recall.ai bot. Needs `apps/bot-worker/.env`. |
+| #   | Process                  | Command                                  | Port    | Notes                                                                                                                                                    |
+| --- | ------------------------ | ---------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Portal** (Next.js)     | `pnpm --filter @risezome/portal dev`     | `:3000` | Web app + Inngest endpoint at `/api/inngest`. Needs `apps/portal/.env.local`.                                                                            |
+| 2   | **Inngest dev CLI**      | `npx inngest-cli@latest dev`             | `:8288` | Auto-discovers functions from the portal endpoint. Dashboard at `http://localhost:8288`. Start **after** the portal so discovery succeeds on first poll. |
+| 3   | **Bot-worker** (Fastify) | `pnpm --filter @risezome/bot-worker dev` | `:8787` | Long-lived WS server for the Recall.ai bot. Needs `apps/bot-worker/.env`.                                                                                |
 
 Order matters: portal first (Inngest needs the `/api/inngest` endpoint
 to register functions), then Inngest CLI, then bot-worker. The
@@ -55,10 +55,10 @@ We run a single **named** Cloudflare tunnel (`risezome-dev`) that serves
 both, with **stable** hostnames that survive restarts/crashes (no more
 re-pasting random `*.trycloudflare.com` names):
 
-| Hostname | → local | Use |
-|----------|---------|-----|
-| `https://dev.risezome.app` | `:3000` | Portal + marketing site + blog (share this) |
-| `https://bot-worker-dev.risezome.app` | `:8787` | Bot-worker WS for real Recall bots |
+| Hostname                              | → local | Use                                         |
+| ------------------------------------- | ------- | ------------------------------------------- |
+| `https://dev.risezome.app`            | `:3000` | Portal + marketing site + blog (share this) |
+| `https://bot-worker-dev.risezome.app` | `:8787` | Bot-worker WS for real Recall bots          |
 
 ### Start it (not auto-started; run after a reboot)
 

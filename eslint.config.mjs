@@ -37,6 +37,7 @@ export default tseslint.config(
             '*.config.ts',
             '*.config.mjs',
             'apps/hud/build.config.mjs',
+            'test/*.test.ts',
           ],
         },
         tsconfigRootDir: import.meta.dirname,
