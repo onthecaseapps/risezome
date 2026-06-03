@@ -1,7 +1,7 @@
 ---
 title: "feat: Knowledge Gaps — captured misses, demand-ranked library, assignment, sections"
 type: feat
-status: active
+status: completed
 date: 2026-06-02
 origin: docs/brainstorms/2026-06-02-knowledge-gaps-requirements.md
 depth: deep
