@@ -27,9 +27,9 @@ export default tseslint.config(
     },
   },
   {
-    // Standalone Node scripts (e.g. scripts/register-github-app.mjs) run
-    // under `node`, not the bundler — give them the Node globals.
-    files: ['scripts/**/*.mjs'],
+    // Standalone Node files (scripts, and next.config.mjs) run under `node`,
+    // not the bundler — give them the Node globals.
+    files: ['scripts/**/*.mjs', 'next.config.mjs'],
     languageOptions: {
       globals: {
         process: 'readonly',
