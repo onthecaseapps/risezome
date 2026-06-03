@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Schibsted_Grotesk } from 'next/font/google';
+import { Schibsted_Grotesk, Space_Grotesk } from 'next/font/google';
 import { THEME_INIT_SCRIPT } from '@risezome/hud-ui';
 import './globals.css';
 
@@ -7,6 +7,15 @@ const schibstedGrotesk = Schibsted_Grotesk({
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-schibsted-grotesk',
+});
+
+// Brand display face (the rising-chevron wordmark + demo headlines). Schibsted
+// stays the UI/body font; Space Grotesk is reserved for display moments.
+const spaceGrotesk = Space_Grotesk({
+  subsets: ['latin'],
+  display: 'swap',
+  weight: ['500', '700'],
+  variable: '--font-space-grotesk',
 });
 
 export const metadata: Metadata = {
@@ -27,7 +36,11 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>): React.ReactElement {
   return (
-    <html lang="en" className={schibstedGrotesk.variable} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${schibstedGrotesk.variable} ${spaceGrotesk.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>

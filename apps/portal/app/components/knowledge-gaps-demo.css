@@ -1,0 +1,120 @@
+/*
+ * Knowledge Gaps marketing demo — ported from the Claude Design prototype
+ * (risezome/components/gaps-demo.jsx). A self-contained DARK showcase band:
+ * it carries its own background + design tokens so it reads identically whether
+ * the surrounding marketing page is in light or dark theme, matching the
+ * handoff mockup exactly.
+ *
+ * The animated values (card assembly, demand count, chip pops) live as inline
+ * styles in the .tsx because they're driven by the rAF clock. Everything static
+ * — tokens, glow, grain, keyframes, feature tags — lives here.
+ */
+.kg {
+  /* Design tokens carried from the prototype's dark theme (risezome.css). */
+  --accent: #7c83ff;
+  --surface: #131419;
+  --surface-3: #1f222b;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  --text: #f3f3f6;
+  --text-dim: #9a9ba7;
+  --text-faint: #66677a;
+  --hue-issue: #e6a23c;
+  --hue-doc: #2fb6a3;
+  --font-display: var(--font-space-grotesk), 'Space Grotesk', system-ui, sans-serif;
+
+  position: relative;
+  overflow: hidden;
+  color: var(--text);
+  background:
+    radial-gradient(120% 90% at 50% 118%, rgba(124, 131, 255, 0.12), transparent 55%),
+    radial-gradient(90% 60% at 50% -10%, rgba(81, 89, 224, 0.1), transparent 60%), #0a0b0e;
+}
+
+.kg-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: radial-gradient(circle, #fff 1px, transparent 1px);
+  background-size: 4px 4px;
+}
+
+.kg-frame {
+  position: relative;
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+/* Floating ask chips need the full-width (880px) frame so the left gutter sits
+ * clear of the centered hero card. Below that the gutter collapses and they'd
+ * pile onto the card — they're a decorative flourish, so just hide them. */
+.kg-chips {
+  display: none;
+}
+@media (min-width: 960px) {
+  .kg-chips {
+    display: block;
+  }
+}
+
+/* Feature tags below the stage. */
+.kg-tags {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 30px;
+  flex-wrap: wrap;
+}
+.kg-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 8px 14px;
+}
+.kg-tag b {
+  color: var(--text);
+  font-weight: 600;
+}
+.kg-tag .kg-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+@keyframes kg-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes kg-pulse {
+  0% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.04);
+  }
+}
+
+/* Reduced motion: the .tsx renders the finished (resolved) frame statically and
+ * skips the loop. Silence the caption/pulse keyframes too, belt and braces. */
+@media (prefers-reduced-motion: reduce) {
+  .kg [data-kg-anim],
+  .kg [data-kg-pulse] {
+    animation: none !important;
+  }
+}

@@ -1,5 +1,6 @@
 import { Hero } from '../components/hero';
 import { ValueSections } from '../components/value-sections';
+import { KnowledgeGapsDemo } from '../components/knowledge-gaps-demo';
 import { WaitlistForm } from '../components/waitlist-form';
 import { MeetingDemo } from '../components/demo/meeting-demo';
 
@@ -27,6 +28,11 @@ export default function Home(): React.ReactElement {
       </section>
 
       <ValueSections />
+
+      {/* Knowledge Gaps showcase — follows the "closes the doc gap" value beat:
+          a dark, self-contained band that animates a gap from capture through
+          resolution. */}
+      <KnowledgeGapsDemo />
 
       <WaitlistForm />
     </>
