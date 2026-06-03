@@ -2,7 +2,7 @@ import type { ReactElement } from 'react';
 import { notFound, redirect } from 'next/navigation';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServerClient } from '../../../../_lib/supabase-server';
-import { decryptToken } from '../../../../_lib/token-crypto';
+import { decryptToken, transcriptWithText } from '../../../../_lib/token-crypto';
 import { LiveMeetingClient } from './_client';
 import type { CardEvent, CardTrigger, TranscriptUtterance } from '@risezome/hud-ui';
 import { mapSynthesisRow, type InitialSynthesis } from '../_synthesis-seed';
@@ -132,17 +132,12 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
     // Seed the prior transcript (finals only) so a reload mid-meeting restores
     // what was already said; the live channel + reconnect-replay keep it
     // current. Partials are transient and intentionally not seeded.
-    const { data: transcriptRows } = await supabase
-      .from('meeting_events')
-      .select('payload')
-      .eq('meeting_id', meetingId)
-      .eq('org_id', orgId)
-      .eq('type', 'transcript.data')
-      .order('event_id', { ascending: true });
-    initialTranscript = (transcriptRows ?? []).flatMap((row): TranscriptUtterance[] => {
-      const p = (row.payload as Record<string, unknown> | null) ?? {};
+    // F2: transcript text is encrypted at rest — fetch it decrypted (one round-trip).
+    const transcriptRows = await transcriptWithText(supabase, meetingId, orgId);
+    initialTranscript = transcriptRows.flatMap((row): TranscriptUtterance[] => {
+      const p = row.payload ?? {};
       const utteranceId = p['utteranceId'];
-      const text = p['text'];
+      const text = row.text;
       if (typeof utteranceId !== 'string' || typeof text !== 'string') return [];
       return [
         {

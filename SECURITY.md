@@ -60,12 +60,16 @@ the database, not just the application.
 
 ## Customer content protection
 
-- **Meeting recaps are encrypted at rest** (pgcrypto AES-256), decrypted
-  server-side only.
-- Other content columns (meeting transcripts, in-progress syntheses, search
-  chunks + vector embeddings) rely on **disk-level** encryption plus RLS, by a
-  deliberate, documented decision — column-encrypting them would break the
-  features that query/search them. The rationale and follow-ups are recorded in
+- **Sensitive meeting content is encrypted at rest** (pgcrypto AES-256,
+  decrypted server-side only): the whole-meeting **recap**, the AI's
+  **synthesized answers**, and the **verbatim transcript text**. Transcript
+  speaker names + timing stay in plaintext metadata (so they remain queryable),
+  but the spoken words themselves are encrypted.
+- The remaining customer content held in plaintext is the **search corpus**
+  (document chunks + vector embeddings), which relies on **disk-level**
+  encryption plus RLS — column-encrypting it would break full-text and vector
+  search. This is a deliberate, documented decision; the rationale and
+  follow-ups are recorded in
   [`docs/solutions/2026-06-03-content-encryption-at-rest.md`](docs/solutions/2026-06-03-content-encryption-at-rest.md).
 - **Disconnect purges content.** When a source is disconnected, its ingested
   content and embeddings are deleted (cascade) after a short grace window — data

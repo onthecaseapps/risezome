@@ -30,6 +30,7 @@ import {
   type GapToPlace,
   type SectionRef,
 } from '@risezome/engine/gaps';
+import { transcriptWithText } from '../../../app/_lib/token-crypto';
 
 const SECTION_COLORS = ['indigo', 'emerald', 'sky', 'amber', 'rose', 'violet', 'teal', 'slate'];
 
@@ -85,16 +86,19 @@ export function buildGroups(
   embeddings: ReadonlyArray<readonly number[]>,
   askers: Map<string, string>,
 ): AssemblyGroup[] {
-  const items: Array<Embedded<{ miss: MissRow; vector: readonly number[] }>> = misses.map((miss, i) => ({
-    item: { miss, vector: embeddings[i] ?? [] },
-    vector: embeddings[i] ?? [],
-  }));
+  const items: Array<Embedded<{ miss: MissRow; vector: readonly number[] }>> = misses.map(
+    (miss, i) => ({
+      item: { miss, vector: embeddings[i] ?? [] },
+      vector: embeddings[i] ?? [],
+    }),
+  );
   const groups = dedupeWithinBatch(items, GAP_MERGE_MAX_DISTANCE);
   return groups.map((g) => {
     const occurrences: OccurrenceInput[] = g.members.map(({ miss }) => ({
       utterance_id: miss.utterance_id,
       verbatim_question: miss.verbatim_question,
-      asker_name: miss.utterance_id !== null ? (askers.get(miss.utterance_id) ?? 'Unknown') : 'Unknown',
+      asker_name:
+        miss.utterance_id !== null ? (askers.get(miss.utterance_id) ?? 'Unknown') : 'Unknown',
       reason: miss.reason,
     }));
     return {
@@ -162,17 +166,13 @@ export async function backfillMissesForMeeting(
   if (retracts.length === 0) return 0;
 
   // Recover the verbatim question for each retracted utterance from the transcript.
-  const { data: events } = await service
-    .from('meeting_events')
-    .select('payload')
-    .eq('meeting_id', meetingId)
-    .eq('org_id', orgId)
-    .eq('type', 'transcript.data');
+  // F2: transcript text is encrypted at rest — fetch it decrypted.
+  const events = await transcriptWithText(service, meetingId, orgId);
   const textByUtt = new Map<string, string>();
-  for (const e of (events ?? []) as { payload: Record<string, unknown> | null }[]) {
+  for (const e of events) {
     const p = e.payload ?? {};
     const uid = p['utteranceId'];
-    const text = p['text'];
+    const text = e.text;
     if (typeof uid === 'string' && typeof text === 'string' && text.length > 0) {
       textByUtt.set(uid, text);
     }
@@ -282,7 +282,12 @@ export async function assembleKnowledgeGaps(args: {
     if (error !== null) throw new Error(`assemble group: ${error.message}`);
     const row = Array.isArray(data) ? data[0] : data;
     if (row === undefined || row === null) continue;
-    const r = row as { gap_id: string; created: boolean; resurfaced: boolean; assignee_id: string | null };
+    const r = row as {
+      gap_id: string;
+      created: boolean;
+      resurfaced: boolean;
+      assignee_id: string | null;
+    };
     touchedGapIds.push(r.gap_id);
     if (r.created) created += 1;
     if (r.resurfaced) {
@@ -305,7 +310,10 @@ export async function assembleKnowledgeGaps(args: {
   const { error: markErr } = await service
     .from('meeting_gap_misses')
     .update({ processed_at: new Date().toISOString() })
-    .in('miss_id', misses.map((m) => m.miss_id));
+    .in(
+      'miss_id',
+      misses.map((m) => m.miss_id),
+    );
   if (markErr !== null) throw new Error(`mark processed: ${markErr.message}`);
 
   return { misses: misses.length, groups: groups.length, created, resurfaced };
@@ -362,7 +370,10 @@ async function reclusterSections(args: {
   const placements = assignSections(toPlace, sectionRefs);
   for (const p of placements) {
     if (p.sectionId !== null) {
-      await service.from('knowledge_gaps').update({ section_id: p.sectionId }).eq('gap_id', p.gapId);
+      await service
+        .from('knowledge_gaps')
+        .update({ section_id: p.sectionId })
+        .eq('gap_id', p.gapId);
     }
   }
 
@@ -389,7 +400,13 @@ async function reclusterSections(args: {
 
 export async function createNotification(
   service: SupabaseClient,
-  n: { userId: string; orgId: string; type: 'gap_assigned' | 'gap_resurfaced'; gapId: string; actorId?: string },
+  n: {
+    userId: string;
+    orgId: string;
+    type: 'gap_assigned' | 'gap_resurfaced';
+    gapId: string;
+    actorId?: string;
+  },
 ): Promise<void> {
   const { error } = await service.from('notifications').insert({
     user_id: n.userId,
@@ -400,7 +417,9 @@ export async function createNotification(
   });
   // A dropped notification is not self-healing; surface it rather than swallow.
   if (error !== null) {
-    console.warn(`[knowledge-gaps] notification insert failed (${n.type}, gap=${n.gapId}): ${error.message}`);
+    console.warn(
+      `[knowledge-gaps] notification insert failed (${n.type}, gap=${n.gapId}): ${error.message}`,
+    );
   }
 }
 
@@ -431,7 +450,9 @@ export function makeSectionNamer(apiKey: string, fetchImpl: typeof fetch = fetch
               role: 'user',
               content: `These meeting questions cluster into one topic:\n${questions
                 .map((q) => `- ${q}`)
-                .join('\n')}\n\nReply with a short section name (2-4 words, Title Case), nothing else.`,
+                .join(
+                  '\n',
+                )}\n\nReply with a short section name (2-4 words, Title Case), nothing else.`,
             },
           ],
         }),

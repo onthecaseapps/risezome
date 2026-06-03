@@ -1,6 +1,6 @@
 import { inngest } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
-import { encryptToken } from '../../../app/_lib/token-crypto';
+import { encryptToken, transcriptWithText } from '../../../app/_lib/token-crypto';
 import { buildTranscriptText, recapMeeting, type TranscriptLine } from '../lib/meeting-recap';
 
 /**
@@ -55,16 +55,11 @@ export const generateMeetingRecapFn = inngest.createFunction(
         if (ev !== null && typeof ev.title === 'string' && ev.title.length > 0) title = ev.title;
       }
 
-      const { data: rows } = await service
-        .from('meeting_events')
-        .select('payload')
-        .eq('meeting_id', meetingId)
-        .eq('org_id', orgId)
-        .eq('type', 'transcript.data')
-        .order('event_id', { ascending: true });
-      const lines: TranscriptLine[] = (rows ?? []).flatMap((r) => {
-        const p = (r.payload as Record<string, unknown> | null) ?? {};
-        const text = p['text'];
+      // F2: transcript text is encrypted at rest — fetch it decrypted.
+      const rows = await transcriptWithText(service, meetingId, orgId);
+      const lines: TranscriptLine[] = rows.flatMap((r) => {
+        const p = r.payload ?? {};
+        const text = r.text;
         if (typeof text !== 'string' || text.length === 0) return [];
         return [
           { speaker: typeof p['speaker'] === 'string' ? (p['speaker'] as string) : null, text },

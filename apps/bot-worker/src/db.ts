@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Utterance } from '@risezome/engine/transcribe';
+import { encryptToken } from './token-crypto.js';
 
 /**
  * Service-role Supabase client. The bot-worker writes meeting_events
@@ -40,7 +41,6 @@ export async function markRecordingIfFirst(
     .in('status', ['launching', 'awaiting_recall', 'joining', 'waiting_room'])
     .select('meeting_id');
   if (error !== null) {
-     
     console.error('[bot-worker.db] markRecording failed:', error);
     return false;
   }
@@ -70,19 +70,31 @@ export async function persistAndBroadcast(
   client: SupabaseClient,
   args: { meetingId: string; orgId: string; type: string; payload: Record<string, unknown> },
 ): Promise<{ eventId: number | null; broadcasted: boolean }> {
+  // F2: for transcript events, encrypt the verbatim text at rest. The stored
+  // payload omits `text` (speaker/timing/ids stay plaintext so capture_card_stats
+  // keeps working); the text lives encrypted in transcript_text_enc. The
+  // broadcast below still carries the full plaintext payload to live participants.
+  let storedPayload = args.payload;
+  let transcriptTextEnc: string | null = null;
+  const textVal = args.payload.text;
+  if (args.type === 'transcript.data' && typeof textVal === 'string') {
+    const { text: _text, ...rest } = args.payload;
+    storedPayload = rest;
+    transcriptTextEnc = await encryptToken(client, textVal);
+  }
   const { data, error } = await client
     .from('meeting_events')
     .insert({
       meeting_id: args.meetingId,
       org_id: args.orgId,
       type: args.type,
-      payload: args.payload,
+      payload: storedPayload,
+      transcript_text_enc: transcriptTextEnc,
     })
     .select('event_id')
     .single();
 
   if (error !== null) {
-     
     console.error('[bot-worker.db] meeting_events insert failed:', error);
     return { eventId: null, broadcasted: false };
   }
@@ -104,12 +116,12 @@ export async function persistAndBroadcast(
     });
     const broadcasted = sendResult === 'ok';
     if (!broadcasted) {
-       
-      console.warn(`[bot-worker.db] broadcast send returned ${String(sendResult)} (event durable in DB)`);
+      console.warn(
+        `[bot-worker.db] broadcast send returned ${String(sendResult)} (event durable in DB)`,
+      );
     }
     return { eventId, broadcasted };
   } catch (err) {
-     
     console.warn('[bot-worker.db] broadcast failed (event durable in DB):', err);
     return { eventId, broadcasted: false };
   }

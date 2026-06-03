@@ -47,3 +47,32 @@ export async function decryptToken(service: SupabaseClient, ciphertext: string):
   }
   return data as string;
 }
+
+/** One transcript event with its text decrypted server-side (F2). */
+export interface TranscriptRow {
+  event_id: number;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+  text: string | null;
+}
+
+/**
+ * Fetch a meeting's transcript with `text` decrypted in a single round-trip via
+ * the `transcript_with_text` RPC (F2). RLS on meeting_events still gates the
+ * rows; the encryption key stays server-side.
+ */
+export async function transcriptWithText(
+  db: SupabaseClient,
+  meetingId: string,
+  orgId: string,
+): Promise<TranscriptRow[]> {
+  const { data, error } = await db.rpc('transcript_with_text', {
+    p_meeting_id: meetingId,
+    p_org_id: orgId,
+    p_key: requireTokenKey(),
+  });
+  if (error !== null) {
+    throw new Error(`transcript_with_text failed: ${error.message}`);
+  }
+  return (data ?? []) as TranscriptRow[];
+}

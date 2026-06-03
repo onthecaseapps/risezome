@@ -19,6 +19,8 @@ transaction, every encrypted column and bumps its per-row version:
 - `atlassian_connections.access_token_enc` / `refresh_token_enc` (+ `token_version`)
 - `trello_connections.token_enc`
 - `meetings.recap_text_enc` (+ `recap_key_version`)
+- `syntheses.accumulated_text_enc` (+ `synth_key_version`)
+- `meeting_events.transcript_text_enc`
 
 ## Procedure (maintenance window)
 

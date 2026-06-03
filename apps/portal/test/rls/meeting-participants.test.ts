@@ -166,6 +166,58 @@ if (!stackReachable && !FORCE) {
       await admin.from('meetings').delete().eq('meeting_id', meetingId);
     });
 
+    it('F2: transcript text is encrypted in meeting_events; transcript_with_text decrypts it', async () => {
+      const meeting = await admin
+        .from('meetings')
+        .insert({
+          org_id: orgId,
+          user_id: launcher.id,
+          conference_url: 'https://zoom.us/j/transcript-enc',
+          status: 'completed',
+        })
+        .select('meeting_id')
+        .single();
+      expect(meeting.error).toBeNull();
+      const meetingId = meeting.data!.meeting_id as string;
+
+      const enc = await admin.rpc('encrypt_refresh_token', {
+        plaintext: 'How does our auth token rotation actually work?',
+        key: TOKEN_KEY,
+      });
+      // payload keeps speaker/utteranceId (queryable), NOT the text.
+      const ev = await admin.from('meeting_events').insert({
+        meeting_id: meetingId,
+        org_id: orgId,
+        type: 'transcript.data',
+        payload: { utteranceId: 'u1', speaker: 'Nathan', startMs: 0, endMs: 1000 },
+        transcript_text_enc: enc.data as unknown as string,
+      });
+      expect(ev.error).toBeNull();
+
+      // The verbatim text is NOT in the stored payload.
+      const { data: rawRows } = await admin
+        .from('meeting_events')
+        .select('payload')
+        .eq('meeting_id', meetingId)
+        .eq('type', 'transcript.data');
+      const payload = (rawRows ?? [])[0]?.payload as Record<string, unknown>;
+      expect(payload?.['text']).toBeUndefined();
+      expect(payload?.['speaker']).toBe('Nathan'); // speaker stays queryable
+
+      // The batch reader returns the decrypted text.
+      const { data: decoded, error: rpcErr } = await admin.rpc('transcript_with_text', {
+        p_meeting_id: meetingId,
+        p_org_id: orgId,
+        p_key: TOKEN_KEY,
+      });
+      expect(rpcErr).toBeNull();
+      const rows = (decoded ?? []) as { payload: Record<string, unknown>; text: string }[];
+      expect(rows[0]?.text).toBe('How does our auth token rotation actually work?');
+      expect(rows[0]?.payload['speaker']).toBe('Nathan');
+
+      await admin.from('meetings').delete().eq('meeting_id', meetingId);
+    });
+
     it('blocks a second LIVE meeting for the same (org, conference_url)', async () => {
       const first = await admin
         .from('meetings')

@@ -2,7 +2,7 @@ import type { ReactElement } from 'react';
 import { notFound } from 'next/navigation';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServerClient } from '../../../../_lib/supabase-server';
-import { decryptToken } from '../../../../_lib/token-crypto';
+import { decryptToken, transcriptWithText } from '../../../../_lib/token-crypto';
 import type { CardEvent, CardTrigger, TranscriptUtterance } from '@risezome/hud-ui';
 import {
   mapSynthesisRow,
@@ -60,19 +60,14 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   // Full transcript (finals), ordered. Capture each utterance's event time so a
   // pre-U6 synthesis (no stored trigger) can be anchored to the question spoken
   // just before it fired.
-  const { data: transcriptRows } = await supabase
-    .from('meeting_events')
-    .select('payload, created_at')
-    .eq('meeting_id', meetingId)
-    .eq('org_id', orgId)
-    .eq('type', 'transcript.data')
-    .order('event_id', { ascending: true });
+  // F2: transcript text is encrypted at rest — fetch it decrypted (one round-trip).
+  const transcriptRows = await transcriptWithText(supabase, meetingId, orgId);
   const initialTranscript: TranscriptUtterance[] = [];
   const utteranceTimes: UtteranceTime[] = [];
-  for (const row of transcriptRows ?? []) {
-    const p = (row.payload as Record<string, unknown> | null) ?? {};
+  for (const row of transcriptRows) {
+    const p = row.payload ?? {};
     const utteranceId = p['utteranceId'];
-    const text = p['text'];
+    const text = row.text;
     if (typeof utteranceId !== 'string' || typeof text !== 'string') continue;
     initialTranscript.push({
       utteranceId,
