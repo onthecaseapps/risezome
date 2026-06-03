@@ -4,6 +4,7 @@ import {
   requireAtlassianClientId,
   requireAtlassianClientSecret,
 } from './atlassian';
+import { decryptToken, encryptToken } from './token-crypto';
 
 /**
  * Atlassian access-token manager. Returns a valid access token for an org's
@@ -30,23 +31,58 @@ export interface ValidToken {
 
 interface ConnectionRow {
   id: string;
+  /** Decrypted in readConnection (stored as access_token_enc bytea). */
   access_token: string;
+  /** Decrypted in readConnection (stored as refresh_token_enc bytea). */
   refresh_token: string;
   expires_at: string;
   cloud_id: string;
   site_url: string | null;
+  /** Optimistic-concurrency guard for rotation (U2: replaces token-byte compare). */
+  token_version: number;
+}
+
+interface ConnectionEncRow {
+  id: string;
+  access_token_enc: string | null;
+  refresh_token_enc: string | null;
+  expires_at: string;
+  cloud_id: string;
+  site_url: string | null;
+  token_version: number;
 }
 
 const inflightRefresh = new Map<string, Promise<ValidToken>>();
 
-async function readConnection(orgId: string, service: SupabaseClient): Promise<ConnectionRow | null> {
+async function readConnection(
+  orgId: string,
+  service: SupabaseClient,
+): Promise<ConnectionRow | null> {
   const { data, error } = await service
     .from('atlassian_connections')
-    .select('id, access_token, refresh_token, expires_at, cloud_id, site_url')
+    .select(
+      'id, access_token_enc, refresh_token_enc, expires_at, cloud_id, site_url, token_version',
+    )
     .eq('org_id', orgId)
     .maybeSingle();
   if (error !== null) throw new Error(`atlassian_connections read failed: ${error.message}`);
-  return (data as ConnectionRow | null) ?? null;
+  const row = data as ConnectionEncRow | null;
+  if (row === null) return null;
+  // A pre-encryption row (or a wiped one) has no ciphertext → treat as "reconnect".
+  if (row.access_token_enc === null || row.refresh_token_enc === null) return null;
+  const [accessToken, refreshToken] = await Promise.all([
+    decryptToken(service, row.access_token_enc),
+    decryptToken(service, row.refresh_token_enc),
+  ]);
+  return {
+    id: row.id,
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expires_at: row.expires_at,
+    cloud_id: row.cloud_id,
+    site_url: row.site_url,
+    token_version: row.token_version,
+  };
 }
 
 function isExpired(expiresAt: string, now: number): boolean {
@@ -93,18 +129,24 @@ async function doRefresh(
     now,
   });
 
-  // Guarded update: only persist if the stored refresh token still matches the
-  // one we refreshed from. If another worker already rotated it, our update
-  // affects 0 rows and we adopt their fresher tokens instead.
+  // Guarded update: only persist if token_version still matches what we read
+  // (U2 — ciphertext is non-deterministic so we can't compare token bytes). If
+  // another worker already rotated it, our update affects 0 rows and we adopt
+  // their fresher tokens instead. Encrypt the new pair before writing.
+  const [accessEnc, refreshEnc] = await Promise.all([
+    encryptToken(service, set.accessToken),
+    encryptToken(service, set.refreshToken),
+  ]);
   const { data } = await service
     .from('atlassian_connections')
     .update({
-      access_token: set.accessToken,
-      refresh_token: set.refreshToken,
+      access_token_enc: accessEnc,
+      refresh_token_enc: refreshEnc,
       expires_at: new Date(set.expiresAt).toISOString(),
+      token_version: conn.token_version + 1,
     })
     .eq('id', conn.id)
-    .eq('refresh_token', conn.refresh_token)
+    .eq('token_version', conn.token_version)
     .select('id');
 
   if (Array.isArray(data) && data.length > 0) {

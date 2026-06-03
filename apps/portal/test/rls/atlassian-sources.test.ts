@@ -13,6 +13,8 @@ const SUPABASE_URL = process.env['SUPABASE_URL'] ?? 'http://127.0.0.1:54321';
 const SUPABASE_ANON_KEY = process.env['SUPABASE_ANON_KEY'] ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
 const FORCE = process.env['RISEZOME_RUN_RLS_TESTS'] === '1';
+// Encryption key used by the pgcrypto helpers for this test's token round-trips.
+const TOKEN_KEY = 'rls-atlassian-test-key-' + 'k'.repeat(40);
 
 interface TestUser {
   readonly id: string;
@@ -54,12 +56,18 @@ if (!stackReachable && !FORCE) {
       userA = await createTestUser(admin, 'rls-atlassian-a@example.com');
       orgA = await createOrgWithMember(admin, 'Atlassian Org A', userA.id, 'manager');
 
+      // Tokens are stored encrypted (U2): encrypt via the pgcrypto helper before insert.
+      const [atEnc, rtEnc] = await Promise.all([
+        admin.rpc('encrypt_refresh_token', { plaintext: 'at_secret', key: TOKEN_KEY }),
+        admin.rpc('encrypt_refresh_token', { plaintext: 'rt_secret', key: TOKEN_KEY }),
+      ]);
       const { data: conn, error } = await admin
         .from('atlassian_connections')
         .insert({
           org_id: orgA,
-          access_token: 'at_secret',
-          refresh_token: 'rt_secret',
+          access_token_enc: atEnc.data as unknown as string,
+          refresh_token_enc: rtEnc.data as unknown as string,
+          token_version: 0,
           expires_at: new Date(Date.now() + 3600_000).toISOString(),
           cloud_id: 'cloud_1',
           site_url: 'https://acme.atlassian.net',
@@ -78,10 +86,27 @@ if (!stackReachable && !FORCE) {
 
     it('inserts jira and confluence sources off one Atlassian connection', async () => {
       const rows = [
-        { org_id: orgA, kind: 'jira', connection_id: connectionId, external_id: 'PROJ-1', display_name: 'Platform', status: 'pending' },
-        { org_id: orgA, kind: 'confluence', connection_id: connectionId, external_id: 'SPACE-1', display_name: 'Eng Docs', status: 'pending' },
+        {
+          org_id: orgA,
+          kind: 'jira',
+          connection_id: connectionId,
+          external_id: 'PROJ-1',
+          display_name: 'Platform',
+          status: 'pending',
+        },
+        {
+          org_id: orgA,
+          kind: 'confluence',
+          connection_id: connectionId,
+          external_id: 'SPACE-1',
+          display_name: 'Eng Docs',
+          status: 'pending',
+        },
       ];
-      const { data, error } = await admin.from('sources').insert(rows).select('kind, installation_id');
+      const { data, error } = await admin
+        .from('sources')
+        .insert(rows)
+        .select('kind, installation_id');
       expect(error).toBeNull();
       expect((data ?? []).map((r) => r.kind).sort()).toEqual(['confluence', 'jira']);
       expect((data ?? []).every((r) => r.installation_id === null)).toBe(true);
@@ -97,7 +122,13 @@ if (!stackReachable && !FORCE) {
     it('blocks a duplicate Atlassian resource (org, kind, external_id)', async () => {
       const { error } = await admin
         .from('sources')
-        .insert({ org_id: orgA, kind: 'jira', connection_id: connectionId, external_id: 'PROJ-1', status: 'pending' });
+        .insert({
+          org_id: orgA,
+          kind: 'jira',
+          connection_id: connectionId,
+          external_id: 'PROJ-1',
+          status: 'pending',
+        });
       expect(error).not.toBeNull();
     });
 
@@ -111,9 +142,28 @@ if (!stackReachable && !FORCE) {
     });
 
     it('a member CANNOT read atlassian_connections (service-role only)', async () => {
-      const { data, error } = await userA.client.from('atlassian_connections').select('id, access_token');
+      const { data, error } = await userA.client.from('atlassian_connections').select('id');
       expect(error).toBeNull();
       expect(data ?? []).toEqual([]);
+    });
+
+    it('stores tokens encrypted at rest — no plaintext column, decrypt round-trips (U2)', async () => {
+      // The plaintext columns are gone: selecting them is a schema error.
+      const plaintextSel = await admin.from('atlassian_connections').select('refresh_token');
+      expect(plaintextSel.error).not.toBeNull();
+
+      // The stored ciphertext decrypts back to the original via the pgcrypto helper.
+      const { data: row } = await admin
+        .from('atlassian_connections')
+        .select('refresh_token_enc, token_version')
+        .eq('id', connectionId)
+        .single();
+      expect(row?.token_version).toBe(0);
+      const dec = await admin.rpc('decrypt_refresh_token', {
+        ciphertext: (row as { refresh_token_enc: string }).refresh_token_enc,
+        key: TOKEN_KEY,
+      });
+      expect(dec.data).toBe('rt_secret');
     });
   });
 }

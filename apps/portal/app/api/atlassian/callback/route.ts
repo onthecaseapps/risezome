@@ -6,6 +6,7 @@ import {
   requireAtlassianClientId,
   requireAtlassianClientSecret,
 } from '../../../_lib/atlassian';
+import { encryptToken } from '../../../_lib/token-crypto';
 
 /**
  * Completes the Atlassian OAuth flow. Atlassian redirects here with
@@ -37,7 +38,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     .eq('state_token', state)
     .maybeSingle();
   if (pendingErr !== null) {
-    return NextResponse.redirect(new URL('/sources?error=atlassian_state_lookup_failed', url.origin));
+    return NextResponse.redirect(
+      new URL('/sources?error=atlassian_state_lookup_failed', url.origin),
+    );
   }
   if (pending === null) {
     return NextResponse.redirect(new URL('/sources?error=atlassian_state_unknown', url.origin));
@@ -69,11 +72,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(new URL('/sources?error=atlassian_no_sites', url.origin));
   }
 
+  // Encrypt the token pair at rest (U2 / S2) before storing.
+  const [accessTokenEnc, refreshTokenEnc] = await Promise.all([
+    encryptToken(service, tokens.accessToken),
+    encryptToken(service, tokens.refreshToken),
+  ]);
   const { error: upsertErr } = await service.from('atlassian_connections').upsert(
     {
       org_id: orgId,
-      access_token: tokens.accessToken,
-      refresh_token: tokens.refreshToken,
+      access_token_enc: accessTokenEnc,
+      refresh_token_enc: refreshTokenEnc,
+      token_version: 0,
       expires_at: new Date(tokens.expiresAt).toISOString(),
       cloud_id: site.cloudId,
       site_url: site.url,
