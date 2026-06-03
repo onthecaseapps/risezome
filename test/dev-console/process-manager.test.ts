@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProcessManager, type ProcDef } from '../../scripts/dev-console/process-manager';
@@ -100,5 +100,58 @@ describe('ProcessManager', () => {
     pm.start('once');
     await new Promise((r) => setTimeout(r, 100));
     expect(pm.status().find((s) => s.name === 'once')!.pid).toBe(pid1);
+  });
+
+  // ── U6: ordering, reconciliation, config-gated start-all ──────────────────
+
+  it('start-all follows ascending order and brings every process up', async () => {
+    const defs: ProcDef[] = [
+      { name: 'c', command: 'bash', args: ['-c', 'sleep 30'], cwd: logDir, order: 3 },
+      { name: 'a', command: 'bash', args: ['-c', 'sleep 30'], cwd: logDir, order: 1 },
+      { name: 'b', command: 'bash', args: ['-c', 'sleep 30'], cwd: logDir, order: 2 },
+    ];
+    pm = new ProcessManager(defs, logDir);
+    // names() is the ordered sequence start-all walks (stop-all reverses it).
+    expect(pm.names()).toEqual(['a', 'b', 'c']);
+    pm.startAll();
+    await waitFor(() => pm.status().every((s) => s.state === 'running'));
+    expect(pm.status().map((s) => s.state)).toEqual(['running', 'running', 'running']);
+  });
+
+  it('reconcile marks a process running when its port is bound externally', async () => {
+    const bound = new Set<number>([3000]);
+    pm = new ProcessManager(
+      [
+        { name: 'portal', command: 'bash', args: ['-c', 'true'], cwd: logDir, order: 1, port: 3000 },
+        { name: 'worker', command: 'bash', args: ['-c', 'true'], cwd: logDir, order: 2, port: 8787 },
+      ],
+      logDir,
+      { probePort: (p) => Promise.resolve(bound.has(p)) },
+    );
+    await pm.reconcile();
+    expect(pm.status().find((s) => s.name === 'portal')?.state).toBe('running');
+    expect(pm.status().find((s) => s.name === 'worker')?.state).toBe('stopped');
+    // External process goes away → reconcile resets the badge.
+    bound.delete(3000);
+    await pm.reconcile();
+    expect(pm.status().find((s) => s.name === 'portal')?.state).toBe('stopped');
+  });
+
+  it('start-all skips a process whose requiresConfigPath is missing', async () => {
+    const present = join(logDir, 'present.yml');
+    writeFileSync(present, 'x');
+    const skipped: string[] = [];
+    pm = new ProcessManager(
+      [
+        { name: 'has-config', command: 'bash', args: ['-c', 'sleep 30'], cwd: logDir, order: 1, requiresConfigPath: present },
+        { name: 'no-config', command: 'bash', args: ['-c', 'sleep 30'], cwd: logDir, order: 2, requiresConfigPath: join(logDir, 'absent.yml') },
+      ],
+      logDir,
+    );
+    pm.onLine('no-config', (l) => skipped.push(l));
+    pm.startAll();
+    await waitFor(() => pm.status().find((s) => s.name === 'has-config')?.state === 'running');
+    expect(pm.status().find((s) => s.name === 'no-config')?.state).toBe('stopped');
+    expect(skipped.join('\n')).toMatch(/skipped/);
   });
 });

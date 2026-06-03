@@ -158,6 +158,7 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
   }
 
   async function states(): Promise<ItemStatus[]> {
+    await manager.reconcile();
     const procs: ItemStatus[] = manager.status();
     if (lastMode === 'local') {
       await supabase.refreshState();

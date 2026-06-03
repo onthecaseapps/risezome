@@ -7,6 +7,7 @@ import {
   existsSync,
   type WriteStream,
 } from 'node:fs';
+import { connect } from 'node:net';
 import { join } from 'node:path';
 
 /**
@@ -29,6 +30,34 @@ export interface ProcDef {
   readonly cwd: string;
   /** Start-all/stop-all ordering (ascending start, reverse stop). */
   readonly order: number;
+  /**
+   * Local port this process listens on, if any. Used by `reconcile()` to mark a
+   * process "running" when its port is bound by something the console didn't
+   * spawn (started outside it, or surviving a console restart).
+   */
+  readonly port?: number;
+  /**
+   * If set, start-all skips this process unless the file exists. The tunnel
+   * needs a per-developer cloudflared config; absent config ⇒ silently excluded
+   * rather than a spurious spawn failure.
+   */
+  readonly requiresConfigPath?: string;
+}
+
+/** Probe whether a TCP port on localhost is accepting connections. */
+export type PortProbe = (port: number) => Promise<boolean>;
+
+function defaultProbePort(port: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const socket = connect({ port, host: '127.0.0.1' });
+    const finish = (bound: boolean): void => {
+      socket.destroy();
+      resolve(bound);
+    };
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+    socket.setTimeout(300, () => finish(false));
+  });
 }
 
 export interface ProcStatus {
@@ -159,6 +188,29 @@ class ManagedProcess {
     return { name: this.def.name, state: this.state, pid: this.pid, exitCode: this.exitCode };
   }
 
+  /** True when the console spawned and still owns the underlying child. */
+  get owned(): boolean {
+    return this.#child !== null;
+  }
+
+  /**
+   * Best-effort external-state reconciliation: when we don't own the child and
+   * the process has a known port, mark it running iff the port is bound. Never
+   * touches console-owned processes — their lifecycle events drive state.
+   */
+  async reconcile(probe: PortProbe): Promise<void> {
+    if (this.def.port === undefined || this.owned) return;
+    const bound = await probe(this.def.port);
+    if (bound) {
+      this.state = 'running';
+    } else if (this.state === 'running') {
+      // We don't own a child and the port is no longer bound: the external
+      // process went away. Reset so the badge doesn't lie.
+      this.state = 'stopped';
+      this.pid = null;
+    }
+  }
+
   #ingest(text: string): void {
     this.#buf += text;
     let idx = this.#buf.indexOf('\n');
@@ -178,9 +230,11 @@ class ManagedProcess {
 
 export class ProcessManager extends EventEmitter {
   readonly #procs = new Map<string, ManagedProcess>();
+  readonly #probePort: PortProbe;
 
-  constructor(defs: readonly ProcDef[], logDir: string) {
+  constructor(defs: readonly ProcDef[], logDir: string, opts: { probePort?: PortProbe } = {}) {
     super();
+    this.#probePort = opts.probePort ?? defaultProbePort;
     mkdirSync(logDir, { recursive: true });
     for (const def of defs) {
       this.#procs.set(def.name, new ManagedProcess(def, logDir, (line) => this.emit(`line:${def.name}`, line)));
@@ -198,10 +252,22 @@ export class ProcessManager extends EventEmitter {
   }
 
   startAll(): void {
-    for (const p of this.#ordered()) p.start();
+    for (const p of this.#ordered()) {
+      const cfg = p.def.requiresConfigPath;
+      if (cfg !== undefined && !existsSync(cfg)) {
+        this.emit(`line:${p.def.name}`, `[console] skipped ${p.def.name}: missing config ${cfg}`);
+        continue;
+      }
+      p.start();
+    }
   }
   async stopAll(): Promise<void> {
     await Promise.all(this.#ordered().reverse().map((p) => p.stop()));
+  }
+
+  /** Refresh externally-changed state (ports bound outside the console). */
+  async reconcile(): Promise<void> {
+    await Promise.all([...this.#procs.values()].map((p) => p.reconcile(this.#probePort)));
   }
 
   status(): ProcStatus[] {
