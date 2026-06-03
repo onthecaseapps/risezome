@@ -1,7 +1,7 @@
 ---
 title: "feat: Local dev console (configure / start-stop / monitor)"
 type: feat
-status: active
+status: completed
 date: 2026-06-03
 depth: standard
 ---
