@@ -166,6 +166,14 @@ describe('dev-console server', () => {
     expect(lines).toContain('hi');
   });
 
+  it('clears log files via POST /api/logs/clear so they no longer replay', async () => {
+    const { base } = await setup();
+    await post(`${base}/api/proc/echoer/start`);
+    await waitFor(async () => (await readSse(`${base}/api/logs/echoer`, 200)).includes('hi'));
+    expect((await post(`${base}/api/logs/clear`)).status).toBe(200);
+    expect(await readSse(`${base}/api/logs/echoer`, 200)).not.toContain('hi');
+  });
+
   it('stops a process; state → stopped', async () => {
     const { base } = await setup({
       defs: [{ name: 'sleeper', command: 'bash', args: ['-c', 'sleep 30'], cwd: '.', order: 2 }],

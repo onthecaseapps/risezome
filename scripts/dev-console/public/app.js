@@ -224,6 +224,13 @@ resetToggle.addEventListener('change', () => {
   void api('/api/reset-on-start', 'POST', { enabled: resetToggle.checked });
 });
 
+document.getElementById('clear-logs').addEventListener('click', () => {
+  // Truncate server-side files (so they don't replay on reconnect) + clear panes.
+  void api('/api/logs/clear', 'POST');
+  consolePane.logs.replaceChildren();
+  for (const card of cards.values()) card.logs.replaceChildren();
+});
+
 document.querySelectorAll('button[data-all]').forEach((btn) => {
   btn.addEventListener('click', () => {
     btn.disabled = true;

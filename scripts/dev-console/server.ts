@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import { spawn } from 'node:child_process';
-import { readFileSync, existsSync, appendFileSync } from 'node:fs';
+import { readFileSync, existsSync, appendFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ProcessManager, type ProcDef, type ProcStatus } from './process-manager';
@@ -114,6 +114,11 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
         resetOnStart,
         links: links(items),
       });
+    }
+
+    if (method === 'POST' && path === '/api/logs/clear') {
+      clearLogs();
+      return sendJson(res, 200, { ok: true });
     }
 
     if (method === 'POST' && path === '/api/reset-on-start') {
@@ -270,6 +275,20 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       return lines.slice(-200);
     }
     return manager.tail(name, 200);
+  }
+
+  /** Truncate every stream's log file so cleared logs don't replay on reconnect. */
+  function clearLogs(): void {
+    for (const name of [CONSOLE, SUPABASE, ...manager.names()]) {
+      const file =
+        name === SUPABASE ? 'supabase.log' : name === CONSOLE ? 'console.log' : `${name}.log`;
+      const p = join(opts.logDir, file);
+      try {
+        if (existsSync(p)) writeFileSync(p, '');
+      } catch {
+        /* best effort */
+      }
+    }
   }
 
   /** All stream names the UI can show, in display order (console first). */
