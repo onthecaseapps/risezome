@@ -193,3 +193,13 @@ well-known local demo keys). In hosted mode they come from your `.env.dev`.
 - **Never commit** `.env.dev`, `.env.local`, `.env`, or `.dev-tag` (all
   gitignored). The local demo Supabase keys are public and non-secret; your
   hosted keys and `BOT_WORKER_SECRET` are not.
+- **Don't duplicate secrets on disk.** Avoid `sed -i.bak` (or any editor backup)
+  on `.env*` files — it leaves `.env.bak` copies of live secrets lying around
+  (`*.bak` is gitignored, but the copies are still real keys on your machine).
+  Prefer a secret manager (`op run -- pnpm dev`, 1Password/Doppler/Vault) over
+  on-disk `.env` files. Keep the **production** `USER_TOKEN_ENCRYPTION_KEY`
+  distinct from any value in your dev `.env` files, so a dev-machine compromise
+  never yields the key that protects production tokens.
+- **`.dev-logs/` holds raw process output** (which can include transcripts and,
+  before redaction, auth tokens). It's gitignored, but treat it as sensitive:
+  the dev console's **Clear logs** button (or `: > .dev-logs/*.log`) scrubs it.
