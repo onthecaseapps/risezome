@@ -47,14 +47,6 @@ export interface CardRetracted {
   readonly reason: 'verifier-downgraded' | 'meeting-ended' | 'manual-dismiss';
 }
 
-export interface GapEvent {
-  readonly gapId: string;
-  readonly meetingId: string;
-  readonly question: string;
-  readonly contextWindow: string;
-  readonly createdAt: number;
-}
-
 export type SynthesisErrorCode =
   | 'refused'
   | 'rate-limited'
@@ -151,7 +143,6 @@ export type ServerMessage =
   | { type: 'card'; card: CardEvent }
   | { type: 'cardUpdated'; update: CardUpdated }
   | { type: 'cardRetracted'; retracted: CardRetracted }
-  | { type: 'gap'; gap: GapEvent }
   | { type: 'status'; mode: 'idle' | 'capturing' | 'processing' }
   | { type: 'meetingStarted'; meetingId: string }
   | { type: 'meetingEnded'; meetingId: string }

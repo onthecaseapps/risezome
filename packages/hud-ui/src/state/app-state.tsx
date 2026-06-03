@@ -12,7 +12,6 @@ import type {
   CardEvent,
   CardRetracted,
   CardUpdated,
-  GapEvent,
   SynthesisCitation,
   SynthesisDeltaEvent,
   SynthesisDoneEvent,
@@ -68,8 +67,6 @@ export interface AppState {
   readonly meeting: MeetingMode;
   /** Insertion-ordered map keyed by cardId. */
   readonly cards: ReadonlyMap<string, CardRecord>;
-  /** Insertion-ordered map keyed by gapId. */
-  readonly gaps: ReadonlyMap<string, GapEvent>;
   /** Insertion-ordered map keyed by synthesisId. */
   readonly syntheses: ReadonlyMap<string, SynthesisRecord>;
   /** Live transcript, keyed by utteranceId (a partial and its final share an
@@ -97,7 +94,6 @@ export const initialAppState: AppState = {
   status: 'disconnected',
   meeting: 'idle',
   cards: new Map(),
-  gaps: new Map(),
   syntheses: new Map(),
   transcript: new Map(),
   lastSynthesisAnnounce: null,
@@ -110,7 +106,6 @@ export type AppAction =
   | { type: 'cardUpdated'; update: CardUpdated }
   | { type: 'cardRetracted'; retracted: CardRetracted }
   | { type: 'cardPinned'; cardId: string; pinned: boolean }
-  | { type: 'gap'; gap: GapEvent }
   | { type: 'meetingStarted' }
   | { type: 'meetingEnded' }
   | { type: 'meetingStatus'; mode: MeetingMode }
@@ -206,12 +201,6 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
         cards = next;
       }
       return { ...state, cards, syntheses: cascaded ? syntheses : state.syntheses };
-    }
-
-    case 'gap': {
-      const gaps = cloneMap(state.gaps);
-      gaps.set(action.gap.gapId, action.gap);
-      return { ...state, gaps };
     }
 
     case 'meetingStarted':

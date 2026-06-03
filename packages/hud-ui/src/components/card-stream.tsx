@@ -23,7 +23,7 @@ export function CardStream(): ReactElement {
   const unpinned = Array.from(state.cards.values()).filter((c) => !c.pinned);
   const reversed = unpinned.slice().reverse();
 
-  if (reversed.length === 0 && state.syntheses.size === 0 && state.gaps.size === 0) {
+  if (reversed.length === 0 && state.syntheses.size === 0) {
     return (
       <section
         id="card-stream"

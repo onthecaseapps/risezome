@@ -272,11 +272,6 @@ export function dispatchBroadcast(
         dispatch({ type: 'synthesisRetracted', retracted: payload['retracted'] as never });
       }
       return;
-    case 'gap':
-      if (isObject(payload['gap'])) {
-        dispatch({ type: 'gap', gap: payload['gap'] as never });
-      }
-      return;
     case 'transcript.data': {
       const utterance = toTranscriptUtterance(payload);
       if (utterance !== null) dispatch({ type: 'transcriptUtterance', utterance });
