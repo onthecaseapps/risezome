@@ -40,8 +40,12 @@ Then open **http://localhost:4317** and:
    **restart** of those processes, since env is read at boot — use each row's
    **restart** button.
 2. **Start / stop / restart** any process, or **Start all / Stop all** (Supabase
-   first in local mode, tunnel last, reverse on stop). The tunnel row is skipped
-   automatically when you have no `~/.cloudflared/risezome-dev-<tag>.yml`.
+   first in local mode, tunnel last, reverse on stop). On start, the console
+   **auto-creates your per-developer cloudflared tunnel** if it doesn't exist yet
+   (`risezome-dev-<tag>` named tunnel + DNS routes + config — see below). You only
+   need to do the one-time `cloudflared tunnel login` first; if cloudflared is
+   missing or not authenticated, the tunnel pane tells you exactly what to run and
+   the rest of the stack still comes up.
 3. **Watch logs** per process — ANSI colors are preserved and error/warn lines
    are tinted. Logs also persist to `.dev-logs/<name>.log` (gitignored) so a
    process that outlives the console can still be `grep`-ed.
@@ -110,11 +114,23 @@ Universal SSL doesn't cover two-level subdomains — `dev-nathan.risezome.app` �
 - Tunnel: `risezome-dev-<tag>`, config at `~/.cloudflared/risezome-dev-<tag>.yml`.
 - Hostnames: `dev-<tag>.risezome.app` → `:3000`, `bot-worker-dev-<tag>.risezome.app` → `:8787`.
 
+**You only do the one-time login**; everything else is automated:
+
+```bash
+cloudflared tunnel login   # one-time: opens a browser, pick the risezome.app zone
+```
+
+After that, the dev console's **Start all** (or `pnpm dev <tag> local --tunnel`)
+runs `scripts/ensure-tunnel.sh <tag>`, which idempotently creates the named
+tunnel, routes both hostnames' DNS, and writes the ingress config (with
+`disableChunkedEncoding: true` for the bot-worker WS). It's a no-op once set up,
+so each developer ends up with a **persistent** tunnel. `RISEZOME_DEV_ORIGIN` is
+derived as `dev-<tag>.risezome.app`, so Next dev hydrates over your tunnel
+automatically.
+
 See [`persistent-bot-worker-tunnel.md`](./persistent-bot-worker-tunnel.md) for
-the tunnel creation recipe (login, `tunnel create`, `tunnel route dns`, the
-ingress YAML with `disableChunkedEncoding: true` for WS). Then `pnpm dev <tag>
-local --tunnel`. `RISEZOME_DEV_ORIGIN` is derived as `dev-<tag>.risezome.app`, so
-Next dev hydrates over your tunnel automatically.
+the underlying recipe `ensure-tunnel.sh` automates, and for teardown
+(`cloudflared tunnel delete risezome-dev-<tag>`).
 
 ### 4. Per-dev Recall Environment (for real bot isolation)
 

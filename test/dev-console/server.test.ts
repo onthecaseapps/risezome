@@ -193,4 +193,74 @@ esac
     await startReq;
     expect((await getJson<StateResp>(`${base}/api/state`)).activity ?? null).toBeNull();
   });
+
+  it('start-all ensures the tunnel (creates its config) before launching it', async () => {
+    root = mkdtempSync(join(tmpdir(), 'console-tun-'));
+    const tunnelConfig = join(root, 'risezome-dev-test.yml');
+    const ensure = join(root, 'fake-ensure');
+    // Stand-in for ensure-tunnel.sh: writes the config so the tunnel can start.
+    writeFileSync(
+      ensure,
+      `#!/usr/bin/env bash\necho "[tunnel] ready"\nprintf 'x' > "${tunnelConfig}"\n`,
+    );
+    chmodSync(ensure, 0o755);
+    const defs: ProcDef[] = [
+      {
+        name: 'tunnel',
+        command: 'bash',
+        args: ['-c', 'sleep 30'],
+        cwd: root,
+        order: 5,
+        requiresConfigPath: tunnelConfig,
+      },
+    ];
+    handle = createConsole({
+      repoRoot: root,
+      logDir: root,
+      registry: defs,
+      mode: 'hosted',
+      tag: 'test',
+      ensureTunnelCmd: { command: 'bash', scriptArgPrefix: [ensure] },
+    });
+    const base = `http://127.0.0.1:${String(await handle.listen(0))}`;
+    expect(existsSync(tunnelConfig)).toBe(false);
+    await post(`${base}/api/all/start`);
+    expect(existsSync(tunnelConfig)).toBe(true); // ensure ran and created the config
+    await waitFor(
+      async () =>
+        (await getJson<StateResp>(`${base}/api/state`)).items.find((i) => i.name === 'tunnel')
+          ?.state === 'running',
+    );
+  });
+
+  it('start-all leaves the tunnel stopped when ensure fails (e.g. not authenticated)', async () => {
+    root = mkdtempSync(join(tmpdir(), 'console-tun-'));
+    const tunnelConfig = join(root, 'risezome-dev-test.yml'); // never created
+    const ensure = join(root, 'fake-ensure-fail');
+    writeFileSync(ensure, `#!/usr/bin/env bash\necho "[tunnel] not authenticated" >&2\nexit 4\n`);
+    chmodSync(ensure, 0o755);
+    const defs: ProcDef[] = [
+      {
+        name: 'tunnel',
+        command: 'bash',
+        args: ['-c', 'sleep 30'],
+        cwd: root,
+        order: 5,
+        requiresConfigPath: tunnelConfig,
+      },
+    ];
+    handle = createConsole({
+      repoRoot: root,
+      logDir: root,
+      registry: defs,
+      mode: 'hosted',
+      tag: 'test',
+      ensureTunnelCmd: { command: 'bash', scriptArgPrefix: [ensure] },
+    });
+    const base = `http://127.0.0.1:${String(await handle.listen(0))}`;
+    await post(`${base}/api/all/start`);
+    expect(existsSync(tunnelConfig)).toBe(false); // ensure failed, no config
+    const s = await getJson<StateResp>(`${base}/api/state`);
+    expect(s.items.find((i) => i.name === 'tunnel')?.state).toBe('stopped'); // skipped, not started
+  });
 });

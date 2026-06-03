@@ -53,11 +53,6 @@ CMDS=(
   "npx inngest-cli@latest dev"
   "pnpm --filter @risezome/bot-worker dev"
 )
-if [ "$TUNNEL" -eq 1 ]; then
-  NAMES="${NAMES},tunnel"; COLORS="${COLORS},yellow"
-  CMDS+=("cloudflared tunnel --config ${TUNNEL_CONFIG} run")
-fi
-
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "plan: tag=${TAG} mode=${MODE}"
   echo "step: env (scripts/use-env.sh ${TAG} ${MODE})"
@@ -94,8 +89,18 @@ if [ "$START_SUPABASE" -eq 1 ]; then
   fi
 fi
 
-if [ "$TUNNEL" -eq 1 ] && [ ! -f "$TUNNEL_CONFIG" ]; then
-  echo "dev: warning — tunnel config $TUNNEL_CONFIG not found; the tunnel process will fail. See docs/runbooks/two-developer-local-setup.md." >&2
+# 2b. Ensure the per-dev cloudflared tunnel exists (create it if missing), then
+#     add it to the launch set — but only if setup succeeded, so a missing/
+#     unauthenticated cloudflared doesn't take down the whole stack via
+#     --kill-others.
+if [ "$TUNNEL" -eq 1 ]; then
+  echo "dev: ensuring cloudflared tunnel for ${TAG}…"
+  if bash "$ROOT/scripts/ensure-tunnel.sh" "$TAG"; then
+    NAMES="${NAMES},tunnel"; COLORS="${COLORS},yellow"
+    CMDS+=("cloudflared tunnel --config ${TUNNEL_CONFIG} run")
+  else
+    echo "dev: warning — tunnel setup failed (see above); launching without the tunnel." >&2
+  fi
 fi
 
 # 3. Launch everything with one multiplexed, prefixed log stream. --kill-others

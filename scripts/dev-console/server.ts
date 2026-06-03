@@ -24,9 +24,13 @@ export interface ConsoleOptions {
   readonly registry: readonly ProcDef[];
   /** Supabase mode: local shows Supabase as a managed item; hosted hides it. */
   readonly mode: 'local' | 'hosted';
+  /** Developer tag the console booted with — drives the per-dev cloudflared tunnel. */
+  readonly tag?: string;
   /** Injectable for tests. */
   readonly supabaseCommand?: string;
   readonly useEnvCmd?: { command: string; scriptArgPrefix?: string[] };
+  /** Injectable ensure-tunnel command (defaults to `bash scripts/ensure-tunnel.sh`). */
+  readonly ensureTunnelCmd?: { command: string; scriptArgPrefix?: string[] };
 }
 
 export interface ConsoleHandle {
@@ -122,7 +126,9 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
               'Starting Supabase — first run pulls Docker images, this can take a few minutes…';
             await supabase.start();
           }
-          activity = 'Launching portal · inngest · bot-worker…';
+          activity = 'Setting up your cloudflared tunnel…';
+          await ensureTunnel();
+          activity = 'Launching portal · inngest · bot-worker · tunnel…';
           manager.startAll();
         } else {
           activity = 'Stopping all processes…';
@@ -163,6 +169,12 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       }
       if (!manager.has(name))
         return sendJson(res, 404, { ok: false, error: `unknown process: ${name}` });
+      // The tunnel needs its per-dev cloudflared config to exist before it can
+      // run — create it on demand when (re)starting the tunnel.
+      if (name === 'tunnel' && (action === 'start' || action === 'restart')) {
+        activity = 'Setting up your cloudflared tunnel…';
+        await ensureTunnel();
+      }
       if (action === 'start') manager.start(name);
       else if (action === 'stop') {
         activity = `Stopping ${name}…`;
@@ -213,6 +225,61 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       return lines.slice(-200);
     }
     return manager.tail(name, 200);
+  }
+
+  /**
+   * Ensure the per-developer cloudflared tunnel exists (create it if missing),
+   * streaming progress into the tunnel's log pane. Resolves with the script's
+   * exit code; non-zero (cloudflared missing / not authenticated / failure) just
+   * means the tunnel won't start this round — the actionable message is already
+   * in its log. Skipped when no tag is set.
+   */
+  function ensureTunnel(): Promise<number> {
+    const tag = opts.tag ?? readTag(opts.repoRoot);
+    if (tag.length === 0) {
+      manager.emit('line:tunnel', '[tunnel] no developer tag set — apply a tag first.');
+      return Promise.resolve(2);
+    }
+    const command = opts.ensureTunnelCmd?.command ?? 'bash';
+    const args = [
+      ...(opts.ensureTunnelCmd?.scriptArgPrefix ?? [
+        join(opts.repoRoot, 'scripts', 'ensure-tunnel.sh'),
+      ]),
+      tag,
+    ];
+    return new Promise((resolve) => {
+      let child;
+      try {
+        child = spawn(command, args, { cwd: opts.repoRoot, stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (err) {
+        manager.emit(
+          'line:tunnel',
+          `[tunnel] ensure failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        resolve(-1);
+        return;
+      }
+      let buf = '';
+      const onData = (chunk: Buffer): void => {
+        buf += chunk.toString('utf8');
+        let idx = buf.indexOf('\n');
+        while (idx !== -1) {
+          manager.emit('line:tunnel', buf.slice(0, idx));
+          buf = buf.slice(idx + 1);
+          idx = buf.indexOf('\n');
+        }
+      };
+      child.stdout?.on('data', onData);
+      child.stderr?.on('data', onData);
+      child.on('error', (err) => {
+        manager.emit('line:tunnel', `[tunnel] ${err.message}`);
+        resolve(-1);
+      });
+      child.on('close', (code) => {
+        if (buf.length > 0) manager.emit('line:tunnel', buf);
+        resolve(code ?? -1);
+      });
+    });
   }
 
   async function states(): Promise<ItemStatus[]> {
@@ -306,6 +373,7 @@ if (isMain()) {
     logDir: join(repoRoot, '.dev-logs'),
     registry: appRegistry(repoRoot, tag),
     mode,
+    tag,
   });
   void handle.listen(port).then((p) => {
     console.warn(`[dev-console] http://127.0.0.1:${String(p)}  (tag=${tag}, mode=${mode})`);
