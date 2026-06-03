@@ -40,6 +40,7 @@ function setup(
 }
 
 afterEach(async () => {
+  delete process.env.RISEZOME_TUNNEL_HOSTED_OK;
   await handle?.close();
   rmSync(root, { recursive: true, force: true });
 });
@@ -280,6 +281,7 @@ esac
   });
 
   it('start-all ensures the tunnel (creates its config) before launching it', async () => {
+    process.env.RISEZOME_TUNNEL_HOSTED_OK = '1'; // ack hosted-mode tunnel (U13)
     root = mkdtempSync(join(tmpdir(), 'console-tun-'));
     const tunnelConfig = join(root, 'risezome-dev-test.yml');
     const ensure = join(root, 'fake-ensure');
@@ -319,6 +321,7 @@ esac
   });
 
   it('start-all leaves the tunnel stopped when ensure fails (e.g. not authenticated)', async () => {
+    process.env.RISEZOME_TUNNEL_HOSTED_OK = '1'; // ack so ensure actually runs (U13)
     root = mkdtempSync(join(tmpdir(), 'console-tun-'));
     const tunnelConfig = join(root, 'risezome-dev-test.yml'); // never created
     const ensure = join(root, 'fake-ensure-fail');
@@ -347,5 +350,38 @@ esac
     expect(existsSync(tunnelConfig)).toBe(false); // ensure failed, no config
     const s = await getJson<StateResp>(`${base}/api/state`);
     expect(s.items.find((i) => i.name === 'tunnel')?.state).toBe('stopped'); // skipped, not started
+  });
+
+  it('refuses to ensure the tunnel in hosted mode without the ack env (U13)', async () => {
+    delete process.env.RISEZOME_TUNNEL_HOSTED_OK; // no acknowledgement
+    root = mkdtempSync(join(tmpdir(), 'console-tun-'));
+    const tunnelConfig = join(root, 'risezome-dev-test.yml');
+    const ensure = join(root, 'fake-ensure');
+    // This fake WOULD create the config — but the hosted-mode guard must block it.
+    writeFileSync(ensure, `#!/usr/bin/env bash\nprintf 'x' > "${tunnelConfig}"\n`);
+    chmodSync(ensure, 0o755);
+    const defs: ProcDef[] = [
+      {
+        name: 'tunnel',
+        command: 'bash',
+        args: ['-c', 'sleep 30'],
+        cwd: root,
+        order: 5,
+        requiresConfigPath: tunnelConfig,
+      },
+    ];
+    handle = createConsole({
+      repoRoot: root,
+      logDir: root,
+      registry: defs,
+      mode: 'hosted',
+      tag: 'test',
+      ensureTunnelCmd: { command: 'bash', scriptArgPrefix: [ensure] },
+    });
+    const base = `http://127.0.0.1:${String(await handle.listen(0))}`;
+    await post(`${base}/api/all/start`);
+    expect(existsSync(tunnelConfig)).toBe(false); // guard blocked ensure — config never created
+    const s = await getJson<StateResp>(`${base}/api/state`);
+    expect(s.items.find((i) => i.name === 'tunnel')?.state).toBe('stopped');
   });
 });

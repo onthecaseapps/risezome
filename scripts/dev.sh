@@ -45,6 +45,14 @@ TUNNEL_CONFIG="${HOME}/.cloudflared/risezome-dev-${TAG}.yml"
 START_SUPABASE=0
 if [ "$MODE" = "local" ] && [ "$NO_SUPABASE" -eq 0 ]; then START_SUPABASE=1; fi
 
+# U13: the tunnel publishes localhost:3000/8787 to the public internet; in hosted
+# mode those are backed by a real database. Refuse unless explicitly acknowledged.
+if [ "$TUNNEL" -eq 1 ] && [ "$MODE" = "hosted" ] && [ "${RISEZOME_TUNNEL_HOSTED_OK:-}" != "1" ]; then
+  echo "dev: refusing the tunnel in hosted mode — it would expose a real-data stack to the internet." >&2
+  echo "dev: use local mode, or set RISEZOME_TUNNEL_HOSTED_OK=1 to override (consider Cloudflare Access)." >&2
+  TUNNEL=0
+fi
+
 # Build the concurrently process list.
 NAMES="portal,inngest,bot"
 COLORS="blue,magenta,green"

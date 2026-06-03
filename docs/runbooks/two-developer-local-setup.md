@@ -139,6 +139,13 @@ so each developer ends up with a **persistent** tunnel. `RISEZOME_DEV_ORIGIN` is
 derived as `dev-<tag>.risezome.app`, so Next dev hydrates over your tunnel
 automatically.
 
+> **Hosted-mode guard (security).** The tunnel exposes `localhost:3000`/`:8787`
+> to the public internet. In **hosted** Supabase mode those are backed by a real
+> database, so both the console and `pnpm dev` **refuse to start the tunnel in
+> hosted mode** unless you set `RISEZOME_TUNNEL_HOSTED_OK=1`. Use the tunnel with
+> **local** mode (throwaway data), or put Cloudflare Access in front of the
+> hostname before overriding.
+
 See [`persistent-bot-worker-tunnel.md`](./persistent-bot-worker-tunnel.md) for
 the underlying recipe `ensure-tunnel.sh` automates, and for teardown
 (`cloudflared tunnel delete risezome-dev-<tag>`).

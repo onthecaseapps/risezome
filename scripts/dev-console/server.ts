@@ -366,6 +366,18 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       logConsole('[tunnel] no developer tag set — apply a tag first.');
       return Promise.resolve(2);
     }
+    // U13 (S12): the tunnel publishes localhost:3000/8787 to the public internet.
+    // In hosted mode those are backed by a REAL database, so refuse to expose
+    // them unless the developer explicitly acknowledges via RISEZOME_TUNNEL_HOSTED_OK=1.
+    if (lastMode === 'hosted' && process.env.RISEZOME_TUNNEL_HOSTED_OK !== '1') {
+      logConsole(
+        '[tunnel] refusing to start: Supabase mode is "hosted" — the tunnel would expose a stack backed by real data to the internet.',
+      );
+      logConsole(
+        '[tunnel] use local mode for the tunnel, or set RISEZOME_TUNNEL_HOSTED_OK=1 to override (consider putting Cloudflare Access in front).',
+      );
+      return Promise.resolve(1);
+    }
     const command = opts.ensureTunnelCmd?.command ?? 'bash';
     const args = [
       ...(opts.ensureTunnelCmd?.scriptArgPrefix ?? [

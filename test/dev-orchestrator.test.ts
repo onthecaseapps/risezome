@@ -16,9 +16,14 @@ const REAL_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts
 let root: string;
 let script: string;
 
-function run(args: string[]): { status: number; stdout: string } {
+function run(args: string[], env: Record<string, string> = {}): { status: number; stdout: string } {
   try {
-    const stdout = execFileSync('bash', [script, ...args], { encoding: 'utf8', cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout = execFileSync('bash', [script, ...args], {
+      encoding: 'utf8',
+      cwd: root,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...env },
+    });
     return { status: 0, stdout };
   } catch (e) {
     const err = e as { status?: number; stdout?: Buffer | string };
@@ -61,6 +66,20 @@ describe('dev.sh --dry-run plan', () => {
 
   it('--tunnel adds the tunnel process', () => {
     const { stdout } = run(['nathan', 'local', '--tunnel', '--dry-run']);
+    expect(stdout).toContain('proc: tunnel');
+  });
+
+  it('refuses the tunnel in hosted mode without the ack env (U13)', () => {
+    const { stdout } = run(['nathan', 'hosted', '--no-supabase', '--tunnel', '--dry-run'], {
+      RISEZOME_TUNNEL_HOSTED_OK: '',
+    });
+    expect(stdout).not.toContain('proc: tunnel');
+  });
+
+  it('allows the hosted-mode tunnel when RISEZOME_TUNNEL_HOSTED_OK=1 (U13)', () => {
+    const { stdout } = run(['nathan', 'hosted', '--no-supabase', '--tunnel', '--dry-run'], {
+      RISEZOME_TUNNEL_HOSTED_OK: '1',
+    });
     expect(stdout).toContain('proc: tunnel');
   });
 
