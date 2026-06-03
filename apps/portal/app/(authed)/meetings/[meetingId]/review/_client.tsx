@@ -156,24 +156,29 @@ function ReviewSplit({
         )}
       </section>
 
-      {/* Surfaced panel reads as a distinct surface via a subtle card tint. */}
+      {/* Surfaced panel reads as a distinct surface via a subtle card tint. The
+          column stretches to the transcript's height (full-height tint); the
+          inner content sticks to the top so the summary stays in view while a
+          long transcript scrolls past it. */}
       <section className={`${col} bg-card/40`}>
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h2 className={label}>Surfaced</h2>
-          {count > 1 ? (
-            <Stepper
-              index={safeIndex}
-              count={count}
-              onPrev={() => setActiveIndex((i) => Math.max(0, Math.min(i, count - 1) - 1))}
-              onNext={() => setActiveIndex((i) => Math.min(count - 1, i + 1))}
-            />
-          ) : null}
+        <div className="lg:sticky lg:top-6 lg:max-h-[calc(100dvh-3rem)] lg:overflow-y-auto">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className={label}>Surfaced</h2>
+            {count > 1 ? (
+              <Stepper
+                index={safeIndex}
+                count={count}
+                onPrev={() => setActiveIndex((i) => Math.max(0, Math.min(i, count - 1) - 1))}
+                onNext={() => setActiveIndex((i) => Math.min(count - 1, i + 1))}
+              />
+            ) : null}
+          </div>
+          {active !== undefined ? (
+            <ActiveSynthesis synthesisId={active.synthesisId} />
+          ) : (
+            <p className="text-sm text-muted">No summaries were generated in this meeting.</p>
+          )}
         </div>
-        {active !== undefined ? (
-          <ActiveSynthesis synthesisId={active.synthesisId} />
-        ) : (
-          <p className="text-sm text-muted">No summaries were generated in this meeting.</p>
-        )}
       </section>
     </div>
   );
