@@ -18,7 +18,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { VoyageEmbedder } from '@risezome/engine/embed';
+import { type VoyageEmbedder } from '@risezome/engine/embed';
 import {
   dedupeWithinBatch,
   assignSections,

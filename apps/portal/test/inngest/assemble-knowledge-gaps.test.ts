@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { VoyageEmbedder } from '@risezome/engine/embed';
+import { type VoyageEmbedder } from '@risezome/engine/embed';
 import {
   assembleKnowledgeGaps,
   backfillMissesForMeeting,
