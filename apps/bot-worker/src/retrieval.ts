@@ -11,6 +11,7 @@ import {
   type WinningChunk,
 } from './parent-doc';
 import { optionalQueryExpander } from './query-expand';
+import { encryptToken } from './token-crypto.js';
 import { augmentQuery } from '@risezome/engine/query-expand';
 import { shouldExpandOnMiss } from '@risezome/engine/query-route';
 import { shouldRecordMiss, type MissRecord } from '@risezome/engine/gaps';
@@ -910,7 +911,8 @@ async function runSynthesisAndBroadcast(args: {
     meeting_id: args.meetingId,
     org_id: args.orgId,
     source_card_ids: args.surfacedCardIds,
-    accumulated_text: '',
+    // accumulated_text_enc left null while running; the final answer is encrypted
+    // on the 'done' update below (F1).
     status: 'running',
     citations: [],
     trace_id: args.traceId,
@@ -1071,7 +1073,7 @@ async function runSynthesisAndBroadcast(args: {
           .from('syntheses')
           .update({
             status: 'done',
-            accumulated_text: parsed.text,
+            accumulated_text_enc: await encryptToken(args.db, parsed.text), // F1: encrypt at rest
             stop_reason: chunk.stopReason,
             citations: richCitations,
             input_tokens: chunk.usage.inputTokens,

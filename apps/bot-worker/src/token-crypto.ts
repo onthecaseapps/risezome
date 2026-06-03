@@ -25,3 +25,15 @@ export async function decryptToken(db: SupabaseClient, ciphertext: string): Prom
   }
   return data;
 }
+
+/** Encrypt `plaintext` to a pgcrypto ciphertext (write straight into a bytea column). */
+export async function encryptToken(db: SupabaseClient, plaintext: string): Promise<string> {
+  const { data, error } = (await db.rpc('encrypt_refresh_token', {
+    plaintext,
+    key: requireTokenKey(),
+  })) as { data: string | null; error: { message: string } | null };
+  if (error !== null || data === null) {
+    throw new Error(`encrypt_refresh_token failed: ${error?.message ?? 'returned null'}`);
+  }
+  return data;
+}

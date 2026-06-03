@@ -113,6 +113,59 @@ if (!stackReachable && !FORCE) {
       if (m.data) await admin.from('meetings').delete().eq('meeting_id', m.data.meeting_id);
     });
 
+    it('F1: the synthesized answer is stored encrypted — no plaintext column, decrypt round-trips', async () => {
+      const meeting = await admin
+        .from('meetings')
+        .insert({
+          org_id: orgId,
+          user_id: launcher.id,
+          conference_url: 'https://zoom.us/j/synth-enc',
+          status: 'completed',
+        })
+        .select('meeting_id')
+        .single();
+      expect(meeting.error).toBeNull();
+      const meetingId = meeting.data!.meeting_id as string;
+
+      const enc = await admin.rpc('encrypt_refresh_token', {
+        plaintext: 'The repo uses Kafka for the event bus [1].',
+        key: TOKEN_KEY,
+      });
+      const s = await admin
+        .from('syntheses')
+        .insert({
+          synthesis_id: `synth_${Date.now()}`,
+          meeting_id: meetingId,
+          org_id: orgId,
+          source_card_ids: [],
+          accumulated_text_enc: enc.data as unknown as string,
+          status: 'done',
+          citations: [],
+          trace_id: 't',
+        })
+        .select('synthesis_id')
+        .single();
+      expect(s.error).toBeNull();
+
+      // Plaintext column is gone.
+      const plaintextSel = await admin.from('syntheses').select('accumulated_text');
+      expect(plaintextSel.error).not.toBeNull();
+
+      const { data: row } = await admin
+        .from('syntheses')
+        .select('accumulated_text_enc, synth_key_version')
+        .eq('synthesis_id', s.data!.synthesis_id as string)
+        .single();
+      expect(row?.synth_key_version).toBe(0);
+      const dec = await admin.rpc('decrypt_refresh_token', {
+        ciphertext: (row as { accumulated_text_enc: string }).accumulated_text_enc,
+        key: TOKEN_KEY,
+      });
+      expect(dec.data).toBe('The repo uses Kafka for the event bus [1].');
+
+      await admin.from('meetings').delete().eq('meeting_id', meetingId);
+    });
+
     it('blocks a second LIVE meeting for the same (org, conference_url)', async () => {
       const first = await admin
         .from('meetings')
@@ -121,14 +174,12 @@ if (!stackReachable && !FORCE) {
         .single();
       expect(first.error).toBeNull();
 
-      const second = await admin
-        .from('meetings')
-        .insert({
-          org_id: orgId,
-          user_id: coAttendee.id,
-          conference_url: url,
-          status: 'launching',
-        });
+      const second = await admin.from('meetings').insert({
+        org_id: orgId,
+        user_id: coAttendee.id,
+        conference_url: url,
+        status: 'launching',
+      });
       expect(second.error).not.toBeNull(); // unique-index violation
 
       // Cleanup

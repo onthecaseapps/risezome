@@ -90,13 +90,19 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   const { data: synthRows } = await supabase
     .from('syntheses')
     .select(
-      'synthesis_id, source_card_ids, accumulated_text, status, stop_reason, error_code, error_message, citations, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, ttft_ms, latency_ms, trace_id, pinned, pinned_at, trigger_utterance_id, retracted_at, created_at',
+      'synthesis_id, source_card_ids, accumulated_text_enc, status, stop_reason, error_code, error_message, citations, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, ttft_ms, latency_ms, trace_id, pinned, pinned_at, trigger_utterance_id, retracted_at, created_at',
     )
     .eq('meeting_id', meetingId)
     .eq('status', 'done')
     .is('retracted_at', null)
     .order('created_at', { ascending: true });
   const rows = (synthRows ?? []) as Record<string, unknown>[];
+  // F1: the answer text is encrypted at rest — decrypt into the field the
+  // (sync) mappers expect, server-side. Done syntheses always have ciphertext.
+  for (const s of rows) {
+    const enc = s['accumulated_text_enc'] as string | null;
+    s['accumulated_text'] = enc !== null ? await decryptToken(supabase, enc) : '';
+  }
   const initialSyntheses: InitialSynthesis[] = rows.map((s) => mapSynthesisRow(s));
 
   // Cards the syntheses cite → CardEvent for the cards' SOURCES list. Fetched
