@@ -69,7 +69,9 @@ describe('SupabaseControl', () => {
     await sb.start();
     expect(sb.state).toBe('running');
     expect(lines.join('\n')).toMatch(/already running/i);
-    const log = existsSync(join(dir, 'supabase.log')) ? readFileSync(join(dir, 'supabase.log'), 'utf8') : '';
+    const log = existsSync(join(dir, 'supabase.log'))
+      ? readFileSync(join(dir, 'supabase.log'), 'utf8')
+      : '';
     expect(log).not.toContain('Resetting database');
   });
 

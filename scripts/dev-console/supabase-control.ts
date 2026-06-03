@@ -53,7 +53,9 @@ export class SupabaseControl {
     if (this.state === 'starting') return;
     const alreadyUp = await this.statusIsUp();
     if (alreadyUp) {
-      this.#line('[console] local Supabase already running — leaving it (not resetting your data).');
+      this.#line(
+        '[console] local Supabase already running — leaving it (not resetting your data).',
+      );
       this.state = 'running';
       return;
     }
@@ -91,7 +93,11 @@ export class SupabaseControl {
   }
 
   /** Spawn `command args`, stream output to the log + emit, resolve with exit code. */
-  #run(args: string[], extraEnv: Record<string, string> = {}, quiet = false): Promise<number | null> {
+  #run(
+    args: string[],
+    extraEnv: Record<string, string> = {},
+    quiet = false,
+  ): Promise<number | null> {
     return new Promise((resolve) => {
       let child;
       try {

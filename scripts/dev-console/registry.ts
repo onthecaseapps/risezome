@@ -14,9 +14,30 @@ import type { ProcDef } from './process-manager';
 export function appRegistry(repoRoot: string, tag: string): ProcDef[] {
   const tunnelConfig = join(homedir(), '.cloudflared', `risezome-dev-${tag}.yml`);
   return [
-    { name: 'portal', command: 'pnpm', args: ['--filter', '@risezome/portal', 'dev'], cwd: repoRoot, order: 2, port: 3000 },
-    { name: 'inngest', command: 'npx', args: ['inngest-cli@latest', 'dev'], cwd: repoRoot, order: 3, port: 8288 },
-    { name: 'bot-worker', command: 'pnpm', args: ['--filter', '@risezome/bot-worker', 'dev'], cwd: repoRoot, order: 4, port: 8787 },
+    {
+      name: 'portal',
+      command: 'pnpm',
+      args: ['--filter', '@risezome/portal', 'dev'],
+      cwd: repoRoot,
+      order: 2,
+      port: 3000,
+    },
+    {
+      name: 'inngest',
+      command: 'npx',
+      args: ['inngest-cli@latest', 'dev'],
+      cwd: repoRoot,
+      order: 3,
+      port: 8288,
+    },
+    {
+      name: 'bot-worker',
+      command: 'pnpm',
+      args: ['--filter', '@risezome/bot-worker', 'dev'],
+      cwd: repoRoot,
+      order: 4,
+      port: 8787,
+    },
     {
       name: 'tunnel',
       command: 'cloudflared',

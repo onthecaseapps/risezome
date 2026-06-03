@@ -67,11 +67,15 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     const path = url.pathname;
     const method = req.method ?? 'GET';
 
-    if (method === 'GET' && (path === '/' || path === '/index.html')) return serveStatic('index.html', 'text/html', res);
-    if (method === 'GET' && path === '/app.js') return serveStatic('app.js', 'text/javascript', res);
-    if (method === 'GET' && path === '/styles.css') return serveStatic('styles.css', 'text/css', res);
+    if (method === 'GET' && (path === '/' || path === '/index.html'))
+      return serveStatic('index.html', 'text/html', res);
+    if (method === 'GET' && path === '/app.js')
+      return serveStatic('app.js', 'text/javascript', res);
+    if (method === 'GET' && path === '/styles.css')
+      return serveStatic('styles.css', 'text/css', res);
 
-    if (method === 'GET' && path === '/api/state') return sendJson(res, 200, { items: await states(), mode: lastMode });
+    if (method === 'GET' && path === '/api/state')
+      return sendJson(res, 200, { items: await states(), mode: lastMode });
 
     if (method === 'GET' && path === '/api/config') {
       return sendJson(res, 200, { tag: readTag(opts.repoRoot), mode: lastMode });
@@ -80,11 +84,16 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       const body = await readBody(req);
       const tag = typeof body.tag === 'string' ? body.tag.trim() : '';
       const mode = typeof body.mode === 'string' ? body.mode : '';
-      if (mode !== 'local' && mode !== 'hosted') return sendJson(res, 400, { ok: false, error: 'mode must be local|hosted' });
+      if (mode !== 'local' && mode !== 'hosted')
+        return sendJson(res, 400, { ok: false, error: 'mode must be local|hosted' });
       if (tag.length === 0) return sendJson(res, 400, { ok: false, error: 'tag required' });
       const result = await runUseEnv(opts, tag, mode);
       lastMode = mode;
-      return sendJson(res, result.code === 0 ? 200 : 500, { ok: result.code === 0, tag: readTag(opts.repoRoot), mode });
+      return sendJson(res, result.code === 0 ? 200 : 500, {
+        ok: result.code === 0,
+        tag: readTag(opts.repoRoot),
+        mode,
+      });
     }
 
     const procMatch = /^\/api\/proc\/([^/]+)\/(start|stop|restart)$/.exec(path);
@@ -107,7 +116,8 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     }
 
     const logMatch = /^\/api\/logs\/([^/]+)$/.exec(path);
-    if (method === 'GET' && logMatch !== null) return streamLogs(decodeURIComponent(logMatch[1]!), req, res);
+    if (method === 'GET' && logMatch !== null)
+      return streamLogs(decodeURIComponent(logMatch[1]!), req, res);
 
     sendJson(res, 404, { ok: false, error: 'not found' });
   }
@@ -122,7 +132,8 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       }
       return sendJson(res, 200, { ok: true, items: await states() });
     }
-    if (!manager.has(name)) return sendJson(res, 404, { ok: false, error: `unknown process: ${name}` });
+    if (!manager.has(name))
+      return sendJson(res, 404, { ok: false, error: `unknown process: ${name}` });
     if (action === 'start') manager.start(name);
     else if (action === 'stop') await manager.stop(name);
     else await manager.restart(name);
@@ -216,9 +227,17 @@ function readTag(repoRoot: string): string {
   const p = join(repoRoot, '.dev-tag');
   return existsSync(p) ? readFileSync(p, 'utf8').trim() : '';
 }
-function runUseEnv(opts: ConsoleOptions, tag: string, mode: string): Promise<{ code: number | null }> {
+function runUseEnv(
+  opts: ConsoleOptions,
+  tag: string,
+  mode: string,
+): Promise<{ code: number | null }> {
   const command = opts.useEnvCmd?.command ?? 'bash';
-  const args = [...(opts.useEnvCmd?.scriptArgPrefix ?? [join(opts.repoRoot, 'scripts', 'use-env.sh')]), tag, mode];
+  const args = [
+    ...(opts.useEnvCmd?.scriptArgPrefix ?? [join(opts.repoRoot, 'scripts', 'use-env.sh')]),
+    tag,
+    mode,
+  ];
   return new Promise((resolve) => {
     const child = spawn(command, args, { cwd: opts.repoRoot, stdio: 'ignore' });
     child.on('error', () => resolve({ code: -1 }));
@@ -235,7 +254,12 @@ if (isMain()) {
   const tag = readTag(repoRoot) || 'dev';
   const mode = (process.env.DEV_CONSOLE_MODE as 'local' | 'hosted') || 'local';
   const port = Number.parseInt(process.env.DEV_CONSOLE_PORT ?? '4317', 10);
-  const handle = createConsole({ repoRoot, logDir: join(repoRoot, '.dev-logs'), registry: appRegistry(repoRoot, tag), mode });
+  const handle = createConsole({
+    repoRoot,
+    logDir: join(repoRoot, '.dev-logs'),
+    registry: appRegistry(repoRoot, tag),
+    mode,
+  });
   void handle.listen(port).then((p) => {
     console.warn(`[dev-console] http://127.0.0.1:${String(p)}  (tag=${tag}, mode=${mode})`);
   });

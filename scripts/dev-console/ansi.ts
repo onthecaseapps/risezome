@@ -8,10 +8,22 @@
 export type LogLevel = 'error' | 'warn' | 'info';
 
 const FG: Record<number, string> = {
-  30: '#3b4048', 31: '#e06c75', 32: '#98c379', 33: '#e5c07b',
-  34: '#61afef', 35: '#c678dd', 36: '#56b6c2', 37: '#abb2bf',
-  90: '#5c6370', 91: '#e06c75', 92: '#98c379', 93: '#e5c07b',
-  94: '#61afef', 95: '#c678dd', 96: '#56b6c2', 97: '#ffffff',
+  30: '#3b4048',
+  31: '#e06c75',
+  32: '#98c379',
+  33: '#e5c07b',
+  34: '#61afef',
+  35: '#c678dd',
+  36: '#56b6c2',
+  37: '#abb2bf',
+  90: '#5c6370',
+  91: '#e06c75',
+  92: '#98c379',
+  93: '#e5c07b',
+  94: '#61afef',
+  95: '#c678dd',
+  96: '#56b6c2',
+  97: '#ffffff',
 };
 
 export function escapeHtml(s: string): string {
@@ -31,7 +43,10 @@ export function ansiToHtml(input: string): string {
   while ((m = SGR.exec(input)) !== null) {
     out += escapeHtml(input.slice(last, m.index));
     last = SGR.lastIndex;
-    const codes = (m[1] ?? '').split(';').filter((c) => c.length > 0).map(Number);
+    const codes = (m[1] ?? '')
+      .split(';')
+      .filter((c) => c.length > 0)
+      .map(Number);
     let color: string | null = null;
     let bold = false;
     let reset = codes.length === 0; // bare ESC[m == reset

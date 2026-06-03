@@ -48,7 +48,9 @@ function ensureCard(name) {
 
   root.querySelectorAll('button[data-act]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      void api(`/api/proc/${encodeURIComponent(name)}/${btn.dataset.act}`, 'POST').then(refreshState);
+      void api(`/api/proc/${encodeURIComponent(name)}/${btn.dataset.act}`, 'POST').then(
+        refreshState,
+      );
     });
   });
   logs.addEventListener('scroll', () => {
@@ -115,18 +117,22 @@ async function loadConfig() {
 configForm.addEventListener('submit', (ev) => {
   ev.preventDefault();
   configStatus.textContent = 'applying…';
-  void api('/api/config', 'POST', { tag: tagInput.value.trim(), mode: modeSelect.value }).then((r) => {
-    configStatus.textContent = r.ok ? `applied (${r.mode})` : `error: ${r.error ?? 'failed'}`;
-    void refreshState();
-  });
+  void api('/api/config', 'POST', { tag: tagInput.value.trim(), mode: modeSelect.value }).then(
+    (r) => {
+      configStatus.textContent = r.ok ? `applied (${r.mode})` : `error: ${r.error ?? 'failed'}`;
+      void refreshState();
+    },
+  );
 });
 
 document.querySelectorAll('button[data-all]').forEach((btn) => {
   btn.addEventListener('click', () => {
     btn.disabled = true;
-    void api(`/api/all/${btn.dataset.all}`, 'POST').then(refreshState).finally(() => {
-      btn.disabled = false;
-    });
+    void api(`/api/all/${btn.dataset.all}`, 'POST')
+      .then(refreshState)
+      .finally(() => {
+        btn.disabled = false;
+      });
   });
 });
 

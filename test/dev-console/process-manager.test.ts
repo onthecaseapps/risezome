@@ -82,7 +82,15 @@ describe('ProcessManager', () => {
 
   it('spawn failure surfaces as exited with an error line, not a throw', async () => {
     pm = new ProcessManager(
-      [{ name: 'nope', command: 'definitely-not-a-real-binary-xyz', args: [], cwd: logDir, order: 1 }],
+      [
+        {
+          name: 'nope',
+          command: 'definitely-not-a-real-binary-xyz',
+          args: [],
+          cwd: logDir,
+          order: 1,
+        },
+      ],
       logDir,
     );
     const lines: string[] = [];
@@ -122,8 +130,22 @@ describe('ProcessManager', () => {
     const bound = new Set<number>([3000]);
     pm = new ProcessManager(
       [
-        { name: 'portal', command: 'bash', args: ['-c', 'true'], cwd: logDir, order: 1, port: 3000 },
-        { name: 'worker', command: 'bash', args: ['-c', 'true'], cwd: logDir, order: 2, port: 8787 },
+        {
+          name: 'portal',
+          command: 'bash',
+          args: ['-c', 'true'],
+          cwd: logDir,
+          order: 1,
+          port: 3000,
+        },
+        {
+          name: 'worker',
+          command: 'bash',
+          args: ['-c', 'true'],
+          cwd: logDir,
+          order: 2,
+          port: 8787,
+        },
       ],
       logDir,
       { probePort: (p) => Promise.resolve(bound.has(p)) },
@@ -143,8 +165,22 @@ describe('ProcessManager', () => {
     const skipped: string[] = [];
     pm = new ProcessManager(
       [
-        { name: 'has-config', command: 'bash', args: ['-c', 'sleep 30'], cwd: logDir, order: 1, requiresConfigPath: present },
-        { name: 'no-config', command: 'bash', args: ['-c', 'sleep 30'], cwd: logDir, order: 2, requiresConfigPath: join(logDir, 'absent.yml') },
+        {
+          name: 'has-config',
+          command: 'bash',
+          args: ['-c', 'sleep 30'],
+          cwd: logDir,
+          order: 1,
+          requiresConfigPath: present,
+        },
+        {
+          name: 'no-config',
+          command: 'bash',
+          args: ['-c', 'sleep 30'],
+          cwd: logDir,
+          order: 2,
+          requiresConfigPath: join(logDir, 'absent.yml'),
+        },
       ],
       logDir,
     );

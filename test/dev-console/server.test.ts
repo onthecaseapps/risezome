@@ -15,7 +15,9 @@ echo "$1" > .dev-tag
 let handle: ConsoleHandle;
 let root: string;
 
-function setup(opts: { mode?: 'local' | 'hosted'; defs?: ProcDef[] } = {}): Promise<{ base: string }> {
+function setup(
+  opts: { mode?: 'local' | 'hosted'; defs?: ProcDef[] } = {},
+): Promise<{ base: string }> {
   root = mkdtempSync(join(tmpdir(), 'console-srv-'));
   const fakeSb = join(root, 'fake-supabase');
   writeFileSync(fakeSb, FAKE_SB);
@@ -23,7 +25,9 @@ function setup(opts: { mode?: 'local' | 'hosted'; defs?: ProcDef[] } = {}): Prom
   const fakeUseEnv = join(root, 'fake-use-env');
   writeFileSync(fakeUseEnv, FAKE_USEENV);
   chmodSync(fakeUseEnv, 0o755);
-  const defs = opts.defs ?? [{ name: 'echoer', command: 'bash', args: ['-c', 'echo hi; sleep 5'], cwd: root, order: 2 }];
+  const defs = opts.defs ?? [
+    { name: 'echoer', command: 'bash', args: ['-c', 'echo hi; sleep 5'], cwd: root, order: 2 },
+  ];
   handle = createConsole({
     repoRoot: root,
     logDir: root,
@@ -113,10 +117,15 @@ describe('dev-console server', () => {
   });
 
   it('stops a process; state → stopped', async () => {
-    const { base } = await setup({ defs: [{ name: 'sleeper', command: 'bash', args: ['-c', 'sleep 30'], cwd: '.', order: 2 }] });
+    const { base } = await setup({
+      defs: [{ name: 'sleeper', command: 'bash', args: ['-c', 'sleep 30'], cwd: '.', order: 2 }],
+    });
     await post(`${base}/api/proc/sleeper/start`);
-    await waitFor(async () =>
-      (await getJson<StateResp>(`${base}/api/state`)).items.find((i: Item) => i.name === 'sleeper')?.state === 'running',
+    await waitFor(
+      async () =>
+        (await getJson<StateResp>(`${base}/api/state`)).items.find(
+          (i: Item) => i.name === 'sleeper',
+        )?.state === 'running',
     );
     expect((await post(`${base}/api/proc/sleeper/stop`)).status).toBe(200);
     const s = await getJson<StateResp>(`${base}/api/state`);

@@ -11,11 +11,18 @@
   --border: #3b4048;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
 body {
   margin: 0;
-  font: 13px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font:
+    13px/1.5 ui-monospace,
+    'SF Mono',
+    Menlo,
+    Consolas,
+    monospace;
   background: var(--bg);
   color: var(--fg);
 }
@@ -33,12 +40,26 @@ body {
   z-index: 10;
 }
 
-.topbar h1 { font-size: 14px; margin: 0; color: #fff; }
+.topbar h1 {
+  font-size: 14px;
+  margin: 0;
+  color: #fff;
+}
 
-.config { display: flex; align-items: center; gap: 10px; }
-.config label { display: flex; align-items: center; gap: 4px; }
+.config {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.config label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 
-input, select, button {
+input,
+select,
+button {
   font: inherit;
   color: var(--fg);
   background: var(--panel);
@@ -47,13 +68,26 @@ input, select, button {
   padding: 4px 8px;
 }
 
-button { cursor: pointer; }
-button:hover { border-color: var(--accent); }
-button:disabled { opacity: 0.5; cursor: default; }
+button {
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--accent);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 
-.muted { color: var(--muted); }
+.muted {
+  color: var(--muted);
+}
 
-.all-controls { display: flex; gap: 8px; margin-left: auto; }
+.all-controls {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
 
 .procs {
   display: grid;
@@ -62,7 +96,9 @@ button:disabled { opacity: 0.5; cursor: default; }
   padding: 16px;
 }
 @media (min-width: 1100px) {
-  .procs { grid-template-columns: 1fr 1fr; }
+  .procs {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .proc {
@@ -83,10 +119,22 @@ button:disabled { opacity: 0.5; cursor: default; }
   border-bottom: 1px solid var(--border);
 }
 
-.proc-name { font-weight: 600; color: #fff; }
-.proc-pid { color: var(--muted); font-size: 11px; }
-.proc-controls { display: flex; gap: 6px; margin-left: auto; }
-.proc-controls button { padding: 2px 8px; }
+.proc-name {
+  font-weight: 600;
+  color: #fff;
+}
+.proc-pid {
+  color: var(--muted);
+  font-size: 11px;
+}
+.proc-controls {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.proc-controls button {
+  padding: 2px 8px;
+}
 
 .badge {
   display: inline-block;
@@ -97,10 +145,22 @@ button:disabled { opacity: 0.5; cursor: default; }
   letter-spacing: 0.03em;
   border: 1px solid transparent;
 }
-.badge.running { color: var(--green); border-color: var(--green); }
-.badge.starting { color: var(--yellow); border-color: var(--yellow); }
-.badge.stopped { color: var(--muted); border-color: var(--muted); }
-.badge.exited { color: var(--red); border-color: var(--red); }
+.badge.running {
+  color: var(--green);
+  border-color: var(--green);
+}
+.badge.starting {
+  color: var(--yellow);
+  border-color: var(--yellow);
+}
+.badge.stopped {
+  color: var(--muted);
+  border-color: var(--muted);
+}
+.badge.exited {
+  color: var(--red);
+  border-color: var(--red);
+}
 
 .logs {
   height: 280px;
@@ -112,6 +172,12 @@ button:disabled { opacity: 0.5; cursor: default; }
   background: var(--bg);
 }
 
-.log-line { display: block; }
-.log-line.error { color: var(--red); }
-.log-line.warn { color: var(--yellow); }
+.log-line {
+  display: block;
+}
+.log-line.error {
+  color: var(--red);
+}
+.log-line.warn {
+  color: var(--yellow);
+}

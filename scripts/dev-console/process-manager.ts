@@ -1,12 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import {
-  createWriteStream,
-  mkdirSync,
-  readFileSync,
-  existsSync,
-  type WriteStream,
-} from 'node:fs';
+import { createWriteStream, mkdirSync, readFileSync, existsSync, type WriteStream } from 'node:fs';
 import { connect } from 'node:net';
 import { join } from 'node:path';
 
@@ -237,7 +231,10 @@ export class ProcessManager extends EventEmitter {
     this.#probePort = opts.probePort ?? defaultProbePort;
     mkdirSync(logDir, { recursive: true });
     for (const def of defs) {
-      this.#procs.set(def.name, new ManagedProcess(def, logDir, (line) => this.emit(`line:${def.name}`, line)));
+      this.#procs.set(
+        def.name,
+        new ManagedProcess(def, logDir, (line) => this.emit(`line:${def.name}`, line)),
+      );
     }
   }
 
@@ -262,7 +259,11 @@ export class ProcessManager extends EventEmitter {
     }
   }
   async stopAll(): Promise<void> {
-    await Promise.all(this.#ordered().reverse().map((p) => p.stop()));
+    await Promise.all(
+      this.#ordered()
+        .reverse()
+        .map((p) => p.stop()),
+    );
   }
 
   /** Refresh externally-changed state (ports bound outside the console). */
