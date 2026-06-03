@@ -15,6 +15,7 @@
 import Fastify from 'fastify';
 import { fastifyServerOptions } from './server-options.js';
 import { transcriptLogFields } from './transcript-log.js';
+import { bearerMatches } from './shared-secret.js';
 import websocket from '@fastify/websocket';
 import { VoyageEmbedder } from '@risezome/engine/embed';
 import {
@@ -146,6 +147,11 @@ async function main(): Promise<void> {
   // runtime entry. The portal also updates meetings.status = 'completed'
   // before sending this.
   fastify.post<{ Params: { id: string } }>('/meetings/:id/end', async (req, reply) => {
+    // U12 (S13): require the shared BOT_WORKER_SECRET — this mutates in-memory
+    // state and is reachable over the public dev tunnel; it must not be anonymous.
+    if (!bearerMatches(req.headers.authorization, secret)) {
+      return reply.code(401).send({ ok: false, error: 'unauthorized' });
+    }
     const meetingId = req.params.id;
     const runtime = runtimes.get(meetingId);
     if (runtime === undefined) return reply.send({ ok: true, removed: false });

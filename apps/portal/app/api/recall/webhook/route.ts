@@ -109,7 +109,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     .eq('recall_bot_id', botId)
     .maybeSingle();
   if (lookupErr !== null) {
-     
     console.error('[recall.webhook] meeting lookup failed:', lookupErr);
     return new NextResponse('DB error', { status: 500 });
   }
@@ -137,7 +136,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     .update(update)
     .eq('meeting_id', meeting.meeting_id);
   if (updateErr !== null) {
-     
     console.error('[recall.webhook] meeting update failed:', updateErr);
     return new NextResponse('DB error', { status: 500 });
   }
@@ -152,7 +150,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     meetingId: meeting.meeting_id as string,
     orgId: meeting.org_id as string,
     status: newStatus,
-    errorMessage: typeof update['error_message'] === 'string' ? (update['error_message'] as string) : null,
+    errorMessage:
+      typeof update['error_message'] === 'string' ? (update['error_message'] as string) : null,
   });
 
   // On call_ended, ping the bot-worker to flush. Fire-and-forget.
@@ -166,7 +165,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         data: { meetingId: meeting.meeting_id as string, orgId: meeting.org_id as string },
       })
       .catch((err: unknown) => {
-
         console.error('[recall.webhook] recap enqueue failed:', err);
       });
     // Assemble knowledge gaps from this meeting's misses (U6). Best-effort —
@@ -210,7 +208,6 @@ async function broadcastStatus(
     .select('event_id')
     .single();
   if (error !== null) {
-     
     console.warn('[recall.webhook] meeting_events insert failed:', error);
     return;
   }
@@ -225,7 +222,6 @@ async function broadcastStatus(
     });
     await channel.unsubscribe();
   } catch (err) {
-     
     console.warn('[recall.webhook] broadcast failed:', err);
   }
 }
@@ -236,11 +232,14 @@ async function notifyBotWorkerEnd(meetingId: string): Promise<void> {
   try {
     await fetch(`${base.replace(/\/$/, '')}/meetings/${encodeURIComponent(meetingId)}/end`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        // U12: authenticate to the bot-worker's control endpoint.
+        authorization: `Bearer ${process.env['BOT_WORKER_SECRET'] ?? ''}`,
+      },
       body: '{}',
     });
   } catch (err) {
-     
     console.warn('[recall.webhook] bot-worker end notify failed:', err);
   }
 }

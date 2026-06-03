@@ -50,7 +50,9 @@ function maxDurationSeconds(env: Record<string, string | undefined> = process.en
  * How long after a recording's start we wait before treating it as a missed
  * `bot.call_ended`. = max bot duration + buffer, clamped to the hard cap.
  */
-export function recordingReapAfterMs(env: Record<string, string | undefined> = process.env): number {
+export function recordingReapAfterMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
   const candidate = (maxDurationSeconds(env) + REAP_BUFFER_S) * 1000;
   return Math.min(candidate, HARD_CAP_S * 1000);
 }
@@ -89,7 +91,11 @@ export interface ReapResult {
  */
 export async function reapStaleMeetings(
   service: ReaperDb,
-  opts: { nowMs: number; recordingReapAfterMs: number; notify: (meetingId: string) => Promise<void> },
+  opts: {
+    nowMs: number;
+    recordingReapAfterMs: number;
+    notify: (meetingId: string) => Promise<void>;
+  },
 ): Promise<ReapResult> {
   const recordingCutoff = new Date(opts.nowMs - opts.recordingReapAfterMs).toISOString();
   const prelaunchCutoff = new Date(opts.nowMs - PRELAUNCH_GRACE_S * 1000).toISOString();
@@ -105,7 +111,8 @@ export async function reapStaleMeetings(
     .not('started_at', 'is', null)
     .lt('started_at', recordingCutoff)
     .select('meeting_id');
-  if (byStart.error !== null) throw new Error(`reap recording (started_at): ${byStart.error.message}`);
+  if (byStart.error !== null)
+    throw new Error(`reap recording (started_at): ${byStart.error.message}`);
   for (const row of byStart.data ?? []) reapedIds.push(row.meeting_id);
 
   // 2. Recording meetings the webhook flipped before any utterance set
@@ -117,7 +124,8 @@ export async function reapStaleMeetings(
     .is('started_at', null)
     .lt('created_at', recordingCutoff)
     .select('meeting_id');
-  if (byCreated.error !== null) throw new Error(`reap recording (created_at): ${byCreated.error.message}`);
+  if (byCreated.error !== null)
+    throw new Error(`reap recording (created_at): ${byCreated.error.message}`);
   for (const row of byCreated.data ?? []) reapedIds.push(row.meeting_id);
 
   // 3. Pre-recording states that never started recording in time → failed.
@@ -147,7 +155,11 @@ async function notifyBotWorker(meetingId: string): Promise<void> {
   try {
     await fetch(`${base.replace(/\/$/, '')}/meetings/${encodeURIComponent(meetingId)}/end`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        // U12: authenticate to the bot-worker's control endpoint.
+        authorization: `Bearer ${process.env['BOT_WORKER_SECRET'] ?? ''}`,
+      },
       body: '{}',
     });
   } catch {

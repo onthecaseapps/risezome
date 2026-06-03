@@ -47,7 +47,11 @@ async function notifyBotWorker(meetingId: string): Promise<void> {
   try {
     await fetch(`${base.replace(/\/$/, '')}/meetings/${encodeURIComponent(meetingId)}/end`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        // U12: authenticate to the bot-worker's control endpoint.
+        authorization: `Bearer ${process.env['BOT_WORKER_SECRET'] ?? ''}`,
+      },
       body: '{}',
     });
   } catch {
