@@ -152,9 +152,12 @@ fails silently on a missing file.
 
 ## What is NOT running locally
 
-- **Supabase** — the dev servers talk to the hosted Supabase project
-  via the env-var URL/key. There's no local Postgres or
-  `supabase start` in this setup.
+- **Supabase** — by default the dev servers talk to the hosted Supabase
+  project via the env-var URL/key. A local `supabase start` stack is now a
+  first-class, switchable option, and `pnpm dev` is a one-command runner that
+  wires env + starts everything per developer. For two developers sharing this
+  repo without colliding, see
+  [`two-developer-local-setup.md`](./two-developer-local-setup.md).
 - **Recall.ai** — calls go to the hosted Recall API. The bot-worker
   serves the WebSocket the cloud bot dials back into.
 - **Anthropic / Voyage / Deepgram** — all hosted; the dev servers
