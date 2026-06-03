@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { ProcessManager, type ProcDef, type ProcStatus } from './process-manager';
 import { SupabaseControl, type SupabaseState } from './supabase-control';
 import { appRegistry } from './registry';
+import { renderLine } from './ansi';
 
 /**
  * Dev-console HTTP server (plan U2, + config route U4, + teardown/ordering U6).
@@ -136,7 +137,9 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       'cache-control': 'no-cache',
       connection: 'keep-alive',
     });
-    const send = (line: string): void => res.write(`data: ${JSON.stringify(line)}\n\n`);
+    const send = (line: string): void => {
+      res.write(`data: ${JSON.stringify(renderLine(line))}\n\n`);
+    };
     for (const line of tail(name)) send(line);
     const onLine = (line: string): void => send(line);
     manager.on(`line:${name}`, onLine);

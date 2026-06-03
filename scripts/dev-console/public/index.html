@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Risezome dev console</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>Risezome dev console</h1>
+      <form id="config" class="config">
+        <label>tag <input id="tag" name="tag" placeholder="nathan" autocomplete="off" /></label>
+        <label>supabase
+          <select id="mode" name="mode">
+            <option value="hosted">hosted</option>
+            <option value="local">local</option>
+          </select>
+        </label>
+        <button type="submit">Apply</button>
+        <span id="config-status" class="muted"></span>
+      </form>
+      <div class="all-controls">
+        <button data-all="start">Start all</button>
+        <button data-all="stop">Stop all</button>
+      </div>
+    </header>
+
+    <main id="procs" class="procs"></main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

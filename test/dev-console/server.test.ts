@@ -80,7 +80,7 @@ async function readSse(url: string, ms: number): Promise<string[]> {
         const evt = buf.slice(0, i);
         buf = buf.slice(i + 2);
         const m = /^data: (.*)$/m.exec(evt);
-        if (m) lines.push(JSON.parse(m[1]!) as string);
+        if (m) lines.push((JSON.parse(m[1]!) as { html: string }).html);
       }
     }
   } catch {

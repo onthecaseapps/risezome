@@ -22,6 +22,9 @@ export default tseslint.config(
       'apps/daemon/scripts/**',
       'apps/bot-worker/scripts/**',
       '**/ws-probe.mjs',
+      // The dev console's browser assets (vanilla HTML/JS/CSS) use browser
+      // globals and no build step — not part of the Node/TS lint surface.
+      'scripts/dev-console/public/**',
     ],
   },
   js.configs.recommended,
@@ -38,8 +41,6 @@ export default tseslint.config(
             '*.config.mjs',
             'apps/hud/build.config.mjs',
             'test/*.test.ts',
-            'test/dev-console/*.test.ts',
-            'scripts/dev-console/*.ts',
           ],
         },
         tsconfigRootDir: import.meta.dirname,
