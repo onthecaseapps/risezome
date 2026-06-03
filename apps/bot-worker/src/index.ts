@@ -13,6 +13,7 @@
  */
 
 import Fastify from 'fastify';
+import { fastifyServerOptions } from './server-options.js';
 import websocket from '@fastify/websocket';
 import { VoyageEmbedder } from '@risezome/engine/embed';
 import {
@@ -20,18 +21,9 @@ import {
   DEFAULT_ANTHROPIC_MODEL,
   type Synthesizer,
 } from '@risezome/engine/synthesize';
-import {
-  AnthropicRelevanceClassifier,
-  type RelevanceClassifier,
-} from '@risezome/engine/relevance';
-import {
-  AnthropicSummarizer,
-  type Summarizer,
-} from '@risezome/engine/summarize';
-import {
-  AnthropicClassifier,
-  type Classifier,
-} from '@risezome/engine/router';
+import { AnthropicRelevanceClassifier, type RelevanceClassifier } from '@risezome/engine/relevance';
+import { AnthropicSummarizer, type Summarizer } from '@risezome/engine/summarize';
+import { AnthropicClassifier, type Classifier } from '@risezome/engine/router';
 import { type SkillRegistry } from '@risezome/engine/skills';
 import { buildSkillRegistry } from './skills/index.js';
 import { adaptRecallMessage } from './recall-adapter.js';
@@ -44,11 +36,7 @@ import {
   persistAndBroadcast,
   utteranceToEventPayload,
 } from './db.js';
-import {
-  maybeRetrieveAndEmit,
-  newRetrievalRuntime,
-  type RetrievalRuntime,
-} from './retrieval.js';
+import { maybeRetrieveAndEmit, newRetrievalRuntime, type RetrievalRuntime } from './retrieval.js';
 import { MeetingSummarizerRuntime } from './summarizer-runtime.js';
 import { recordMiss } from './gap-capture.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -88,9 +76,10 @@ async function main(): Promise<void> {
   // transcript pipeline still runs). Lets you run the bot-worker in
   // "transcript-only" dev mode without standing up Voyage.
   const voyageKey = process.env.VOYAGE_API_KEY;
-  const embedder = voyageKey !== undefined && voyageKey.length > 0
-    ? new VoyageEmbedder({ apiKey: voyageKey })
-    : null;
+  const embedder =
+    voyageKey !== undefined && voyageKey.length > 0
+      ? new VoyageEmbedder({ apiKey: voyageKey })
+      : null;
   if (embedder === null) {
     console.warn('[bot-worker] VOYAGE_API_KEY unset — per-utterance retrieval disabled');
   }
@@ -102,15 +91,18 @@ async function main(): Promise<void> {
   // without burning Anthropic tokens.
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const anthropicModel = process.env.ANTHROPIC_MODEL ?? DEFAULT_ANTHROPIC_MODEL;
-  const synthesizer: Synthesizer | null = anthropicKey !== undefined && anthropicKey.length > 0
-    ? new AnthropicSynthesizer({ apiKey: anthropicKey, model: anthropicModel })
-    : null;
-  const relevanceClassifier: RelevanceClassifier | null = anthropicKey !== undefined && anthropicKey.length > 0
-    ? new AnthropicRelevanceClassifier({ apiKey: anthropicKey, model: anthropicModel })
-    : null;
-  const summarizer: Summarizer | null = anthropicKey !== undefined && anthropicKey.length > 0
-    ? new AnthropicSummarizer({ apiKey: anthropicKey, model: anthropicModel })
-    : null;
+  const synthesizer: Synthesizer | null =
+    anthropicKey !== undefined && anthropicKey.length > 0
+      ? new AnthropicSynthesizer({ apiKey: anthropicKey, model: anthropicModel })
+      : null;
+  const relevanceClassifier: RelevanceClassifier | null =
+    anthropicKey !== undefined && anthropicKey.length > 0
+      ? new AnthropicRelevanceClassifier({ apiKey: anthropicKey, model: anthropicModel })
+      : null;
+  const summarizer: Summarizer | null =
+    anthropicKey !== undefined && anthropicKey.length > 0
+      ? new AnthropicSummarizer({ apiKey: anthropicKey, model: anthropicModel })
+      : null;
   // Router classifier + skill registry — process-singleton (no per-
   // meeting state). The classifier and registry are paired: both must
   // be present for the router branch in maybeRetrieveAndEmit to fire.
@@ -118,9 +110,10 @@ async function main(): Promise<void> {
   // GitHub App credentials (GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY_BASE64)
   // and resolves each meeting org's installation token + repos from the
   // sources table at call time.
-  const classifier: Classifier | null = anthropicKey !== undefined && anthropicKey.length > 0
-    ? new AnthropicClassifier({ apiKey: anthropicKey, model: anthropicModel })
-    : null;
+  const classifier: Classifier | null =
+    anthropicKey !== undefined && anthropicKey.length > 0
+      ? new AnthropicClassifier({ apiKey: anthropicKey, model: anthropicModel })
+      : null;
   const skillRegistry: SkillRegistry = buildSkillRegistry({
     db,
     logger: {
@@ -133,13 +126,16 @@ async function main(): Promise<void> {
     },
   });
   if (synthesizer === null) {
-    console.warn('[bot-worker] ANTHROPIC_API_KEY unset — synthesis + LLM relevance + rolling summary + router classifier disabled');
+    console.warn(
+      '[bot-worker] ANTHROPIC_API_KEY unset — synthesis + LLM relevance + rolling summary + router classifier disabled',
+    );
   }
   console.log(`[bot-worker] skill registry size: ${String(skillRegistry.size())}`);
 
-  // maxParamLength default is 100; the eval endpoints carry the auth JWT
-  // (~270 chars) as a :jwt path param, so raise the cap or those routes 404.
-  const fastify = Fastify({ logger: { level: 'info' }, maxParamLength: 2000 });
+  // Server options (incl. disableRequestLogging so the auth JWT in the URL path
+  // is never logged, and maxParamLength for the long :jwt param). See
+  // server-options.ts for the security rationale.
+  const fastify = Fastify(fastifyServerOptions());
   await fastify.register(websocket);
 
   fastify.get('/health', () => ({ ok: true, runtimes: runtimes.size }));
@@ -207,35 +203,50 @@ async function main(): Promise<void> {
             utteranceCount: 0,
             markedRecording: false,
             retrieval: newRetrievalRuntime(),
-            summarizer: summarizer !== null
-              ? new MeetingSummarizerRuntime({
-                  summarizer,
-                  onSummaryUpdated: (s, at) => {
-                    logger.info(
-                      {
-                        meetingId,
-                        currentTopic: s.current_topic,
-                        openQuestions: s.open_questions.length,
-                        keyTerms: s.key_terms.length,
-                        at,
-                      },
-                      'summary.updated',
-                    );
-                  },
-                  onSummarizerError: (err) => {
-                    logger.warn({ meetingId, err: String(err) }, 'summarizer.error');
-                  },
-                })
-              : null,
+            summarizer:
+              summarizer !== null
+                ? new MeetingSummarizerRuntime({
+                    summarizer,
+                    onSummaryUpdated: (s, at) => {
+                      logger.info(
+                        {
+                          meetingId,
+                          currentTopic: s.current_topic,
+                          openQuestions: s.open_questions.length,
+                          keyTerms: s.key_terms.length,
+                          at,
+                        },
+                        'summary.updated',
+                      );
+                    },
+                    onSummarizerError: (err) => {
+                      logger.warn({ meetingId, err: String(err) }, 'summarizer.error');
+                    },
+                  })
+                : null,
           };
           runtimes.set(meetingId, runtime);
-          req.log.info({ meetingId, orgId: payload.orgId, summarizer: runtime.summarizer !== null }, 'runtime.created');
+          req.log.info(
+            { meetingId, orgId: payload.orgId, summarizer: runtime.summarizer !== null },
+            'runtime.created',
+          );
         } else {
           req.log.info({ meetingId }, 'runtime.reconnected');
         }
 
         socket.on('message', (raw: Buffer) => {
-          void handleMessage(raw, meetingId, payload.orgId, db, embedder, synthesizer, relevanceClassifier, classifier, skillRegistry, req.log);
+          void handleMessage(
+            raw,
+            meetingId,
+            payload.orgId,
+            db,
+            embedder,
+            synthesizer,
+            relevanceClassifier,
+            classifier,
+            skillRegistry,
+            req.log,
+          );
         });
 
         socket.on('close', () => {
@@ -266,7 +277,12 @@ async function main(): Promise<void> {
       },
       wsHandler: async (socket, req) => {
         if (!localDebugEnabled) {
-          socket.send(JSON.stringify({ type: 'error', message: 'local-debug disabled (set LOCAL_DEBUG_ENABLED=true)' }));
+          socket.send(
+            JSON.stringify({
+              type: 'error',
+              message: 'local-debug disabled (set LOCAL_DEBUG_ENABLED=true)',
+            }),
+          );
           socket.close();
           return;
         }
@@ -285,7 +301,7 @@ async function main(): Promise<void> {
           socket.close();
           return;
         }
-        const jwt = (req.params)['*'];
+        const jwt = req.params['*'];
         let payload: BotWsJwtPayload;
         try {
           payload = await verifyBotWsJwt(jwt, secret);
@@ -339,7 +355,11 @@ async function handleMessage(
   relevanceClassifier: RelevanceClassifier | null,
   classifier: Classifier | null,
   skillRegistry: SkillRegistry,
-  logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void },
+  logger: {
+    info: (obj: object, msg?: string) => void;
+    warn: (obj: object, msg?: string) => void;
+    error: (obj: object, msg?: string) => void;
+  },
 ): Promise<void> {
   let parsed: unknown;
   try {
