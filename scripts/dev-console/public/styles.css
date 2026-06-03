@@ -149,7 +149,8 @@ button:disabled {
   color: var(--green);
   border-color: var(--green);
 }
-.badge.starting {
+.badge.starting,
+.badge.stopping {
   color: var(--yellow);
   border-color: var(--yellow);
 }

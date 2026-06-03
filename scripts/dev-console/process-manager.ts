@@ -189,17 +189,22 @@ class ManagedProcess {
 
   /**
    * Best-effort external-state reconciliation: when we don't own the child and
-   * the process has a known port, mark it running iff the port is bound. Never
-   * touches console-owned processes — their lifecycle events drive state.
+   * the process has a known port, surface a process started outside the console
+   * (or one that survived a console restart) as running. Never touches
+   * console-owned processes — their lifecycle events drive state.
+   *
+   * Only promotes from `stopped` (the fresh/idle state). An `exited` process is
+   * one the console watched crash — we trust that over a port probe, so a
+   * leftover/zombie listener still holding the port can't mask a crash and
+   * paint a dead process green (the one lie a monitor must never tell).
    */
   async reconcile(probe: PortProbe): Promise<void> {
     if (this.def.port === undefined || this.owned) return;
     const bound = await probe(this.def.port);
     if (bound) {
-      this.state = 'running';
+      if (this.state === 'stopped') this.state = 'running';
     } else if (this.state === 'running') {
-      // We don't own a child and the port is no longer bound: the external
-      // process went away. Reset so the badge doesn't lie.
+      // An externally-bound process we'd surfaced as running went away.
       this.state = 'stopped';
       this.pid = null;
     }

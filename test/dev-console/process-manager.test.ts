@@ -159,6 +159,29 @@ describe('ProcessManager', () => {
     expect(pm.status().find((s) => s.name === 'portal')?.state).toBe('stopped');
   });
 
+  it('reconcile does NOT promote a crashed (exited) process to running even if its port is still bound', async () => {
+    pm = new ProcessManager(
+      [
+        {
+          name: 'portal',
+          command: 'bash',
+          args: ['-c', 'exit 1'],
+          cwd: logDir,
+          order: 1,
+          port: 3000,
+        },
+      ],
+      logDir,
+      { probePort: () => Promise.resolve(true) }, // pretend a zombie listener still holds :3000
+    );
+    pm.start('portal');
+    await waitFor(() => pm.status().find((s) => s.name === 'portal')?.state === 'exited');
+    await pm.reconcile();
+    // The console watched it crash — a leftover port binding must not mask that.
+    expect(pm.status().find((s) => s.name === 'portal')?.state).toBe('exited');
+    expect(pm.status().find((s) => s.name === 'portal')?.exitCode).toBe(1);
+  });
+
   it('start-all skips a process whose requiresConfigPath is missing', async () => {
     const present = join(logDir, 'present.yml');
     writeFileSync(present, 'x');
