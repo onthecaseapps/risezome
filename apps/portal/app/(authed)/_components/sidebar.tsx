@@ -5,7 +5,7 @@ import { cookies } from 'next/headers';
 import { OrgSwitcher } from './org-switcher';
 import { SidebarFrame } from './sidebar-frame';
 import { SidebarNavLink } from './sidebar-nav-link';
-import { CalendarIcon, CapturesIcon, DebugIcon, LiveIcon, MembersIcon, SettingsIcon, SourcesIcon, WhatsNewIcon } from './nav-icons';
+import { CalendarIcon, CapturesIcon, DebugIcon, GapsIcon, LiveIcon, MembersIcon, SettingsIcon, SourcesIcon, WhatsNewIcon } from './nav-icons';
 import { UserCard } from './user-card';
 
 /**
@@ -45,6 +45,10 @@ export async function Sidebar(): Promise<ReactElement> {
   // dot and the list contents never disagree — a stuck meeting whose
   // started_at is older than 6h won't surface in either place.
   let activeMeetingCount = 0;
+  // Unread knowledge-gap notifications for the current user, scoped by RLS to
+  // their own recipient rows. Drives the pulsing dot on "Knowledge gaps" — the
+  // same COUNT-only pattern as the recording dot above (no rows shipped).
+  let unreadGapNotifications = 0;
   if (current !== null) {
     const supabase = await createServerClient();
     const freshnessCutoff = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
@@ -55,6 +59,13 @@ export async function Sidebar(): Promise<ReactElement> {
       .eq('status', 'recording')
       .gte('started_at', freshnessCutoff);
     activeMeetingCount = count ?? 0;
+
+    const { count: notifCount } = await supabase
+      .from('notifications')
+      .select('notification_id', { count: 'exact', head: true })
+      .eq('org_id', current.id)
+      .is('read_at', null);
+    unreadGapNotifications = notifCount ?? 0;
   }
 
   return (
@@ -95,6 +106,22 @@ export async function Sidebar(): Promise<ReactElement> {
           matchPrefix="/captures"
           icon={<CapturesIcon />}
           label="Captures"
+        />
+        <SidebarNavLink
+          href="/gaps"
+          matchPrefix="/gaps"
+          icon={<GapsIcon />}
+          label="Knowledge gaps"
+          {...(unreadGapNotifications > 0
+            ? {
+                dot: (
+                  <span
+                    aria-label={`${unreadGapNotifications} unread`}
+                    className="inline-block h-2 w-2 animate-pulse rounded-full bg-accent"
+                  />
+                ),
+              }
+            : {})}
         />
         {isManager && (
           <>
