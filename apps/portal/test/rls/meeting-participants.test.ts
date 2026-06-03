@@ -19,6 +19,7 @@ const SUPABASE_URL = process.env['SUPABASE_URL'] ?? 'http://127.0.0.1:54321';
 const SUPABASE_ANON_KEY = process.env['SUPABASE_ANON_KEY'] ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
 const FORCE = process.env['RISEZOME_RUN_RLS_TESTS'] === '1';
+const TOKEN_KEY = 'rls-recap-test-key-' + 'k'.repeat(40); // U9 recap encryption
 
 interface TestUser {
   readonly id: string;
@@ -73,6 +74,45 @@ if (!stackReachable && !FORCE) {
       await admin.auth.admin.deleteUser(outsider.id).catch(() => undefined);
     });
 
+    it('U9/S9: the meeting recap is stored encrypted — no plaintext column, decrypt round-trips', async () => {
+      const enc = await admin.rpc('encrypt_refresh_token', {
+        plaintext: 'Confidential recap: we are acquiring Acme for $40M.',
+        key: TOKEN_KEY,
+      });
+      const m = await admin
+        .from('meetings')
+        .insert({
+          org_id: orgId,
+          user_id: launcher.id,
+          conference_url: 'https://zoom.us/j/recap-enc',
+          status: 'completed',
+          recap_text_enc: enc.data as unknown as string,
+          recap_status: 'done',
+        })
+        .select('meeting_id')
+        .single();
+      expect(m.error).toBeNull();
+
+      // Plaintext column is gone.
+      const plaintextSel = await admin.from('meetings').select('recap_text');
+      expect(plaintextSel.error).not.toBeNull();
+
+      // Ciphertext decrypts back to the original.
+      const { data: row } = await admin
+        .from('meetings')
+        .select('recap_text_enc, recap_key_version')
+        .eq('meeting_id', m.data!.meeting_id as string)
+        .single();
+      expect(row?.recap_key_version).toBe(0);
+      const dec = await admin.rpc('decrypt_refresh_token', {
+        ciphertext: (row as { recap_text_enc: string }).recap_text_enc,
+        key: TOKEN_KEY,
+      });
+      expect(dec.data).toBe('Confidential recap: we are acquiring Acme for $40M.');
+
+      if (m.data) await admin.from('meetings').delete().eq('meeting_id', m.data.meeting_id);
+    });
+
     it('blocks a second LIVE meeting for the same (org, conference_url)', async () => {
       const first = await admin
         .from('meetings')
@@ -83,7 +123,12 @@ if (!stackReachable && !FORCE) {
 
       const second = await admin
         .from('meetings')
-        .insert({ org_id: orgId, user_id: coAttendee.id, conference_url: url, status: 'launching' });
+        .insert({
+          org_id: orgId,
+          user_id: coAttendee.id,
+          conference_url: url,
+          status: 'launching',
+        });
       expect(second.error).not.toBeNull(); // unique-index violation
 
       // Cleanup
@@ -120,12 +165,10 @@ if (!stackReachable && !FORCE) {
       expect(meeting.error).toBeNull();
       const meetingId = meeting.data!.meeting_id as string;
 
-      await admin
-        .from('meeting_participants')
-        .insert([
-          { meeting_id: meetingId, user_id: launcher.id },
-          { meeting_id: meetingId, user_id: coAttendee.id },
-        ]);
+      await admin.from('meeting_participants').insert([
+        { meeting_id: meetingId, user_id: launcher.id },
+        { meeting_id: meetingId, user_id: coAttendee.id },
+      ]);
 
       const launcherSees = await launcher.client.rpc('is_meeting_participant', {
         p_meeting_id: meetingId,

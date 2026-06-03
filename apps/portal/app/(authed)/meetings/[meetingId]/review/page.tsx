@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import { notFound } from 'next/navigation';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServerClient } from '../../../../_lib/supabase-server';
+import { decryptToken } from '../../../../_lib/token-crypto';
 import type { CardEvent, CardTrigger, TranscriptUtterance } from '@risezome/hud-ui';
 import {
   mapSynthesisRow,
@@ -31,13 +32,18 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   const { data: meeting } = await supabase
     .from('meetings')
     .select(
-      'meeting_id, org_id, status, started_at, ended_at, calendar_event_id, recap_text, recap_status',
+      'meeting_id, org_id, status, started_at, ended_at, calendar_event_id, recap_text_enc, recap_status',
     )
     .eq('meeting_id', meetingId)
     .eq('org_id', orgId)
     .maybeSingle();
 
   if (meeting === null) notFound();
+
+  // U9: the recap is encrypted at rest — decrypt server-side (the key stays in
+  // env; the browser never sees it).
+  const recapEnc = meeting.recap_text_enc as string | null;
+  const recapText = recapEnc !== null ? await decryptToken(supabase, recapEnc) : null;
 
   let title = 'Meeting';
   if (meeting.calendar_event_id !== null) {
@@ -141,7 +147,9 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
     rows.map((s) => ({
       synthesisId: s['synthesis_id'] as string,
       triggerUtteranceId:
-        typeof s['trigger_utterance_id'] === 'string' ? (s['trigger_utterance_id'] as string) : null,
+        typeof s['trigger_utterance_id'] === 'string'
+          ? (s['trigger_utterance_id'] as string)
+          : null,
       createdAtMs: new Date(s['created_at'] as string).getTime(),
     })),
     utteranceTimes,
@@ -153,7 +161,7 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
       status={meeting.status as string}
       startedAtIso={meeting.started_at as string | null}
       endedAtIso={meeting.ended_at as string | null}
-      recapText={(meeting.recap_text as string | null) ?? null}
+      recapText={recapText}
       recapStatus={(meeting.recap_status as RecapStatus) ?? null}
       initialTranscript={initialTranscript}
       initialSyntheses={initialSyntheses}

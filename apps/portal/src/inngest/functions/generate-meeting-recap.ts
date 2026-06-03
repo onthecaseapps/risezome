@@ -1,5 +1,6 @@
 import { inngest } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
+import { encryptToken } from '../../../app/_lib/token-crypto';
 import { buildTranscriptText, recapMeeting, type TranscriptLine } from '../lib/meeting-recap';
 
 /**
@@ -18,7 +19,8 @@ export const generateMeetingRecapFn = inngest.createFunction(
     onFailure: async ({ event }) => {
       // Exhausted retries: mark the recap failed so the review page stops
       // showing "generating…". The original event is nested under data.event.
-      const original = (event as unknown as { data: { event?: { data?: { meetingId?: string } } } }).data;
+      const original = (event as unknown as { data: { event?: { data?: { meetingId?: string } } } })
+        .data;
       const meetingId = original.event?.data?.meetingId;
       if (typeof meetingId !== 'string') return;
       const service = createServiceRoleClient();
@@ -27,9 +29,11 @@ export const generateMeetingRecapFn = inngest.createFunction(
     triggers: [{ event: 'risezome/meeting.recap-requested' }],
   },
   async ({ event, step }) => {
-    const { meetingId, orgId } = (event as unknown as {
-      data: { meetingId: string; orgId: string };
-    }).data;
+    const { meetingId, orgId } = (
+      event as unknown as {
+        data: { meetingId: string; orgId: string };
+      }
+    ).data;
 
     const ctx = await step.run('load-transcript', async () => {
       const service = createServiceRoleClient();
@@ -62,10 +66,15 @@ export const generateMeetingRecapFn = inngest.createFunction(
         const p = (r.payload as Record<string, unknown> | null) ?? {};
         const text = p['text'];
         if (typeof text !== 'string' || text.length === 0) return [];
-        return [{ speaker: typeof p['speaker'] === 'string' ? (p['speaker'] as string) : null, text }];
+        return [
+          { speaker: typeof p['speaker'] === 'string' ? (p['speaker'] as string) : null, text },
+        ];
       });
 
-      await service.from('meetings').update({ recap_status: 'generating' }).eq('meeting_id', meetingId);
+      await service
+        .from('meetings')
+        .update({ recap_status: 'generating' })
+        .eq('meeting_id', meetingId);
       return { title, transcriptText: buildTranscriptText(lines), hasTranscript: lines.length > 0 };
     });
 
@@ -76,7 +85,11 @@ export const generateMeetingRecapFn = inngest.createFunction(
         await service
           .from('meetings')
           .update({
-            recap_text: 'No transcript was captured for this meeting.',
+            // U9: recap encrypted at rest.
+            recap_text_enc: await encryptToken(
+              service,
+              'No transcript was captured for this meeting.',
+            ),
             recap_status: 'done',
             recap_generated_at: new Date().toISOString(),
           })
@@ -96,7 +109,7 @@ export const generateMeetingRecapFn = inngest.createFunction(
       await service
         .from('meetings')
         .update({
-          recap_text: recap,
+          recap_text_enc: await encryptToken(service, recap), // U9: encrypt at rest
           recap_status: 'done',
           recap_generated_at: new Date().toISOString(),
         })
