@@ -393,8 +393,11 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     const tag = opts.tag ?? readTag(opts.repoRoot);
     const up = (name: string): boolean => items.find((i) => i.name === name)?.state === 'running';
     const out: { label: string; url: string }[] = [];
-    if (up('portal')) out.push({ label: 'Portal', url: 'http://localhost:3000' });
-    if (up('inngest')) out.push({ label: 'Inngest dev', url: 'http://localhost:8288' });
+    if (up('portal')) {
+      out.push({ label: 'Portal (app)', url: 'http://localhost:3000/upcoming' });
+      out.push({ label: 'Marketing site', url: 'http://localhost:3000' });
+    }
+    if (up('inngest')) out.push({ label: 'Inngest UI', url: 'http://localhost:8288' });
     if (up('bot-worker'))
       out.push({ label: 'Bot-worker health', url: 'http://localhost:8787/health' });
     if (lastMode === 'local' && up(SUPABASE)) {

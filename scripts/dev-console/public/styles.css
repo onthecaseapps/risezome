@@ -132,14 +132,14 @@ button:disabled {
   margin: 0;
 }
 
-/* Links panel — clickable URLs for the tools that are up. */
+/* Links panel — first cell of the process grid; clickable URLs for live tools. */
 .links-panel {
-  margin: 16px 16px 0;
+  align-self: start; /* stay compact at the top of its grid row */
 }
 .links {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   padding: 10px;
 }
 .link {

@@ -238,7 +238,8 @@ describe('dev-console server', () => {
           ?.state === 'running',
     );
     const links = (await getJson<StateResp>(`${base}/api/state`)).links ?? [];
-    expect(links.some((l) => l.url === 'http://localhost:3000')).toBe(true);
+    expect(links.some((l) => l.url === 'http://localhost:3000/upcoming')).toBe(true); // Portal app
+    expect(links.some((l) => l.url === 'http://localhost:3000')).toBe(true); // Marketing
   });
 
   it('local mode includes Supabase in state', async () => {
