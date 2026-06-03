@@ -82,7 +82,7 @@ if (!stackReachable && !FORCE) {
       await admin.auth.admin.deleteUser(member.id).catch(() => undefined);
     });
 
-    it('R5/AE3: member sees only meetings they participated in, not a co-member\'s', async () => {
+    it("R5/AE3: member sees only meetings they participated in, not a co-member's", async () => {
       const { data, error } = await member.client.from('meetings').select('meeting_id');
       expect(error).toBeNull();
       const ids = (data ?? []).map((r) => r.meeting_id as string);
@@ -109,8 +109,11 @@ if (!stackReachable && !FORCE) {
       expect((data ?? []).map((r) => r.card_id)).toContain('card-shared');
     });
 
-    it('R5: a non-participant cannot read another meeting\'s cards/syntheses/gaps/events', async () => {
-      const cards = await member.client.from('cards').select('card_id').eq('meeting_id', meetingOfManager);
+    it("R5: a non-participant cannot read another meeting's cards/syntheses/gaps/events", async () => {
+      const cards = await member.client
+        .from('cards')
+        .select('card_id')
+        .eq('meeting_id', meetingOfManager);
       expect(cards.error).toBeNull();
       expect(cards.data ?? []).toEqual([]);
 
@@ -122,8 +125,32 @@ if (!stackReachable && !FORCE) {
       expect(events.data ?? []).toEqual([]);
     });
 
-    it('calendar_events SELECT returns only the requesting user\'s events', async () => {
-      const { data, error } = await member.client.from('calendar_events').select('event_id, user_id');
+    it('U8/S8: a participant CANNOT directly UPDATE a card via the client (no client UPDATE policy)', async () => {
+      // The "participants pin meeting cards" UPDATE policy was dropped — pin/dismiss
+      // route through org-scoped service-role actions only. manager participates in
+      // meetingOfManager, yet a direct client UPDATE must affect zero rows.
+      const res = await manager.client
+        .from('cards')
+        .update({ pinned: true, title: 'hijacked' })
+        .eq('card_id', 'card-mgr')
+        .select('card_id');
+      expect(res.error).toBeNull();
+      expect(res.data ?? []).toEqual([]); // 0 rows updated (RLS denies the write)
+
+      // Confirm the row was untouched.
+      const check = await admin
+        .from('cards')
+        .select('pinned, title')
+        .eq('card_id', 'card-mgr')
+        .single();
+      expect(check.data?.pinned).not.toBe(true);
+      expect(check.data?.title).not.toBe('hijacked');
+    });
+
+    it("calendar_events SELECT returns only the requesting user's events", async () => {
+      const { data, error } = await member.client
+        .from('calendar_events')
+        .select('event_id, user_id');
       expect(error).toBeNull();
       expect((data ?? []).every((r) => r.user_id === member.id)).toBe(true);
     });
@@ -171,7 +198,11 @@ async function createOrgWithMember(
   userId: string,
   role: 'manager' | 'member',
 ): Promise<string> {
-  const { data: org, error } = await admin.from('orgs').insert({ name: orgName }).select('id').single();
+  const { data: org, error } = await admin
+    .from('orgs')
+    .insert({ name: orgName })
+    .select('id')
+    .single();
   if (error !== null || org === null) {
     throw new Error(`Failed to create org ${orgName}: ${error?.message ?? 'no row'}`);
   }
@@ -203,11 +234,16 @@ async function insertMeeting(
     .insert({ org_id: orgId, user_id: launcherId, conference_url: url, status: 'completed' })
     .select('meeting_id')
     .single();
-  if (error !== null || data === null) throw new Error(`Failed to insert meeting: ${error?.message ?? 'no row'}`);
+  if (error !== null || data === null)
+    throw new Error(`Failed to insert meeting: ${error?.message ?? 'no row'}`);
   return data.meeting_id as string;
 }
 
-async function addParticipant(admin: SupabaseClient, meetingId: string, userId: string): Promise<void> {
+async function addParticipant(
+  admin: SupabaseClient,
+  meetingId: string,
+  userId: string,
+): Promise<void> {
   const { error } = await admin
     .from('meeting_participants')
     .insert({ meeting_id: meetingId, user_id: userId });

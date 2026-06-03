@@ -8,8 +8,8 @@ import { createServiceRoleClient } from '../../../../_lib/supabase-server';
  * `pinned_at` to the current time on pin (null on unpin) so future
  * consumers can sort or render "pinned 3m ago".
  *
- * RLS allows org members to UPDATE their org's cards; we additionally
- * verify org membership through requireAuthedUserWithOrg + a service-role
+ * Cards have NO client UPDATE policy (U8) — this is the only write path.
+ * We verify org membership through requireAuthedUserWithOrg + a service-role
  * filter on (card_id, org_id) so a forged client can't pin/unpin a
  * different org's card.
  *
@@ -109,7 +109,8 @@ async function broadcastCardUpdated(
   await new Promise<void>((resolve) => {
     channel.subscribe((status: string) => {
       if (status === 'SUBSCRIBED') resolve();
-      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') resolve();
+      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED')
+        resolve();
     });
     setTimeout(resolve, 3000);
   });
@@ -130,7 +131,8 @@ async function broadcastCardRetracted(
   await new Promise<void>((resolve) => {
     channel.subscribe((status: string) => {
       if (status === 'SUBSCRIBED') resolve();
-      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') resolve();
+      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED')
+        resolve();
     });
     setTimeout(resolve, 3000);
   });
