@@ -1,7 +1,7 @@
 ---
 title: "feat: Isolated local dev environments (per-developer Supabase, tunnel, Recall)"
 type: feat
-status: active
+status: completed
 date: 2026-06-02
 depth: standard
 ---
