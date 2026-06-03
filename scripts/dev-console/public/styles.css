@@ -132,11 +132,12 @@ button:disabled {
   margin: 0;
 }
 
-/* Links panel — first cell of the process grid; clickable URLs for live tools. */
-.links-panel {
-  align-self: start; /* stay compact at the top of its grid row */
-}
+/* Links panel — first cell of the process grid; clickable URLs for live tools.
+   Stretches to fill its grid cell (matches the process card height in its row). */
 .links {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
