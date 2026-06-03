@@ -1,8 +1,9 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { requireAuthedUserWithOrg } from '../../_lib/auth';
+import { requireAuthedUserWithOrg, requireManager } from '../../_lib/auth';
 import { createServiceRoleClient } from '../../_lib/supabase-server';
+import { inngest } from '../../../src/inngest/client';
 
 /**
  * Gap lifecycle + assignment + sharing actions (plan U10).
@@ -158,5 +159,20 @@ export async function shareWithOrgAction(gapId: string): Promise<ActionResult> {
   const { error } = await service.from('knowledge_gaps').update({ shared_with_org: true }).eq('gap_id', gapId);
   if (error !== null) return { ok: false, error: error.message };
   revalidatePath('/gaps');
+  return { ok: true };
+}
+
+/**
+ * Backfill the library from this org's already-ended meetings (MANAGER ONLY).
+ * Fire-and-forget: enqueues the backfill Inngest job, which reconstructs misses
+ * from past retracted syntheses and runs assembly per meeting.
+ */
+export async function requestGapsBackfillAction(): Promise<ActionResult> {
+  const { orgId } = await requireManager();
+  try {
+    await inngest.send({ name: 'risezome/gaps.backfill-requested', data: { orgId } });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'backfill enqueue failed' };
+  }
   return { ok: true };
 }

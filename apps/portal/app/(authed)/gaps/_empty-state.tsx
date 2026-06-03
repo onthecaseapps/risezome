@@ -1,11 +1,13 @@
 import type { ReactElement } from 'react';
+import { BackfillButton } from './_bits';
 
 /**
  * Knowledge-gaps empty state (plan U8 / mockup #11). Shown when the org has
  * zero visible gaps. A question-mark-in-magnifier motif, the "nothing to set
- * up" reassurance copy, and two CTAs.
+ * up" reassurance copy, and two CTAs. Managers also get a one-off backfill from
+ * past meetings.
  */
-export function GapsEmptyState(): ReactElement {
+export function GapsEmptyState({ isManager = false }: { isManager?: boolean }): ReactElement {
   return (
     <div className="mx-auto mt-6 flex max-w-md flex-col items-center rounded-2xl border border-dashed border-border bg-card/40 px-6 py-16 text-center">
       <span className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-accent-soft text-accent">
@@ -35,6 +37,12 @@ export function GapsEmptyState(): ReactElement {
           How gaps work
         </a>
       </div>
+      {isManager ? (
+        <div className="mt-5 border-t border-border/60 pt-5">
+          <p className="mb-2 text-xs text-muted">Already ran meetings before this shipped?</p>
+          <BackfillButton />
+        </div>
+      ) : null}
     </div>
   );
 }

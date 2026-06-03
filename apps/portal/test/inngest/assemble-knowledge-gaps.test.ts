@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { VoyageEmbedder } from '@risezome/engine/embed';
 import {
   assembleKnowledgeGaps,
+  backfillMissesForMeeting,
   buildGroups,
   resolveAskers,
   toVectorLiteral,
@@ -269,6 +270,85 @@ describe('assembleKnowledgeGaps — orchestration', () => {
     const placed = calls.gapSectionUpdates.find((u) => u.gapId === 'g-new');
     expect(placed).toBeDefined();
     expect((placed!.payload as { section_id: string }).section_id).toBe('sec-auth');
+  });
+});
+
+// ── Backfill from past syntheses ─────────────────────────────────────────────
+
+function makeBackfillMock(cfg: {
+  syntheses: { trigger_utterance_id: string | null; retracted_reason: string }[];
+  events: { payload: Record<string, unknown> | null }[];
+  existingMisses?: { utterance_id: string | null }[];
+}) {
+  const inserted: unknown[] = [];
+  const dataByTable: Record<string, unknown[]> = {
+    syntheses: cfg.syntheses,
+    meeting_events: cfg.events,
+    meeting_gap_misses: cfg.existingMisses ?? [],
+  };
+  function builder(table: string) {
+    let op: 'select' | 'insert' = 'select';
+    const b: Record<string, unknown> = {};
+    b.select = () => b;
+    b.insert = (rows: unknown) => {
+      op = 'insert';
+      inserted.push(...(rows as unknown[]));
+      return b;
+    };
+    b.eq = () => b;
+    b.is = () => b;
+    b.in = () => b;
+    b.then = (resolve: (v: unknown) => unknown) =>
+      op === 'select'
+        ? resolve({ data: dataByTable[table] ?? [], error: null })
+        : resolve({ error: null });
+    return b;
+  }
+  const client = { from: (t: string) => builder(t) } as unknown as SupabaseClient;
+  return { client, inserted };
+}
+
+describe('backfillMissesForMeeting', () => {
+  it('reconstructs misses from retracted refusal/ungrounded syntheses', async () => {
+    const { client, inserted } = makeBackfillMock({
+      syntheses: [
+        { trigger_utterance_id: 'u1', retracted_reason: 'refusal' },
+        { trigger_utterance_id: 'u2', retracted_reason: 'ungrounded' },
+      ],
+      events: [
+        { payload: { utteranceId: 'u1', text: 'what is our refund window?' } },
+        { payload: { utteranceId: 'u2', text: 'do we support SSO?' } },
+      ],
+    });
+    const n = await backfillMissesForMeeting(client, 'm1', 'o1');
+    expect(n).toBe(2);
+    expect(inserted).toHaveLength(2);
+    expect(inserted.map((r) => (r as { reason: string }).reason).sort()).toEqual(['refusal', 'ungrounded']);
+    expect((inserted[0] as { verbatim_question: string }).verbatim_question).toBe('what is our refund window?');
+  });
+
+  it('skips utterances that already have a miss row (idempotent re-run)', async () => {
+    const { client, inserted } = makeBackfillMock({
+      syntheses: [{ trigger_utterance_id: 'u1', retracted_reason: 'refusal' }],
+      events: [{ payload: { utteranceId: 'u1', text: 'q' } }],
+      existingMisses: [{ utterance_id: 'u1' }],
+    });
+    expect(await backfillMissesForMeeting(client, 'm1', 'o1')).toBe(0);
+    expect(inserted).toHaveLength(0);
+  });
+
+  it('skips a retracted synthesis whose utterance text cannot be recovered', async () => {
+    const { client, inserted } = makeBackfillMock({
+      syntheses: [{ trigger_utterance_id: 'u-missing', retracted_reason: 'refusal' }],
+      events: [],
+    });
+    expect(await backfillMissesForMeeting(client, 'm1', 'o1')).toBe(0);
+    expect(inserted).toHaveLength(0);
+  });
+
+  it('returns 0 when there are no retracted syntheses', async () => {
+    const { client } = makeBackfillMock({ syntheses: [], events: [] });
+    expect(await backfillMissesForMeeting(client, 'm1', 'o1')).toBe(0);
   });
 });
 

@@ -95,6 +95,13 @@ export interface KnowledgeGapsRequestedEvent {
   };
 }
 
+export interface KnowledgeGapsBackfillRequestedEvent {
+  name: 'risezome/gaps.backfill-requested';
+  data: {
+    orgId: string;
+  };
+}
+
 /**
  * The Inngest client is a singleton per process. Production uses the
  * INNGEST_EVENT_KEY/INNGEST_SIGNING_KEY env vars set by the Vercel-Inngest

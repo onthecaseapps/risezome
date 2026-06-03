@@ -130,6 +130,88 @@ export interface AssembleResult {
   readonly resurfaced: number;
 }
 
+/**
+ * Backfill (plan U6 follow-up): reconstruct `meeting_gap_misses` for a past
+ * meeting from the persisted `syntheses` table. A retracted synthesis with
+ * reason 'refusal' or 'ungrounded' IS a recorded miss; the verbatim question is
+ * recovered from the transcript via trigger_utterance_id. (The 'no_hits' branch
+ * never created a synthesis row, so those misses are not recoverable without
+ * replaying retrieval — out of scope for this cheap backfill.)
+ *
+ * Idempotent: skips utterances that already have a miss row, so re-running the
+ * backfill (or backfilling a meeting that already captured live misses) never
+ * duplicates. Returns the number of new miss rows inserted.
+ */
+export async function backfillMissesForMeeting(
+  service: SupabaseClient,
+  meetingId: string,
+  orgId: string,
+): Promise<number> {
+  const { data: retractRows, error: synErr } = await service
+    .from('syntheses')
+    .select('trigger_utterance_id, retracted_reason')
+    .eq('meeting_id', meetingId)
+    .eq('org_id', orgId)
+    .eq('status', 'retracted')
+    .in('retracted_reason', ['refusal', 'ungrounded']);
+  if (synErr !== null) throw new Error(`backfill load syntheses: ${synErr.message}`);
+  const retracts = (retractRows ?? []).filter(
+    (r): r is { trigger_utterance_id: string; retracted_reason: string } =>
+      typeof r.trigger_utterance_id === 'string' && r.trigger_utterance_id.length > 0,
+  );
+  if (retracts.length === 0) return 0;
+
+  // Recover the verbatim question for each retracted utterance from the transcript.
+  const { data: events } = await service
+    .from('meeting_events')
+    .select('payload')
+    .eq('meeting_id', meetingId)
+    .eq('org_id', orgId)
+    .eq('type', 'transcript.data');
+  const textByUtt = new Map<string, string>();
+  for (const e of (events ?? []) as { payload: Record<string, unknown> | null }[]) {
+    const p = e.payload ?? {};
+    const uid = p['utteranceId'];
+    const text = p['text'];
+    if (typeof uid === 'string' && typeof text === 'string' && text.length > 0) {
+      textByUtt.set(uid, text);
+    }
+  }
+
+  // Skip utterances that already have a miss row (live capture or a prior backfill).
+  const { data: existing } = await service
+    .from('meeting_gap_misses')
+    .select('utterance_id')
+    .eq('meeting_id', meetingId);
+  const seen = new Set((existing ?? []).map((r) => r.utterance_id as string | null));
+
+  const toInsert: Array<{
+    meeting_id: string;
+    org_id: string;
+    utterance_id: string;
+    verbatim_question: string;
+    reason: string;
+  }> = [];
+  for (const r of retracts) {
+    if (seen.has(r.trigger_utterance_id)) continue;
+    const text = textByUtt.get(r.trigger_utterance_id);
+    if (text === undefined) continue; // can't recover the question — skip
+    toInsert.push({
+      meeting_id: meetingId,
+      org_id: orgId,
+      utterance_id: r.trigger_utterance_id,
+      verbatim_question: text,
+      reason: r.retracted_reason,
+    });
+    seen.add(r.trigger_utterance_id);
+  }
+  if (toInsert.length === 0) return 0;
+
+  const { error: insErr } = await service.from('meeting_gap_misses').insert(toInsert);
+  if (insErr !== null) throw new Error(`backfill insert misses: ${insErr.message}`);
+  return toInsert.length;
+}
+
 export async function assembleKnowledgeGaps(args: {
   service: SupabaseClient;
   embedder: VoyageEmbedder;

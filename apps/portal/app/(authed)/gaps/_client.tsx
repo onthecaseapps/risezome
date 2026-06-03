@@ -223,7 +223,7 @@ export function GapsClient({
 
       {/* list */}
       {gaps.length === 0 ? (
-        <GapsEmptyState />
+        <GapsEmptyState isManager={isManager} />
       ) : filtered.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border bg-card/40 px-6 py-12 text-center text-sm text-muted">
           No gaps match these filters.

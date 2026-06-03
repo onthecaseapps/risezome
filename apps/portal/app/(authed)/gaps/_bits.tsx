@@ -1,7 +1,43 @@
 'use client';
 
-import type { ReactElement } from 'react';
+import { useState, useTransition, type ReactElement } from 'react';
 import type { GapStatus } from './_types';
+import { requestGapsBackfillAction } from './gap-actions';
+
+/** Manager-only one-off: rebuild the library from past meetings' retracted syntheses. */
+export function BackfillButton(): ReactElement {
+  const [pending, start] = useTransition();
+  const [state, setState] = useState<'idle' | 'done' | 'error'>('idle');
+
+  if (state === 'done') {
+    return (
+      <p className="text-sm text-accent">
+        Backfill started — gaps from past meetings will appear here in a few minutes.
+      </p>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => {
+          start(async () => {
+            const res = await requestGapsBackfillAction();
+            setState(res.ok ? 'done' : 'error');
+          });
+        }}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium text-fg transition-colors hover:border-accent/40 disabled:opacity-60"
+      >
+        {pending ? 'Starting backfill…' : 'Backfill from past meetings'}
+      </button>
+      {state === 'error' ? (
+        <p className="mt-2 text-xs text-error">Couldn&apos;t start the backfill — try again.</p>
+      ) : null}
+    </div>
+  );
+}
 
 // ── demand tiering (presentational only) ────────────────────────────────────
 
