@@ -46,7 +46,8 @@ export const indexConfluenceFn = inngest.createFunction(
       await service
         .from('sources')
         .update({ status: 'indexing', status_message: null, indexed_files: 0, total_files: null })
-        .eq('id', sourceId);
+        .eq('id', sourceId)
+        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
       return { spaceId: source.external_id as string };
     });
 

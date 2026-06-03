@@ -99,7 +99,8 @@ export const indexRepoFn = inngest.createFunction(
           total_files: null,
           chunk_count: 0,
         })
-        .eq('id', sourceId);
+        .eq('id', sourceId)
+        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
       return data as {
         id: string;
         org_id: string;

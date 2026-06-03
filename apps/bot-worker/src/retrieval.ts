@@ -361,7 +361,8 @@ export async function maybeRetrieveAndEmit(args: {
   const { data: chunkRows } = await args.db
     .from('doc_chunks')
     .select('chunk_id, doc_id, domain, text, position, is_summary')
-    .in('chunk_id', chunkIds);
+    .in('chunk_id', chunkIds)
+    .eq('org_id', args.orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   const chunkById = new Map(
     (chunkRows ?? []).map((c) => [
       c.chunk_id as string,
@@ -378,7 +379,8 @@ export async function maybeRetrieveAndEmit(args: {
   const { data: docRows } = await args.db
     .from('docs')
     .select('id, source, type, title, url')
-    .in('id', docIds);
+    .in('id', docIds)
+    .eq('org_id', args.orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   const docById = new Map(
     (docRows ?? []).map((d) => [
       d.id as string,
@@ -760,6 +762,7 @@ async function retractIfNotPinned(
     .from('cards')
     .select('pinned')
     .eq('card_id', cardId)
+    .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     .maybeSingle();
   if (priorRow === null) return;
   if (priorRow.pinned === true) return; // pinned cards are sacred
@@ -771,6 +774,7 @@ async function retractIfNotPinned(
       retracted_reason: 'verifier-downgraded',
     })
     .eq('card_id', cardId)
+    .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     .is('retracted_at', null);
   if (updateErr !== null) {
     logger.warn({ err: updateErr, cardId }, 'retraction.update.failed');
@@ -960,7 +964,8 @@ async function runSynthesisAndBroadcast(args: {
               cache_creation_tokens: chunk.usage.cacheCreationTokens,
               latency_ms: latencyMs,
             })
-            .eq('synthesis_id', synthesisId);
+            .eq('synthesis_id', synthesisId)
+            .eq('org_id', args.orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
 
           await persistAndBroadcast(args.db, {
             meetingId: args.meetingId,
@@ -1046,7 +1051,8 @@ async function runSynthesisAndBroadcast(args: {
               cache_creation_tokens: chunk.usage.cacheCreationTokens,
               latency_ms: latencyMs,
             })
-            .eq('synthesis_id', synthesisId);
+            .eq('synthesis_id', synthesisId)
+            .eq('org_id', args.orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
           await persistAndBroadcast(args.db, {
             meetingId: args.meetingId,
             orgId: args.orgId,
@@ -1155,7 +1161,8 @@ async function runSynthesisAndBroadcast(args: {
         error_code: errorCode,
         error_message: errorMessage,
       })
-      .eq('synthesis_id', synthesisId);
+      .eq('synthesis_id', synthesisId)
+      .eq('org_id', args.orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
 
     await persistAndBroadcast(args.db, {
       meetingId: args.meetingId,

@@ -84,7 +84,8 @@ export async function setRepoBranchAction(
   const { error: updErr } = await service
     .from('sources')
     .update({ default_branch: branch, status: 'pending', status_message: null })
-    .eq('id', sourceId);
+    .eq('id', sourceId)
+    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   if (updErr !== null) return { ok: false, error: updErr.message };
 
   await inngest.send({

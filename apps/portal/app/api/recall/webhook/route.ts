@@ -103,6 +103,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // Look up the meeting via recall_bot_id. RLS would block under the
   // user-scoped client; service-role is the right choice for webhooks.
+  // service-role-cross-org: Recall webhook carries no org; recall_bot_id (Recall's
+  // globally-unique id) is the trusted key that resolves org_id.
   const { data: meeting, error: lookupErr } = await service
     .from('meetings')
     .select('meeting_id, org_id, status')

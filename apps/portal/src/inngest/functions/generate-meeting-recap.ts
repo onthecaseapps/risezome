@@ -24,6 +24,8 @@ export const generateMeetingRecapFn = inngest.createFunction(
       const meetingId = original.event?.data?.meetingId;
       if (typeof meetingId !== 'string') return;
       const service = createServiceRoleClient();
+      // service-role-cross-org: onFailure only receives the failed event's meetingId
+      // (no org payload); flips a terminal status on a meetingId we ourselves created.
       await service.from('meetings').update({ recap_status: 'failed' }).eq('meeting_id', meetingId);
     },
     triggers: [{ event: 'risezome/meeting.recap-requested' }],
@@ -51,6 +53,7 @@ export const generateMeetingRecapFn = inngest.createFunction(
           .from('calendar_events')
           .select('title')
           .eq('id', meeting.calendar_event_id as string)
+          .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
           .maybeSingle();
         if (ev !== null && typeof ev.title === 'string' && ev.title.length > 0) title = ev.title;
       }
@@ -69,7 +72,8 @@ export const generateMeetingRecapFn = inngest.createFunction(
       await service
         .from('meetings')
         .update({ recap_status: 'generating' })
-        .eq('meeting_id', meetingId);
+        .eq('meeting_id', meetingId)
+        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
       return { title, transcriptText: buildTranscriptText(lines), hasTranscript: lines.length > 0 };
     });
 
@@ -88,7 +92,8 @@ export const generateMeetingRecapFn = inngest.createFunction(
             recap_status: 'done',
             recap_generated_at: new Date().toISOString(),
           })
-          .eq('meeting_id', meetingId);
+          .eq('meeting_id', meetingId)
+          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
       });
       return { meetingId, recap: 'empty' as const };
     }
@@ -108,7 +113,8 @@ export const generateMeetingRecapFn = inngest.createFunction(
           recap_status: 'done',
           recap_generated_at: new Date().toISOString(),
         })
-        .eq('meeting_id', meetingId);
+        .eq('meeting_id', meetingId)
+        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     });
 
     return { meetingId, recap: 'done' as const };

@@ -188,30 +188,41 @@ export async function mergeGapsAction(targetGapId: string, sourceGapId: string):
   const { data: aOcc } = await service
     .from('gap_occurrences')
     .select('meeting_id, utterance_id')
-    .eq('gap_id', targetGapId);
+    .eq('gap_id', targetGapId)
+    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   const aKeys = new Set((aOcc ?? []).map((o) => `${o.meeting_id as string}:${(o.utterance_id as string | null) ?? ''}`));
 
   const { data: bOcc } = await service
     .from('gap_occurrences')
     .select('occurrence_id, meeting_id, utterance_id')
-    .eq('gap_id', sourceGapId);
+    .eq('gap_id', sourceGapId)
+    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   const collidingIds: number[] = [];
   for (const o of bOcc ?? []) {
     const key = `${o.meeting_id as string}:${(o.utterance_id as string | null) ?? ''}`;
     if (aKeys.has(key)) collidingIds.push(o.occurrence_id as number);
   }
   if (collidingIds.length > 0) {
-    const { error: dropErr } = await service.from('gap_occurrences').delete().in('occurrence_id', collidingIds);
+    const { error: dropErr } = await service
+      .from('gap_occurrences')
+      .delete()
+      .in('occurrence_id', collidingIds)
+      .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     if (dropErr !== null) return { ok: false, error: dropErr.message };
   }
   const { error: repointErr } = await service
     .from('gap_occurrences')
     .update({ gap_id: targetGapId })
-    .eq('gap_id', sourceGapId);
+    .eq('gap_id', sourceGapId)
+    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   if (repointErr !== null) return { ok: false, error: repointErr.message };
 
   // Union viewers from B into A (on conflict do nothing).
-  const { data: bViewers } = await service.from('gap_viewers').select('user_id, org_id').eq('gap_id', sourceGapId);
+  const { data: bViewers } = await service
+    .from('gap_viewers')
+    .select('user_id, org_id')
+    .eq('gap_id', sourceGapId)
+    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   if ((bViewers ?? []).length > 0) {
     const rows = (bViewers ?? []).map((v) => ({
       gap_id: targetGapId,
@@ -229,11 +240,13 @@ export async function mergeGapsAction(targetGapId: string, sourceGapId: string):
   const { count: freq } = await service
     .from('gap_occurrences')
     .select('occurrence_id', { count: 'exact', head: true })
-    .eq('gap_id', targetGapId);
+    .eq('gap_id', targetGapId)
+    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   const { data: span } = await service
     .from('gap_occurrences')
     .select('asked_at')
     .eq('gap_id', targetGapId)
+    .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     .order('asked_at', { ascending: true });
   const askedAts = (span ?? []).map((o) => o.asked_at as string);
   const update: Record<string, unknown> = { frequency: freq ?? 0 };
@@ -244,7 +257,8 @@ export async function mergeGapsAction(targetGapId: string, sourceGapId: string):
   const { error: freqErr } = await service
     .from('knowledge_gaps')
     .update(update)
-    .eq('gap_id', targetGapId);
+    .eq('gap_id', targetGapId)
+    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   if (freqErr !== null) return { ok: false, error: freqErr.message };
 
   // Delete B (its remaining occurrences were re-pointed; viewers cascade).

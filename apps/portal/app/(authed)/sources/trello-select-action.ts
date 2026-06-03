@@ -77,7 +77,8 @@ export async function selectTrelloBoardsAction(
           status: 'pending',
           status_message: null,
         })
-        .eq('id', existing.id as string);
+        .eq('id', existing.id as string)
+        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
       if (updateErr !== null) {
         errors.push(updateErr.message);
         continue;

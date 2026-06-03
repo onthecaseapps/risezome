@@ -49,6 +49,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   // Lookup + delete the pending row in two steps. We delete immediately so
   // the state can't be replayed, even if subsequent steps fail.
+  // service-role-cross-org: OAuth callback has no org in scope yet; the unguessable
+  // single-use state_token IS the cross-org-safe key that resolves org_id.
   const { data: pending, error: pendingErr } = await service
     .from('pending_installations')
     .select('org_id, user_id, expires_at')
@@ -64,11 +66,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(new URL('/sources?error=install_state_unknown', url.origin));
   }
   if (new Date(pending.expires_at as string) < new Date()) {
+    // service-role-cross-org: delete keyed by the same unguessable state_token.
     await service.from('pending_installations').delete().eq('state_token', state);
     return NextResponse.redirect(new URL('/sources?error=install_state_expired', url.origin));
   }
 
   const orgId = pending.org_id as string;
+  // service-role-cross-org: delete keyed by the same unguessable state_token.
   await service.from('pending_installations').delete().eq('state_token', state);
 
   // Fetch installation metadata from GitHub. Authenticates as the installation

@@ -64,7 +64,8 @@ export const indexTrelloFn = inngest.createFunction(
       await service
         .from('sources')
         .update({ status: 'indexing', status_message: null, indexed_files: 0, total_files: null })
-        .eq('id', sourceId);
+        .eq('id', sourceId)
+        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
       // U4: do NOT return the token from this memoized step — Inngest persists
       // step return values as run state, which would put the secret at rest
       // outside our DB/redaction boundary. Return only the connection id; the
@@ -83,6 +84,7 @@ export const indexTrelloFn = inngest.createFunction(
         .from('trello_connections')
         .select('token_enc')
         .eq('id', ctx.connectionId)
+        .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
         .single();
       if (connErr !== null || conn === null || conn.token_enc === null) {
         throw new Error(`trello connection missing for source ${sourceId}`);

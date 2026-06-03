@@ -61,7 +61,8 @@ export async function resolveGapAction(gapId: string): Promise<ActionResult> {
   const { error } = await service
     .from('knowledge_gaps')
     .update({ status: 'resolved', resolved_by: ctx.userId, resolved_at: now })
-    .eq('gap_id', gapId);
+    .eq('gap_id', gapId)
+    .eq('org_id', ctx.orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   if (error !== null) return { ok: false, error: error.message };
   revalidatePath('/gaps');
   return { ok: true };
@@ -77,7 +78,8 @@ export async function dismissGapAction(gapId: string): Promise<ActionResult> {
   const { error } = await service
     .from('knowledge_gaps')
     .update({ status: 'dismissed', dismissed_by: ctx.userId, dismissed_at: now })
-    .eq('gap_id', gapId);
+    .eq('gap_id', gapId)
+    .eq('org_id', ctx.orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   if (error !== null) return { ok: false, error: error.message };
   revalidatePath('/gaps');
   return { ok: true };
@@ -122,7 +124,11 @@ export async function assignGapAction(gapId: string, assigneeUserId: string): Pr
     update['dismissed_at'] = null;
   }
 
-  const { error: updErr } = await service.from('knowledge_gaps').update(update).eq('gap_id', gapId);
+  const { error: updErr } = await service
+    .from('knowledge_gaps')
+    .update(update)
+    .eq('gap_id', gapId)
+    .eq('org_id', ctx.orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   if (updErr !== null) return { ok: false, error: updErr.message };
 
   // KTD1: the assignee gains visibility even if they weren't a participant.
@@ -156,7 +162,11 @@ export async function shareWithOrgAction(gapId: string): Promise<ActionResult> {
   const { ctx } = loaded;
   if (!ctx.isManager) return { ok: false, error: 'forbidden' };
   const service = createServiceRoleClient();
-  const { error } = await service.from('knowledge_gaps').update({ shared_with_org: true }).eq('gap_id', gapId);
+  const { error } = await service
+    .from('knowledge_gaps')
+    .update({ shared_with_org: true })
+    .eq('gap_id', gapId)
+    .eq('org_id', ctx.orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   if (error !== null) return { ok: false, error: error.message };
   revalidatePath('/gaps');
   return { ok: true };

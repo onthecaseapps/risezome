@@ -46,6 +46,7 @@ export const backfillKnowledgeGapsFn = inngest.createFunction(
           .from('meeting_gap_misses')
           .select('miss_id', { count: 'exact', head: true })
           .eq('meeting_id', meetingId)
+          .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
           .is('processed_at', null);
         if ((count ?? 0) > 0) ready.push(meetingId);
       }

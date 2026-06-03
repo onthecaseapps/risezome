@@ -24,6 +24,8 @@ export default async function InvitePage({
   const { error: errorCode } = await searchParams;
 
   const service = createServiceRoleClient();
+  // service-role-cross-org: invite preview for an anonymous/not-yet-member visitor;
+  // the unguessable invite token is the cross-org-safe key (org is not yet known).
   const { data: invite } = await service
     .from('org_invites')
     .select('token, role, expires_at, org:orgs(name)')

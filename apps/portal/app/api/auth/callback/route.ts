@@ -117,6 +117,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         // for the 5-min cron. Best-effort: we look up the user's first
         // org membership; if they're brand-new (still going to onboarding),
         // we skip and let the cron pick them up after they pick an org.
+        // service-role-cross-org: resolving the user's org-of-record from their
+        // own user_id; org_id is the output of this lookup, not an input filter.
         const { data: membership } = await service
           .from('org_members')
           .select('org_id')

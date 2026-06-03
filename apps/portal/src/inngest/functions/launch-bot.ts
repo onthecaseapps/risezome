@@ -67,6 +67,8 @@ export const launchBotFn = inngest.createFunction(
     // ── Step 2: re-fetch + validate ──────────────────────────────────
     const check = await step.run('reload-event', async () => {
       const service = createServiceRoleClient();
+      // service-role-cross-org: launch job's only input is the calendarEventId from
+      // the trusted event payload; this lookup RESOLVES org_id (it is the output).
       const { data, error } = await service
         .from('calendar_events')
         .select('id, user_id, org_id, bot_optin, start_at, conference_url, title, platform')
@@ -272,7 +274,8 @@ export const launchBotFn = inngest.createFunction(
             status: 'awaiting_recall',
             recall_bot_id: launchResult.recallBotId,
           })
-          .eq('meeting_id', meetingId);
+          .eq('meeting_id', meetingId)
+          .eq('org_id', eventRow.org_id); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
       } else {
         await service
           .from('meetings')
@@ -281,7 +284,8 @@ export const launchBotFn = inngest.createFunction(
             error_code: launchResult.errorCode,
             error_message: launchResult.errorMessage,
           })
-          .eq('meeting_id', meetingId);
+          .eq('meeting_id', meetingId)
+          .eq('org_id', eventRow.org_id); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
       }
     });
 

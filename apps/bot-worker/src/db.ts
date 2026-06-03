@@ -7,9 +7,12 @@ import { encryptToken } from './token-crypto.js';
  * + cards + syntheses on behalf of meetings it owns; RLS would block
  * the writes via the publishable key, so we use the secret key. Every
  * call must explicitly filter by org_id (defense-in-depth) — the
- * cross-org grep check that lands later (per the plan's
- * Cross-tenant query enforcement decision) will catch any missing
- * scoping.
+ * cross-org enforcement guard now exists at
+ * scripts/lint/check-service-role-org-scope.mjs (run via
+ * `pnpm lint:org-scope`) and fails CI on any service-role `.from(<org-scoped
+ * table>)` chain missing an org_id predicate. This file is registered as a
+ * service-role module in that guard, so every org-scoped `.from` chain here is
+ * checked regardless of how the client is obtained.
  */
 export function createServiceClient(): SupabaseClient {
   const url = requireEnv('SUPABASE_URL');

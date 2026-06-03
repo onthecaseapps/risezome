@@ -179,6 +179,8 @@ export const syncAllCalendarsCron = inngest.createFunction(
       const out: Array<{ userId: string; orgId: string }> = [];
       for (const t of tokens ?? []) {
         const userId = t.user_id as string;
+        // service-role-cross-org: cron sweep across all users resolving each user's
+        // org-of-record from their own user_id; org_id is the output, not a filter.
         const { data: membership } = await service
           .from('org_members')
           .select('org_id, joined_at')

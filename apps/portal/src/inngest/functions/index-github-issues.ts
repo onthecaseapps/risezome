@@ -104,6 +104,7 @@ export const indexGithubIssuesFn = inngest.createFunction(
               .from('docs')
               .select('updated_at')
               .eq('source_id', sourceId)
+              .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
               .in('type', OWNED_TYPES)
               .order('updated_at', { ascending: false })
               .limit(1)
@@ -339,7 +340,8 @@ async function indexBatch(args: {
     const { error: hashErr } = await service
       .from('docs')
       .update({ content_hash: contentHash(chunks.map((c) => c.text)) })
-      .eq('id', doc.docId);
+      .eq('id', doc.docId)
+      .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     if (hashErr !== null) {
       throw new Error(`content_hash update failed for ${doc.docId}: ${hashErr.message}`);
     }

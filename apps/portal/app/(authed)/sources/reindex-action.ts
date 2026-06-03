@@ -48,7 +48,8 @@ export async function reindexSourceAction(
   await service
     .from('sources')
     .update({ status: 'pending', status_message: null })
-    .eq('id', sourceId);
+    .eq('id', sourceId)
+    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
 
   // Dispatch by kind: each connector has its own indexer + event, so a source
   // only triggers its own indexer.

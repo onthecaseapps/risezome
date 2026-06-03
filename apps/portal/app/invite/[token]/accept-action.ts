@@ -28,6 +28,8 @@ export async function acceptInviteAction(formData: FormData): Promise<void> {
   const user = await requireAuthedUser();
   const service = createServiceRoleClient();
 
+  // service-role-cross-org: invite acceptance has no org in scope yet; the
+  // unguessable single-use invite token IS the cross-org-safe key resolving org_id.
   const { data: invite, error: readErr } = await service
     .from('org_invites')
     .select('token, org_id, role, can_invite_bot, expires_at')
@@ -61,6 +63,7 @@ export async function acceptInviteAction(formData: FormData): Promise<void> {
   }
 
   // Single-use: consume the token regardless of new-vs-existing membership.
+  // service-role-cross-org: keyed by the same unguessable single-use invite token.
   await service.from('org_invites').delete().eq('token', token);
 
   const cookieStore = await cookies();

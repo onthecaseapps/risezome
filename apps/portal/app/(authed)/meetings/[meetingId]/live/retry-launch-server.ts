@@ -47,6 +47,7 @@ export async function retryFailedLaunchAction(
     .from('calendar_events')
     .select('id, start_at, bot_optin')
     .eq('id', meeting.calendar_event_id)
+    .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     .maybeSingle();
   if (calErr !== null) return { ok: false, error: calErr.message };
   if (calEvent === null) return { ok: false, error: 'calendar_event_deleted' };
@@ -59,7 +60,8 @@ export async function retryFailedLaunchAction(
     const { error: updateErr } = await service
       .from('calendar_events')
       .update({ bot_optin: true })
-      .eq('id', meeting.calendar_event_id);
+      .eq('id', meeting.calendar_event_id)
+      .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     if (updateErr !== null) return { ok: false, error: updateErr.message };
   }
 

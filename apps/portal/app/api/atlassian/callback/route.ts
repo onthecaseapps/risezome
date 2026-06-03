@@ -32,6 +32,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const service = createServiceRoleClient();
 
+  // service-role-cross-org: OAuth callback has no org in scope yet; the unguessable
+  // single-use state_token IS the cross-org-safe key that resolves org_id.
   const { data: pending, error: pendingErr } = await service
     .from('pending_installations')
     .select('org_id, expires_at')
@@ -45,6 +47,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (pending === null) {
     return NextResponse.redirect(new URL('/sources?error=atlassian_state_unknown', url.origin));
   }
+  // service-role-cross-org: delete keyed by the same unguessable state_token.
   await service.from('pending_installations').delete().eq('state_token', state);
   if (new Date(pending.expires_at as string) < new Date()) {
     return NextResponse.redirect(new URL('/sources?error=atlassian_state_expired', url.origin));

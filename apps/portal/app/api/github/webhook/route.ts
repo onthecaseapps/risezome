@@ -121,6 +121,9 @@ async function handleInstallationEvent(
     // (row exists with org_id already set), ignoreDuplicates leaves it
     // alone. If we beat the callback, we create the row with org_id NULL
     // and the callback sets it via its own upsert.
+    // service-role-cross-org: GitHub webhook carries no org; github_installations
+    // is keyed by GitHub's globally-unique installation_id (the callback later
+    // binds org_id). org is genuinely unknown here.
     const { error: directErr } = await service.from('github_installations').upsert(
       {
         installation_id: installationId,
@@ -163,7 +166,10 @@ async function handleInstallationEvent(
 
   if (action === 'deleted') {
     const now = new Date().toISOString();
+    // service-role-cross-org: webhook keyed by GitHub's installation_id; org unknown.
     await service.from('github_installations').update({ removed_at: now }).eq('installation_id', installationId);
+    // service-role-cross-org: a GitHub installation_id maps to exactly one org's
+    // sources; the webhook has no org in scope to filter on.
     await service
       .from('sources')
       .update({ status: 'removed', removed_at: now })
@@ -173,6 +179,7 @@ async function handleInstallationEvent(
   }
 
   if (action === 'suspend') {
+    // service-role-cross-org: webhook keyed by GitHub's installation_id; org unknown.
     await service
       .from('github_installations')
       .update({ suspended_at: new Date().toISOString() })
@@ -181,6 +188,7 @@ async function handleInstallationEvent(
   }
 
   if (action === 'unsuspend') {
+    // service-role-cross-org: webhook keyed by GitHub's installation_id; org unknown.
     await service
       .from('github_installations')
       .update({ suspended_at: null })
@@ -220,6 +228,8 @@ async function handleInstallationRepositoriesEvent(
   if (removed.length > 0) {
     const now = new Date().toISOString();
     const fullNames = removed.map((r) => r.full_name);
+    // service-role-cross-org: a GitHub installation_id maps to exactly one org's
+    // sources; the webhook has no org in scope to filter on.
     await service
       .from('sources')
       .update({ status: 'removed', removed_at: now })
@@ -232,6 +242,8 @@ async function getOrgIdForInstallation(
   service: ReturnType<typeof createServiceRoleClient>,
   installationId: number,
 ): Promise<string | null> {
+  // service-role-cross-org: this lookup RESOLVES org_id from GitHub's
+  // installation_id; org is the output, not an input filter.
   const { data, error } = await service
     .from('github_installations')
     .select('org_id')
