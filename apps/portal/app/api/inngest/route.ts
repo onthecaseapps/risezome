@@ -7,6 +7,7 @@ import { indexConfluenceFn } from '../../../src/inngest/functions/index-confluen
 import { syncCalendarFn, syncAllCalendarsCron } from '../../../src/inngest/functions/sync-calendar';
 import { launchBotFn } from '../../../src/inngest/functions/launch-bot';
 import { reapStaleMeetingsCron } from '../../../src/inngest/functions/reap-stale-meetings';
+import { purgeRemovedSourcesCron } from '../../../src/inngest/functions/purge-removed-sources';
 import { generateMeetingRecapFn } from '../../../src/inngest/functions/generate-meeting-recap';
 import { assembleKnowledgeGapsFn } from '../../../src/inngest/functions/assemble-knowledge-gaps';
 import { backfillKnowledgeGapsFn } from '../../../src/inngest/functions/backfill-knowledge-gaps';
@@ -33,6 +34,7 @@ export const { GET, POST, PUT } = serve({
     syncAllCalendarsCron,
     launchBotFn,
     reapStaleMeetingsCron,
+    purgeRemovedSourcesCron,
     generateMeetingRecapFn,
     assembleKnowledgeGapsFn,
     backfillKnowledgeGapsFn,
