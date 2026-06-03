@@ -198,6 +198,29 @@ describe('launchRecallBot — request body shape', () => {
     expect(rt.realtime_endpoints[0]?.events).toContain('transcript.data');
   });
 
+  it('includes metadata.developer_id only when developerId is set (local-dev Recall isolation)', async () => {
+    const capture = async (deps: Record<string, unknown>): Promise<Record<string, string>> => {
+      let captured: Record<string, unknown> | null = null;
+      const fakeFetch = makeFetch(async (req) => {
+        captured = (await req.json()) as Record<string, unknown>;
+        return new Response(JSON.stringify({ id: 'bot-1' }), { status: 201 });
+      });
+      await launchRecallBot(baseArgs(), {
+        apiKey: 'k', deepgramKey: 'd', botWorkerBaseUrl: 'wss://b.t', region: 'us-east-1', fetch: fakeFetch, ...deps,
+      });
+      return (captured as unknown as Record<string, unknown>)['metadata'] as Record<string, string>;
+    };
+
+    const withTag = await capture({ developerId: 'nathan' });
+    expect(withTag['developer_id']).toBe('nathan');
+
+    const withoutTag = await capture({});
+    expect(withoutTag['developer_id']).toBeUndefined();
+
+    const emptyTag = await capture({ developerId: '' });
+    expect(emptyTag['developer_id']).toBeUndefined();
+  });
+
   it('hits the right region URL', async () => {
     let capturedUrl: string | null = null;
     const fakeFetch = makeFetch(async (req) => {

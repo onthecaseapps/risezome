@@ -253,6 +253,12 @@ export const launchBotFn = inngest.createFunction(
             process.env['RECALL_MAX_DURATION_SECONDS'],
             300,
           ),
+          // Local-dev isolation: tag bots with the developer so a shared Recall
+          // Environment could demux by owner. Unset in prod / with per-dev
+          // Environments (the primary isolation path).
+          ...(process.env['RECALL_DEVELOPER_ID']
+            ? { developerId: process.env['RECALL_DEVELOPER_ID'] }
+            : {}),
         },
       );
     });

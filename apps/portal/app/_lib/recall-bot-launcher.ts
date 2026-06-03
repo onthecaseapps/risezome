@@ -56,6 +56,13 @@ export interface LaunchBotDeps {
    * proven). Must be > 0; treated as integer seconds.
    */
   maxCallDurationSeconds?: number;
+  /**
+   * Optional developer tag for local-dev Recall isolation. When set, written
+   * into the bot's `metadata.developer_id` so a shared Recall webhook receiver
+   * could demultiplex by owner. Inert when unset (the primary isolation path is
+   * a separate per-developer Recall Environment — see the two-developer runbook).
+   */
+  developerId?: string;
   /** Override for testing. */
   fetch?: typeof fetch;
   /**
@@ -114,6 +121,7 @@ interface RecallBotRequestBody {
     org_id: string;
     meeting_id: string;
     user_id: string;
+    developer_id?: string;
   };
 }
 
@@ -229,6 +237,9 @@ function buildBody(args: LaunchBotArgs, deps: LaunchBotDeps): RecallBotRequestBo
       org_id: args.orgId,
       meeting_id: args.meetingId,
       user_id: args.userId,
+      ...(deps.developerId !== undefined && deps.developerId.length > 0
+        ? { developer_id: deps.developerId }
+        : {}),
     },
   };
 }
