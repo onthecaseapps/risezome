@@ -9,6 +9,8 @@ build/
 .env
 .env.local
 .env.*.local
+.env.dev
+.dev-tag
 
 coverage/
 .nyc_output/
