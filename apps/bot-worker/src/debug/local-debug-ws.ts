@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { type WebSocket } from 'ws';
 import { SidecarRunner } from './sidecar-runner.js';
 import { DeepgramTranscriptionEngine } from './deepgram.js';
+import { logTranscripts } from '../transcript-log.js';
 import { VoyageEmbedder } from '@risezome/engine/embed';
 import {
   AnthropicSynthesizer,
@@ -43,7 +44,12 @@ import {
 } from '@risezome/engine/synthesize';
 import { hybridSearch } from '../corpus-search';
 import { optionalReranker } from '../reranker';
-import { expandWinnersToParents, parentDocEnabled, dedupeByDoc, type WinningChunk } from '../parent-doc';
+import {
+  expandWinnersToParents,
+  parentDocEnabled,
+  dedupeByDoc,
+  type WinningChunk,
+} from '../parent-doc';
 import { optionalQueryExpander } from '../query-expand';
 import { augmentQuery } from '@risezome/engine/query-expand';
 import { shouldExpandOnMiss } from '@risezome/engine/query-route';
@@ -114,10 +120,28 @@ const FINALS_TTL_MS = 60_000;
 const CONTINUATION_WINDOW_MS = 6_000;
 
 const CONTINUATION_LEADERS = new Set([
-  'and', 'but', 'or', 'so',
-  'in', 'on', 'at', 'of', 'to', 'for', 'with', 'from',
-  'where', 'when', 'how', 'why', 'which', 'who',
-  'because', 'since', 'while', 'that',
+  'and',
+  'but',
+  'or',
+  'so',
+  'in',
+  'on',
+  'at',
+  'of',
+  'to',
+  'for',
+  'with',
+  'from',
+  'where',
+  'when',
+  'how',
+  'why',
+  'which',
+  'who',
+  'because',
+  'since',
+  'while',
+  'that',
 ]);
 
 function looksLikeContinuation(
@@ -135,7 +159,6 @@ function looksLikeContinuation(
   }
   return CONTINUATION_LEADERS.has(firstWord.toLowerCase());
 }
-
 
 export async function handleLocalDebugWs(
   socket: WebSocket,
@@ -157,7 +180,10 @@ export async function handleLocalDebugWs(
       args: ['--role=system'],
     });
   } catch (err) {
-    send(socket, { type: 'error', message: `sidecar init failed: ${String((err as Error).message)}` });
+    send(socket, {
+      type: 'error',
+      message: `sidecar init failed: ${String((err as Error).message)}`,
+    });
     socket.close();
     return;
   }
@@ -272,10 +298,12 @@ export async function handleLocalDebugWs(
     // extending the prior one. Effective query = concat. We still pass
     // the full recent context as a backstop in case the heuristic is
     // wrong.
-    const isContinuation = recentFinals.length >= 2 && looksLikeContinuation(
-      recentFinals[recentFinals.length - 2]!,
-      recentFinals[recentFinals.length - 1]!,
-    );
+    const isContinuation =
+      recentFinals.length >= 2 &&
+      looksLikeContinuation(
+        recentFinals[recentFinals.length - 2]!,
+        recentFinals[recentFinals.length - 1]!,
+      );
     const effectiveUtterance = isContinuation
       ? `${recentFinals[recentFinals.length - 2]!.text} ${text}`
       : text;
@@ -316,8 +344,10 @@ export async function handleLocalDebugWs(
 
     args.logger.info(
       {
-        rawUtterance: text,
-        effectiveUtterance,
+        // Transcript bodies redacted by default (U6); verbatim only under LOG_TRANSCRIPTS=1.
+        rawUtteranceLen: text.length,
+        effectiveUtteranceLen: effectiveUtterance.length,
+        ...(logTranscripts() ? { rawUtterance: text, effectiveUtterance } : {}),
         isContinuation,
         recentContextSize: recentContext.length,
         bufferSize: recentFinals.length,
@@ -435,7 +465,16 @@ interface PipelineArgs {
 async function runDebugPipeline(p: PipelineArgs): Promise<void> {
   const traceId = randomUUID();
   const synthesisId = p.synthesisId;
-  const { socket, args, embedder, synthesizer, relevanceClassifier, routerClassifier, skillRegistry, abortSignal } = p;
+  const {
+    socket,
+    args,
+    embedder,
+    synthesizer,
+    relevanceClassifier,
+    routerClassifier,
+    skillRegistry,
+    abortSignal,
+  } = p;
 
   args.logger.info(
     { traceId, synthesisId, utteranceId: p.utteranceId, text: p.utteranceText },
@@ -454,7 +493,12 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       { traceId, utteranceId: p.utteranceId, relevance: heuristic },
       'local-debug.relevance.skip.filler',
     );
-    send(socket, { type: 'retrieval-skip', reason: 'heuristic-filler', traceId, utteranceId: p.utteranceId });
+    send(socket, {
+      type: 'retrieval-skip',
+      reason: 'heuristic-filler',
+      traceId,
+      utteranceId: p.utteranceId,
+    });
     return;
   }
   if (heuristic === 'ambiguous') {
@@ -515,8 +559,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     classifierStartedAt = Date.now();
     const hasContext =
       p.lastSummary !== null &&
-      ((p.lastSummary.current_topic?.length ?? 0) > 0 ||
-        p.lastSummary.open_questions.length > 0);
+      ((p.lastSummary.current_topic?.length ?? 0) > 0 || p.lastSummary.open_questions.length > 0);
     args.logger.info(
       { traceId, utteranceId: p.utteranceId, hadContext: hasContext },
       'local-debug.classifier.start',
@@ -543,9 +586,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
   // carry the topic vocabulary into the embedding. Env-gated default-
   // off; see KEY_TERMS_BOOST_ENABLED comment for rationale.
   const keyTermsBoost =
-    KEY_TERMS_BOOST_ENABLED &&
-    p.lastSummary !== null &&
-    p.lastSummary.key_terms.length > 0
+    KEY_TERMS_BOOST_ENABLED && p.lastSummary !== null && p.lastSummary.key_terms.length > 0
       ? ` ${p.lastSummary.key_terms.join(' ')}`
       : '';
   const embedText = p.utteranceText + keyTermsBoost;
@@ -554,10 +595,7 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
   const embedResult = await embedder.embed({
     items: [{ text: embedText, domain: 'text' }],
   });
-  args.logger.info(
-    { traceId, latencyMs: Date.now() - embedStartMs },
-    'local-debug.embed.done',
-  );
+  args.logger.info({ traceId, latencyMs: Date.now() - embedStartMs }, 'local-debug.embed.done');
   if (abortSignal.aborted) {
     args.logger.info({ traceId }, 'local-debug.pipeline.aborted.post-embed');
     return;
@@ -591,7 +629,9 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       try {
         const augmented = augmentQuery(embedText, await expander(embedText));
         if (augmented !== embedText) {
-          const expandedVec = (await embedder.embed({ items: [{ text: augmented, domain: 'text' }] })).vectors[0]?.vector;
+          const expandedVec = (
+            await embedder.embed({ items: [{ text: augmented, domain: 'text' }] })
+          ).vectors[0]?.vector;
           if (expandedVec !== undefined) {
             hits = await hybridSearch(args.db, {
               orgId: args.orgId,
@@ -682,7 +722,9 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       : hits;
     const winners: WinningChunk[] = sourceHits.flatMap((h) => {
       const c = chunkById.get(h.chunk_id);
-      return c === undefined ? [] : [{ chunkId: h.chunk_id, docId: c.doc_id, position: c.position, text: c.text }];
+      return c === undefined
+        ? []
+        : [{ chunkId: h.chunk_id, docId: c.doc_id, position: c.position, text: c.text }];
     });
     const expandedByChunk = parentDocEnabled()
       ? await expandWinnersToParents(args.db, winners)
@@ -705,7 +747,13 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       // U8: judge relevance from the tight child (`focus`), formulate from the
       // expanded parent (`text`). docId lets citation verification accept a
       // quote verbatim in a sibling chunk of the same doc at another rank.
-      sources.push({ rank: i + 1, title: doc.title, text: expanded, focus: chunk.text, docId: chunk.doc_id });
+      sources.push({
+        rank: i + 1,
+        title: doc.title,
+        text: expanded,
+        focus: chunk.text,
+        docId: chunk.doc_id,
+      });
       send(socket, {
         type: 'card',
         traceId,
@@ -784,7 +832,12 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       if (chunk.type === 'start') {
         sawStart = true;
         args.logger.info(
-          { traceId, model: chunk.model, inputTokens: chunk.usage.inputTokens, cacheRead: chunk.usage.cacheReadTokens },
+          {
+            traceId,
+            model: chunk.model,
+            inputTokens: chunk.usage.inputTokens,
+            cacheRead: chunk.usage.cacheReadTokens,
+          },
           'local-debug.synthesis.upstream-start',
         );
       } else if (chunk.type === 'textDelta') {
@@ -795,7 +848,10 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
       } else if (chunk.type === 'done') {
         sawDone = true;
         const parsed = parseSynthesisOutput(accumulated, synthesisSources.length);
-        const { verified, droppedQuoted, downgradedToBare } = verifyCitations(parsed.citations, synthesisSources);
+        const { verified, droppedQuoted, downgradedToBare } = verifyCitations(
+          parsed.citations,
+          synthesisSources,
+        );
         const richCitations = verified.flatMap((c) => {
           // With a tool source at [1], card N is at rank N+1. Subtract
           // the offset to map a citation rank back to its cardId.
@@ -824,9 +880,14 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
             // Diagnostic: what the model actually cited (rank + quote prefix)
             // and a preview of the answer, so a grounded-in-0 result can be
             // traced to "no citations emitted" vs "verifier dropped them".
-            rawCitations: parsed.citations.map((c) => ({ rank: c.rank, quote: c.quote?.slice(0, 60) })),
+            rawCitations: parsed.citations.map((c) => ({
+              rank: c.rank,
+              quote: c.quote?.slice(0, 60),
+            })),
             answerPreview: parsed.text.slice(0, 200),
-            sourceTitles: synthesisSources.map((s, i) => `[${String(i + 1)}] ${s.title.slice(0, 60)}`),
+            sourceTitles: synthesisSources.map(
+              (s, i) => `[${String(i + 1)}] ${s.title.slice(0, 60)}`,
+            ),
             stopReason: chunk.stopReason,
             usage: chunk.usage,
           },
@@ -1026,7 +1087,10 @@ async function resolveToolSource(p: {
     } else if (err instanceof Error && err.name === 'AbortError') {
       // Aborted — silent.
     } else {
-      p.logger.warn({ traceId: p.traceId, message: (err as Error).message }, 'local-debug.classifier.error');
+      p.logger.warn(
+        { traceId: p.traceId, message: (err as Error).message },
+        'local-debug.classifier.error',
+      );
     }
     return null;
   }

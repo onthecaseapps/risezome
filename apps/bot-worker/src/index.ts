@@ -14,6 +14,7 @@
 
 import Fastify from 'fastify';
 import { fastifyServerOptions } from './server-options.js';
+import { transcriptLogFields } from './transcript-log.js';
 import websocket from '@fastify/websocket';
 import { VoyageEmbedder } from '@risezome/engine/embed';
 import {
@@ -416,7 +417,8 @@ async function handleMessage(
         eventId: result.eventId,
         broadcasted: result.broadcasted,
         speaker: adapted.utterance.speaker,
-        text: adapted.utterance.text.slice(0, 60),
+        // Transcript body redacted by default (U6); verbatim only under LOG_TRANSCRIPTS=1.
+        ...transcriptLogFields(adapted.utterance.text),
       },
       'utterance',
     );
