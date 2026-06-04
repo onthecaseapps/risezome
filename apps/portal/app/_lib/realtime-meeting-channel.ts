@@ -313,27 +313,33 @@ async function reconnectFetch(args: {
   onMaxEventId: (id: number) => void;
   onMeetingStatus: (s: BroadcastedStatus) => void;
 }): Promise<void> {
-  const supabase = getBrowserClient();
-  const { data, error } = await supabase
-    .from('meeting_events')
-    .select('event_id, type, payload')
-    .eq('meeting_id', args.meetingId)
-    .eq('org_id', args.orgId)
-    .gt('event_id', args.afterEventId)
-    .order('event_id', { ascending: true });
-  if (error !== null) {
-     
-    console.warn('[realtime-meeting-channel] reconnect-fetch failed:', error);
+  // Go through the server route (NOT a direct meeting_events read) so transcript
+  // text — encrypted at rest and stripped from the payload — comes back
+  // decrypted. A client-side read can't decrypt, so it could never surface live
+  // transcript; only the server seed could, which is why transcript needed a
+  // refresh. The route returns broadcast-shaped payloads so the mapping below is
+  // unchanged.
+  let body: { events?: { event_id: number; type: string; payload: Record<string, unknown> }[] };
+  try {
+    const res = await fetch(
+      `/api/meetings/${encodeURIComponent(args.meetingId)}/events?after=${String(args.afterEventId)}`,
+      { headers: { accept: 'application/json' } },
+    );
+    if (!res.ok) {
+      console.warn('[realtime-meeting-channel] reconnect-fetch failed:', res.status);
+      return;
+    }
+    body = (await res.json()) as typeof body;
+  } catch (err) {
+    console.warn('[realtime-meeting-channel] reconnect-fetch error:', err);
     return;
   }
-  for (const row of data ?? []) {
-    const eventId = row.event_id as number;
-    const payload = (row.payload as Record<string, unknown> | null) ?? {};
-    dispatchBroadcast(row.type as string, payload, args.dispatch, (s) => {
+  for (const row of body.events ?? []) {
+    dispatchBroadcast(row.type, row.payload, args.dispatch, (s) => {
       const next = typeof s === 'function' ? s({ status: 'subscribed', liveMeetingStatus: null }) : s;
       if (next.liveMeetingStatus !== null) args.onMeetingStatus(next.liveMeetingStatus);
     });
-    args.onMaxEventId(eventId);
+    args.onMaxEventId(row.event_id);
   }
 }
 

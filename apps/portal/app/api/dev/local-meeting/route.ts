@@ -77,7 +77,23 @@ export async function POST(req: Request): Promise<NextResponse> {
         { status: 500 },
       );
     }
-    return NextResponse.json({ ok: true, meetingId: data.meeting_id as string, orgId: identity.orgId });
+    const meetingId = data.meeting_id as string;
+
+    // Register the dev user as a participant. The meetings (and cards/syntheses/
+    // realtime) SELECT policies are participant-scoped via is_meeting_participant
+    // (migration 20260603330000) — NOT org-membership — so without this row the
+    // user-scoped live page reads null and 404s, even though the meeting is in
+    // the user's org. The production launch path writes this row too.
+    const { error: partErr } = await service
+      .from('meeting_participants')
+      .insert({ meeting_id: meetingId, user_id: identity.userId });
+    if (partErr !== null) {
+      return NextResponse.json(
+        { ok: false, error: `participant insert failed: ${partErr.message}` },
+        { status: 500 },
+      );
+    }
+    return NextResponse.json({ ok: true, meetingId, orgId: identity.orgId });
   }
 
   if (body.action === 'stop') {

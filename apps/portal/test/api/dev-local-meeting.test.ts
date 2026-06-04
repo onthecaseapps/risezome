@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({
     orgsList: { data: [{ id: 'o1', name: 'Org One' }, { id: 'o2', name: 'Org Two' }], error: null } as { data: unknown; error: unknown },
     org: { data: { id: 'org_fallback' } } as { data: unknown },
     member: { data: { user_id: 'user_fallback' } } as { data: unknown },
-    captured: { insert: null as unknown, update: null as unknown },
+    captured: { insert: null as unknown, update: null as unknown, participant: null as unknown },
   },
 }));
 
@@ -23,6 +23,7 @@ vi.mock('../../app/_lib/supabase-server', () => ({
         insert(row: unknown) {
           mode = 'insert';
           if (table === 'meetings') h.responses.captured.insert = row;
+          if (table === 'meeting_participants') h.responses.captured.participant = row;
           return b;
         },
         update(row: unknown) {
@@ -72,6 +73,7 @@ describe('dev local-meeting API', () => {
     vi.clearAllMocks();
     h.responses.captured.insert = null;
     h.responses.captured.update = null;
+    h.responses.captured.participant = null;
     vi.stubEnv('NODE_ENV', 'development');
     vi.stubEnv('RISEZOME_DEV_ORG_ID', 'org_env');
     vi.stubEnv('RISEZOME_DEV_USER_ID', 'user_env');
@@ -92,6 +94,9 @@ describe('dev local-meeting API', () => {
     expect(String(inserted.title)).toMatch(/^Local meeting /);
     expect(inserted.conference_url).toBeUndefined(); // left null (flag, KTD3)
     expect(inserted.calendar_event_id).toBeUndefined();
+    // The dev user is registered as a participant so the participant-scoped
+    // meetings RLS policy lets the live page read it (else 404 despite org match).
+    expect(h.responses.captured.participant).toEqual({ meeting_id: 'm_new', user_id: 'user_env' });
   });
 
   it('stop completes the meeting and fires BOTH recap + gaps jobs (KTD4)', async () => {
