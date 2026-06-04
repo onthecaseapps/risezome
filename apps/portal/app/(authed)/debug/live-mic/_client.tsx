@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import {
   AppStateProvider,
   CardActionsProvider,
@@ -13,6 +13,13 @@ import {
   type CardEvent as HudCardEvent,
   type SynthesisActions,
 } from '@risezome/hud-ui';
+import {
+  TracePanel,
+  indexTrace,
+  type TraceCard,
+  type TraceEvent,
+  type UtteranceTrace,
+} from './_trace-panel';
 
 /**
  * Client component for the local-mic debug page. Opens a WebSocket to
@@ -145,6 +152,7 @@ type DebugEvent =
   | RetrievalSkipEvent
   | SkillResultEvent
   | SummaryEvent
+  | TraceEvent
   | OtherEvent;
 
 
@@ -199,6 +207,12 @@ function DebugInner({
   const [systemEvents, setSystemEvents] = useState<string[]>([]);
   const [currentSummary, setCurrentSummary] = useState<MeetingSummaryPayload | null>(null);
   const [summaryAt, setSummaryAt] = useState<number | null>(null);
+  // U5: per-utterance stage-by-stage traces, indexed by utteranceId, plus the
+  // currently-selected utterance whose trace the panel renders.
+  const [tracesByUtterance, setTracesByUtterance] = useState<Map<string, UtteranceTrace>>(
+    () => new Map(),
+  );
+  const [selectedUtteranceId, setSelectedUtteranceId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   const handleEvent = useCallback((evt: DebugEvent) => {
@@ -305,6 +319,12 @@ function DebugInner({
         });
         return;
       }
+      case 'trace': {
+        // U5: index the per-stage trace under its utteranceId (latest run wins).
+        const t = evt as TraceEvent;
+        setTracesByUtterance((prev) => indexTrace(prev, t));
+        return;
+      }
       default: {
         const label =
           'reason' in evt
@@ -369,7 +389,35 @@ function DebugInner({
     setSystemEvents([]);
     setCurrentSummary(null);
     setSummaryAt(null);
+    setTracesByUtterance(new Map());
+    setSelectedUtteranceId(null);
   }, []);
+
+  // U5: the selected utterance's trace + text + retrieved cards. The cards
+  // arrive via `card` events (the trace's hybrid-search stage carries only a
+  // count), so we resolve them from `cardGroups` by utteranceId here.
+  const selectedTrace: UtteranceTrace | null =
+    selectedUtteranceId !== null ? (tracesByUtterance.get(selectedUtteranceId) ?? null) : null;
+  const selectedUtteranceText: string | null = useMemo(() => {
+    if (selectedUtteranceId === null) return null;
+    return utterances.find((u) => u.utteranceId === selectedUtteranceId)?.text ?? null;
+  }, [selectedUtteranceId, utterances]);
+  const selectedCards: TraceCard[] = useMemo(() => {
+    if (selectedUtteranceId === null) return [];
+    return cardGroups
+      .filter((g) => g.utteranceId === selectedUtteranceId)
+      .flatMap((g) => g.cards)
+      .map((c) => ({
+        rank: c.rank,
+        title: c.title,
+        source: c.source,
+        docType: c.docType,
+        ...(c.distance !== undefined ? { distance: c.distance } : {}),
+        ...(c.score !== undefined ? { score: c.score } : {}),
+        ...(c.ftsMatched !== undefined ? { ftsMatched: c.ftsMatched } : {}),
+        ...(c.isSummary !== undefined ? { isSummary: c.isSummary } : {}),
+      }));
+  }, [selectedUtteranceId, cardGroups]);
 
   return (
     <div className="flex h-dvh flex-col px-6 py-6">
@@ -423,30 +471,73 @@ function DebugInner({
 
       <SummaryStrip summary={currentSummary} summaryAt={summaryAt} />
 
-      <div className="grid min-h-0 flex-1 grid-cols-3 gap-4">
+      <div className="grid min-h-0 flex-1 grid-cols-4 gap-4">
         <Panel title={`Utterances (${utterances.length})`}>
           {utterances.length === 0 ? (
             <EmptyHint text="Start a session and start speaking. Partials appear as they stream; finals trigger retrieval." />
           ) : (
             <ul className="space-y-2 text-sm">
-              {utterances.slice().reverse().map((u) => (
-                <li
-                  key={`${u.utteranceId}-${String(u.revision)}`}
-                  className={
-                    u.isFinal
-                      ? 'rounded border border-border bg-card px-3 py-2'
-                      : 'rounded border border-dashed border-border px-3 py-2 italic text-muted'
-                  }
-                >
-                  <div className="text-[10px] uppercase tracking-wider text-muted">
-                    {u.isFinal ? 'final' : 'partial'} · rev {String(u.revision)} ·{' '}
-                    {u.utteranceId.slice(-6)}
-                  </div>
-                  <div className="mt-0.5">{u.text}</div>
-                </li>
-              ))}
+              {utterances.slice().reverse().map((u) => {
+                // U5: final utterances are clickable → select to open the trace
+                // panel. A dot marks utterances that already have a trace.
+                const selected = u.utteranceId === selectedUtteranceId;
+                const hasTrace = tracesByUtterance.has(u.utteranceId);
+                if (!u.isFinal) {
+                  return (
+                    <li
+                      key={`${u.utteranceId}-${String(u.revision)}`}
+                      className="rounded border border-dashed border-border px-3 py-2 italic text-muted"
+                    >
+                      <div className="text-[10px] uppercase tracking-wider text-muted">
+                        partial · rev {String(u.revision)} · {u.utteranceId.slice(-6)}
+                      </div>
+                      <div className="mt-0.5">{u.text}</div>
+                    </li>
+                  );
+                }
+                return (
+                  <li key={`${u.utteranceId}-${String(u.revision)}`}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedUtteranceId(u.utteranceId)}
+                      aria-pressed={selected}
+                      className={
+                        'block w-full rounded border px-3 py-2 text-left transition-colors ' +
+                        (selected
+                          ? 'border-accent bg-accent-soft/40'
+                          : 'border-border bg-card hover:bg-accent-soft/20')
+                      }
+                    >
+                      <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted">
+                        <span>final · rev {String(u.revision)} · {u.utteranceId.slice(-6)}</span>
+                        {hasTrace && (
+                          <span
+                            className="ml-auto inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"
+                            title="trace available"
+                          />
+                        )}
+                      </div>
+                      <div className="mt-0.5 text-fg">{u.text}</div>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
+        </Panel>
+
+        <Panel
+          title={
+            selectedUtteranceId !== null
+              ? `Trace · ${selectedUtteranceId.slice(-6)}`
+              : 'Trace'
+          }
+        >
+          <TracePanel
+            trace={selectedTrace}
+            cards={selectedCards}
+            utteranceText={selectedUtteranceText}
+          />
         </Panel>
 
         <Panel title={`Retrievals (${cardGroups.length})`}>
