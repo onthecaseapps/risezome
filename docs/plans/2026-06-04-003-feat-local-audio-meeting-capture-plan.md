@@ -1,7 +1,7 @@
 ---
 title: "feat: Local-audio live meeting capture (dev)"
 type: feat
-status: active
+status: completed
 date: 2026-06-04
 origin: docs/brainstorms/2026-06-04-local-audio-live-meeting-capture-requirements.md
 ---
