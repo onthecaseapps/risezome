@@ -1,7 +1,7 @@
 ---
 title: "feat: Pipeline Trace Debug page — full gate-by-gate ledger on the local-mic debug surface"
 type: feat
-status: active
+status: completed
 date: 2026-06-04
 design_source: "Claude Design bundle — risezome/project/Pipeline Trace Debug.html (+ debug-data/trace/outputs/rail.jsx); chat intent at risezome/chats/chat1.md lines 1561-1668"
 ---
