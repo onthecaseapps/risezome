@@ -164,10 +164,19 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       return sendJson(res, 200, { ok: true });
     }
 
+    if (method === 'GET' && path === '/api/local-meeting/orgs') {
+      try {
+        return sendJson(res, 200, { ok: true, ...(await localMeeting.orgs()) });
+      } catch (err) {
+        return sendJson(res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
     if (method === 'POST' && path === '/api/local-meeting/start') {
       setStep('Starting local-audio meeting…');
       try {
-        const state = await localMeeting.start();
+        const reqBody = await readBody(req);
+        const orgId = typeof reqBody.orgId === 'string' ? reqBody.orgId : undefined;
+        const state = await localMeeting.start(orgId);
         return sendJson(res, 200, { ok: true, localMeeting: state });
       } catch (err) {
         return sendJson(res, 409, { ok: false, error: err instanceof Error ? err.message : String(err) });

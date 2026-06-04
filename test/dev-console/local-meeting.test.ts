@@ -136,4 +136,25 @@ describe('LocalMeetingControl', () => {
     expect(state.active).toBe(false);
     expect(calls).toHaveLength(0);
   });
+
+  it('orgs() proxies to the portal and returns the list + default', async () => {
+    const { fetch, calls } = routedFetch([
+      ['/api/dev/local-meeting', () => jsonRes(200, { ok: true, orgs: [{ id: 'o1', name: 'One' }], defaultOrgId: 'o1' })],
+    ]);
+    const { control } = makeControl(fetch);
+    const r = await control.orgs();
+    expect(r.orgs).toEqual([{ id: 'o1', name: 'One' }]);
+    expect(r.defaultOrgId).toBe('o1');
+    expect(calls[0]!.body).toEqual({ action: 'orgs' });
+  });
+
+  it('start passes the chosen orgId to the portal mint', async () => {
+    const { fetch, calls } = routedFetch([
+      ['/api/dev/local-meeting', mintOk],
+      ['/local-capture/start', () => jsonRes(200, { ok: true })],
+    ]);
+    const { control } = makeControl(fetch);
+    await control.start('picked-org');
+    expect(calls[0]!.body).toEqual({ action: 'start', orgId: 'picked-org' });
+  });
 });

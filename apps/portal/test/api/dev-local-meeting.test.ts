@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   responses: {
     meetingInsert: { data: { meeting_id: 'm_new' }, error: null } as { data: unknown; error: unknown },
     meetingUpdate: { data: [{ meeting_id: 'm1' }], error: null } as { data: unknown; error: unknown },
+    orgsList: { data: [{ id: 'o1', name: 'Org One' }, { id: 'o2', name: 'Org Two' }], error: null } as { data: unknown; error: unknown },
     org: { data: { id: 'org_fallback' } } as { data: unknown },
     member: { data: { user_id: 'user_fallback' } } as { data: unknown },
     captured: { insert: null as unknown, update: null as unknown },
@@ -41,9 +42,15 @@ vi.mock('../../app/_lib/supabase-server', () => ({
           Promise.resolve(
             table === 'orgs' ? h.responses.org : table === 'org_members' ? h.responses.member : { data: null },
           ),
-        // Awaitable for the update().select() path.
+        // Awaitable for the update().select() and orgs-list paths.
         then: (resolve: (v: unknown) => void) =>
-          resolve(table === 'meetings' && mode === 'update' ? h.responses.meetingUpdate : { data: null, error: null }),
+          resolve(
+            table === 'meetings' && mode === 'update'
+              ? h.responses.meetingUpdate
+              : table === 'orgs' && mode === 'select'
+                ? h.responses.orgsList
+                : { data: null, error: null },
+          ),
       };
       return b;
     },
@@ -100,6 +107,21 @@ describe('dev local-meeting API', () => {
       'risezome/meeting.recap-requested',
     ]);
     for (const e of events) expect(e.data).toEqual({ meetingId: 'm1', orgId: 'org_env' });
+  });
+
+  it('lists orgs (+ the configured default) for the dev console picker', async () => {
+    const res = await POST(post({ action: 'orgs' }));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean; orgs: { id: string }[]; defaultOrgId: string | null };
+    expect(json.ok).toBe(true);
+    expect(json.orgs.map((o) => o.id)).toEqual(['o1', 'o2']);
+    expect(json.defaultOrgId).toBe('org_env'); // from RISEZOME_DEV_ORG_ID
+  });
+
+  it('start honors an explicit orgId override (the picked org)', async () => {
+    const res = await POST(post({ action: 'start', orgId: 'picked-org' }));
+    expect(res.status).toBe(200);
+    expect((h.responses.captured.insert as Record<string, unknown>).org_id).toBe('picked-org');
   });
 
   it('is 404 in production (dev-only, KTD6)', async () => {

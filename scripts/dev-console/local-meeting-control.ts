@@ -47,8 +47,22 @@ export class LocalMeetingControl {
     return this.#state;
   }
 
-  /** Start a local-audio meeting. Rejects if one is already running (R8). */
-  async start(): Promise<LocalMeetingState> {
+  /** List orgs (+ the configured default) so the dev console can offer a picker.
+   *  The chosen org should match the browser's active org for the live page to
+   *  find the meeting. */
+  async orgs(): Promise<{ orgs: { id: string; name: string | null }[]; defaultOrgId: string | null }> {
+    const res = await this.#postJson(`${this.#deps.portalUrl}/api/dev/local-meeting`, {
+      action: 'orgs',
+    });
+    if (!res.ok) throw new Error(`portal orgs failed (${String(res.status)}): ${res.text}`);
+    const body = res.body as { orgs?: { id: string; name: string | null }[]; defaultOrgId?: string | null };
+    return { orgs: body.orgs ?? [], defaultOrgId: body.defaultOrgId ?? null };
+  }
+
+  /** Start a local-audio meeting. Rejects if one is already running (R8).
+   *  `orgId` (when given) mints into that org — it should be the org the browser
+   *  session is currently viewing, or the live page will 404. */
+  async start(orgId?: string): Promise<LocalMeetingState> {
     if (this.#state.active) {
       throw new Error('a local meeting is already running');
     }
@@ -58,22 +72,23 @@ export class LocalMeetingControl {
     this.#deps.log('Ensuring audio sidecar…');
     await this.#deps.ensureSidecar();
 
-    // Mint the meeting in the dev org.
+    // Mint the meeting in the chosen (or default) dev org.
     const minted = await this.#postJson(`${this.#deps.portalUrl}/api/dev/local-meeting`, {
       action: 'start',
+      ...(orgId !== undefined && orgId.length > 0 ? { orgId } : {}),
     });
     if (!minted.ok) {
       throw new Error(`portal mint failed (${String(minted.status)}): ${minted.text}`);
     }
-    const { meetingId, orgId } = minted.body as { meetingId?: string; orgId?: string };
-    if (typeof meetingId !== 'string' || typeof orgId !== 'string') {
+    const { meetingId, orgId: mintedOrgId } = minted.body as { meetingId?: string; orgId?: string };
+    if (typeof meetingId !== 'string' || typeof mintedOrgId !== 'string') {
       throw new Error('portal mint returned no meetingId/orgId');
     }
 
     // Tell the bot-worker to start capturing into it.
     const started = await this.#postJson(
       `${this.#deps.botWorkerUrl}/local-capture/start`,
-      { meetingId, orgId },
+      { meetingId, orgId: mintedOrgId },
       { authorization: `Bearer ${this.#deps.botWorkerSecret}` },
     );
     if (!started.ok) {
@@ -82,7 +97,7 @@ export class LocalMeetingControl {
       await this.#postJson(`${this.#deps.portalUrl}/api/dev/local-meeting`, {
         action: 'stop',
         meetingId,
-        orgId,
+        orgId: mintedOrgId,
       }).catch(() => undefined);
       throw new Error(`bot-worker capture start failed (${String(started.status)}): ${started.text}`);
     }
@@ -90,7 +105,7 @@ export class LocalMeetingControl {
     this.#state = {
       active: true,
       meetingId,
-      orgId,
+      orgId: mintedOrgId,
       liveUrl: `${this.#deps.portalUrl}/meetings/${meetingId}/live`,
     };
     this.#deps.log(`Local meeting started: ${meetingId}`);

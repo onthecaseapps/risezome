@@ -23,6 +23,7 @@ const lmBadge = document.getElementById('lm-badge');
 const lmLive = document.getElementById('lm-live');
 const lmStart = document.getElementById('lm-start');
 const lmStop = document.getElementById('lm-stop');
+const lmOrg = document.getElementById('lm-org');
 
 const cards = new Map(); // name -> { root, badge, pid, logs, atBottom }
 
@@ -211,10 +212,28 @@ function paintLocalMeeting(lm) {
   }
 }
 
+// Populate the org picker once. The chosen org must match the org your browser
+// session is viewing, or the live page 404s (it's org-scoped).
+async function loadOrgs() {
+  if (!lmOrg) return;
+  const res = await api('/api/local-meeting/orgs');
+  if (!res || !res.ok || !Array.isArray(res.orgs)) return;
+  lmOrg.replaceChildren();
+  for (const o of res.orgs) {
+    const opt = document.createElement('option');
+    opt.value = o.id;
+    opt.textContent = (o.name && o.name.trim()) || o.id;
+    if (res.defaultOrgId && o.id === res.defaultOrgId) opt.selected = true;
+    lmOrg.appendChild(opt);
+  }
+}
+loadOrgs();
+
 if (lmStart) {
   lmStart.addEventListener('click', async () => {
     lmStart.disabled = true;
-    const res = await api('/api/local-meeting/start', 'POST');
+    const orgId = lmOrg && lmOrg.value ? lmOrg.value : undefined;
+    const res = await api('/api/local-meeting/start', 'POST', orgId ? { orgId } : undefined);
     if (res && res.ok && res.localMeeting) {
       paintLocalMeeting(res.localMeeting);
       if (res.localMeeting.liveUrl) window.open(res.localMeeting.liveUrl, '_blank');

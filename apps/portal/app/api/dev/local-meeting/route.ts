@@ -21,7 +21,7 @@ import { inngest } from '../../../../src/inngest/client';
  */
 
 interface Body {
-  action?: 'start' | 'stop';
+  action?: 'start' | 'stop' | 'orgs';
   meetingId?: string;
   orgId?: string;
 }
@@ -35,6 +35,20 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   const body = (await req.json().catch(() => ({}))) as Body;
   const service = createServiceRoleClient();
+
+  if (body.action === 'orgs') {
+    // List orgs so the dev console can offer a picker (the chosen org must match
+    // the browser session's active org for the live page to find the meeting).
+    const { data, error } = await service
+      .from('orgs')
+      .select('id, name')
+      .order('created_at', { ascending: true });
+    if (error !== null) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    }
+    const defaultOrgId = process.env.RISEZOME_DEV_ORG_ID ?? null;
+    return NextResponse.json({ ok: true, orgs: data ?? [], defaultOrgId });
+  }
 
   if (body.action === 'start') {
     let identity: { orgId: string; userId: string };
