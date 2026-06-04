@@ -25,37 +25,38 @@ import { createServiceRoleClient } from '../app/_lib/supabase-server';
 import { migrateOrgEncryption } from '../src/inngest/functions/migrate-encryption-to-kms';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+/** One legacy-row count: rows with non-null ciphertext whose version sentinel
+ *  is still < KMS_ESDK (null or < 2). `enc`/`ver` name the column pair; the
+ *  google-tokens row adds `key_org_id is null` as an extra legacy signal. */
+interface CountSpec {
+  label: string;
+  table: string;
+  enc: string;
+  orFilter: string;
+}
+
+const COUNT_SPECS: CountSpec[] = [
+  { label: 'meetings.recap_text_enc', table: 'meetings', enc: 'recap_text_enc', orFilter: 'recap_key_version.is.null,recap_key_version.lt.2' },
+  { label: 'syntheses.accumulated_text_enc', table: 'syntheses', enc: 'accumulated_text_enc', orFilter: 'synth_key_version.is.null,synth_key_version.lt.2' },
+  { label: 'meeting_events.transcript_text_enc', table: 'meeting_events', enc: 'transcript_text_enc', orFilter: 'transcript_key_version.is.null,transcript_key_version.lt.2' },
+  { label: 'trello_connections.token_enc', table: 'trello_connections', enc: 'token_enc', orFilter: 'token_version.is.null,token_version.lt.2' },
+  { label: 'user_google_tokens.refresh_token_enc', table: 'user_google_tokens', enc: 'refresh_token_enc', orFilter: 'key_version.is.null,key_version.lt.2,key_org_id.is.null' },
+];
+
 async function legacyCounts(service: SupabaseClient): Promise<{ label: string; legacy: number }[]> {
   const out: { label: string; legacy: number }[] = [];
-  const count = async (
-    label: string,
-    table: string,
-    build: (q: ReturnType<SupabaseClient['from']>) => unknown,
-  ): Promise<void> => {
-    const q = service.from(table).select('*', { count: 'exact', head: true });
-    const { count: n, error } = (await build(q)) as { count: number | null; error: { message: string } | null };
-    if (error !== null) {
-      out.push({ label: `${label} (ERR: ${error.message})`, legacy: -1 });
-      return;
-    }
-    out.push({ label, legacy: n ?? 0 });
-  };
-
-  await count('meetings.recap_text_enc', 'meetings', (q) =>
-    (q as ReturnType<SupabaseClient['from']>['select']).not('recap_text_enc', 'is', null).or('recap_key_version.is.null,recap_key_version.lt.2'),
-  );
-  await count('syntheses.accumulated_text_enc', 'syntheses', (q) =>
-    (q as never as { not: (...a: unknown[]) => { or: (s: string) => unknown } }).not('accumulated_text_enc', 'is', null).or('synth_key_version.is.null,synth_key_version.lt.2'),
-  );
-  await count('meeting_events.transcript_text_enc', 'meeting_events', (q) =>
-    (q as never as { not: (...a: unknown[]) => { or: (s: string) => unknown } }).not('transcript_text_enc', 'is', null).or('transcript_key_version.is.null,transcript_key_version.lt.2'),
-  );
-  await count('trello_connections.token_enc', 'trello_connections', (q) =>
-    (q as never as { not: (...a: unknown[]) => { or: (s: string) => unknown } }).not('token_enc', 'is', null).or('token_version.is.null,token_version.lt.2'),
-  );
-  await count('user_google_tokens.refresh_token_enc', 'user_google_tokens', (q) =>
-    (q as never as { not: (...a: unknown[]) => { or: (s: string) => unknown } }).not('refresh_token_enc', 'is', null).or('key_version.is.null,key_version.lt.2,key_org_id.is.null'),
-  );
+  for (const spec of COUNT_SPECS) {
+    const { count, error } = await service
+      .from(spec.table)
+      .select('*', { count: 'exact', head: true })
+      .not(spec.enc, 'is', null)
+      .or(spec.orFilter);
+    out.push(
+      error !== null
+        ? { label: `${spec.label} (ERR: ${error.message})`, legacy: -1 }
+        : { label: spec.label, legacy: count ?? 0 },
+    );
+  }
   return out;
 }
 
