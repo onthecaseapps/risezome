@@ -17,6 +17,7 @@ import { scoreRagas, type Judge, type RagasScores } from '@risezome/engine/eval'
 import {
   type RelevanceClassifier,
   type RelevanceContext,
+  classifySubstantiveQuestion,
 } from '@risezome/engine/relevance';
 import { hybridSearch } from './corpus-search.js';
 import { optionalReranker } from './reranker.js';
@@ -288,6 +289,27 @@ export interface EvalCitationView {
   readonly status: CitationStatus;
 }
 
+/**
+ * Live triggering verdict for a question, computed from the SAME
+ * classifySubstantiveQuestion the live adapter uses (R15) — so the eval mirrors
+ * what live would do. `wouldFire` reflects the always-fire QUESTION lane;
+ * dedup/ceiling are per-meeting stateful and not modeled in single-question
+ * eval mode (KTD6).
+ */
+export interface TriggeringVerdict {
+  readonly lane: 'question' | 'ambient';
+  readonly isQuestion: boolean;
+  /** The QUESTION lane fires this immediately (== isQuestion). Ambient
+   *  utterances take the budgeted path, reflected by the gate/result below. */
+  readonly wouldFire: boolean;
+  readonly reason: string;
+}
+
+export function triggeringVerdictFor(question: string): TriggeringVerdict {
+  const { isQuestion, reason } = classifySubstantiveQuestion(question);
+  return { lane: isQuestion ? 'question' : 'ambient', isQuestion, wouldFire: isQuestion, reason };
+}
+
 /** Everything needed to render one row of the eval dev page. */
 export interface EvalQuestionView {
   readonly question: GoldenQuestion;
@@ -309,6 +331,8 @@ export interface EvalQuestionView {
   readonly latencyMs: number;
   /** True when the relevance gate suppressed the utterance before retrieval. */
   readonly gateSuppressed: boolean;
+  /** Live two-lane triggering verdict (R14), from the shared classifier. */
+  readonly triggeringVerdict: TriggeringVerdict;
   /** The per-stage pipeline trace for this question (the eval runs the shared
    *  core with a trace sink, so each evaluated question carries one). Null only
    *  if the core returned before assembling a trace. */
@@ -337,6 +361,7 @@ function emptyView(
     ragas: null,
     latencyMs,
     gateSuppressed,
+    triggeringVerdict: triggeringVerdictFor(question.q),
     trace,
   };
 }
@@ -480,6 +505,7 @@ export async function evaluateQuestion(
     ragas,
     latencyMs: elapsed(),
     gateSuppressed: false,
+    triggeringVerdict: triggeringVerdictFor(question.q),
     trace,
   };
 }

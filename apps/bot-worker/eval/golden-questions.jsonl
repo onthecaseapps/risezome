@@ -163,3 +163,6 @@
 {"q": "my laptop fan is so loud on these calls", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
 {"q": "is anyone else starving right now", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
 {"q": "we should get the team some swag", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "right", "bucket": "offtopic", "expect_refusal": true, "note": "TRIGGER: rhetorical tag — would not fire (question lane)"}
+{"q": "you know what i mean", "bucket": "offtopic", "expect_refusal": true, "note": "TRIGGER: rhetorical — would not fire (question lane)"}
+{"q": "that makes sense, right", "bucket": "offtopic", "expect_refusal": true, "note": "TRIGGER: rhetorical tag on a statement — would not fire (question lane)"}
