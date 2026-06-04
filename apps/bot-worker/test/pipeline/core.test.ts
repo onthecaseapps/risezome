@@ -1,0 +1,384 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { VoyageEmbedder, EmbedRequest, EmbedResult } from '@risezome/engine/embed';
+import type {
+  Synthesizer,
+  SynthesisInput,
+  SynthesisChunk,
+} from '@risezome/engine/synthesize';
+import type { RelevanceClassifier, RelevanceResult } from '@risezome/engine/relevance';
+import type { MissRecord } from '@risezome/engine/gaps';
+import { runPipeline } from '../../src/pipeline/core.js';
+import type {
+  PipelineDeps,
+  PipelineInput,
+  PipelineSink,
+  PipelineCard,
+  EmittedCard,
+  PipelineTrace,
+  SynthesisStartInfo,
+  SynthesisDoneInfo,
+  SynthesisRefusalInfo,
+  SkipInfo,
+  HybridSearchFn,
+} from '../../src/pipeline/contract.js';
+import type { HybridHit } from '../../src/corpus-search.js';
+
+// ── Fakes ───────────────────────────────────────────────────────────────
+
+const ORG = 'org_1';
+const noopLogger = { info: () => undefined, warn: () => undefined };
+
+function fakeEmbedder(): VoyageEmbedder {
+  const embed = vi.fn(
+    async (_req: EmbedRequest): Promise<EmbedResult> => ({
+      vectors: [{ index: 0, vector: new Float32Array([0.1, 0.2, 0.3]), cached: false }],
+      dimension: 3,
+      inputTokens: 1,
+      cacheHits: 0,
+    }),
+  );
+  return { dimension: 3, embed } as unknown as VoyageEmbedder;
+}
+
+/** A Supabase stub whose `from(...).select(...).in(...).eq(...)` chain resolves
+ *  the chunk/doc enrichment rows for a fixed hit. */
+function fakeDb(chunkRows: object[], docRows: object[]): SupabaseClient {
+  const from = (table: string): unknown => {
+    const rows = table === 'doc_chunks' ? chunkRows : docRows;
+    const chain = {
+      select: () => chain,
+      in: () => chain,
+      eq: () => Promise.resolve({ data: rows, error: null }),
+    };
+    return chain;
+  };
+  return { from } as unknown as SupabaseClient;
+}
+
+/** A synthesizer that yields a fixed body (start → textDelta → done). */
+function fakeSynthesizer(body: string): Synthesizer {
+  return {
+    async *synthesize(_input: SynthesisInput): AsyncIterable<SynthesisChunk> {
+      const usage = { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 };
+      yield { type: 'start', synthesisId: 's', model: 'fake', usage };
+      yield { type: 'textDelta', synthesisId: 's', delta: body };
+      yield { type: 'done', synthesisId: 's', stopReason: 'end_turn', usage };
+    },
+  };
+}
+
+function skipClassifier(confidence: number): RelevanceClassifier {
+  return {
+    classify: vi.fn(
+      async (): Promise<RelevanceResult> => ({
+        decision: 'skip',
+        confidence,
+        reason: 'not about our work',
+      }),
+    ),
+  };
+}
+
+const hit = (chunkId: string, distance: number | null): HybridHit => ({
+  chunk_id: chunkId,
+  distance,
+  score: 0.5,
+  ftsMatched: true,
+});
+
+/** Recording sink WITHOUT recordTrace (the prod-like, zero-trace shape). */
+class RecordingSink implements PipelineSink {
+  readonly cards: PipelineCard[] = [];
+  readonly skips: SkipInfo[] = [];
+  readonly misses: MissRecord[] = [];
+  readonly starts: SynthesisStartInfo[] = [];
+  readonly deltas: { synthesisId: string; delta: string }[] = [];
+  readonly dones: SynthesisDoneInfo[] = [];
+  readonly refusals: SynthesisRefusalInfo[] = [];
+  #seq = 0;
+
+  emitCard(card: PipelineCard): Promise<EmittedCard | null> {
+    this.cards.push(card);
+    this.#seq += 1;
+    return Promise.resolve({ cardId: `card_${String(this.#seq)}` });
+  }
+  synthesisStart(info: SynthesisStartInfo): void {
+    this.starts.push(info);
+  }
+  synthesisDelta(synthesisId: string, delta: string): void {
+    this.deltas.push({ synthesisId, delta });
+  }
+  synthesisDone(info: SynthesisDoneInfo): void {
+    this.dones.push(info);
+  }
+  synthesisRefusal(info: SynthesisRefusalInfo): void {
+    this.refusals.push(info);
+  }
+  recordMiss(miss: MissRecord): void {
+    this.misses.push(miss);
+  }
+  recordSkip(info: SkipInfo): void {
+    this.skips.push(info);
+  }
+}
+
+/** A sink that also records traces (the dev/eval shape). */
+class TracingSink extends RecordingSink {
+  readonly traces: PipelineTrace[] = [];
+  recordTrace(trace: PipelineTrace): void {
+    this.traces.push(trace);
+  }
+}
+
+/** Build deps; callers override pieces per scenario. The search fn defaults
+ *  to one verbatim-quotable hit; chunk/doc rows back it. */
+function makeDeps(over: Partial<PipelineDeps> = {}): {
+  deps: PipelineDeps;
+  search: ReturnType<typeof vi.fn>;
+  embedder: VoyageEmbedder;
+} {
+  const search = vi.fn(
+    async (..._args: Parameters<HybridSearchFn>): Promise<HybridHit[]> => [hit('chunk_1', 0.1)],
+  );
+  const embedder = over.embedder ?? fakeEmbedder();
+  const db =
+    over.db ??
+    fakeDb(
+      [
+        {
+          chunk_id: 'chunk_1',
+          doc_id: 'doc_1',
+          domain: 'text',
+          text: 'The answer is forty two.',
+          position: 0,
+          is_summary: false,
+        },
+      ],
+      [{ id: 'doc_1', source: 'github', type: 'doc', title: 'Doc One', url: null }],
+    );
+  const deps: PipelineDeps = {
+    db,
+    embedder,
+    hybridSearch: search,
+    isLowConfidenceHits: () => false,
+    optionalReranker: () => undefined,
+    optionalQueryExpander: () => undefined,
+    dedupeByDoc: (items) => [...items],
+    expandWinnersToParents: () => Promise.resolve(new Map()),
+    parentDocEnabled: () => false,
+    logger: noopLogger,
+    topK: 5,
+    ...over,
+  };
+  return { deps, search, embedder };
+}
+
+function input(over: Partial<PipelineInput> = {}): PipelineInput {
+  return {
+    utteranceText: 'What is the answer?',
+    utteranceId: 'u1',
+    meetingId: 'm1',
+    orgId: ORG,
+    queryText: 'What is the answer?',
+    ...over,
+  };
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+describe('runPipeline — pre-retrieval gate (KTD3)', () => {
+  it('clearly_filler → recordSkip(heuristic) and NO embed/search call', async () => {
+    const { deps, search, embedder } = makeDeps();
+    const sink = new RecordingSink();
+    const result = await runPipeline(input({ utteranceText: 'yeah' }), deps, sink);
+
+    expect(result).toEqual({ emitted: 0, skipped: 'filler' });
+    expect(sink.skips).toEqual([{ stage: 'heuristic-gate', reason: 'filler' }]);
+    expect((embedder.embed as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    expect(search.mock.calls).toHaveLength(0);
+    expect(sink.cards).toHaveLength(0);
+  });
+
+  it('strict substantive judged skip≥threshold → recordSkip(llm-judge), no embed/search', async () => {
+    const classifier = skipClassifier(0.9);
+    const { deps, search, embedder } = makeDeps({
+      relevanceClassifier: classifier,
+      relevanceStrict: true,
+      relevanceSkipThreshold: 0.7,
+    });
+    const sink = new RecordingSink();
+    const result = await runPipeline(input(), deps, sink);
+
+    expect(result).toEqual({ emitted: 0, skipped: 'relevance_skip' });
+    expect(sink.skips).toEqual([
+      { stage: 'llm-judge', reason: 'not about our work', confidence: 0.9 },
+    ]);
+    expect((embedder.embed as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    expect(search.mock.calls).toHaveLength(0);
+  });
+
+  it('skip below threshold → falls through to embed + search', async () => {
+    const classifier = skipClassifier(0.5); // below 0.7
+    const { deps, search, embedder } = makeDeps({
+      relevanceClassifier: classifier,
+      relevanceStrict: true,
+    });
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+
+    expect(sink.skips).toHaveLength(0);
+    expect((embedder.embed as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(0);
+    expect(search.mock.calls).toHaveLength(1);
+  });
+
+  it('non-strict substantive does NOT route to the judge (classifier untouched)', async () => {
+    const classifier = skipClassifier(0.9);
+    const { deps } = makeDeps({ relevanceClassifier: classifier, relevanceStrict: false });
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+
+    expect((classifier.classify as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    expect(sink.skips).toHaveLength(0);
+  });
+});
+
+describe('runPipeline — surface path', () => {
+  it('embed → search → dedup → emitCard with rank + score', async () => {
+    const { deps, search } = makeDeps();
+    const sink = new RecordingSink();
+    const result = await runPipeline(input(), deps, sink);
+
+    expect(result.emitted).toBe(1);
+    expect(search.mock.calls).toHaveLength(1);
+    expect(sink.cards).toHaveLength(1);
+    const card = sink.cards[0]!;
+    expect(card.rank).toBe(0);
+    expect(card.docId).toBe('doc_1');
+    expect(card.title).toBe('Doc One');
+    // distance 0.1 → 1 - 0.1/2 = 0.95
+    expect(card.score).toBeCloseTo(0.95, 5);
+  });
+});
+
+describe('runPipeline — zero hits', () => {
+  it('substantive question, 0 hits → recordMiss(no_hits), no card', async () => {
+    const search = vi.fn(async () => [] as HybridHit[]);
+    const { deps } = makeDeps({ hybridSearch: search as unknown as HybridSearchFn });
+    const sink = new RecordingSink();
+    const result = await runPipeline(input(), deps, sink);
+
+    expect(result).toEqual({ emitted: 0, skipped: 'no_hits' });
+    expect(sink.cards).toHaveLength(0);
+    expect(sink.misses).toHaveLength(1);
+    expect(sink.misses[0]!.reason).toBe('no_hits');
+  });
+});
+
+describe('runPipeline — synthesis grounded-or-nothing', () => {
+  it('grounded answer → synthesisStart/Delta/Done, no miss', async () => {
+    const body = 'STATUS: answer\nThe answer is [1: "forty two"].';
+    const { deps } = makeDeps({ synthesizer: fakeSynthesizer(body) });
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+
+    expect(sink.starts).toHaveLength(1);
+    expect(sink.deltas).toHaveLength(1);
+    expect(sink.dones).toHaveLength(1);
+    expect(sink.dones[0]!.citations).toHaveLength(1);
+    expect(sink.dones[0]!.citations[0]!.cardId).toBe('card_1');
+    expect(sink.refusals).toHaveLength(0);
+    expect(sink.misses).toHaveLength(0);
+  });
+
+  it('no_relevant_context → synthesisRefusal(refusal) + recordMiss(refusal)', async () => {
+    const body = 'STATUS: no_relevant_context\nNothing here.';
+    const { deps } = makeDeps({ synthesizer: fakeSynthesizer(body) });
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+
+    expect(sink.dones).toHaveLength(0);
+    expect(sink.refusals).toHaveLength(1);
+    expect(sink.refusals[0]!.reason).toBe('refusal');
+    expect(sink.misses.map((m) => m.reason)).toEqual(['refusal']);
+  });
+
+  it('ungrounded (0 surviving citations) → synthesisRefusal(ungrounded) + recordMiss(ungrounded)', async () => {
+    // An answer with a quote NOT present in the source → dropped → 0 survivors.
+    const body = 'STATUS: answer\nThe answer is [1: "a fabricated quote nowhere in source"].';
+    const { deps } = makeDeps({ synthesizer: fakeSynthesizer(body) });
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+
+    expect(sink.dones).toHaveLength(0);
+    expect(sink.refusals).toHaveLength(1);
+    expect(sink.refusals[0]!.reason).toBe('ungrounded');
+    expect(sink.misses.map((m) => m.reason)).toEqual(['ungrounded']);
+  });
+});
+
+describe('runPipeline — trace (KTD4/R5)', () => {
+  it('trace sink present → one PipelineTrace with per-stage records', async () => {
+    const body = 'STATUS: answer\nThe answer is [1: "forty two"].';
+    const { deps } = makeDeps({ synthesizer: fakeSynthesizer(body) });
+    const sink = new TracingSink();
+    await runPipeline(input(), deps, sink);
+
+    expect(sink.traces).toHaveLength(1);
+    const stages = sink.traces[0]!.stages.map((s) => s.stage);
+    // gate (heuristic + llm-judge-skipped) → embed → hybrid-search → crag →
+    // dedup-expand → citation-verify → synthesis.
+    expect(stages).toContain('heuristic-gate');
+    expect(stages).toContain('embed');
+    expect(stages).toContain('hybrid-search');
+    expect(stages).toContain('dedup-expand');
+    expect(stages).toContain('synthesis');
+    expect(stages).toContain('citation-verify');
+    // Every record carries a status + latency.
+    for (const rec of sink.traces[0]!.stages) {
+      expect(['ran', 'skipped', 'short_circuited']).toContain(rec.status);
+      expect(typeof rec.latencyMs).toBe('number');
+    }
+  });
+
+  it('filler short-circuit still emits a trace with the gate skip record', async () => {
+    const { deps } = makeDeps();
+    const sink = new TracingSink();
+    await runPipeline(input({ utteranceText: 'yeah' }), deps, sink);
+
+    expect(sink.traces).toHaveLength(1);
+    const gate = sink.traces[0]!.stages.find((s) => s.stage === 'heuristic-gate')!;
+    expect(gate.status).toBe('short_circuited');
+    expect(gate.reason).toBe('clearly_filler');
+  });
+
+  it('trace sink ABSENT → no trace work observable (no recordTrace, nothing thrown)', async () => {
+    const { deps } = makeDeps({ synthesizer: fakeSynthesizer('STATUS: answer\n[1: "forty two"]') });
+    const sink = new RecordingSink();
+    // RecordingSink has no recordTrace property at all.
+    expect((sink as PipelineSink).recordTrace).toBeUndefined();
+    const result = await runPipeline(input(), deps, sink);
+    expect(result.emitted).toBe(1);
+    // Nothing trace-shaped leaked onto the sink.
+    expect(Object.prototype.hasOwnProperty.call(sink, 'traces')).toBe(false);
+  });
+});
+
+describe('runPipeline — topK honored', () => {
+  it('passes deps.topK as the search limit', async () => {
+    const { deps, search } = makeDeps({ topK: 7 });
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+    expect(search.mock.calls[0]![0].limit).toBe(7);
+  });
+
+  it('defaults to the canonical topK (5) when unset', async () => {
+    const { deps, search } = makeDeps();
+    // Strip the explicit topK so the core's DEFAULT_TOP_K applies.
+    const { topK: _omit, ...rest } = deps;
+    void _omit;
+    const sink = new RecordingSink();
+    await runPipeline(input(), rest, sink);
+    expect(search.mock.calls[0]![0].limit).toBe(5);
+  });
+});
