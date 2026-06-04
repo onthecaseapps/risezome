@@ -194,7 +194,7 @@ function InviteCard(): ReactElement {
           placeholder="Who's this for? (e.g. Priya)"
           className="min-w-[180px] flex-1 rounded-xl border border-border bg-bg/60 px-3.5 py-2.5 text-sm text-fg placeholder:text-muted focus:border-accent/50 focus:outline-none"
         />
-        <RoleSelect
+        <InviteRoleSelect
           value={role}
           onChange={(r) => {
             setRole(r);
@@ -225,7 +225,7 @@ function InviteCard(): ReactElement {
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-4">
         <label
           className={`flex items-center gap-2.5 text-sm ${role === 'manager' ? 'opacity-50' : ''}`}
-          title={role === 'manager' ? 'Managers can always invite the bot' : undefined}
+          title={role === 'manager' ? 'Admins can always invite the bot' : undefined}
         >
           <Toggle
             checked={role === 'manager' ? true : canInviteBot}
@@ -264,7 +264,7 @@ function MemberRowView({ member, now }: { member: MemberRow; now: number | null 
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
-  function onRoleChange(next: 'manager' | 'member'): void {
+  function onRoleChange(next: WorkspaceRole): void {
     const prev = role;
     setRole(next);
     setError(null);
@@ -272,7 +272,7 @@ function MemberRowView({ member, now }: { member: MemberRow; now: number | null 
       const result = await changeRoleAction(member.userId, next);
       if (!result.ok) {
         setRole(prev);
-        setError(result.error === 'last_manager' ? 'Workspace needs at least one manager.' : result.error);
+        setError(roleErrorMessage(result.error));
       }
     });
   }
@@ -294,13 +294,14 @@ function MemberRowView({ member, now }: { member: MemberRow; now: number | null 
     start(async () => {
       const result = await removeMemberAction(member.userId);
       if (result.ok) setRemoved(true);
-      else setError(result.error === 'last_manager' ? 'Workspace needs at least one manager.' : result.error);
+      else setError(roleErrorMessage(result.error));
     });
   }
 
   if (removed) return null;
 
-  const isManager = role === 'manager';
+  // Admin tier (Admin or Super Admin) implicitly always has bot access.
+  const isAdmin = role === 'manager' || role === 'super_admin';
   const active = lastActive(member, now);
 
   return (
@@ -327,8 +328,8 @@ function MemberRowView({ member, now }: { member: MemberRow; now: number | null 
 
       <span className="hidden items-center gap-2 sm:flex">
         <Toggle
-          checked={isManager ? true : canInviteBot}
-          disabled={pending || isManager || member.isSelf}
+          checked={isAdmin ? true : canInviteBot}
+          disabled={pending || isAdmin || member.isSelf}
           onChange={onBotChange}
         />
         <span className="text-xs text-muted">Bot</span>
@@ -337,7 +338,7 @@ function MemberRowView({ member, now }: { member: MemberRow; now: number | null 
       {member.isSelf ? (
         <RoleBadge role={role} />
       ) : (
-        <RoleSelect value={role as 'manager' | 'member'} onChange={onRoleChange} disabled={pending} />
+        <RoleSelect value={role as WorkspaceRole} onChange={onRoleChange} disabled={pending} />
       )}
 
       {member.isSelf ? (
@@ -428,23 +429,83 @@ function PendingInviteRow({ invite, now }: { invite: PendingInvite; now: number 
 
 // ── Bits ────────────────────────────────────────────────────────────────────
 
+/** The three workspace tiers. Stored `manager` displays as "Admin" (KTD1);
+ *  `super_admin` displays as "Super Admin". */
+type WorkspaceRole = 'member' | 'manager' | 'super_admin';
+
 const ROLE_DOT: Record<string, string> = {
+  super_admin: 'bg-amber-400',
   manager: 'bg-violet-400',
   member: 'bg-sky-400',
   viewer: 'bg-slate-400',
 };
 
+/** Display label for a stored role value. `manager` → "Admin" everywhere. */
+function roleLabel(role: string): string {
+  switch (role) {
+    case 'super_admin':
+      return 'Super Admin';
+    case 'manager':
+      return 'Admin';
+    case 'viewer':
+      return 'Viewer';
+    default:
+      return 'Member';
+  }
+}
+
+/** Map the last-privileged-user trigger codes to friendly copy. */
+function roleErrorMessage(error: string): string {
+  if (error === 'last_super_admin') return 'Workspace needs at least one Super Admin.';
+  if (error === 'last_manager') return 'Workspace needs at least one Admin.';
+  return error;
+}
+
 function RoleBadge({ role }: { role: string }): ReactElement {
-  const label = role === 'manager' ? 'Manager' : role === 'viewer' ? 'Viewer' : 'Member';
   return (
     <span className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-medium text-fg">
       <span className={`h-2 w-2 rounded-full ${ROLE_DOT[role] ?? 'bg-slate-400'}`} />
-      {label}
+      {roleLabel(role)}
     </span>
   );
 }
 
+/** Member-row role control: all three tiers (Member / Admin / Super Admin). */
 function RoleSelect({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: WorkspaceRole;
+  onChange: (v: WorkspaceRole) => void;
+  disabled?: boolean;
+}): ReactElement {
+  return (
+    <div className="relative">
+      <span className={`pointer-events-none absolute left-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full ${ROLE_DOT[value]}`} />
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(toWorkspaceRole(e.target.value))}
+        className="cursor-pointer appearance-none rounded-lg border border-border bg-card py-1.5 pl-7 pr-8 text-sm font-medium text-fg focus:border-accent/50 focus:outline-none disabled:opacity-60"
+      >
+        <option value="member">Member</option>
+        <option value="manager">Admin</option>
+        <option value="super_admin">Super Admin</option>
+      </select>
+      <ChevronDown />
+    </div>
+  );
+}
+
+function toWorkspaceRole(v: string): WorkspaceRole {
+  if (v === 'manager' || v === 'super_admin') return v;
+  return 'member';
+}
+
+/** Invite-only role control: Member / Admin (super_admin is assigned after join,
+ *  never invited — the master-key tier is granted deliberately, not via a link). */
+function InviteRoleSelect({
   value,
   onChange,
   disabled = false,
@@ -463,7 +524,7 @@ function RoleSelect({
         className="cursor-pointer appearance-none rounded-lg border border-border bg-card py-1.5 pl-7 pr-8 text-sm font-medium text-fg focus:border-accent/50 focus:outline-none disabled:opacity-60"
       >
         <option value="member">Member</option>
-        <option value="manager">Manager</option>
+        <option value="manager">Admin</option>
       </select>
       <ChevronDown />
     </div>

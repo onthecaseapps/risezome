@@ -13,6 +13,8 @@ import {
   type UtteranceTime,
 } from '../_synthesis-seed';
 import { ReviewClient, type RecapStatus } from './_client';
+import { PrivacyPicker } from './_privacy-picker';
+import { toPrivacyLevel } from '../../../../_lib/privacy-levels';
 
 /**
  * Post-meeting review page (U8). Mirrors the live view: a generated
@@ -53,6 +55,21 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
     },
     meetingId,
   });
+
+  // U6: privacy control. Owner = meetings.user_id; admin = manager|super_admin.
+  // The org floor (most-private level a non-admin owner may pick) is read via the
+  // RLS-scoped client (org members may SELECT org_privacy_config). Default floor =
+  // only_me if the config row is absent. The picker is presentation only — the
+  // action + DB trigger enforce the floor.
+  const isOwner = (meeting.user_id as string) === user.id;
+  const isAdmin = role === 'manager' || role === 'super_admin';
+  const currentPrivacy = toPrivacyLevel(meeting.privacy_level as string | null);
+  const { data: privacyConfig } = await supabase
+    .from('org_privacy_config')
+    .select('privacy_floor')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  const floor = toPrivacyLevel((privacyConfig?.privacy_floor as string | null) ?? 'only_me');
 
   // U9: the recap is encrypted at rest — decrypt server-side (the key stays in
   // env; the browser never sees it). DEGRADE on a crypto failure (KMS blip /
@@ -208,6 +225,15 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
       initialSyntheses={initialSyntheses}
       initialCards={initialCards}
       anchorMap={anchorMap}
+      privacyControl={
+        <PrivacyPicker
+          meetingId={meetingId}
+          currentLevel={currentPrivacy}
+          isOwner={isOwner}
+          isAdmin={isAdmin}
+          floor={floor}
+        />
+      }
     />
   );
 }

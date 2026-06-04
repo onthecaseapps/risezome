@@ -3,6 +3,7 @@ import { decryptForOrgFromBytea, EnvelopeCryptoError } from '@risezome/crypto';
 import { requireAuthedUserWithOrg } from '../../_lib/auth';
 import { createServerClient } from '../../_lib/supabase-server';
 import { CapturesClient, type CaptureCard, type CapturePlatform } from './_client';
+import { toPrivacyLevel } from '../../_lib/privacy-levels';
 
 /**
  * Captures — the historical record of past meetings the bot attended.
@@ -34,7 +35,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
   const { data: meetingRows } = await supabase
     .from('meetings')
     .select(
-      'meeting_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, conference_url, recap_text_enc, recap_status, created_at',
+      'meeting_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, conference_url, recap_text_enc, recap_status, privacy_level, created_at',
     )
     .eq('org_id', orgId)
     .in('status', ['completed', 'failed'])
@@ -53,6 +54,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
     conference_url: string | null;
     recap_text_enc: string | null;
     recap_status: 'generating' | 'done' | 'failed' | null;
+    privacy_level: string | null;
     created_at: string;
   }>;
 
@@ -150,6 +152,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
       endedAtIso: m.ended_at,
       createdAtIso: m.created_at,
       platform: platformFromUrl(m.conference_url),
+      privacyLevel: toPrivacyLevel(m.privacy_level),
       summary: recapByMeeting.get(m.meeting_id) ?? null,
       recapStatus: m.recap_status,
       answersCount: s.answers,

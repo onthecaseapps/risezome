@@ -23,7 +23,7 @@ vi.mock('../../app/_lib/supabase-server', () => ({
     }),
 }));
 
-import { requireAuthedUserWithOrg, requireManager } from '../../app/_lib/auth';
+import { requireAuthedUserWithOrg, requireManager, requireSuperAdmin } from '../../app/_lib/auth';
 
 function membershipRow(role: string, canInviteBot: boolean, orgId = 'org_1', name = 'Org One') {
   return { role, can_invite_bot: canInviteBot, org: { id: orgId, name } };
@@ -70,8 +70,33 @@ describe('requireManager', () => {
     expect(ctx.role).toBe('manager');
   });
 
+  it('resolves for a super_admin (admin power includes super_admin)', async () => {
+    orgMembersResult.mockResolvedValue({ data: [membershipRow('super_admin', false)], error: null });
+    const ctx = await requireManager();
+    expect(ctx.role).toBe('super_admin');
+    expect(ctx.canInviteBot).toBe(true); // super_admin is implicitly an admin
+  });
+
   it('redirects a member to /upcoming', async () => {
     orgMembersResult.mockResolvedValue({ data: [membershipRow('member', true)], error: null });
     await expect(requireManager()).rejects.toThrow('REDIRECT:/upcoming');
+  });
+});
+
+describe('requireSuperAdmin (audit-log + master-key route guard)', () => {
+  it('resolves only for a super_admin', async () => {
+    orgMembersResult.mockResolvedValue({ data: [membershipRow('super_admin', false)], error: null });
+    const ctx = await requireSuperAdmin();
+    expect(ctx.role).toBe('super_admin');
+  });
+
+  it('redirects a plain admin (manager) to /upcoming', async () => {
+    orgMembersResult.mockResolvedValue({ data: [membershipRow('manager', true)], error: null });
+    await expect(requireSuperAdmin()).rejects.toThrow('REDIRECT:/upcoming');
+  });
+
+  it('redirects a member to /upcoming', async () => {
+    orgMembersResult.mockResolvedValue({ data: [membershipRow('member', true)], error: null });
+    await expect(requireSuperAdmin()).rejects.toThrow('REDIRECT:/upcoming');
   });
 });

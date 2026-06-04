@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, type ReactElement } from 'react';
+import { PRIVACY_LABEL, type PrivacyLevel } from '../../_lib/privacy-levels';
 
 export type CapturePlatform = 'zoom' | 'meet' | 'teams' | 'other';
 
@@ -13,6 +14,7 @@ export interface CaptureCard {
   endedAtIso: string | null;
   createdAtIso: string;
   platform: CapturePlatform;
+  privacyLevel: PrivacyLevel;
   summary: string | null;
   recapStatus: 'generating' | 'done' | 'failed' | null;
   answersCount: number;
@@ -83,7 +85,9 @@ export function CapturesClient({
       <header className="mb-7">
         <h1 className="text-4xl font-bold tracking-tight">Captures</h1>
         <p className="mt-2 text-pretty text-muted">
-          Past meetings the bot attended for <span className="font-medium text-fg">{orgName}</span>.
+          The shared library of past meetings for{' '}
+          <span className="font-medium text-fg">{orgName}</span> — workspace-visible captures plus
+          any private ones you can see.
         </p>
       </header>
 
@@ -200,6 +204,7 @@ function CaptureCardView({ capture: c }: { capture: CaptureCard }): ReactElement
           <span className="text-sm text-muted">{time}</span>
         </div>
         <div className="flex items-center gap-2">
+          <PrivacyBadge level={c.privacyLevel} />
           <span className={`text-sm font-medium ${PLATFORM_TEXT[c.platform]}`}>
             {PLATFORM_LABEL[c.platform]}
           </span>
@@ -287,6 +292,40 @@ function StatusBadge({ status }: { status: 'completed' | 'failed' }): ReactEleme
   );
 }
 
+/**
+ * Per-meeting visibility badge (permissions overhaul U6). The library now shows
+ * org-visible meetings (RLS widened in U3), so each card surfaces who can see it.
+ * Compact labels here (the full "(workspace)" qualifier lives on the picker);
+ * the icon differentiates the three levels at a glance.
+ */
+const PRIVACY_BADGE: Record<PrivacyLevel, { short: string; className: string }> = {
+  only_me: { short: 'Only me', className: 'bg-rose-500/15 text-rose-500' },
+  only_participants: { short: 'Participants', className: 'bg-amber-500/15 text-amber-500' },
+  only_teammates: { short: 'Workspace', className: 'bg-emerald-500/15 text-emerald-500' },
+};
+
+function PrivacyBadge({ level }: { level: PrivacyLevel }): ReactElement {
+  const cfg = PRIVACY_BADGE[level];
+  return (
+    <span
+      title={PRIVACY_LABEL[level]}
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${cfg.className}`}
+    >
+      <LockGlyph />
+      {cfg.short}
+    </span>
+  );
+}
+
+function LockGlyph(): ReactElement {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4" y="11" width="16" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 018 0v4" />
+    </svg>
+  );
+}
+
 const PLATFORM_STYLE: Record<CapturePlatform, string> = {
   zoom: 'bg-blue-500/15 text-blue-400',
   meet: 'bg-emerald-500/15 text-emerald-400',
@@ -370,8 +409,8 @@ function EmptyState(): ReactElement {
     <div className="rounded-2xl border border-dashed border-border bg-card/40 px-6 py-16 text-center">
       <h2 className="text-lg font-semibold tracking-tight">No captures yet</h2>
       <p className="mx-auto mt-2 max-w-sm text-pretty text-sm text-muted">
-        Meetings the Risezome bot attended will appear here once they wrap. Toggle the bot on for a
-        meeting on the{' '}
+        Meetings the Risezome bot attended appear here once they wrap — your workspace’s shared
+        library, plus any private meetings you can see. Toggle the bot on for a meeting on the{' '}
         <a href="/upcoming" className="text-accent hover:underline">
           Upcoming
         </a>{' '}

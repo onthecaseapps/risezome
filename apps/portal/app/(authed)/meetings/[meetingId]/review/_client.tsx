@@ -37,6 +37,8 @@ export interface ReviewClientProps {
   initialCards: CardEvent[];
   /** utteranceId → synthesisId for the transcript anchors. */
   anchorMap: Record<string, string>;
+  /** Privacy control rendered in the header (RSC-built: picker or badge). */
+  privacyControl?: ReactNode;
 }
 
 function seedState(
@@ -84,11 +86,14 @@ export function ReviewClient(props: ReviewClientProps): ReactElement {
         <a href="/upcoming" className="text-xs text-muted hover:text-fg">
           ← Upcoming
         </a>
-        <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">{props.title}</h1>
-          <span className="text-sm text-muted">
-            <StatusBadge status={props.status} /> · {formatRange(props.startedAtIso, props.endedAtIso)}
-          </span>
+        <div className="mt-2 flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h1 className="text-2xl font-semibold tracking-tight">{props.title}</h1>
+            <span className="text-sm text-muted">
+              <StatusBadge status={props.status} /> · {formatRange(props.startedAtIso, props.endedAtIso)}
+            </span>
+          </div>
+          {props.privacyControl !== undefined ? props.privacyControl : null}
         </div>
       </header>
 
