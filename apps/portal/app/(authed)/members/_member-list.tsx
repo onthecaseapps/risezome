@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { createInviteAction, revokeInviteAction } from './invite-action';
 import { changeRoleAction, removeMemberAction, setCanInviteBotAction } from './member-actions';
+import { primaryButtonClass } from '../_components/ui';
 
 export interface MemberRow {
   userId: string;
@@ -75,7 +76,7 @@ export function MembersClient({
             onClick={() => {
               inviteRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-semibold text-accent-fg shadow-sm transition-opacity hover:opacity-90"
+            className={primaryButtonClass}
           >
             <PlusGlyph />
             Invite

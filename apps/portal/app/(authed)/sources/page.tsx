@@ -9,6 +9,7 @@ import { SourcesAutoRefresh } from './_auto-refresh';
 import { GithubRepoItem } from './_github-repo-item';
 import { ConnectionSources } from './_connection-sources';
 import { TrelloMark, JiraMark, ConfluenceMark } from './_source-icons';
+import { primaryButtonClass } from '../_components/ui';
 
 interface TrelloSourceRow {
   id: string;
@@ -179,10 +180,10 @@ export default async function SourcesPage(props: {
             href={manageUrl ?? '/sources/install'}
             target={manageUrl !== null ? '_blank' : undefined}
             rel={manageUrl !== null ? 'noopener noreferrer' : undefined}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-white shadow-sm hover:bg-accent-press"
+            className={primaryButtonClass}
           >
             <PlusIcon />
-            Connect a source
+            Add repositories
           </a>
         )}
       </header>
@@ -304,10 +305,7 @@ function EmptyConnectState(): ReactElement {
         Install the Risezome GitHub App on the org or user account whose repos you want indexed.
         You choose which repos we can see.
       </p>
-      <a
-        href="/sources/install"
-        className="mt-6 inline-flex items-center justify-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-accent-press"
-      >
+      <a href="/sources/install" className={`mt-6 ${primaryButtonClass}`}>
         Connect GitHub
       </a>
     </div>

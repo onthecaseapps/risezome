@@ -5,6 +5,7 @@ import { OptInToggle } from './_opt-in-toggle';
 import { SyncStatus } from './_sync-status';
 import { lookupMeetingsForEvents } from './_meetings-lookup';
 import { LiveStatusProvider, LiveStatusChip, LiveMeetingCta } from './_live-status';
+import { primaryButtonClass } from '../_components/ui';
 
 /**
  * Upcoming meetings for the current org. Shows the next 7 days of
@@ -72,7 +73,7 @@ export default async function UpcomingPage(): Promise<ReactElement> {
   const lastSyncedAt = await lookupLastSyncedAt(user.id);
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8">
+    <div className="mx-auto max-w-5xl px-6 py-8">
       <header className="mb-6 flex items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Upcoming meetings</h1>
@@ -87,7 +88,7 @@ export default async function UpcomingPage(): Promise<ReactElement> {
             href="https://calendar.google.com/calendar/u/0/r/eventedit"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-white shadow-sm hover:bg-accent-press"
+            className={primaryButtonClass}
           >
             <PlusIcon />
             Add meeting
@@ -138,9 +139,9 @@ function EmptyState(): ReactElement {
           href="https://calendar.google.com/calendar/u/0/r/eventedit"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center justify-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-accent-press"
+          className={primaryButtonClass}
         >
-          Schedule a meeting
+          Add meeting
         </a>
         <a
           href="/sources"

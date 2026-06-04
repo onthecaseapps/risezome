@@ -199,7 +199,12 @@ function CaptureCardView({ capture: c }: { capture: CaptureCard }): ReactElement
           <PlatformIcon platform={c.platform} />
           <span className="text-sm text-muted">{time}</span>
         </div>
-        <StatusBadge status={c.status} />
+        <div className="flex items-center gap-2">
+          <span className={`text-sm font-medium ${PLATFORM_TEXT[c.platform]}`}>
+            {PLATFORM_LABEL[c.platform]}
+          </span>
+          <StatusBadge status={c.status} />
+        </div>
       </div>
 
       <h3 className="mt-3.5 text-pretty text-lg font-semibold leading-snug tracking-tight">
@@ -216,9 +221,9 @@ function CaptureCardView({ capture: c }: { capture: CaptureCard }): ReactElement
 
       <div className="mt-4 flex items-center justify-between border-t border-border/70 pt-3.5">
         <div className="flex items-center gap-3.5 text-xs text-muted">
-          <Metric icon={<SparkleGlyph />} value={c.answersCount} accent />
-          <Metric icon={<LayersGlyph />} value={c.sourcesCount} />
-          {dur !== null ? <Metric icon={<ClockGlyph />} value={`${String(dur)}m`} /> : null}
+          <Metric icon={<SparkleGlyph />} value={c.answersCount} label="answers given" accent />
+          <Metric icon={<LayersGlyph />} value={c.sourcesCount} label="sources surfaced" />
+          {dur !== null ? <Metric icon={<ClockGlyph />} value={`${String(dur)}m`} label="duration" /> : null}
         </div>
         <SpeakerAvatars speakers={c.speakers} />
       </div>
@@ -247,32 +252,37 @@ function firstLine(text: string): string {
 function Metric({
   icon,
   value,
+  label,
   accent = false,
 }: {
   icon: ReactElement;
   value: number | string;
+  label: string;
   accent?: boolean;
 }): ReactElement {
   return (
-    <span className={`inline-flex items-center gap-1 tabular-nums ${accent ? 'text-accent' : ''}`}>
+    <span
+      title={label}
+      aria-label={`${String(value)} ${label}`}
+      className={`inline-flex items-center gap-1 tabular-nums ${accent ? 'text-accent' : ''}`}
+    >
       {icon}
       {value}
     </span>
   );
 }
 
-function StatusBadge({ status }: { status: 'completed' | 'failed' }): ReactElement {
-  if (status === 'failed') {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-500">
-        <WarnGlyph />
-        Check
-      </span>
-    );
-  }
+/**
+ * Only renders for the `failed` state — a badge that's on every card carries no
+ * information. "Check" (amber) appears precisely when a recording needs
+ * attention; a successful capture is the unremarkable default, so it gets none.
+ */
+function StatusBadge({ status }: { status: 'completed' | 'failed' }): ReactElement | null {
+  if (status !== 'failed') return null;
   return (
-    <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
-      Rec
+    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-500">
+      <WarnGlyph />
+      Check
     </span>
   );
 }
@@ -282,6 +292,20 @@ const PLATFORM_STYLE: Record<CapturePlatform, string> = {
   meet: 'bg-emerald-500/15 text-emerald-400',
   teams: 'bg-indigo-500/15 text-indigo-400',
   other: 'bg-slate-500/15 text-slate-400',
+};
+
+const PLATFORM_LABEL: Record<CapturePlatform, string> = {
+  zoom: 'Zoom',
+  meet: 'Meet',
+  teams: 'Teams',
+  other: 'Call',
+};
+
+const PLATFORM_TEXT: Record<CapturePlatform, string> = {
+  zoom: 'text-blue-600 dark:text-blue-400',
+  meet: 'text-emerald-600 dark:text-emerald-400',
+  teams: 'text-indigo-600 dark:text-indigo-400',
+  other: 'text-muted',
 };
 
 function PlatformIcon({ platform }: { platform: CapturePlatform }): ReactElement {

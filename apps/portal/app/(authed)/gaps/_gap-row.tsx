@@ -69,21 +69,32 @@ export function GapRow({
           ) : null}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted">
-          <span className="inline-flex items-center gap-1">
+          <span
+            className="inline-flex items-center gap-1"
+            title="People who asked"
+            aria-label={`${gap.people} ${gap.people === 1 ? 'person' : 'people'} asked`}
+          >
             <PersonGlyph />
             {gap.people}
           </span>
-          <span className="inline-flex items-center gap-1">
+          <span
+            className="inline-flex items-center gap-1"
+            title="Meetings where this came up"
+            aria-label={`${gap.meetings} ${gap.meetings === 1 ? 'meeting' : 'meetings'}`}
+          >
             <VideoGlyph />
             {gap.meetings}
           </span>
           {lastAsked !== null ? (
-            <span className="inline-flex items-center gap-1">
+            <span className="inline-flex items-center gap-1" title="Last asked">
               <ClockGlyph />
               {lastAsked}
             </span>
           ) : null}
-          <span className="inline-flex items-center gap-1 text-accent">
+          <span
+            className="inline-flex items-center gap-1 text-accent"
+            title="Conversation moments — open to view"
+          >
             <MomentsGlyph />
             {gap.moments} {gap.moments === 1 ? 'moment' : 'moments'}
           </span>

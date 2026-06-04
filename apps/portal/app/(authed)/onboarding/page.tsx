@@ -1,7 +1,8 @@
 import type { ReactElement } from 'react';
 import { redirect } from 'next/navigation';
-import { Logo } from '../../_components/logo';
 import { listUserOrgs, requireAuthedUser } from '../../_lib/auth';
+import { MembersIcon, SourcesIcon, CapturesIcon, GapsIcon } from '../_components/nav-icons';
+import { primaryButtonClass } from '../_components/ui';
 import { createOrg } from './actions';
 
 /**
@@ -20,6 +21,7 @@ export default async function OnboardingPage({
 }): Promise<ReactElement> {
   await requireAuthedUser();
   const orgs = await listUserOrgs();
+  // Users with at least one membership never see onboarding — straight to the app.
   if (orgs.length > 0) {
     redirect('/sources');
   }
@@ -27,14 +29,13 @@ export default async function OnboardingPage({
   const { error } = await searchParams;
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center px-6 py-12">
+    <main className="mx-auto flex min-h-dvh max-w-lg flex-col items-center justify-center px-6 py-12">
       <div className="w-full space-y-8">
         <header className="flex flex-col items-center gap-3 text-center">
-          <Logo size={40} className="text-accent" />
           <h1 className="text-2xl font-semibold tracking-tight">Welcome to Risezome</h1>
           <p className="max-w-sm text-sm text-muted">
-            Let&apos;s name your workspace. You can rename it later in Settings, and add more
-            workspaces from the sidebar.
+            A workspace is your team&apos;s private corner of Risezome. Its members, sources, and
+            the answers grounded from them all live inside it. Name your first one to begin.
           </p>
         </header>
 
@@ -53,15 +54,54 @@ export default async function OnboardingPage({
               autoFocus
             />
           </label>
-          <button
-            type="submit"
-            className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:bg-accent-press"
-          >
+          <button type="submit" className={`${primaryButtonClass} w-full`}>
             Create workspace
           </button>
         </form>
+
+        <WorkspaceExplainer />
       </div>
     </main>
+  );
+}
+
+/**
+ * First-run primer: what's scoped to a workspace, and why a team might keep
+ * several. The "why" is the load-bearing part — new users default to one
+ * catch-all workspace and only later discover that mixing every team's sources
+ * dilutes answers and erases the privacy boundary.
+ */
+function WorkspaceExplainer(): ReactElement {
+  const items: Array<{ icon: ReactElement; label: string; desc: string }> = [
+    { icon: <MembersIcon />, label: 'Members', desc: 'Who can ask and see answers' },
+    { icon: <SourcesIcon />, label: 'Sources', desc: 'The repos, boards & docs it searches' },
+    { icon: <CapturesIcon />, label: 'Captures', desc: 'Meetings the bot recorded' },
+    { icon: <GapsIcon />, label: 'Knowledge gaps', desc: 'Questions that couldn’t be answered' },
+  ];
+  return (
+    <div className="space-y-4 rounded-2xl border border-border bg-card/40 p-5">
+      <p className="text-xs font-semibold uppercase tracking-wider text-muted">
+        What lives in a workspace
+      </p>
+      <ul className="grid gap-x-4 gap-y-4 sm:grid-cols-2">
+        {items.map((it) => (
+          <li key={it.label} className="flex items-start gap-3">
+            <span className="mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-accent-soft text-accent">
+              {it.icon}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-fg">{it.label}</span>
+              <span className="block text-xs leading-snug text-muted">{it.desc}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="border-t border-border/70 pt-3.5 text-sm text-muted">
+        <span className="font-medium text-fg">Tip: keep one workspace per team.</span>{' '}
+        Each searches only its own sources, so answers stay focused and a team&apos;s private
+        context never crosses into another&apos;s.
+      </p>
+    </div>
   );
 }
 
