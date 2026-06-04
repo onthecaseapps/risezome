@@ -152,9 +152,15 @@ export async function runPipeline(
   // judge on `ambiguous` always — and on `clearly_substantive` too when strict
   // (U3 about-our-work routing). A skip stops BEFORE embed/search; the
   // utterance emits no cards.
+  // QUESTION lane (KTD2): the adapter already classified this as a substantive
+  // question, so SKIP the relevance gate entirely — retrieve and let the
+  // synthesizer be the relevance backstop (ground-or-refuse). A cheap refusal is
+  // the worst case; an answerable question is never dropped before retrieval.
+  // lane undefined ⇒ ambient (back-compat for eval/legacy callers).
+  const bypassGate = input.lane === 'question';
   const heuristicStart = Date.now();
   const heuristic = classifyRelevanceHeuristic(input.utteranceText);
-  if (heuristic === 'clearly_filler') {
+  if (!bypassGate && heuristic === 'clearly_filler') {
     deps.logger.info(
       { meetingId: input.meetingId, utteranceId: input.utteranceId, relevance: heuristic },
       'pipeline.gate.filler',
@@ -173,14 +179,19 @@ export async function runPipeline(
   }
   if (trace !== null) {
     trace.push(
-      stageRecord('heuristic-gate', 'ran', heuristicStart, {
-        decision: heuristic,
-        reason: heuristic === 'clearly_substantive' ? 'substantive' : 'ambiguous',
+      stageRecord('heuristic-gate', bypassGate ? 'short_circuited' : 'ran', heuristicStart, {
+        decision: bypassGate ? 'bypassed' : heuristic,
+        reason: bypassGate
+          ? 'question_lane'
+          : heuristic === 'clearly_substantive'
+            ? 'substantive'
+            : 'ambiguous',
       }),
     );
   }
 
   const routeToJudge =
+    !bypassGate &&
     (heuristic === 'ambiguous' || (strict && heuristic === 'clearly_substantive')) &&
     deps.relevanceClassifier !== undefined;
   if (routeToJudge && deps.relevanceClassifier !== undefined) {

@@ -241,6 +241,41 @@ describe('runPipeline — pre-retrieval gate (KTD3)', () => {
     expect((classifier.classify as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
     expect(sink.skips).toHaveLength(0);
   });
+
+  // ── QUESTION lane bypass (KTD2 / U4) ──────────────────────────────────────
+  it("lane='question' bypasses the heuristic filler skip → embed/search still run", async () => {
+    const { deps, search, embedder } = makeDeps();
+    const sink = new RecordingSink();
+    // 'yeah' is clearly_filler; the question lane must still proceed.
+    const result = await runPipeline(input({ utteranceText: 'yeah', lane: 'question' }), deps, sink);
+
+    expect(result.skipped).toBeUndefined();
+    expect(sink.skips).toHaveLength(0);
+    expect((embedder.embed as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(0);
+    expect(search.mock.calls).toHaveLength(1);
+  });
+
+  it("lane='question' bypasses the about-our-work judge entirely (classifier untouched), even when strict", async () => {
+    const classifier = skipClassifier(0.9); // would skip if consulted
+    const { deps, search } = makeDeps({
+      relevanceClassifier: classifier,
+      relevanceStrict: true,
+      relevanceSkipThreshold: 0.7,
+    });
+    const sink = new RecordingSink();
+    const result = await runPipeline(input({ lane: 'question' }), deps, sink);
+
+    expect((classifier.classify as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    expect(result.skipped).toBeUndefined();
+    expect(search.mock.calls).toHaveLength(1);
+  });
+
+  it("lane undefined ⇒ ambient (back-compat): filler still skips", async () => {
+    const { deps } = makeDeps();
+    const sink = new RecordingSink();
+    const result = await runPipeline(input({ utteranceText: 'yeah' }), deps, sink);
+    expect(result).toEqual({ emitted: 0, skipped: 'filler' });
+  });
 });
 
 describe('runPipeline — surface path', () => {
