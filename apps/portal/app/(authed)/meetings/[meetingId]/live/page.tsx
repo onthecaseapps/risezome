@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import { notFound, redirect } from 'next/navigation';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServerClient } from '../../../../_lib/supabase-server';
+import { recordMasterKeyAccessIfNeeded } from '../../../../_lib/meeting-access';
 import { decryptForOrgFromBytea, EnvelopeCryptoError } from '@risezome/crypto';
 import { transcriptWithText } from '../../../../_lib/transcript';
 import { LiveMeetingClient } from './_client';
@@ -28,13 +29,13 @@ interface PageProps {
 
 export default async function LiveMeetingPage(props: PageProps): Promise<ReactElement> {
   const { meetingId } = await props.params;
-  const { orgId } = await requireAuthedUserWithOrg();
+  const { user, orgId, role } = await requireAuthedUserWithOrg();
 
   const supabase = await createServerClient();
   const { data: meeting } = await supabase
     .from('meetings')
     .select(
-      'meeting_id, org_id, user_id, status, recall_bot_id, error_code, error_message, started_at, ended_at, calendar_event_id',
+      'meeting_id, org_id, user_id, privacy_level, status, recall_bot_id, error_code, error_message, started_at, ended_at, calendar_event_id',
     )
     .eq('meeting_id', meetingId)
     .eq('org_id', orgId)
@@ -43,6 +44,17 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
   if (meeting === null) {
     notFound();
   }
+
+  // U5: audit a super_admin master-key view (best-effort; never throws).
+  await recordMasterKeyAccessIfNeeded({
+    viewer: { userId: user.id, orgId, role },
+    meeting: {
+      org_id: meeting.org_id as string,
+      user_id: meeting.user_id as string,
+      privacy_level: meeting.privacy_level as string,
+    },
+    meetingId,
+  });
 
   const status = meeting.status as
     | 'launching'

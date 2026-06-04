@@ -18,14 +18,41 @@ export async function changeRoleAction(userId: string, role: string): Promise<Ac
   if (role !== 'manager' && role !== 'member' && role !== 'super_admin') {
     return { ok: false, error: 'invalid_role' };
   }
-  const { orgId } = await requireAdmin();
+  const { user, orgId } = await requireAdmin();
   const service = createServiceRoleClient();
+
+  // Capture the old role for the audit trail (U5). Org-scoped read.
+  const { data: prior } = await service
+    .from('org_members')
+    .select('role')
+    .eq('org_id', orgId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  const oldRole = (prior?.role as string | undefined) ?? null;
+
   const { error } = await service
     .from('org_members')
     .update({ role })
     .eq('org_id', orgId)
     .eq('user_id', userId);
   if (error !== null) return { ok: false, error: lastManagerError(error.message) };
+
+  // Append an append-only role_change audit row (service-role; U5). Best-effort:
+  // the role change already committed, so a failed audit insert must not surface
+  // as a failed role change — log and continue.
+  if (oldRole !== role) {
+    const { error: auditErr } = await service.from('permission_audit_log').insert({
+      org_id: orgId,
+      actor_id: user.id,
+      action: 'role_change',
+      target_meeting_id: null,
+      detail: { user_id: userId, old_role: oldRole, new_role: role },
+    });
+    if (auditErr !== null) {
+      console.error('[member-actions] role_change audit insert failed:', auditErr.message);
+    }
+  }
+
   revalidatePath('/members');
   return { ok: true };
 }

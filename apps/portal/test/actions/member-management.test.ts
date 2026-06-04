@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const requireManager = vi.fn();
+const requireAdmin = vi.fn();
 const createServiceRoleClient = vi.fn();
 
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
-vi.mock('../../app/_lib/auth', () => ({ requireManager: () => requireManager() }));
+// member-actions imports requireAdmin (the admin-power gate; requireManager is an
+// alias of it). Mock the actual imported name.
+vi.mock('../../app/_lib/auth', () => ({ requireAdmin: () => requireAdmin() }));
 vi.mock('../../app/_lib/supabase-server', () => ({
   createServiceRoleClient: () => createServiceRoleClient(),
 }));
@@ -18,8 +20,17 @@ import {
 function makeService(error?: string): unknown {
   const terminal = async () => ({ error: error !== undefined ? { message: error } : null });
   return {
-    from() {
+    from(table: string) {
+      // changeRoleAction (U5) reads the member's current role for the audit
+      // detail, then appends a permission_audit_log row (best-effort). Provide
+      // a select chain ending in maybeSingle and an insert that succeeds.
+      if (table === 'permission_audit_log') {
+        return { insert: async () => ({ error: null }) };
+      }
       return {
+        select: () => ({
+          eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { role: 'member' } }) }) }),
+        }),
         update: () => ({ eq: () => ({ eq: terminal }) }),
         delete: () => ({ eq: () => ({ eq: terminal }) }),
       };
@@ -28,7 +39,7 @@ function makeService(error?: string): unknown {
 }
 
 beforeEach(() => {
-  requireManager.mockResolvedValue({ orgId: 'org_1', user: { id: 'mgr_1' } });
+  requireAdmin.mockResolvedValue({ orgId: 'org_1', user: { id: 'mgr_1' } });
 });
 afterEach(() => vi.clearAllMocks());
 

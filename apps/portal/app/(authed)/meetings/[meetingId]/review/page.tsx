@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import { notFound } from 'next/navigation';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServerClient } from '../../../../_lib/supabase-server';
+import { recordMasterKeyAccessIfNeeded } from '../../../../_lib/meeting-access';
 import { decryptForOrgFromBytea, EnvelopeCryptoError } from '@risezome/crypto';
 import { transcriptWithText } from '../../../../_lib/transcript';
 import type { CardEvent, CardTrigger, TranscriptUtterance } from '@risezome/hud-ui';
@@ -27,19 +28,31 @@ interface PageProps {
 
 export default async function ReviewPage(props: PageProps): Promise<ReactElement> {
   const { meetingId } = await props.params;
-  const { orgId } = await requireAuthedUserWithOrg();
+  const { user, orgId, role } = await requireAuthedUserWithOrg();
 
   const supabase = await createServerClient();
   const { data: meeting } = await supabase
     .from('meetings')
     .select(
-      'meeting_id, org_id, status, started_at, ended_at, calendar_event_id, recap_text_enc, recap_status',
+      'meeting_id, org_id, user_id, privacy_level, status, started_at, ended_at, calendar_event_id, recap_text_enc, recap_status',
     )
     .eq('meeting_id', meetingId)
     .eq('org_id', orgId)
     .maybeSingle();
 
   if (meeting === null) notFound();
+
+  // U5: if a super_admin is viewing a meeting only the master key grants them,
+  // record an audit row (best-effort; never throws). RLS already granted the row.
+  await recordMasterKeyAccessIfNeeded({
+    viewer: { userId: user.id, orgId, role },
+    meeting: {
+      org_id: meeting.org_id as string,
+      user_id: meeting.user_id as string,
+      privacy_level: meeting.privacy_level as string,
+    },
+    meetingId,
+  });
 
   // U9: the recap is encrypted at rest — decrypt server-side (the key stays in
   // env; the browser never sees it). DEGRADE on a crypto failure (KMS blip /
