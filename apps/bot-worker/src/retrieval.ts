@@ -668,22 +668,31 @@ export async function maybeRetrieveAndEmit(args: {
         'synthesis.skipped.filler',
       );
     } else {
-      const shouldSkip =
-        heuristic === 'ambiguous' && args.relevanceClassifier !== undefined
-          ? await classifyLlmAndDecide({
-              classifier: args.relevanceClassifier,
-              utterance: args.utteranceText,
-              meetingId: args.meetingId,
-              utteranceId: args.utteranceId,
-              ...(args.lastSummary !== undefined && {
-                context: {
-                  current_topic: args.lastSummary.current_topic,
-                  open_questions: args.lastSummary.open_questions,
-                },
-              }),
-              logger: args.logger,
-            })
-          : false;
+      // Route to the LLM judge on `ambiguous` always, and on
+      // `clearly_substantive` too when strict (U3) — so the about-our-work
+      // gate fires on questions, not just ambiguous utterances. The judge runs
+      // after retrieval, before the expensive synthesis, so a skip still saves
+      // the synthesis cost. (Latency follow-up: fire it in parallel with
+      // retrieval to hide the extra call on the common path.)
+      const routeToJudge =
+        (heuristic === 'ambiguous' ||
+          (RELEVANCE_STRICT && heuristic === 'clearly_substantive')) &&
+        args.relevanceClassifier !== undefined;
+      const shouldSkip = routeToJudge
+        ? await classifyLlmAndDecide({
+            classifier: args.relevanceClassifier!,
+            utterance: args.utteranceText,
+            meetingId: args.meetingId,
+            utteranceId: args.utteranceId,
+            ...(args.lastSummary !== undefined && {
+              context: {
+                current_topic: args.lastSummary.current_topic,
+                open_questions: args.lastSummary.open_questions,
+              },
+            }),
+            logger: args.logger,
+          })
+        : false;
       if (shouldSkip) {
         // Already logged inside classifyLlmAndDecide.
       } else {
@@ -800,6 +809,15 @@ async function retractIfNotPinned(
  */
 const RELEVANCE_SKIP_THRESHOLD = 0.7;
 const RELEVANCE_TIMEOUT_MS = 3000;
+/**
+ * Strict "about-our-work" routing (U3). When true, substantive questions
+ * (`clearly_substantive`) are routed through the LLM judge too, so the
+ * about-our-work gate fires on them — not just on `ambiguous` utterances.
+ * Pairs with the strict prompt the classifier reads from the same env flag.
+ * Default OFF (legacy behavior); flip RISEZOME_RELEVANCE_STRICT=true to enable.
+ * Eval A/B: precision 84%→98%, over-refusal flat (see eval/reports/precision-results.md).
+ */
+const RELEVANCE_STRICT = process.env.RISEZOME_RELEVANCE_STRICT === 'true';
 
 /**
  * Run the LLM classifier on an ambiguous utterance, with a hard timeout
