@@ -77,6 +77,14 @@ export interface PipelineInput {
   /** Optional relevance context for the LLM judge, when a caller wants to
    *  override what's derived from `lastSummary`. */
   readonly relevanceContext?: RelevanceContext;
+  /**
+   * Triggering lane (live two-lane policy). `'question'` ⇒ this fire was a
+   * detected substantive question; the core SKIPS its relevance gate and lets
+   * the synthesizer be the relevance backstop (ground-or-refuse). `'ambient'`
+   * (or undefined, for back-compat with eval/legacy callers) ⇒ the core runs
+   * the relevance gate as before.
+   */
+  readonly lane?: 'question' | 'ambient';
 }
 
 // ── Deps (the injected capabilities) ────────────────────────────────────

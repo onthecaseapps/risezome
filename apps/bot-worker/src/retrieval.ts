@@ -5,7 +5,7 @@ import { optionalReranker } from './reranker';
 import { expandWinnersToParents, parentDocEnabled, dedupeByDoc } from './parent-doc';
 import { optionalQueryExpander } from './query-expand';
 import { type MissRecord } from '@risezome/engine/gaps';
-import { type RelevanceClassifier } from '@risezome/engine/relevance';
+import { type RelevanceClassifier, classifySubstantiveQuestion } from '@risezome/engine/relevance';
 import { type Classifier } from '@risezome/engine/router';
 import { type SkillRegistry } from '@risezome/engine/skills';
 import type { MeetingSummary } from '@risezome/engine/summarize';
@@ -64,11 +64,27 @@ const KEY_TERMS_BOOST_ENABLED = process.env.RISEZOME_KEY_TERMS_BOOST === 'true';
  */
 const RELEVANCE_STRICT = process.env.RISEZOME_RELEVANCE_STRICT === 'true';
 
+// Two-lane triggering (KTD3). A detected substantive question fires immediately,
+// bypassing the cooldown, so a real question asked amid filler is never dropped
+// (the original incident). Cost is bounded by a HIGH abuse ceiling — set well
+// above any normal conversational question rate — so only runaway/abusive
+// volume is throttled. Over the ceiling, a question falls back to the ambient
+// cooldown (best-effort), not a hard drop. Env-overridable like the rest.
+const QUESTION_MAX_PER_MIN =
+  Number.parseInt(process.env.RISEZOME_QUESTION_MAX_PER_MIN ?? '6', 10) || 6;
+const QUESTION_MAX_PER_MEETING =
+  Number.parseInt(process.env.RISEZOME_QUESTION_MAX_PER_MEETING ?? '60', 10) || 60;
+const QUESTION_RATE_WINDOW_MS = 60_000;
+
 export interface RetrievalRuntime {
   /** Concatenated text of recent final utterances (the rolling query window). */
   recentFinals: string[];
   utteranceCountSinceLastRetrieval: number;
   lastRetrievalAt: number;
+  /** QUESTION-lane fire timestamps within the last minute (per-minute ceiling). */
+  questionFireTimestamps: number[];
+  /** Total QUESTION-lane fires this meeting (per-meeting ceiling). */
+  questionFireCount: number;
   /**
    * Most recent cardId surfaced for a given docId in this meeting. Drives the
    * stale-card retractor (now in the Supabase sink): a new card for a docId that
@@ -82,6 +98,8 @@ export function newRetrievalRuntime(): RetrievalRuntime {
     recentFinals: [],
     utteranceCountSinceLastRetrieval: 0,
     lastRetrievalAt: 0,
+    questionFireTimestamps: [],
+    questionFireCount: 0,
     liveCardByDocId: new Map<string, string>(),
   };
 }
@@ -134,16 +152,40 @@ export async function maybeRetrieveAndEmit(args: {
   }
   args.runtime.utteranceCountSinceLastRetrieval += 1;
 
-  // ── Throttling / cooldown gates (prod-only; stay in the adapter) ─────
+  // ── Two-lane triggering (KTD3) ───────────────────────────────────────
+  // A detected substantive question takes the QUESTION lane: it bypasses the
+  // cooldown so a real question is never throttled out (the original incident).
+  // Everything else takes the AMBIENT lane and keeps the cost-budgeted cooldown.
   const now = Date.now();
+  const lane: 'question' | 'ambient' = classifySubstantiveQuestion(args.utteranceText)
+    .isQuestion
+    ? 'question'
+    : 'ambient';
+
+  // Per-minute question budget (prune the rolling window first).
+  args.runtime.questionFireTimestamps = args.runtime.questionFireTimestamps.filter(
+    (t) => now - t < QUESTION_RATE_WINDOW_MS,
+  );
+  const overQuestionCeiling =
+    args.runtime.questionFireTimestamps.length >= QUESTION_MAX_PER_MIN ||
+    args.runtime.questionFireCount >= QUESTION_MAX_PER_MEETING;
+
+  // The cooldown applies to ambient fires, and to question fires only when they
+  // are over the abuse ceiling (best-effort throttle, not a hard drop).
+  const mustRespectCooldown = lane === 'ambient' || overQuestionCeiling;
+
   if (args.runtime.utteranceCountSinceLastRetrieval < UTTERANCE_THRESHOLD) {
     return { emitted: 0, skipped: 'below_utterance_threshold' };
   }
-  if (now - args.runtime.lastRetrievalAt < COOLDOWN_MS) {
-    return { emitted: 0, skipped: 'cooldown' };
+  if (mustRespectCooldown && now - args.runtime.lastRetrievalAt < COOLDOWN_MS) {
+    return { emitted: 0, skipped: lane === 'question' ? 'question_ceiling' : 'cooldown' };
   }
   args.runtime.utteranceCountSinceLastRetrieval = 0;
   args.runtime.lastRetrievalAt = now;
+  if (lane === 'question') {
+    args.runtime.questionFireTimestamps.push(now);
+    args.runtime.questionFireCount += 1;
+  }
 
   // ── Build the query text (prod transcription-source shape) ───────────
   // The EMBED/lexical query is the rolling window of recent finals, optionally
@@ -177,6 +219,7 @@ export async function maybeRetrieveAndEmit(args: {
     meetingId: args.meetingId,
     orgId: args.orgId,
     queryText: queryText + keyTermsBoost,
+    lane,
     ...(recentContext.length > 0 ? { recentContext } : {}),
     ...(args.lastSummary !== undefined ? { lastSummary: args.lastSummary } : {}),
   };
