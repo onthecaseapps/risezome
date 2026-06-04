@@ -1,0 +1,134 @@
+// @vitest-environment node
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const h = vi.hoisted(() => ({
+  send: vi.fn((_e: unknown) => Promise.resolve()),
+  responses: {
+    meetingInsert: { data: { meeting_id: 'm_new' }, error: null } as { data: unknown; error: unknown },
+    meetingUpdate: { data: [{ meeting_id: 'm1' }], error: null } as { data: unknown; error: unknown },
+    org: { data: { id: 'org_fallback' } } as { data: unknown },
+    member: { data: { user_id: 'user_fallback' } } as { data: unknown },
+    captured: { insert: null as unknown, update: null as unknown },
+  },
+}));
+
+vi.mock('../../src/inngest/client', () => ({ inngest: { send: h.send } }));
+
+vi.mock('../../app/_lib/supabase-server', () => ({
+  createServiceRoleClient: () => ({
+    from(table: string) {
+      let mode: 'select' | 'insert' | 'update' = 'select';
+      const b = {
+        insert(row: unknown) {
+          mode = 'insert';
+          if (table === 'meetings') h.responses.captured.insert = row;
+          return b;
+        },
+        update(row: unknown) {
+          mode = 'update';
+          if (table === 'meetings') h.responses.captured.update = row;
+          return b;
+        },
+        select: () => b,
+        eq: () => b,
+        order: () => b,
+        limit: () => b,
+        single: () =>
+          Promise.resolve(
+            table === 'meetings' && mode === 'insert' ? h.responses.meetingInsert : { data: null, error: null },
+          ),
+        maybeSingle: () =>
+          Promise.resolve(
+            table === 'orgs' ? h.responses.org : table === 'org_members' ? h.responses.member : { data: null },
+          ),
+        // Awaitable for the update().select() path.
+        then: (resolve: (v: unknown) => void) =>
+          resolve(table === 'meetings' && mode === 'update' ? h.responses.meetingUpdate : { data: null, error: null }),
+      };
+      return b;
+    },
+  }),
+}));
+
+import { POST } from '../../app/api/dev/local-meeting/route';
+
+function post(body: unknown): Request {
+  return new Request('http://localhost/api/dev/local-meeting', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+describe('dev local-meeting API', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.responses.captured.insert = null;
+    h.responses.captured.update = null;
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('RISEZOME_DEV_ORG_ID', 'org_env');
+    vi.stubEnv('RISEZOME_DEV_USER_ID', 'user_env');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('start mints a recording meeting in the dev org with a Local-meeting title and null flags', async () => {
+    const res = await POST(post({ action: 'start' }));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean; meetingId: string; orgId: string };
+    expect(json).toMatchObject({ ok: true, meetingId: 'm_new', orgId: 'org_env' });
+    const inserted = h.responses.captured.insert as Record<string, unknown>;
+    expect(inserted.org_id).toBe('org_env');
+    expect(inserted.user_id).toBe('user_env');
+    expect(inserted.status).toBe('recording');
+    expect(String(inserted.title)).toMatch(/^Local meeting /);
+    expect(inserted.conference_url).toBeUndefined(); // left null (flag, KTD3)
+    expect(inserted.calendar_event_id).toBeUndefined();
+  });
+
+  it('stop completes the meeting and fires BOTH recap + gaps jobs (KTD4)', async () => {
+    const res = await POST(post({ action: 'stop', meetingId: 'm1', orgId: 'org_env' }));
+    expect(res.status).toBe(200);
+    const updated = h.responses.captured.update as Record<string, unknown>;
+    expect(updated.status).toBe('completed');
+    expect(typeof updated.ended_at).toBe('string');
+    expect(h.send).toHaveBeenCalledTimes(2);
+    const events = h.send.mock.calls.map((c) => c[0] as { name: string; data: unknown });
+    expect(events.map((e) => e.name).sort()).toEqual([
+      'risezome/meeting.gaps-requested',
+      'risezome/meeting.recap-requested',
+    ]);
+    for (const e of events) expect(e.data).toEqual({ meetingId: 'm1', orgId: 'org_env' });
+  });
+
+  it('is 404 in production (dev-only, KTD6)', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const res = await POST(post({ action: 'start' }));
+    expect(res.status).toBe(404);
+  });
+
+  it('stop on an unknown/foreign-org meeting is a 404 and fires no jobs', async () => {
+    h.responses.meetingUpdate = { data: [], error: null }; // 0 rows updated
+    const res = await POST(post({ action: 'stop', meetingId: 'nope', orgId: 'org_env' }));
+    expect(res.status).toBe(404);
+    expect(h.send).not.toHaveBeenCalled();
+    h.responses.meetingUpdate = { data: [{ meeting_id: 'm1' }], error: null }; // restore
+  });
+
+  it('stop requires meetingId + orgId', async () => {
+    const res = await POST(post({ action: 'stop' }));
+    expect(res.status).toBe(400);
+    expect(h.send).not.toHaveBeenCalled();
+  });
+
+  it('start falls back to the oldest org + member when env vars are unset', async () => {
+    vi.stubEnv('RISEZOME_DEV_ORG_ID', '');
+    vi.stubEnv('RISEZOME_DEV_USER_ID', '');
+    const res = await POST(post({ action: 'start' }));
+    expect(res.status).toBe(200);
+    const inserted = h.responses.captured.insert as Record<string, unknown>;
+    expect(inserted.org_id).toBe('org_fallback');
+    expect(inserted.user_id).toBe('user_fallback');
+  });
+});
