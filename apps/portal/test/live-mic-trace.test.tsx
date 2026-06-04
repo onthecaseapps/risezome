@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import {
   TracePanel,
   indexTrace,
@@ -40,99 +40,90 @@ describe('indexTrace (trace-indexing reducer)', () => {
   });
 });
 
-describe('TracePanel', () => {
-  it('renders the empty state when the selected utterance has no trace', () => {
-    render(<TracePanel trace={null} cards={[]} utteranceText={null} />);
-    expect(screen.getByText(/click a final transcript line/i)).toBeInTheDocument();
+const GROUNDED: UtteranceTrace = {
+  traceId: 'tr_g',
+  utteranceId: 'g',
+  meetingId: 'm1',
+  stages: [
+    { stage: 'empty-query', status: 'ran', decision: 'pass', latencyMs: 0 },
+    { stage: 'heuristic-gate', status: 'ran', decision: 'clearly_substantive', latencyMs: 4 },
+    { stage: 'router', status: 'ran', decision: 'not_fired', reason: 'not_tool_shaped', latencyMs: 6 },
+    { stage: 'embed', status: 'ran', latencyMs: 38, data: { dims: 1024 } },
+    { stage: 'hybrid-search', status: 'ran', latencyMs: 52, data: { hits: [{ rank: 1 }], count: 1 } },
+    { stage: 'crag', status: 'skipped', reason: 'confident', latencyMs: 0 },
+    { stage: 'no-hits', status: 'ran', decision: 'pass', latencyMs: 0, data: { hits: 1 } },
+    { stage: 'dedup-expand', status: 'ran', latencyMs: 24, data: { surviving: 1, parentDoc: false } },
+    { stage: 'emit', status: 'ran', decision: 'emitted', latencyMs: 8, data: { emitted: 1, cards: 1 } },
+    { stage: 'skill', status: 'ran', decision: 'none', reason: 'router_not_fired', latencyMs: 1 },
+    { stage: 'synthesis', status: 'ran', decision: 'generated', latencyMs: 384, data: { chars: 100 } },
+    { stage: 'refusal-gate', status: 'ran', decision: 'pass', latencyMs: 0 },
+    { stage: 'citation-verify', status: 'ran', decision: 'pass', latencyMs: 46, data: { total: 1, surviving: 1, dropped: 0, downgraded: 0 } },
+    { stage: 'reveal', status: 'ran', decision: 'revealed', latencyMs: 12, data: { citations: 1, encrypted: true } },
+  ],
+};
+
+describe('TracePanel (Pipeline Trace Debug)', () => {
+  it('empty state when nothing selected', () => {
+    render(<TracePanel trace={null} utteranceText={null} />);
+    expect(screen.getByText(/select an utterance/i)).toBeInTheDocument();
   });
 
-  it('renders a gated utterance with the skip stage, its reason, and a short-circuit badge', () => {
+  it('gated/in-flight empty state when an utterance is selected but has no trace', () => {
+    render(<TracePanel trace={null} utteranceText="uh, yeah" />);
+    expect(screen.getByText(/no trace yet/i)).toBeInTheDocument();
+  });
+
+  it('grounded trace: outcome banner, 16/16 reached, suppression-gate ribbon, reveal row', () => {
+    render(<TracePanel trace={GROUNDED} utteranceText="how many times do we use ai" />);
+    expect(screen.getByText('Grounded answer revealed')).toBeInTheDocument();
+    expect(screen.getByText(/16 \/ 16 reached/)).toBeInTheDocument();
+    expect(screen.getByText('Suppression gates')).toBeInTheDocument();
+    expect(screen.getByText('Reveal')).toBeInTheDocument();
+  });
+
+  it('filler skip: Skipped banner, Relevance row carries SKIP, downstream rows not reached', () => {
     const trace: UtteranceTrace = {
-      traceId: 'tr_u1',
-      utteranceId: 'u1',
+      traceId: 'tr_f',
+      utteranceId: 'f',
       meetingId: 'm1',
       stages: [
-        {
-          stage: 'heuristic-gate',
-          status: 'short_circuited',
-          decision: 'skip',
-          reason: 'clearly_filler',
-          latencyMs: 1,
-        },
+        { stage: 'empty-query', status: 'ran', decision: 'pass', latencyMs: 0 },
+        { stage: 'heuristic-gate', status: 'short_circuited', decision: 'skip', reason: 'clearly_filler', latencyMs: 0 },
       ],
     };
-    render(<TracePanel trace={trace} cards={[]} utteranceText="uh, yeah" />);
-    expect(screen.getByText('Heuristic gate')).toBeInTheDocument();
-    expect(screen.getByText('short-circuit')).toBeInTheDocument();
-    expect(screen.getByText('clearly_filler')).toBeInTheDocument();
+    render(<TracePanel trace={trace} utteranceText="it might" />);
+    expect(screen.getByText(/Skipped/)).toBeInTheDocument();
+    expect(screen.getByText('Relevance gate')).toBeInTheDocument();
+    // The merged Relevance row shows a SKIP chip.
+    expect(screen.getAllByText('SKIP').length).toBeGreaterThan(0);
+    // Reveal is downstream of the stop → not reached (dash chip).
+    expect(screen.getByText('Reveal')).toBeInTheDocument();
   });
 
-  it('renders hybrid-search cards from the stage data.hits (self-contained trace)', () => {
+  it('miss → knowledge gap chip on the outcome banner', () => {
     const trace: UtteranceTrace = {
-      traceId: 'tr_u3',
-      utteranceId: 'u3',
+      traceId: 'tr_m',
+      utteranceId: 'm',
       meetingId: 'm1',
       stages: [
-        {
-          stage: 'hybrid-search',
-          status: 'ran',
-          latencyMs: 8,
-          data: {
-            count: 2,
-            hits: [
-              { rank: 1, title: 'Launch Plan', score: 0.9, distance: 0.12, ftsMatched: true, isSummary: true },
-              { rank: 2, title: 'Spec Doc', score: 0.7, distance: null, ftsMatched: false, isSummary: false },
-            ],
-          },
-        },
+        { stage: 'hybrid-search', status: 'ran', latencyMs: 47, data: { hits: [], count: 0 } },
+        { stage: 'crag', status: 'ran', decision: 'kept_original', reason: 'miss', latencyMs: 318 },
+        { stage: 'no-hits', status: 'short_circuited', decision: 'miss', latencyMs: 1, data: { recordedGap: true } },
       ],
     };
-    // Pass NO `cards` prop content — the panel must render purely from data.hits.
-    render(<TracePanel trace={trace} cards={[]} utteranceText="what's the launch date?" />);
-    expect(screen.getByText('Launch Plan')).toBeInTheDocument();
-    expect(screen.getByText('Spec Doc')).toBeInTheDocument();
-    expect(screen.getByText('2 hit(s)')).toBeInTheDocument();
-    expect(screen.getByText('summary')).toBeInTheDocument(); // isSummary badge
-    expect(screen.getByText(/dist 0\.120/)).toBeInTheDocument(); // vector hit
-    expect(screen.getByText(/rrf 0\.7000/)).toBeInTheDocument(); // fts-only hit
+    render(<TracePanel trace={trace} utteranceText="we'll have to check the code" />);
+    expect(screen.getByText(/Miss/)).toBeInTheDocument();
+    expect(screen.getByText('→ knowledge gap')).toBeInTheDocument(); // the banner chip
   });
 
-  it('falls back to the `cards` prop when an older trace carried only a count', () => {
-    const trace: UtteranceTrace = {
-      traceId: 'tr_u4',
-      utteranceId: 'u4',
-      meetingId: 'm1',
-      // `hits` is a NUMBER (the pre-enrichment shape), not an array.
-      stages: [{ stage: 'hybrid-search', status: 'ran', latencyMs: 8, data: { hits: 1 } }],
-    };
-    render(
-      <TracePanel
-        trace={trace}
-        cards={[{ rank: 1, title: 'Legacy Card', source: 'github', docType: 'doc', distance: 0.2 }]}
-        utteranceText="legacy"
-      />,
-    );
-    expect(screen.getByText('Legacy Card')).toBeInTheDocument();
-    expect(screen.getByText('1 hit(s)')).toBeInTheDocument();
-  });
-
-  it('renders the synthesis STATUS + citation count for an answered utterance', () => {
-    const trace: UtteranceTrace = {
-      traceId: 'tr_u2',
-      utteranceId: 'u2',
-      meetingId: 'm1',
-      stages: [
-        { stage: 'synthesis', status: 'ran', decision: 'answer', latencyMs: 10, data: { citations: 2 } },
-        {
-          stage: 'citation-verify',
-          status: 'ran',
-          latencyMs: 5,
-          data: { total: 3, surviving: 2, dropped: 1, downgraded: 0 },
-        },
-      ],
-    };
-    render(<TracePanel trace={trace} cards={[]} utteranceText="what's the launch date?" />);
-    expect(screen.getByText('answer')).toBeInTheDocument();
-    expect(screen.getByText('1 dropped')).toBeInTheDocument();
+  it('stage deep-link fires onOpenOutput with the row tab', () => {
+    const onOpen = vi.fn();
+    render(<TracePanel trace={GROUNDED} utteranceText="q" onOpenOutput={onOpen} />);
+    // "Hybrid search" appears in the waterfall legend AND the ledger row; the
+    // ledger row is the last match. Expand it, then click "view retrievals".
+    const matches = screen.getAllByText('Hybrid search');
+    fireEvent.click(matches[matches.length - 1]!);
+    fireEvent.click(screen.getByText(/view retrievals/i));
+    expect(onOpen).toHaveBeenCalledWith('retrievals');
   });
 });
