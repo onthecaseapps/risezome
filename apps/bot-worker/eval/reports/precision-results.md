@@ -49,3 +49,21 @@ The eval validated the approach via `relevanceStrict` in the eval harness. To ma
 **bot-worker** path (`apps/bot-worker/src/retrieval.ts` `maybeRetrieveAndEmit`) must apply the same
 routing (route `clearly_substantive` → judge when strict), and the daemon path follows in U10. The
 prompt change (engine) already flows to both.
+
+## Pipeline consolidation faithfulness gate (2026-06-04)
+
+Plan `docs/plans/2026-06-04-001-refactor-unify-retrieval-pipeline-plan.md` (U4): after migrating
+prod + dev-sidecar + eval onto one shared `pipeline/core.ts`, the corpus eval (now running the SAME
+core as prod) must reproduce the U3 numbers — proof the consolidation didn't change behavior.
+
+| | U3 (pre-consolidation, 165q) | U4 (consolidated core, 165q) |
+|---|---|---|
+| Precision | 99% | **99%** |
+| Over-refusal | 1% | **1%** |
+| relevant surfaced | 74/75 | 74/75 |
+| offtopic suppressed | 42/42 | 42/42 |
+| adjacent suppressed | 47/48 | 47/48 |
+| latency p50/p95 | 3.37s/5.87s | 3.51s/5.91s |
+
+Identical precision/over-refusal/per-bucket counts and the same two borderline residuals. **PASS** —
+the eval validates prod by construction; U2 (prod) and U3 (dev-sidecar) are verified end-to-end.
