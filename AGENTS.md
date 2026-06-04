@@ -6,7 +6,7 @@ Conventions and guardrails for agents and humans working in this repo.
 
 Risezome is a cloud meeting-context copilot. A Recall.ai bot joins a user's meeting, streams the transcript to a long-lived **bot-worker** service, which embeds each utterance, retrieves relevant context from a per-org corpus, optionally routes the query to a skill, synthesizes a cited answer with Claude, and broadcasts it to a **portal** live page over Supabase Realtime. Background **Inngest** jobs launch the bots and index connected sources (GitHub, Trello, Jira, Confluence) into the corpus.
 
-The product is cloud-hosted (portal on Vercel, bot-worker on Fly.io, data in Supabase). The original local desktop daemon (`apps/daemon`), its native audio sidecars (`sidecars/`), and the standalone HUD app (`apps/hud-next`) are **legacy** from an earlier local-capture era. They are kept for reference and a dev-only local-mic debug path, but they are not part of the shipping product — do not extend them when adding product features.
+The product is cloud-hosted (portal on Vercel, bot-worker on Fly.io, data in Supabase). The native audio `sidecars/` are a **dev-only** local-mic debug path: they feed live microphone audio through Deepgram into the exact same bot-worker retrieval/synthesis pipeline as the Recall bot, so the pipeline can be exercised locally without a meeting. They are not shipped to users.
 
 Historical implementation plans and product framing live under `docs/plans/archive/` and `docs/brainstorms/archive/`.
 
@@ -16,16 +16,15 @@ Historical implementation plans and product framing live under `docs/plans/archi
 risezome/
 ├── apps/
 │   ├── portal/                        # Next.js App Router web app (Vercel) — auth, connectors, meeting pages, Inngest endpoint
-│   ├── bot-worker/                    # Fastify WS service (Fly.io) — Recall bot ingest, retrieval, synthesis, broadcast
-│   ├── daemon/                        # LEGACY desktop daemon (local SQLite corpus + sidecar audio)
-│   └── hud-next/                      # LEGACY standalone HUD app (superseded by portal + @risezome/hud-ui)
+│   └── bot-worker/                    # Fastify WS service (Fly.io) — Recall bot ingest, retrieval, synthesis, broadcast
 ├── packages/
 │   ├── engine/                        # Shared core: chunker, embed, synthesize, relevance, router, skills, summarize
 │   ├── crypto/                        # Per-org envelope encryption (AWS Encryption SDK + KMS); shared by portal + bot-worker
 │   ├── hud-ui/                        # React components for the live HUD (cards, synthesis, citations)
 │   └── shared-types/                  # Cross-package TypeScript types
 ├── sidecars/
-│   └── linux/                         # LEGACY PipeWire/PulseAudio capture binary (dev-only local-mic debug)
+│   ├── linux/                         # PipeWire/PulseAudio capture binary (dev-only local-mic debug)
+│   └── macos/                         # CoreAudio capture binary (dev-only local-mic debug)
 ├── supabase/
 │   ├── migrations/                    # Postgres + pgvector schema, RLS policies
 │   └── config.toml                    # Local Supabase config
@@ -50,7 +49,7 @@ risezome/
 
 ## Secrets and env files
 
-- Each app loads its own `.env` (see `apps/<name>/.env.example`). The root `.env.example` documents the legacy daemon's vars.
+- Each app loads its own `.env` (see `apps/<name>/.env.example`). The dev-only local-mic sidecar vars (`RISEZOME_SIDECAR_PATH`, `RISEZOME_SIDECAR_SHA`, `PULSE_SOURCE`) are documented in `apps/bot-worker/src/debug/README.md` and auto-configured by the dev console.
 - Copy the relevant `.env.example` to `.env` and fill in keys. `.env`, `.env.local`, and `.env.*.local` are gitignored.
 - **Never commit secrets, API keys, or `.env` files.** Service-role keys (Supabase secret key, `BOT_WORKER_SECRET`, OAuth client secrets, provider API keys) are server-only — never expose them to the browser or a `NEXT_PUBLIC_*` var.
 - Connector access tokens (GitHub installation, Trello, Atlassian) are stored in Supabase tables protected by RLS with **no policies** (service-role-only access); the bot-worker and Inngest jobs read them with the service-role client.
@@ -78,7 +77,7 @@ risezome/
 - **Recall webhooks** are Svix-signed; verify the signature before acting.
 - **Zero Data Retention** is enforced on Recall bot creation (`recording_config` / retention set to fail-closed).
 - **OAuth secrets and connector tokens** stay server-side; refresh-token rotation (Atlassian) is handled with guarded updates and in-process coalescing.
-- The legacy daemon's local defaults (127.0.0.1 binding, per-session bearer token, SQLite `0600`, sidecar SHA + IPC nonce, consent gating) still apply to that legacy surface but are not the product's security model.
+- The dev-only local-mic debug path verifies the audio sidecar binary by SHA and uses an IPC nonce, but that path is not part of the product's security model.
 
 ## Standards for plans
 
@@ -97,7 +96,7 @@ risezome/
 ## What NOT to do
 
 - Do not commit secrets, API keys, or `.env` files.
-- Do not extend the legacy daemon / hud-next / sidecars when building product features — build in the portal, bot-worker, or shared packages.
+- Do not build product features into the dev-only `sidecars/` local-mic debug path — build in the portal, bot-worker, or shared packages.
 - Do not introduce backwards-compatibility shims for unused branches.
 - Do not add hypothetical-future-use abstractions; YAGNI applies to carrying cost.
 - Do not write multi-line comment blocks where well-named identifiers do the job.

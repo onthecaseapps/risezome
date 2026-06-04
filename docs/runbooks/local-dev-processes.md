@@ -162,6 +162,3 @@ fails silently on a missing file.
   serves the WebSocket the cloud bot dials back into.
 - **Anthropic / Voyage / Deepgram** — all hosted; the dev servers
   use the same API keys production does (with smaller usage).
-- **Daemon** (`apps/daemon`) — legacy desktop POC; not part of the
-  shipping product. Don't start it unless you're actively working
-  on the daemon.

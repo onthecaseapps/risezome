@@ -14,12 +14,9 @@ export default tseslint.config(
       // apps/portal (Next.js) owns its own lint toolchain — see apps/portal/eslint.config.mjs.
       // The root type-checked config would otherwise try to parse it outside its tsconfig project.
       'apps/portal/**',
-      // apps/hud-next likewise.
-      'apps/hud-next/**',
       // Config + one-off dev scripts/probes that aren't part of any
       // tsconfig project (the type-aware parser can't resolve them).
       '**/vitest.config.ts',
-      'apps/daemon/scripts/**',
       'apps/bot-worker/scripts/**',
       '**/ws-probe.mjs',
       // The dev console's browser assets (vanilla HTML/JS/CSS) use browser

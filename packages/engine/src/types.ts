@@ -1,6 +1,5 @@
-// Canonical types lifted from apps/daemon/src/corpus/types.ts so both the
-// daemon and the cloud surfaces share the same vocabulary. The daemon will
-// re-export these from its own paths once U5b lifts the implementations.
+// Canonical corpus types shared across the cloud surfaces (engine,
+// bot-worker, portal) so they share the same vocabulary.
 
 export interface CanonicalDoc {
   readonly id: string;

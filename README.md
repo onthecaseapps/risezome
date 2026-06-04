@@ -2,7 +2,7 @@
 
 A cloud meeting-context copilot. A Recall.ai bot joins your meeting, listens to the transcript in real time, retrieves relevant context from your connected sources (GitHub, Trello, Jira, Confluence), and surfaces synthesized, cited answers on a live page while the conversation is still happening.
 
-> Status: active development. The product is cloud-hosted; the original desktop daemon (`apps/daemon`) and the standalone HUD app (`apps/hud-next`) are legacy from an earlier local-capture era and are not part of the shipping product — see [AGENTS.md](AGENTS.md).
+> Status: active development. The product is cloud-hosted. A dev-only local-mic debug path (native audio `sidecars/` → Deepgram) lets you exercise the exact production pipeline locally — see [AGENTS.md](AGENTS.md).
 
 ## Architecture at a glance
 
