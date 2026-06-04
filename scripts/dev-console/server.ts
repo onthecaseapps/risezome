@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { ProcessManager, type ProcDef, type ProcStatus } from './process-manager';
 import { SupabaseControl, type SupabaseState } from './supabase-control';
 import { SidecarControl } from './sidecar-control';
+import { LocalMeetingControl } from './local-meeting-control';
 import { appRegistry } from './registry';
 import { renderLine } from './ansi';
 
@@ -96,6 +97,23 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     if (msg !== null) logConsole(`▶ ${msg}`);
   }
 
+  // Local-audio meeting capture (dev): orchestrates a real meeting captured from
+  // the local mic instead of a Recall bot. Sequences the portal dev API (mint +
+  // lifecycle) and the bot-worker capture control; the sidecar build is reused.
+  const localMeeting = new LocalMeetingControl({
+    portalUrl: process.env.PORTAL_URL ?? 'http://localhost:3000',
+    botWorkerUrl: process.env.BOT_WORKER_HTTP_URL ?? 'http://localhost:8787',
+    botWorkerSecret:
+      process.env.BOT_WORKER_SECRET ??
+      readEnvVar(join(opts.repoRoot, 'apps', 'bot-worker', '.env'), 'BOT_WORKER_SECRET') ??
+      '',
+    ensureSidecar: async () => {
+      const code = await sidecar.ensure();
+      if (code !== 0) throw new Error('audio sidecar build failed (see Console panel)');
+    },
+    log: (line) => logConsole(line),
+  });
+
   const server = createServer((req, res) => {
     handle(req, res).catch((err: unknown) => {
       sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -123,6 +141,7 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
         resetOnStart,
         links: links(items),
         sidecar: sidecar.status(),
+        localMeeting: localMeeting.state(),
       });
     }
 
@@ -143,6 +162,27 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     if (method === 'POST' && path === '/api/logs/clear') {
       clearLogs();
       return sendJson(res, 200, { ok: true });
+    }
+
+    if (method === 'POST' && path === '/api/local-meeting/start') {
+      setStep('Starting local-audio meeting…');
+      try {
+        const state = await localMeeting.start();
+        return sendJson(res, 200, { ok: true, localMeeting: state });
+      } catch (err) {
+        return sendJson(res, 409, { ok: false, error: err instanceof Error ? err.message : String(err) });
+      } finally {
+        setStep(null);
+      }
+    }
+    if (method === 'POST' && path === '/api/local-meeting/stop') {
+      setStep('Stopping local-audio meeting…');
+      try {
+        const state = await localMeeting.stop();
+        return sendJson(res, 200, { ok: true, localMeeting: state });
+      } finally {
+        setStep(null);
+      }
     }
 
     if (method === 'POST' && path === '/api/reset-on-start') {
@@ -376,6 +416,7 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
         resetOnStart,
         links: links(items),
         sidecar: sidecar.status(),
+        localMeeting: localMeeting.state(),
       });
     };
     const stateTimer = setInterval(() => void pushState(), 1200);
@@ -538,6 +579,17 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 function readTag(repoRoot: string): string {
   const p = join(repoRoot, '.dev-tag');
   return existsSync(p) ? readFileSync(p, 'utf8').trim() : '';
+}
+/** Read a single KEY=value from a .env file (first match), unquoted. Used to
+ *  resolve BOT_WORKER_SECRET for the bot-worker control surface when it isn't in
+ *  the console's own env. Returns undefined when the file/key is absent. */
+function readEnvVar(envPath: string, key: string): string | undefined {
+  if (!existsSync(envPath)) return undefined;
+  for (const line of readFileSync(envPath, 'utf8').split('\n')) {
+    const m = new RegExp(`^${key}=(.*)$`).exec(line.trim());
+    if (m !== null) return m[1]!.replace(/^["']|["']$/g, '').trim();
+  }
+  return undefined;
 }
 function runUseEnv(
   opts: ConsoleOptions,

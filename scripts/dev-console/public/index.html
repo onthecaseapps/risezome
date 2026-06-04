@@ -63,6 +63,22 @@
           <button id="sidecar-build" title="Build the audio sidecar for this OS">Build</button>
         </div>
       </section>
+      <section class="proc localmeeting-panel" id="localmeeting-panel">
+        <div class="proc-head">
+          <span class="proc-name">Local meeting</span>
+          <span class="badge idle" id="lm-badge">idle</span>
+        </div>
+        <div class="sidecar-body">
+          <div class="sidecar-meta">
+            <span>capture a real meeting from your mic — no Recall bot</span>
+            <a class="muted" id="lm-live" href="#" target="_blank" rel="noreferrer" hidden></a>
+          </div>
+          <div>
+            <button id="lm-start" title="Mint a meeting + start capturing from the local sidecar">Start</button>
+            <button id="lm-stop" title="Stop capture + complete the meeting (recap + gaps)" disabled>Stop</button>
+          </div>
+        </div>
+      </section>
     </div>
 
     <main id="procs" class="procs">

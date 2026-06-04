@@ -19,6 +19,10 @@ const sidecarBadge = document.getElementById('sidecar-badge');
 const sidecarOs = document.getElementById('sidecar-os');
 const sidecarPath = document.getElementById('sidecar-path');
 const sidecarBuild = document.getElementById('sidecar-build');
+const lmBadge = document.getElementById('lm-badge');
+const lmLive = document.getElementById('lm-live');
+const lmStart = document.getElementById('lm-start');
+const lmStop = document.getElementById('lm-stop');
 
 const cards = new Map(); // name -> { root, badge, pid, logs, atBottom }
 
@@ -189,12 +193,54 @@ function paintSidecar(s) {
         : 'Build the audio sidecar for this OS';
 }
 
+// Local-meeting card: badge (idle/live), Start/Stop, and a link to the live
+// page once a capture is running.
+function paintLocalMeeting(lm) {
+  if (!lm) return;
+  const active = lm.active === true;
+  lmBadge.className = `badge ${active ? 'running' : 'idle'}`;
+  lmBadge.textContent = active ? 'live' : 'idle';
+  lmStart.disabled = active;
+  lmStop.disabled = !active;
+  if (active && lm.liveUrl) {
+    lmLive.href = lm.liveUrl;
+    lmLive.textContent = 'open live page →';
+    lmLive.hidden = false;
+  } else {
+    lmLive.hidden = true;
+  }
+}
+
+if (lmStart) {
+  lmStart.addEventListener('click', async () => {
+    lmStart.disabled = true;
+    const res = await api('/api/local-meeting/start', 'POST');
+    if (res && res.ok && res.localMeeting) {
+      paintLocalMeeting(res.localMeeting);
+      if (res.localMeeting.liveUrl) window.open(res.localMeeting.liveUrl, '_blank');
+    } else {
+      lmStart.disabled = false;
+      lmBadge.className = 'badge failed';
+      lmBadge.textContent = res && res.error ? 'error' : 'idle';
+      lmBadge.title = (res && res.error) || '';
+    }
+  });
+}
+if (lmStop) {
+  lmStop.addEventListener('click', async () => {
+    lmStop.disabled = true;
+    const res = await api('/api/local-meeting/stop', 'POST');
+    if (res && res.localMeeting) paintLocalMeeting(res.localMeeting);
+  });
+}
+
 let resetTouched = false; // don't fight the user mid-edit with server snapshots
 
 function applyState(state) {
   paintActivity(state.activity);
   paintLinks(state.links);
   paintSidecar(state.sidecar);
+  paintLocalMeeting(state.localMeeting);
   if (!resetTouched && typeof state.resetOnStart === 'boolean') {
     resetToggle.checked = state.resetOnStart;
   }
