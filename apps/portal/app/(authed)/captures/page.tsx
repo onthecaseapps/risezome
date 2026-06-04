@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react';
+import { decryptForOrgFromBytea, EnvelopeCryptoError } from '@risezome/crypto';
 import { requireAuthedUserWithOrg } from '../../_lib/auth';
 import { createServerClient } from '../../_lib/supabase-server';
 import { CapturesClient, type CaptureCard, type CapturePlatform } from './_client';
@@ -33,7 +34,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
   const { data: meetingRows } = await supabase
     .from('meetings')
     .select(
-      'meeting_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, conference_url, recap_text, recap_status, created_at',
+      'meeting_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, conference_url, recap_text_enc, recap_status, created_at',
     )
     .eq('org_id', orgId)
     .in('status', ['completed', 'failed'])
@@ -50,10 +51,31 @@ export default async function CapturesPage(): Promise<ReactElement> {
     calendar_event_id: string | null;
     title: string;
     conference_url: string | null;
-    recap_text: string | null;
+    recap_text_enc: string | null;
     recap_status: 'generating' | 'done' | 'failed' | null;
     created_at: string;
   }>;
+
+  // U9: the recap is encrypted at rest — decrypt server-side (the key stays in
+  // env; the browser never sees it). DEGRADE on a crypto failure (KMS blip, or
+  // a legacy row that can't decrypt under the org key) to a null recap rather
+  // than erroring the whole grid. Mirrors the meeting review page.
+  const recapByMeeting = new Map<string, string | null>();
+  await Promise.all(
+    meetings.map(async (m) => {
+      if (m.recap_text_enc === null) return;
+      try {
+        recapByMeeting.set(m.meeting_id, await decryptForOrgFromBytea(orgId, m.recap_text_enc));
+      } catch (err) {
+        if (err instanceof EnvelopeCryptoError) {
+          console.error(`[captures] recap decrypt failed (meetingId=${m.meeting_id}):`, err);
+          recapByMeeting.set(m.meeting_id, null);
+        } else {
+          throw err;
+        }
+      }
+    }),
+  );
 
   const meetingIds = meetings.map((m) => m.meeting_id);
   const calendarEventIds = meetings
@@ -128,7 +150,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
       endedAtIso: m.ended_at,
       createdAtIso: m.created_at,
       platform: platformFromUrl(m.conference_url),
-      summary: m.recap_text,
+      summary: recapByMeeting.get(m.meeting_id) ?? null,
       recapStatus: m.recap_status,
       answersCount: s.answers,
       sourcesCount: s.sources,
