@@ -27,11 +27,13 @@
 import { VoyageEmbedder } from '@risezome/engine/embed';
 import { AnthropicSynthesizer } from '@risezome/engine/synthesize';
 import { makeAnthropicJudge, meanScores, type RagasScores } from '@risezome/engine/eval';
+import { AnthropicRelevanceClassifier } from '@risezome/engine/relevance';
 import { createServiceClient } from '../src/db.js';
 import {
   evaluateQuestion,
   loadGoldenSet,
   summarize,
+  summarizePrecision,
   type EvalDeps,
   type EvalQuestionView,
 } from '../src/corpus-eval.js';
@@ -56,6 +58,9 @@ async function main(): Promise<void> {
     synthesizer: new AnthropicSynthesizer({ apiKey: anthropicKey }),
     orgId,
     judge: metricsEnabled ? makeAnthropicJudge({ apiKey: anthropicKey }) : null,
+    // Run the FULL real-time path so off-topic/adjacent suppression is measured
+    // at the relevance gate (where production suppresses it), not just retrieval.
+    relevanceClassifier: new AnthropicRelevanceClassifier({ apiKey: anthropicKey }),
   };
 
   const views: EvalQuestionView[] = [];
@@ -81,6 +86,23 @@ async function main(): Promise<void> {
     );
   }
 
+  // Precision / over-refusal / latency over the three buckets — the keep-or-
+  // revert gate for every tuning unit.
+  const prec = summarizePrecision(views);
+  const pct = (n: number | null): string => (n === null ? 'n/a' : `${(n * 100).toFixed(0)}%`);
+  const ms = (n: number | null): string => (n === null ? 'n/a' : `${n.toFixed(0)}ms`);
+  process.stderr.write(
+    `\n=== Precision: ${pct(prec.precision)} · over-refusal: ${pct(prec.overRefusal)} ` +
+      `· latency p50 ${ms(prec.latencyP50)} / p95 ${ms(prec.latencyP95)} ===\n`,
+  );
+  for (const b of ['relevant', 'offtopic', 'adjacent'] as const) {
+    const s = prec.byBucket[b];
+    process.stderr.write(
+      `  ${b.padEnd(9)} n=${String(s.total).padStart(3)}  surfaced ${String(s.surfaced).padStart(3)}  ` +
+        `suppressed ${String(s.suppressed).padStart(3)}  pass ${String(s.passed).padStart(3)}\n`,
+    );
+  }
+
   const allScores = views.map((v) => v.ragas).filter((s): s is RagasScores => s !== null);
   const ragasMean = allScores.length > 0 ? meanScores(allScores) : null;
   if (ragasMean !== null) {
@@ -95,7 +117,11 @@ async function main(): Promise<void> {
   }
 
   process.stdout.write(
-    JSON.stringify({ ...summary, ragas: { mean: ragasMean, perQuestion: views.map((v) => v.ragas) } }, null, 2),
+    JSON.stringify(
+      { ...summary, precision: prec, ragas: { mean: ragasMean, perQuestion: views.map((v) => v.ragas) } },
+      null,
+      2,
+    ),
   );
 }
 

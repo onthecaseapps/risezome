@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useState, type ReactElement, type ReactNode } from 'react';
 
 // ── Shapes mirrored from the bot-worker EvalQuestionView JSON ─────────────
+type EvalBucket = 'relevant' | 'offtopic' | 'adjacent';
 interface GoldenQuestion {
   q: string;
+  bucket?: EvalBucket;
   must_surface?: string[];
   expect_answer_contains?: string[];
   expect_refusal?: boolean;
@@ -57,6 +59,8 @@ interface QuestionView {
   droppedQuoted: number;
   downgradedToBare: number;
   ragas: Ragas | null;
+  latencyMs?: number;
+  gateSuppressed?: boolean;
 }
 
 type RunState = 'idle' | 'running' | QuestionView | { error: string };
@@ -64,6 +68,61 @@ type RunState = 'idle' | 'running' | QuestionView | { error: string };
 function csvToArray(s: string): string[] | undefined {
   const arr = s.split(',').map((x) => x.trim()).filter((x) => x.length > 0);
   return arr.length > 0 ? arr : undefined;
+}
+
+interface BucketAgg {
+  total: number;
+  surfaced: number;
+  suppressed: number;
+}
+interface PrecisionAgg {
+  precision: number | null;
+  overRefusal: number | null;
+  p50: number | null;
+  p95: number | null;
+  byBucket: Record<EvalBucket, BucketAgg>;
+}
+
+/** Precision / over-refusal / latency over completed views (mirrors the
+ *  bot-worker summarizePrecision; null until at least one question has run). */
+function aggregatePrecision(views: QuestionView[]): PrecisionAgg | null {
+  if (views.length === 0) return null;
+  const raw: Record<EvalBucket, { total: number; surfaced: number }> = {
+    relevant: { total: 0, surfaced: 0 },
+    offtopic: { total: 0, surfaced: 0 },
+    adjacent: { total: 0, surfaced: 0 },
+  };
+  for (const v of views) {
+    const b = v.question.bucket ?? 'relevant';
+    raw[b].total += 1;
+    if (!v.result.isRefusal) raw[b].surfaced += 1;
+  }
+  const surfacedTotal = raw.relevant.surfaced + raw.offtopic.surfaced + raw.adjacent.surfaced;
+  const relevantTotal = raw.relevant.total;
+  const lat = views
+    .map((v) => v.latencyMs)
+    .filter((n): n is number => typeof n === 'number')
+    .sort((a, b) => a - b);
+  const pctl = (p: number): number | null =>
+    lat.length > 0 ? (lat[Math.min(lat.length - 1, Math.max(0, Math.ceil((p / 100) * lat.length) - 1))] ?? null) : null;
+  const mk = (x: { total: number; surfaced: number }): BucketAgg => ({
+    total: x.total,
+    surfaced: x.surfaced,
+    suppressed: x.total - x.surfaced,
+  });
+  return {
+    precision: surfacedTotal > 0 ? raw.relevant.surfaced / surfacedTotal : null,
+    overRefusal: relevantTotal > 0 ? (relevantTotal - raw.relevant.surfaced) / relevantTotal : null,
+    p50: pctl(50),
+    p95: pctl(95),
+    byBucket: { relevant: mk(raw.relevant), offtopic: mk(raw.offtopic), adjacent: mk(raw.adjacent) },
+  };
+}
+function pctOrNa(n: number | null): string {
+  return n === null ? 'n/a' : `${(n * 100).toFixed(0)}%`;
+}
+function msOrNa(n: number | null): string {
+  return n === null ? 'n/a' : `${n.toFixed(0)}ms`;
 }
 
 export function EvalDebugClient(): ReactElement {
@@ -123,6 +182,7 @@ export function EvalDebugClient(): ReactElement {
   // Aggregate pass/total over completed views.
   const completed = Object.values(results).filter((r): r is QuestionView => typeof r === 'object' && 'result' in r);
   const passed = completed.filter((v) => v.result.pass).length;
+  const precision = aggregatePrecision(completed);
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-6">
@@ -146,6 +206,25 @@ export function EvalDebugClient(): ReactElement {
           </button>
         </div>
       </header>
+
+      {precision !== null && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1 rounded border border-border bg-card/40 px-4 py-2.5 text-sm">
+          <span className="font-semibold">
+            Precision <span className="text-emerald-400">{pctOrNa(precision.precision)}</span>
+          </span>
+          <span className="font-semibold">
+            Over-refusal <span className="text-amber-400">{pctOrNa(precision.overRefusal)}</span>
+          </span>
+          <span className="text-muted">
+            latency p50 {msOrNa(precision.p50)} / p95 {msOrNa(precision.p95)}
+          </span>
+          <span className="ml-auto text-xs text-muted">
+            relevant {precision.byBucket.relevant.surfaced}/{precision.byBucket.relevant.total} surfaced ·
+            offtopic {precision.byBucket.offtopic.suppressed}/{precision.byBucket.offtopic.total} suppressed ·
+            adjacent {precision.byBucket.adjacent.suppressed}/{precision.byBucket.adjacent.total} suppressed
+          </span>
+        </div>
+      )}
 
       {loadError !== null && (
         <p className="mb-4 rounded border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-300">

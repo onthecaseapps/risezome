@@ -13,6 +13,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { VoyageEmbedder } from '@risezome/engine/embed';
 import { AnthropicSynthesizer } from '@risezome/engine/synthesize';
 import { makeAnthropicJudge } from '@risezome/engine/eval';
+import { AnthropicRelevanceClassifier } from '@risezome/engine/relevance';
 import { verifyBotWsJwt } from '../jwt.js';
 import {
   evaluateQuestion,
@@ -40,8 +41,13 @@ function cleanQuestion(input: unknown): GoldenQuestion | null {
       : undefined;
   const must = strArray(o.must_surface);
   const expect = strArray(o.expect_answer_contains);
+  const bucket =
+    o.bucket === 'offtopic' || o.bucket === 'adjacent' || o.bucket === 'relevant'
+      ? o.bucket
+      : undefined;
   return {
     q: o.q.trim(),
+    ...(bucket !== undefined ? { bucket } : {}),
     ...(must !== undefined ? { must_surface: must } : {}),
     ...(expect !== undefined ? { expect_answer_contains: expect } : {}),
     ...(o.expect_refusal === true ? { expect_refusal: true } : {}),
@@ -123,6 +129,9 @@ export function registerEvalRoutes(instance: FastifyInstance, cfg: EvalRouteConf
         // by passing its id). See security plan U1 / S1.
         orgId: a.orgId,
         judge: req.body?.metrics === true ? makeAnthropicJudge({ apiKey: cfg.anthropicKey }) : null,
+        // Exercise the full real-time path (relevance gate → retrieval) so a
+        // single /run reflects what production would surface or suppress.
+        relevanceClassifier: new AnthropicRelevanceClassifier({ apiKey: cfg.anthropicKey }),
       };
       const view = await evaluateQuestion(deps, question);
       await reply.send(view);

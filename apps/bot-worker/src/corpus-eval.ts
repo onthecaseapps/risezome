@@ -17,6 +17,11 @@ import {
   type CitationStatus,
 } from '@risezome/engine/synthesize';
 import { scoreRagas, type Judge, type RagasScores } from '@risezome/engine/eval';
+import {
+  classifyRelevanceHeuristic,
+  type RelevanceClassifier,
+  type RelevanceContext,
+} from '@risezome/engine/relevance';
 import { hybridSearch } from './corpus-search.js';
 import { optionalReranker } from './reranker.js';
 import {
@@ -234,12 +239,26 @@ export function summarize(results: readonly QuestionResult[]): ReplaySummary {
 const TOP_K = 5;
 const silentLogger = { warn: () => undefined };
 
+const DEFAULT_RELEVANCE_SKIP_THRESHOLD = 0.7;
+
 export interface EvalDeps {
   readonly db: SupabaseClient;
   readonly embedder: VoyageEmbedder;
   readonly synthesizer: AnthropicSynthesizer;
   readonly orgId: string;
   readonly judge: Judge | null;
+  /**
+   * Optional relevance gate. When set, evaluateQuestion runs the FULL real-time
+   * path — heuristic gate → (ambiguous) LLM classifier → retrieval — mirroring
+   * maybeRetrieveAndEmit, so suppression of off-topic/adjacent chatter is
+   * measured where it happens. When null/absent, the gate is skipped
+   * (retrieval-only, legacy behavior).
+   */
+  readonly relevanceClassifier?: RelevanceClassifier | null;
+  /** Skip confidence required to honor a classifier `skip` (default 0.7). */
+  readonly relevanceSkipThreshold?: number;
+  /** Optional rolling-summary context for the classifier (omitted in eval). */
+  readonly relevanceContext?: RelevanceContext;
 }
 
 /** A source exactly as the synthesizer saw it, plus retrieval scores. */
@@ -282,9 +301,18 @@ export interface EvalQuestionView {
   readonly droppedQuoted: number;
   readonly downgradedToBare: number;
   readonly ragas: RagasScores | null;
+  /** Wall-clock ms for the full evaluated path (gate → retrieve → synthesize). */
+  readonly latencyMs: number;
+  /** True when the relevance gate suppressed the utterance before retrieval. */
+  readonly gateSuppressed: boolean;
 }
 
-function emptyView(question: GoldenQuestion, reason: string): EvalQuestionView {
+function emptyView(
+  question: GoldenQuestion,
+  reason: string,
+  latencyMs: number,
+  gateSuppressed = false,
+): EvalQuestionView {
   return {
     question,
     result: scoreQuestion(question, [], '', true),
@@ -298,6 +326,8 @@ function emptyView(question: GoldenQuestion, reason: string): EvalQuestionView {
     droppedQuoted: 0,
     downgradedToBare: 0,
     ragas: null,
+    latencyMs,
+    gateSuppressed,
   };
 }
 
@@ -311,9 +341,41 @@ export async function evaluateQuestion(
   deps: EvalDeps,
   question: GoldenQuestion,
 ): Promise<EvalQuestionView> {
+  const started = performance.now();
+  const elapsed = (): number => performance.now() - started;
+
+  // FULL real-time path: run the relevance gate before retrieval (mirrors
+  // maybeRetrieveAndEmit). A gate skip = suppressed (no card) — correct for
+  // offtopic/adjacent, an over-refusal for relevant. Only runs when a
+  // classifier is wired; otherwise the heuristic still short-circuits filler.
+  const heuristic = classifyRelevanceHeuristic(question.q);
+  if (heuristic === 'clearly_filler') {
+    return emptyView(question, 'relevance-gate: heuristic clearly_filler', elapsed(), true);
+  }
+  if (heuristic === 'ambiguous' && deps.relevanceClassifier != null) {
+    const threshold = deps.relevanceSkipThreshold ?? DEFAULT_RELEVANCE_SKIP_THRESHOLD;
+    let decision;
+    try {
+      decision = await deps.relevanceClassifier.classify(
+        question.q,
+        deps.relevanceContext !== undefined ? { context: deps.relevanceContext } : undefined,
+      );
+    } catch {
+      decision = { decision: 'surface' as const }; // fail-open on classifier error
+    }
+    if (decision.decision === 'skip' && decision.confidence >= threshold) {
+      return emptyView(
+        question,
+        `relevance-gate: classifier skip (${decision.confidence.toFixed(2)})`,
+        elapsed(),
+        true,
+      );
+    }
+  }
+
   const embedResult = await deps.embedder.embed({ items: [{ text: question.q, domain: 'text' }] });
   const vec = embedResult.vectors[0]?.vector;
-  if (vec === undefined) return emptyView(question, 'embed produced no vector');
+  if (vec === undefined) return emptyView(question, 'embed produced no vector', elapsed());
 
   const hits = await hybridSearch(deps.db, {
     orgId: deps.orgId,
@@ -323,7 +385,7 @@ export async function evaluateQuestion(
     reranker: optionalReranker(),
     logger: silentLogger,
   });
-  if (hits.length === 0) return emptyView(question, 'no retrieval hits');
+  if (hits.length === 0) return emptyView(question, 'no retrieval hits', elapsed());
 
   const chunkIds = hits.map((h) => h.chunk_id);
   const { data: chunkRows } = await deps.db
@@ -419,5 +481,75 @@ export async function evaluateQuestion(
     droppedQuoted: detail.filter((d) => d.status === 'dropped').length,
     downgradedToBare: detail.filter((d) => d.status === 'downgraded').length,
     ragas,
+    latencyMs: elapsed(),
+    gateSuppressed: false,
+  };
+}
+
+// ── Precision summary (U2) ──────────────────────────────────────────────
+
+export interface BucketStat {
+  readonly total: number;
+  readonly surfaced: number;
+  readonly suppressed: number;
+  readonly passed: number;
+}
+
+export interface PrecisionSummary {
+  /** Of the items that surfaced a card, the fraction that were `relevant`. */
+  readonly precision: number | null;
+  /** Of `relevant` items, the fraction wrongly suppressed (the guardrail). */
+  readonly overRefusal: number | null;
+  readonly surfacedTotal: number;
+  readonly byBucket: Record<EvalBucket, BucketStat>;
+  readonly latencyP50: number | null;
+  readonly latencyP95: number | null;
+}
+
+function percentile(sortedAsc: readonly number[], p: number): number | null {
+  if (sortedAsc.length === 0) return null;
+  const idx = Math.min(sortedAsc.length - 1, Math.ceil((p / 100) * sortedAsc.length) - 1);
+  return sortedAsc[Math.max(0, idx)] ?? null;
+}
+
+/**
+ * Precision / over-refusal / latency over a replayed set. "Surfaced" = a card
+ * came out (not refused/suppressed). Precision is over surfaced items; over-
+ * refusal is over the `relevant` bucket; latency p50/p95 are over all items.
+ */
+export function summarizePrecision(views: readonly EvalQuestionView[]): PrecisionSummary {
+  const byBucket: Record<EvalBucket, { total: number; surfaced: number; passed: number }> = {
+    relevant: { total: 0, surfaced: 0, passed: 0 },
+    offtopic: { total: 0, surfaced: 0, passed: 0 },
+    adjacent: { total: 0, surfaced: 0, passed: 0 },
+  };
+  for (const v of views) {
+    const bucket = bucketOf(v.question);
+    const surfaced = !v.result.isRefusal;
+    byBucket[bucket].total += 1;
+    if (surfaced) byBucket[bucket].surfaced += 1;
+    if (v.result.pass) byBucket[bucket].passed += 1;
+  }
+  const surfacedTotal = byBucket.relevant.surfaced + byBucket.offtopic.surfaced + byBucket.adjacent.surfaced;
+  const relevantTotal = byBucket.relevant.total;
+  const latencies = views.map((v) => v.latencyMs).sort((a, b) => a - b);
+  const mkStat = (b: { total: number; surfaced: number; passed: number }): BucketStat => ({
+    total: b.total,
+    surfaced: b.surfaced,
+    suppressed: b.total - b.surfaced,
+    passed: b.passed,
+  });
+  return {
+    precision: surfacedTotal > 0 ? byBucket.relevant.surfaced / surfacedTotal : null,
+    overRefusal:
+      relevantTotal > 0 ? (relevantTotal - byBucket.relevant.surfaced) / relevantTotal : null,
+    surfacedTotal,
+    byBucket: {
+      relevant: mkStat(byBucket.relevant),
+      offtopic: mkStat(byBucket.offtopic),
+      adjacent: mkStat(byBucket.adjacent),
+    },
+    latencyP50: percentile(latencies, 50),
+    latencyP95: percentile(latencies, 95),
   };
 }

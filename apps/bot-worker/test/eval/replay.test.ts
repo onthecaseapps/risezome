@@ -1,14 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   bucketOf,
   computeRecall,
   evaluateAnswer,
+  evaluateQuestion,
   expectsSuppression,
   loadGoldenSet,
   scoreQuestion,
   summarize,
+  summarizePrecision,
   validateGoldenSet,
   type EvalBucket,
+  type EvalDeps,
+  type EvalQuestionView,
   type GoldenQuestion,
   type RetrievedDoc,
 } from '../../eval/lib/corpus-replay.js';
@@ -184,5 +188,77 @@ describe('golden-questions.jsonl (the real dataset)', () => {
     expect(counts.relevant).toBeGreaterThan(40);
     expect(counts.offtopic).toBeGreaterThan(20);
     expect(counts.adjacent).toBeGreaterThan(20);
+  });
+});
+
+// ── U2: full-path gate + precision metrics ──────────────────────────────────
+
+describe('evaluateQuestion relevance gate', () => {
+  it('suppresses clearly-filler before any retrieval (no embed/search call)', async () => {
+    const embed = vi.fn();
+    const deps = {
+      db: {} as never,
+      embedder: { embed } as never,
+      synthesizer: {} as never,
+      orgId: 'org_1',
+      judge: null,
+    } as unknown as EvalDeps;
+
+    const view = await evaluateQuestion(deps, {
+      q: 'yeah',
+      bucket: 'offtopic',
+      expect_refusal: true,
+    });
+
+    expect(embed).not.toHaveBeenCalled(); // gate short-circuited before retrieval
+    expect(view.gateSuppressed).toBe(true);
+    expect(view.result.isRefusal).toBe(true);
+    expect(view.result.pass).toBe(true); // offtopic expect_refusal ⇒ suppression is correct
+    expect(view.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('summarizePrecision', () => {
+  function view(bucket: EvalBucket, surfaced: boolean, latencyMs: number): EvalQuestionView {
+    return {
+      question: { q: 'x', bucket },
+      result: { isRefusal: !surfaced, pass: surfaced ? bucket === 'relevant' : bucket !== 'relevant' },
+      latencyMs,
+    } as unknown as EvalQuestionView;
+  }
+
+  it('computes precision over surfaced items and over-refusal over the relevant bucket', () => {
+    const s = summarizePrecision([
+      view('relevant', true, 100),
+      view('relevant', true, 200),
+      view('relevant', true, 300),
+      view('relevant', false, 50), // over-refused
+      view('offtopic', false, 40),
+      view('offtopic', false, 40),
+      view('offtopic', true, 40), // false positive (surfaced chit-chat)
+      view('adjacent', false, 60),
+      view('adjacent', false, 60),
+    ]);
+    expect(s.surfacedTotal).toBe(4); // 3 relevant + 1 offtopic
+    expect(s.precision).toBeCloseTo(3 / 4); // 75%
+    expect(s.overRefusal).toBeCloseTo(1 / 4); // 1 of 4 relevant suppressed
+    expect(s.byBucket.relevant).toMatchObject({ total: 4, surfaced: 3, suppressed: 1 });
+    expect(s.byBucket.offtopic).toMatchObject({ total: 3, surfaced: 1, suppressed: 2 });
+    expect(s.byBucket.adjacent).toMatchObject({ total: 2, surfaced: 0, suppressed: 2 });
+  });
+
+  it('reports latency p50/p95 from per-item timings', () => {
+    const s = summarizePrecision(
+      [10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((ms) => view('relevant', true, ms)),
+    );
+    expect(s.latencyP50).toBe(50);
+    expect(s.latencyP95).toBe(100);
+  });
+
+  it('returns null metrics for an empty set', () => {
+    const s = summarizePrecision([]);
+    expect(s.precision).toBeNull();
+    expect(s.overRefusal).toBeNull();
+    expect(s.latencyP50).toBeNull();
   });
 });
