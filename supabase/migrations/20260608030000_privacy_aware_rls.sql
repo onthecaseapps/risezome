@@ -66,7 +66,7 @@
 -- 1. can_access_meeting(p_meeting_id) — privacy-aware access predicate
 ------------------------------------------------------------
 
-create function public.can_access_meeting(p_meeting_id uuid)
+create or replace function public.can_access_meeting(p_meeting_id uuid)
   returns boolean
   language sql
   stable

@@ -56,6 +56,25 @@ bug, and Admins seeing private meetings *would* be.
 - **Writes are service-role only.** Roles, privacy, and audit follow the
   established "RLS reads, service-role writes, no broad client write policies"
   rule. The audit log is append-only and never client-writable.
+- **One documented audit gap: the org default/floor change is NOT audited (v1).**
+  `setOrgPrivacyConfig` (org `default_privacy` + `privacy_floor`) does not append a
+  `permission_audit_log` row — the audit `action` CHECK admits only
+  `privacy_change` / `admin_override` / `role_change` / `master_key_access`, and the
+  config row's `updated_by`/`updated_at` already records who last changed it. So
+  "every privileged write is audited" has this one intentional exception; add a
+  `config_change` action later if a floor-change trail is needed.
+- **Granting/removing Super Admin requires a Super Admin.** `changeRoleAction`
+  gates member<->manager on `requireAdmin`, but minting OR demoting `super_admin`
+  (the master-key tier) additionally requires the *caller* to be a super_admin —
+  otherwise a manager(Admin) could self-promote to the master key. The DB
+  last-super_admin trigger is the atomic backstop, but the app-layer gate is what
+  blocks the escalation.
+- **The super_admin captures library is exclusion-filtered, not list-audited.**
+  RLS grants a super_admin every meeting in the org. The captures *list* would
+  decrypt + render restricted recaps with no audit row (only detail pages audit).
+  Fix: the list EXCLUDES master-key-only meetings (`isMasterKeyAccess` is true —
+  not owner, not participant, `only_me`/`only_participants`) for a super_admin, so
+  restricted meetings are reachable only via the review/live pages that DO audit.
 
 ## Migration / rollout
 

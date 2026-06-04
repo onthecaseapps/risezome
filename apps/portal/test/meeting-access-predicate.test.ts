@@ -86,3 +86,56 @@ describe('isMasterKeyAccess', () => {
     ).toBe(false);
   });
 });
+
+/**
+ * P1-B: the captures library list EXCLUDES master-key-only meetings for a
+ * super_admin (so a restricted recap is never decrypted/rendered without an audit
+ * row — only the review/live detail pages audit). The page filters with
+ * `!isMasterKeyAccess(...)`; this asserts that exact filter over a mixed row set,
+ * mirroring captures/page.tsx so a regression in the predicate is caught here.
+ */
+describe('captures list exclusion (super_admin)', () => {
+  type Row = { id: string; ownerId: string; privacyLevel: string; isParticipant: boolean };
+
+  const rows: Row[] = [
+    { id: 'own_only_me', ownerId: SA, privacyLevel: 'only_me', isParticipant: false }, // owns → keep
+    { id: 'other_only_me', ownerId: OWNER, privacyLevel: 'only_me', isParticipant: false }, // master-key → exclude
+    { id: 'part_only_participants', ownerId: OWNER, privacyLevel: 'only_participants', isParticipant: true }, // attended → keep
+    { id: 'notpart_only_participants', ownerId: OWNER, privacyLevel: 'only_participants', isParticipant: false }, // not attended → exclude
+    { id: 'teammates', ownerId: OWNER, privacyLevel: 'only_teammates', isParticipant: false }, // entitled → keep
+  ];
+
+  function visibleTo(role: 'member' | 'manager' | 'super_admin'): string[] {
+    return rows
+      .filter(
+        (r) =>
+          !isMasterKeyAccess({
+            role,
+            viewerId: SA,
+            ownerId: r.ownerId,
+            privacyLevel: r.privacyLevel,
+            isParticipant: r.isParticipant,
+          }),
+      )
+      .map((r) => r.id);
+  }
+
+  it('a super_admin list excludes the restricted not-attended meetings (only_me, non-participant only_participants)', () => {
+    const visible = visibleTo('super_admin');
+    expect(visible).not.toContain('other_only_me');
+    expect(visible).not.toContain('notpart_only_participants');
+    // But keeps the ones it is genuinely entitled to.
+    expect(visible).toEqual([
+      'own_only_me',
+      'part_only_participants',
+      'teammates',
+    ]);
+  });
+
+  it('non-super_admin behavior is unchanged — the filter is a no-op (RLS already scopes their rows)', () => {
+    // isMasterKeyAccess is false for non-super_admins, so the captures filter keeps
+    // every row RLS handed them.
+    expect(visibleTo('manager')).toEqual(rows.map((r) => r.id));
+    expect(visibleTo('member')).toEqual(rows.map((r) => r.id));
+  });
+});

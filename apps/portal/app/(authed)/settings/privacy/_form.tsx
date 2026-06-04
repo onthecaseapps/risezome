@@ -5,6 +5,7 @@ import { setOrgPrivacyConfig } from '../privacy-action';
 import {
   PRIVACY_LABEL,
   PRIVACY_LEVELS,
+  PRIVACY_RANK,
   type PrivacyLevel,
 } from '../../../_lib/privacy-levels';
 
@@ -30,6 +31,19 @@ export function PrivacyConfigForm({
   function save(nextDefault: PrivacyLevel, nextFloor: PrivacyLevel): void {
     const prevDefault = defaultPrivacy;
     const prevFloor = floor;
+
+    // Prevent a default MORE private than the floor (rank(default) < rank(floor)):
+    // every new meeting would be stamped below the floor the trigger enforces. The
+    // server rejects this too (default_below_floor); we block it before the round
+    // trip and explain why. Mirrors the DB CHECK / action guard.
+    if (PRIVACY_RANK[nextDefault] < PRIVACY_RANK[nextFloor]) {
+      setError(
+        'The default visibility can’t be more private than the floor. Lower the floor first, or pick a less-private default.',
+      );
+      setSaved(false);
+      return;
+    }
+
     setDefaultPrivacy(nextDefault);
     setFloor(nextFloor);
     setError(null);
@@ -42,7 +56,7 @@ export function PrivacyConfigForm({
       } else {
         setDefaultPrivacy(prevDefault);
         setFloor(prevFloor);
-        setError(result.error === 'invalid_level' ? 'That visibility level isn’t available.' : result.error);
+        setError(messageForConfigError(result.error));
       }
     });
   }
@@ -76,6 +90,17 @@ export function PrivacyConfigForm({
       ) : null}
     </div>
   );
+}
+
+function messageForConfigError(error: string): string {
+  switch (error) {
+    case 'invalid_level':
+      return 'That visibility level isn’t available.';
+    case 'default_below_floor':
+      return 'The default visibility can’t be more private than the floor.';
+    default:
+      return error;
+  }
 }
 
 function SectionLabel({ label }: { label: string }): ReactElement {

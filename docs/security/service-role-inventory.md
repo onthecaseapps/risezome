@@ -76,15 +76,21 @@ pattern — RLS reads, service-role writes, no broad client write policies:
 
 | Write | Path | Gate |
 | --- | --- | --- |
-| Role change (incl. Super Admin) | `members/member-actions.ts changeRoleAction` | `requireAdmin` + service-role + `org_id` scope; appends `role_change` audit |
+| Role change (incl. Super Admin) | `members/member-actions.ts changeRoleAction` | `requireAdmin` + service-role + `org_id` scope; **granting OR removing `super_admin` additionally requires the caller to BE a super_admin** (else `forbidden`) — a manager cannot self-promote to the master-key tier; appends `role_change` audit |
 | Meeting privacy (owner) | `meetings/[id]/privacy-action.ts setMeetingPrivacy` | owner check; floor enforced by DB trigger; appends `privacy_change` audit |
 | Meeting privacy (admin override) | `admin_override_meeting_privacy()` RPC | **SECURITY DEFINER, self-checks `is_org_admin` inside the function**; floor-exempt via a transaction-local GUC; appends `admin_override` audit |
-| Org privacy default + floor | `settings/privacy-action.ts setOrgPrivacyConfig` | `requireAdmin` + service-role upsert of `org_privacy_config` |
-| Master-key access | `_lib/meeting-access.ts` (app layer) | logs `master_key_access` when a Super Admin opens a meeting they aren't otherwise entitled to |
+| Org privacy default + floor | `settings/privacy-action.ts setOrgPrivacyConfig` | `requireAdmin` + service-role upsert of `org_privacy_config`; rejects a default more private than the floor (`default_below_floor`); **intentionally UN-audited in v1** (see note below) |
+| Master-key access | `_lib/meeting-access.ts` (app layer) | logs `master_key_access` when a Super Admin opens a meeting they aren't otherwise entitled to. The captures **library list** EXCLUDES master-key-only meetings for a super_admin (so it never decrypts/renders a restricted recap with no audit row); restricted meetings are reachable only via the review/live detail pages, which DO audit |
 
 `permission_audit_log` is **append-only and Super-Admin-read-only** (RLS SELECT
 gated by `is_super_admin`; no INSERT/UPDATE/DELETE policy for any client role).
 `org_privacy_config` is member-readable (for the picker), service-role-write only.
+**Audit note (v1):** `setOrgPrivacyConfig` (the org default/floor change) is
+deliberately NOT written to `permission_audit_log` — the audit `action` CHECK only
+admits `privacy_change` / `admin_override` / `role_change` / `master_key_access`,
+and the config row's `updated_by`/`updated_at` already records who last changed it.
+So the "every privileged write is audited" reading has this one documented
+exception; a dedicated `config_change` action can be added if a trail is needed.
 The `admin_override_meeting_privacy` RPC is the one privileged client-callable
 function in the system — it is `SECURITY DEFINER` precisely so it can set the
 floor-bypass GUC, and it re-derives the meeting's org and rejects the call unless

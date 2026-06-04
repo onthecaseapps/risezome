@@ -157,6 +157,8 @@ if (!stackReachable && !FORCE) {
         detail: { forged: true },
       });
       expect(error).not.toBeNull();
+      // RLS row-level-security denial is Postgres error 42501 (insufficient_privilege).
+      expect(error?.code).toBe('42501');
       // Verify no forged row landed (count unchanged via service-role).
       const { data } = await admin
         .from('permission_audit_log')
@@ -236,6 +238,9 @@ if (!stackReachable && !FORCE) {
         p_level: 'only_me',
       });
       expect(error).not.toBeNull();
+      // The function raises errcode insufficient_privilege (SQLSTATE 42501) from
+      // its internal is_org_admin self-check.
+      expect(error?.code).toBe('42501');
 
       // The member's attempted below-floor override did NOT take effect.
       const { data } = await admin

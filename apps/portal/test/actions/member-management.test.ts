@@ -17,19 +17,26 @@ import {
   setCanInviteBotAction,
 } from '../../app/(authed)/members/member-actions';
 
-function makeService(error?: string): unknown {
+/**
+ * @param error  optional message returned by update/delete (simulates a trigger).
+ * @param targetRole  the CURRENT role of the member being changed (the row
+ *   changeRoleAction reads for the audit detail + the super_admin gate). Defaults
+ *   to 'member'.
+ */
+function makeService(error?: string, targetRole = 'member'): unknown {
   const terminal = async () => ({ error: error !== undefined ? { message: error } : null });
   return {
     from(table: string) {
       // changeRoleAction (U5) reads the member's current role for the audit
-      // detail, then appends a permission_audit_log row (best-effort). Provide
-      // a select chain ending in maybeSingle and an insert that succeeds.
+      // detail + the super_admin gate, then appends a permission_audit_log row
+      // (best-effort). Provide a select chain ending in maybeSingle and an
+      // insert that succeeds.
       if (table === 'permission_audit_log') {
         return { insert: async () => ({ error: null }) };
       }
       return {
         select: () => ({
-          eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { role: 'member' } }) }) }),
+          eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { role: targetRole } }) }) }),
         }),
         update: () => ({ eq: () => ({ eq: terminal }) }),
         delete: () => ({ eq: () => ({ eq: terminal }) }),
@@ -39,7 +46,8 @@ function makeService(error?: string): unknown {
 }
 
 beforeEach(() => {
-  requireAdmin.mockResolvedValue({ orgId: 'org_1', user: { id: 'mgr_1' } });
+  // Default caller is a plain Admin (manager).
+  requireAdmin.mockResolvedValue({ orgId: 'org_1', user: { id: 'mgr_1' }, role: 'manager' });
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -59,6 +67,38 @@ describe('member-management actions', () => {
       makeService('cannot remove or demote the last manager of a workspace'),
     );
     expect(await changeRoleAction('u2', 'member')).toEqual({ ok: false, error: 'last_manager' });
+  });
+
+  it('changeRoleAction maps the last-super_admin trigger error', async () => {
+    // A super_admin caller demoting a super_admin; the trigger blocks the last one.
+    requireAdmin.mockResolvedValue({ orgId: 'org_1', user: { id: 'sa_1' }, role: 'super_admin' });
+    createServiceRoleClient.mockReturnValue(
+      makeService('cannot remove or demote the last super_admin of a workspace', 'super_admin'),
+    );
+    expect(await changeRoleAction('u2', 'member')).toEqual({ ok: false, error: 'last_super_admin' });
+  });
+
+  it('P1-A: a manager(Admin) caller CANNOT grant super_admin (forbidden)', async () => {
+    // Caller is a manager (default). Granting the master-key tier must be refused.
+    createServiceRoleClient.mockReturnValue(makeService());
+    expect(await changeRoleAction('u2', 'super_admin')).toEqual({ ok: false, error: 'forbidden' });
+  });
+
+  it('P1-A: a manager(Admin) caller CANNOT demote an existing super_admin (forbidden)', async () => {
+    // Target is currently super_admin; only another super_admin may remove that tier.
+    createServiceRoleClient.mockReturnValue(makeService(undefined, 'super_admin'));
+    expect(await changeRoleAction('u2', 'manager')).toEqual({ ok: false, error: 'forbidden' });
+  });
+
+  it('P1-A: a super_admin caller CAN grant super_admin', async () => {
+    requireAdmin.mockResolvedValue({ orgId: 'org_1', user: { id: 'sa_1' }, role: 'super_admin' });
+    createServiceRoleClient.mockReturnValue(makeService());
+    expect(await changeRoleAction('u2', 'super_admin')).toEqual({ ok: true });
+  });
+
+  it('P1-A: a manager(Admin) caller CAN still move member <-> manager', async () => {
+    createServiceRoleClient.mockReturnValue(makeService());
+    expect(await changeRoleAction('u2', 'manager')).toEqual({ ok: true });
   });
 
   it('setCanInviteBotAction succeeds', async () => {

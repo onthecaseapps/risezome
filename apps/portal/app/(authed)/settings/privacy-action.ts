@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '../../_lib/auth';
 import { createServiceRoleClient } from '../../_lib/supabase-server';
+import { PRIVACY_RANK, isPrivacyLevel } from '../../_lib/privacy-levels';
 
 /**
  * Org privacy-config write action (permissions overhaul U4; KTD6).
@@ -22,9 +23,6 @@ import { createServiceRoleClient } from '../../_lib/supabase-server';
  * a dedicated 'config_change' action can be added later if the audit view needs it.
  */
 
-const LEVELS = ['only_me', 'only_participants', 'only_teammates'] as const;
-type PrivacyLevel = (typeof LEVELS)[number];
-
 type ActionResult = { ok: true } | { ok: false; error: string };
 
 export async function setOrgPrivacyConfig(
@@ -33,6 +31,15 @@ export async function setOrgPrivacyConfig(
 ): Promise<ActionResult> {
   if (!isPrivacyLevel(defaultPrivacy) || !isPrivacyLevel(privacyFloor)) {
     return { ok: false, error: 'invalid_level' };
+  }
+
+  // Reject a config where the default is MORE private than the floor (rank(default)
+  // < rank(floor)). A default below the floor is incoherent: every new meeting
+  // would be stamped at a level the floor trigger forbids, breaking the launch
+  // path (defense-in-depth there clamps it, but the config itself must not be
+  // saved in a self-contradictory state). The form mirrors this client-side.
+  if (PRIVACY_RANK[defaultPrivacy] < PRIVACY_RANK[privacyFloor]) {
+    return { ok: false, error: 'default_below_floor' };
   }
 
   const { user, orgId } = await requireAdmin();
@@ -52,8 +59,4 @@ export async function setOrgPrivacyConfig(
 
   revalidatePath('/settings');
   return { ok: true };
-}
-
-function isPrivacyLevel(v: string): v is PrivacyLevel {
-  return (LEVELS as readonly string[]).includes(v);
 }

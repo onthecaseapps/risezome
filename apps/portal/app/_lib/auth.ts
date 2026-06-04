@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { createServerClient } from './supabase-server';
+import { isAdminRole } from './roles';
 
 export const CURRENT_ORG_COOKIE = 'risezome.current_org_id';
 
@@ -101,8 +102,7 @@ export async function requireAuthedUserWithOrg(): Promise<AuthedOrgContext> {
     orgId: chosen.id,
     orgName: chosen.name,
     role: chosen.role,
-    canInviteBot:
-      chosen.role === 'manager' || chosen.role === 'super_admin' || chosen.canInviteBot,
+    canInviteBot: isAdminRole(chosen.role) || chosen.canInviteBot,
   };
 }
 
@@ -116,16 +116,17 @@ export async function requireAuthedUserWithOrg(): Promise<AuthedOrgContext> {
  */
 export async function requireAdmin(): Promise<AuthedOrgContext> {
   const ctx = await requireAuthedUserWithOrg();
-  if (ctx.role !== 'manager' && ctx.role !== 'super_admin') {
+  if (!isAdminRole(ctx.role)) {
     redirect('/upcoming');
   }
   return ctx;
 }
 
 /**
- * Back-compat alias for {@link requireAdmin}. Existing callers named this gate
- * "requireManager"; its meaning is "admin power", which now includes
- * super_admin, so super_admins are no longer redirected away from admin pages.
+ * @deprecated Back-compat alias for {@link requireAdmin}. Existing callers named
+ * this gate "requireManager"; its meaning is "admin power" (`is_org_admin`), which
+ * now includes super_admin, so super_admins are no longer redirected away from
+ * admin pages. Prefer `requireAdmin` in new code.
  */
 export const requireManager = requireAdmin;
 

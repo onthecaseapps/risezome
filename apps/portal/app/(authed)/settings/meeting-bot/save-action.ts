@@ -5,10 +5,10 @@ import { requireManager } from '../../../_lib/auth';
 import { createServerClient } from '../../../_lib/supabase-server';
 
 /**
- * Upsert workspace bot settings. Manager-only (requireManager) — RLS now
- * gates the INSERT/UPDATE on is_org_manager(), and the user-scoped client is
- * sufficient. The action also stamps `updated_by` for an audit trail of who
- * flipped what.
+ * Upsert workspace bot settings. Admin-only (requireManager, an alias of
+ * requireAdmin) — RLS now gates the INSERT/UPDATE on is_org_admin(), and the
+ * user-scoped client is sufficient. The action also stamps `updated_by` for an
+ * audit trail of who flipped what.
  */
 export async function saveBotSettingsAction(input: {
   auto_join: boolean;

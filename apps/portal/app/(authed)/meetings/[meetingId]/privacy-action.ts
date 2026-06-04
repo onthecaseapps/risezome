@@ -6,6 +6,12 @@ import {
   createServerClient,
   createServiceRoleClient,
 } from '../../../_lib/supabase-server';
+import {
+  PRIVACY_RANK,
+  isPrivacyLevel,
+  type PrivacyLevel,
+} from '../../../_lib/privacy-levels';
+import { isAdminRole } from '../../../_lib/roles';
 
 /**
  * Meeting-privacy write action (permissions overhaul U4; KTD6, KTD7).
@@ -47,15 +53,6 @@ import {
  * sanctioned mutation surface.
  */
 
-const LEVELS = ['only_me', 'only_participants', 'only_teammates'] as const;
-type PrivacyLevel = (typeof LEVELS)[number];
-
-const RANK: Record<PrivacyLevel, number> = {
-  only_me: 0,
-  only_participants: 1,
-  only_teammates: 2,
-};
-
 type ActionResult = { ok: true } | { ok: false; error: string };
 
 export async function setMeetingPrivacy(
@@ -91,7 +88,7 @@ export async function setMeetingPrivacy(
     .eq('user_id', user.id)
     .maybeSingle();
   const role = (membership?.role as string | undefined) ?? null;
-  const isAdmin = role === 'manager' || role === 'super_admin';
+  const isAdmin = role !== null && isAdminRole(role);
 
   if (!isOwner && !isAdmin) {
     return { ok: false, error: 'forbidden' };
@@ -100,7 +97,8 @@ export async function setMeetingPrivacy(
   // No-op short-circuit (still allowed; just nothing to record).
   if (oldLevel === level) return { ok: true };
 
-  const belowFloor = RANK[level] < RANK[oldLevel] ? await isBelowFloor(service, orgId, level) : false;
+  const belowFloor =
+    PRIVACY_RANK[level] < PRIVACY_RANK[oldLevel] ? await isBelowFloor(service, orgId, level) : false;
   // ADMIN-OVERRIDE when the caller is acting as an admin on a meeting they don't
   // own, OR an admin deliberately taking a below-floor level on someone's meeting.
   const useOverride = isAdmin && (!isOwner || belowFloor);
@@ -135,10 +133,6 @@ export async function setMeetingPrivacy(
   return { ok: true };
 }
 
-function isPrivacyLevel(v: string): v is PrivacyLevel {
-  return (LEVELS as readonly string[]).includes(v);
-}
-
 /** Is `level` more private than the org's floor? (Service-role read of config.) */
 async function isBelowFloor(
   service: ReturnType<typeof createServiceRoleClient>,
@@ -151,7 +145,7 @@ async function isBelowFloor(
     .eq('org_id', orgId)
     .maybeSingle();
   const floor = (data?.privacy_floor as PrivacyLevel | undefined) ?? 'only_me';
-  return RANK[level] < RANK[floor];
+  return PRIVACY_RANK[level] < PRIVACY_RANK[floor];
 }
 
 /** Append one audit row (service-role, org-scoped). Detail carries old->new. */
@@ -164,11 +158,17 @@ async function appendAudit(
   oldLevel: string,
   newLevel: string,
 ): Promise<void> {
-  await service.from('permission_audit_log').insert({
+  // Best-effort: the privacy change already committed, so a failed audit insert
+  // must not surface as a failed change — log and continue (mirrors
+  // member-actions.ts role_change auditing).
+  const { error } = await service.from('permission_audit_log').insert({
     org_id: orgId,
     actor_id: actorId,
     action,
     target_meeting_id: meetingId,
     detail: { old: oldLevel, new: newLevel },
   });
+  if (error !== null) {
+    console.error('[privacy-action] audit insert failed:', error.message);
+  }
 }

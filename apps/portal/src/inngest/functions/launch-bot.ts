@@ -144,13 +144,28 @@ export const launchBotFn = inngest.createFunction(
       // by-default value 'only_teammates' (same as the column/config defaults).
       const cfg = await service
         .from('org_privacy_config')
-        .select('default_privacy')
+        .select('default_privacy, privacy_floor')
         .eq('org_id', eventRow.org_id)
         .maybeSingle();
       if (cfg.error !== null) {
         throw new Error(`read-privacy-config failed: ${cfg.error.message}`);
       }
-      const defaultPrivacy = (cfg.data?.default_privacy as string | undefined) ?? 'only_teammates';
+      const configuredDefault = (cfg.data?.default_privacy as string | undefined) ?? 'only_teammates';
+      const configuredFloor = (cfg.data?.privacy_floor as string | undefined) ?? 'only_me';
+      // Defense-in-depth: if the org default is somehow MORE private than the
+      // floor (rank(default) < rank(floor)), clamp the stamp UP to the floor so
+      // the floor trigger never rejects the insert. The config action + form now
+      // reject a below-floor default, so this is a belt-and-suspenders guard for
+      // legacy/raced config rows.
+      const PRIVACY_RANK: Record<string, number> = {
+        only_me: 0,
+        only_participants: 1,
+        only_teammates: 2,
+      };
+      const defaultPrivacy =
+        (PRIVACY_RANK[configuredDefault] ?? 2) < (PRIVACY_RANK[configuredFloor] ?? 0)
+          ? configuredFloor
+          : configuredDefault;
 
       const inserted = await service
         .from('meetings')

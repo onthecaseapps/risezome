@@ -112,7 +112,7 @@ on conflict (org_id) do nothing;
 -- expressions/indexes and the planner can fold it. Returns NULL for an unknown
 -- value (the CHECKs already forbid those, so callers never see NULL in practice).
 
-create function public.meeting_privacy_rank(p_level text)
+create or replace function public.meeting_privacy_rank(p_level text)
   returns int
   language sql
   immutable
@@ -125,6 +125,25 @@ create function public.meeting_privacy_rank(p_level text)
   end;
 $$;
 
+-- This is a client-callable public helper (the floor trigger uses it, and the
+-- app may call it via RPC), so lock it down to authenticated like every other
+-- helper: revoke from public, grant execute to authenticated.
+revoke all on function public.meeting_privacy_rank(text) from public;
+grant execute on function public.meeting_privacy_rank(text) to authenticated;
+
+-- DB-level invariant: the org default must NOT be more private than the floor
+-- (rank(default) >= rank(floor)). A below-floor default would stamp every new
+-- meeting at a level the floor trigger forbids. The write action + the settings
+-- form reject this too; this CHECK is the last line of defense (uses the
+-- IMMUTABLE rank helper, so it is index/CHECK-safe). Added after the rank helper
+-- exists so the expression resolves.
+alter table public.org_privacy_config
+  add constraint org_privacy_config_default_not_below_floor
+  check (
+    public.meeting_privacy_rank(default_privacy)
+      >= public.meeting_privacy_rank(privacy_floor)
+  );
+
 ------------------------------------------------------------
 -- 4. Floor-enforcement trigger (KTD7)
 ------------------------------------------------------------
@@ -135,7 +154,7 @@ $$;
 -- ordinary status/recall_bot_id updates are never floor-checked. If the org has
 -- no config row, the floor defaults to 'only_me' (rank 0) — i.e. unconstrained.
 
-create function public.enforce_meeting_privacy_floor()
+create or replace function public.enforce_meeting_privacy_floor()
   returns trigger
   language plpgsql
   as $$

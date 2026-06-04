@@ -1,7 +1,8 @@
 import type { ReactElement } from 'react';
 import { requireSuperAdmin } from '../../../_lib/auth';
 import { createServerClient, createServiceRoleClient } from '../../../_lib/supabase-server';
-import { roleLabel } from './_labels';
+import { roleLabel } from '../../../_lib/roles';
+import { PRIVACY_LABEL, isPrivacyLevel } from '../../../_lib/privacy-levels';
 
 /**
  * Settings → Audit log (permissions overhaul U7). SUPER-ADMIN ONLY.
@@ -26,12 +27,6 @@ const ACTION_LABEL: Record<string, string> = {
   admin_override: 'Admin override',
   role_change: 'Role change',
   master_key_access: 'Master-key access',
-};
-
-const PRIVACY_LABEL: Record<string, string> = {
-  only_me: 'Only me',
-  only_participants: 'Only participants',
-  only_teammates: 'Only teammates',
 };
 
 interface AuditRow {
@@ -184,5 +179,6 @@ function describeDetail(action: string, detail: Record<string, unknown> | null):
 }
 
 function privacyLabel(v: unknown): string {
-  return typeof v === 'string' ? (PRIVACY_LABEL[v] ?? v) : '—';
+  if (typeof v !== 'string') return '—';
+  return isPrivacyLevel(v) ? PRIVACY_LABEL[v] : v;
 }

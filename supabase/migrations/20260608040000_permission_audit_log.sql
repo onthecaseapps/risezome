@@ -77,7 +77,7 @@ create policy "super admins read their org's audit log"
 -- The UPDATE is org-scoped (and meeting-scoped) so it can never touch another
 -- org's row. Returns nothing; the caller (privacy-action.ts) reads back + audits.
 
-create function public.admin_override_meeting_privacy(
+create or replace function public.admin_override_meeting_privacy(
   p_meeting_id uuid,
   p_level text
 )

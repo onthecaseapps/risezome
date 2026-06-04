@@ -7,21 +7,30 @@ import { createServiceRoleClient } from '../../_lib/supabase-server';
 type ActionResult = { ok: true } | { ok: false; error: string };
 
 /**
- * Change a member's role. Admin-only (manager OR super_admin via requireAdmin);
- * scoped to the admin's org. The org_members RLS forbids a user writing another
- * member's row, so these use the service-role client with an explicit admin
- * check. An admin may promote a member to 'super_admin' (an additional
- * master-key holder). The last-privileged-user DB trigger is the atomic backstop
- * (an org can never be left with zero super_admins or zero admins-or-above).
+ * Change a member's role. Scoped to the caller's org. The org_members RLS forbids
+ * a user writing another member's row, so these use the service-role client with
+ * an explicit role check.
+ *
+ * PRIVILEGE GATE (KTD2; super_admin is the master-key tier):
+ *   - member <-> manager changes require ADMIN power (requireAdmin: manager OR
+ *     super_admin).
+ *   - GRANTING super_admin (new role is 'super_admin') OR DEMOTING/removing an
+ *     existing super_admin (target's CURRENT role is 'super_admin') requires the
+ *     caller to BE a super_admin. Otherwise a manager(Admin) could self-promote to
+ *     the master-key tier — a privilege escalation. A non-super_admin caller on
+ *     either of those paths gets 'forbidden'.
+ * The last-privileged-user DB trigger is the atomic backstop (an org can never be
+ * left with zero super_admins or zero admins-or-above).
  */
 export async function changeRoleAction(userId: string, role: string): Promise<ActionResult> {
   if (role !== 'manager' && role !== 'member' && role !== 'super_admin') {
     return { ok: false, error: 'invalid_role' };
   }
-  const { user, orgId } = await requireAdmin();
+  const { user, orgId, role: callerRole } = await requireAdmin();
   const service = createServiceRoleClient();
 
-  // Capture the old role for the audit trail (U5). Org-scoped read.
+  // Capture the old role for the audit trail (U5) AND for the super_admin gate
+  // below. Org-scoped read.
   const { data: prior } = await service
     .from('org_members')
     .select('role')
@@ -29,6 +38,14 @@ export async function changeRoleAction(userId: string, role: string): Promise<Ac
     .eq('user_id', userId)
     .maybeSingle();
   const oldRole = (prior?.role as string | undefined) ?? null;
+
+  // Minting OR removing a super_admin (the master-key tier) requires an existing
+  // super_admin caller — requireAdmin alone (manager) is not enough, else a
+  // manager could self-promote to super_admin.
+  const touchesSuperAdmin = role === 'super_admin' || oldRole === 'super_admin';
+  if (touchesSuperAdmin && callerRole !== 'super_admin') {
+    return { ok: false, error: 'forbidden' };
+  }
 
   const { error } = await service
     .from('org_members')

@@ -15,6 +15,7 @@ import {
 import { ReviewClient, type RecapStatus } from './_client';
 import { PrivacyPicker } from './_privacy-picker';
 import { toPrivacyLevel } from '../../../../_lib/privacy-levels';
+import { isAdminRole } from '../../../../_lib/roles';
 
 /**
  * Post-meeting review page (U8). Mirrors the live view: a generated
@@ -62,7 +63,7 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   // only_me if the config row is absent. The picker is presentation only — the
   // action + DB trigger enforce the floor.
   const isOwner = (meeting.user_id as string) === user.id;
-  const isAdmin = role === 'manager' || role === 'super_admin';
+  const isAdmin = isAdminRole(role);
   const currentPrivacy = toPrivacyLevel(meeting.privacy_level as string | null);
   const { data: privacyConfig } = await supabase
     .from('org_privacy_config')

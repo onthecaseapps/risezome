@@ -54,7 +54,7 @@ alter table public.org_members
 -- True when the caller has ADMIN POWER in p_org_id: role is 'manager' (the
 -- stored Admin tier) OR 'super_admin' (which inherits all admin powers). This
 -- is the canonical admin-power gate going forward (KTD2).
-create function public.is_org_admin(p_org_id uuid)
+create or replace function public.is_org_admin(p_org_id uuid)
   returns boolean
   language sql
   stable
@@ -71,7 +71,7 @@ $$;
 
 -- True only when the caller is a super_admin of p_org_id. Reserved for the
 -- master-key bypass and audit-log read (later units); not an admin-power gate.
-create function public.is_super_admin(p_org_id uuid)
+create or replace function public.is_super_admin(p_org_id uuid)
   returns boolean
   language sql
   stable

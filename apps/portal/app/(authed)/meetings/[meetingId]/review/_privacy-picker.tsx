@@ -118,15 +118,17 @@ function messageFor(error: string): string {
   }
 }
 
-function LockGlyph(): ReactElement {
+/** Shared padlock glyph for the privacy controls. Size/stroke are parameterized
+ *  so the picker (13px) and the captures badge (10px) can reuse one source. */
+export function LockGlyph({ size = 13, strokeWidth = 2 }: { size?: number; strokeWidth?: number } = {}): ReactElement {
   return (
     <svg
-      width="13"
-      height="13"
+      width={size}
+      height={size}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2"
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"

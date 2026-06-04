@@ -1,7 +1,8 @@
 import type { ReactElement } from 'react';
 import { decryptForOrgFromBytea, EnvelopeCryptoError } from '@risezome/crypto';
 import { requireAuthedUserWithOrg } from '../../_lib/auth';
-import { createServerClient } from '../../_lib/supabase-server';
+import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
+import { isMasterKeyAccess } from '../../_lib/meeting-access';
 import { CapturesClient, type CaptureCard, type CapturePlatform } from './_client';
 import { toPrivacyLevel } from '../../_lib/privacy-levels';
 
@@ -29,21 +30,22 @@ function platformFromUrl(url: string | null): CapturePlatform {
 }
 
 export default async function CapturesPage(): Promise<ReactElement> {
-  const { orgId, orgName } = await requireAuthedUserWithOrg();
+  const { user, orgId, orgName, role } = await requireAuthedUserWithOrg();
   const supabase = await createServerClient();
 
   const { data: meetingRows } = await supabase
     .from('meetings')
     .select(
-      'meeting_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, conference_url, recap_text_enc, recap_status, privacy_level, created_at',
+      'meeting_id, user_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, conference_url, recap_text_enc, recap_status, privacy_level, created_at',
     )
     .eq('org_id', orgId)
     .in('status', ['completed', 'failed'])
     .order('created_at', { ascending: false })
     .limit(100);
 
-  const meetings = (meetingRows ?? []) as Array<{
+  const allMeetings = (meetingRows ?? []) as Array<{
     meeting_id: string;
+    user_id: string;
     status: 'completed' | 'failed';
     started_at: string | null;
     ended_at: string | null;
@@ -57,6 +59,45 @@ export default async function CapturesPage(): Promise<ReactElement> {
     privacy_level: string | null;
     created_at: string;
   }>;
+
+  // P1-B (master-key audit gap): RLS grants a super_admin EVERY meeting in their
+  // org, including only_me / only_participants meetings they neither own nor
+  // attended. The library would list + decrypt those recaps with NO audit row
+  // (only the review/live detail pages audit a master-key view). EXCLUDE those
+  // master-key-only meetings from the list so a super_admin sees only meetings
+  // they are genuinely entitled to (owner / participant / only_teammates);
+  // restricted meetings appear only when deliberately opened via review/live,
+  // which records the master_key_access audit row. Non-super_admin behavior is
+  // unchanged: isMasterKeyAccess is false for any non-super_admin, so the filter
+  // is a no-op for them (and RLS already hides those rows anyway).
+  let meetings = allMeetings;
+  if (role === 'super_admin') {
+    // Resolve the viewer's participant set in ONE query (not per-meeting) so the
+    // only_participants entitlement can be checked without N round-trips.
+    const restrictedIds = allMeetings
+      .filter((m) => m.privacy_level === 'only_participants')
+      .map((m) => m.meeting_id);
+    const participantOf = new Set<string>();
+    if (restrictedIds.length > 0) {
+      const service = createServiceRoleClient();
+      const { data: parts } = await service
+        .from('meeting_participants')
+        .select('meeting_id')
+        .eq('user_id', user.id)
+        .in('meeting_id', restrictedIds);
+      for (const p of parts ?? []) participantOf.add(p.meeting_id as string);
+    }
+    meetings = allMeetings.filter(
+      (m) =>
+        !isMasterKeyAccess({
+          role,
+          viewerId: user.id,
+          ownerId: m.user_id,
+          privacyLevel: toPrivacyLevel(m.privacy_level),
+          isParticipant: participantOf.has(m.meeting_id),
+        }),
+    );
+  }
 
   // U9: the recap is encrypted at rest — decrypt server-side (the key stays in
   // env; the browser never sees it). DEGRADE on a crypto failure (KMS blip, or

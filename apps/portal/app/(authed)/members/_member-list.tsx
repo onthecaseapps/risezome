@@ -11,6 +11,7 @@ import {
 import { createInviteAction, revokeInviteAction } from './invite-action';
 import { changeRoleAction, removeMemberAction, setCanInviteBotAction } from './member-actions';
 import { primaryButtonClass } from '../_components/ui';
+import { isAdminRole, roleLabel } from '../../_lib/roles';
 
 export interface MemberRow {
   userId: string;
@@ -301,7 +302,7 @@ function MemberRowView({ member, now }: { member: MemberRow; now: number | null 
   if (removed) return null;
 
   // Admin tier (Admin or Super Admin) implicitly always has bot access.
-  const isAdmin = role === 'manager' || role === 'super_admin';
+  const isAdmin = isAdminRole(role);
   const active = lastActive(member, now);
 
   return (
@@ -437,22 +438,7 @@ const ROLE_DOT: Record<string, string> = {
   super_admin: 'bg-amber-400',
   manager: 'bg-violet-400',
   member: 'bg-sky-400',
-  viewer: 'bg-slate-400',
 };
-
-/** Display label for a stored role value. `manager` → "Admin" everywhere. */
-function roleLabel(role: string): string {
-  switch (role) {
-    case 'super_admin':
-      return 'Super Admin';
-    case 'manager':
-      return 'Admin';
-    case 'viewer':
-      return 'Viewer';
-    default:
-      return 'Member';
-  }
-}
 
 /** Map the last-privileged-user trigger codes to friendly copy. */
 function roleErrorMessage(error: string): string {

@@ -7,9 +7,10 @@ import { MembersClient, type MemberRow, type PendingInvite } from './_member-lis
  * Manager-only member management. requireManager() redirects non-managers.
  *
  * The org_members roster read goes through the RLS-scoped authed client
- * (createServerClient): the "read own membership or all as manager" SELECT
- * policy returns every org member because this page is requireManager()-gated,
- * so is_org_manager(org_id) holds for the caller. RLS is the second layer.
+ * (createServerClient): the "read own membership or all as admin" SELECT
+ * policy returns every org member because this page is requireManager()-gated
+ * (an alias of requireAdmin), so is_org_admin(org_id) holds for the caller. RLS
+ * is the second layer.
  *
  * Two reads MUST stay on service-role (U5 exceptions):
  *   - auth.users display names / last-active (admin getUserById): the admin
