@@ -14,25 +14,44 @@ code at the time of writing; update it when controls change._
 
 **We use vetted, industry-standard cryptography only — we never roll our own.**
 
-- **At rest:** pgcrypto's OpenPGP symmetric encryption (`pgp_sym_encrypt`,
-  `cipher-algo=aes256`) via shared SQL helpers — not hand-written ciphers.
+- **At rest:** the **AWS Encryption SDK** with **per-organization KMS keys**
+  (envelope encryption; AES-256-GCM performed in `node:crypto`). Each org's data
+  is encrypted under its own KMS Customer Master Key (alias
+  `alias/<prefix>-org-<org_id>`); the SDK wraps a per-message data key, binds the
+  `org_id` as encryption context, and a caching layer keeps the hot path off KMS.
+  Crypto runs **app-side**, so the database only ever stores opaque ciphertext —
+  no key and no plaintext ever reach the DB server. (Local dev/CI use a vetted
+  `node:crypto` RawAES fallback keyed by `RISEZOME_DEV_CRYPTO_KEY`; production
+  uses KMS.) See [`@risezome/crypto`](packages/crypto/src/envelope.ts).
 - **In application code:** Node's OpenSSL-backed `node:crypto` for HMAC,
-  constant-time comparison (`timingSafeEqual`), and CSRF nonces (`randomBytes`).
+  constant-time comparison (`timingSafeEqual`), HKDF, and CSRF nonces
+  (`randomBytes`).
 - **Comparisons** of secrets/MACs are constant-time; never `===`.
+
+**Why per-org KMS keys.** Against the threat that matters most once we hold
+customer code — **app/key compromise or a malicious insider** — key custody
+*outside* the application process is the only control that helps: a leaked
+encryption key (or a DB-level insider) is **capped to a single org**, every
+decrypt is auditable (CloudTrail), and a compromised org's key can be **revoked
+instantly** by disabling its CMK. In-app schemes (a single global key, or keys
+derived in-process) would not change that posture.
 
 ## Credentials & secrets at rest
 
-- **Third-party OAuth tokens are encrypted at rest** with pgcrypto AES-256:
-  Google refresh token, Atlassian (Jira/Confluence) access + refresh tokens, and
-  the Trello token. The symmetric key lives only in the
-  `USER_TOKEN_ENCRYPTION_KEY` environment variable — **the database never stores
-  it**, so a database dump, backup, or read replica yields only ciphertext.
+- **Third-party OAuth tokens are encrypted at rest** under the org's per-org KMS
+  key: Google refresh token, Atlassian (Jira/Confluence) access + refresh tokens,
+  and the Trello token. The key is custodied in AWS KMS — **the database never
+  stores it and the app process never holds the master** — so a database dump,
+  backup, or read replica yields only ciphertext, and a leaked key exposes at
+  most one org.
 - **GitHub** uses the GitHub App model: short-lived installation tokens are
   minted on demand, so no long-lived GitHub token is stored.
-- **Key rotation** without forcing re-auth is supported via a re-wrap procedure
-  (decrypt-old / re-encrypt-new, per-row versioned). See
+- **Key rotation & revocation** are per-org: KMS rotates the wrapping key, a
+  per-org re-encryption job rotates data keys without forcing re-auth, and
+  disabling an org's CMK revokes access to that org's data instantly. See
   [`docs/runbooks/encryption-key-rotation.md`](docs/runbooks/encryption-key-rotation.md).
-  The production key is kept distinct from any developer's local key.
+  The one-time migration from the legacy global key is documented in
+  [`docs/runbooks/encryption-kms-migration.md`](docs/runbooks/encryption-kms-migration.md).
 - **Platform secrets** (Recall API key + webhook secret, bot-worker shared
   secret, GitHub App private key, Supabase keys, AI-provider keys) live in
   environment variables only — never committed (enforced by `.gitignore`) and
@@ -53,15 +72,24 @@ the database, not just the application.
   decisions never trust a client-supplied org id; identifiers come from the
   authenticated session / verified JWT.
 - **No over-broad client writes.** Privileged mutations (pin/dismiss, gap
-  confirm/share, source config) go through org-checked service-role actions;
-  there are no broad client `UPDATE` policies that a crafted request could abuse.
-- Service-role queries that act on client-supplied ids re-assert `org_id`
-  (defense-in-depth).
+  confirm/share, source config) go through org-checked service-role actions. The
+  few genuine client writes are **column-scoped** via GRANTs (a user can only
+  flip `calendar_events.bot_optin` or `notifications.read_at` on their own row,
+  not rewrite other columns); there are no broad client `UPDATE` policies a
+  crafted PostgREST request could abuse.
+- **Service-role least privilege.** Service-role queries that act on
+  client-supplied ids re-assert `org_id` (defense-in-depth), enforced by an
+  automated CI guard (`scripts/lint/check-service-role-org-scope.mjs`) that fails
+  the build on any unscoped service-role query against an org table. Read paths
+  that act for the signed-in user are being moved onto the RLS-respecting
+  authenticated client so the database enforces isolation as a second layer.
+  Every service-role call site is classified in
+  [`docs/security/service-role-inventory.md`](docs/security/service-role-inventory.md).
 
 ## Customer content protection
 
-- **Sensitive meeting content is encrypted at rest** (pgcrypto AES-256,
-  decrypted server-side only): the whole-meeting **recap**, the AI's
+- **Sensitive meeting content is encrypted at rest** under the org's per-org KMS
+  key (decrypted server-side only): the whole-meeting **recap**, the AI's
   **synthesized answers**, and the **verbatim transcript text**. Transcript
   speaker names + timing stay in plaintext metadata (so they remain queryable),
   but the spoken words themselves are encrypted.
@@ -93,8 +121,9 @@ the database, not just the application.
 ## Data sub-processors
 
 Some customer content is sent to external AI providers (Voyage for embeddings,
-Anthropic for synthesis) under zero-retention terms. See
-[`docs/security/sub-processors.md`](docs/security/sub-processors.md).
+Anthropic for synthesis) under zero-retention terms. **AWS KMS** custodies the
+per-org encryption keys (it performs key wrap/unwrap; customer *content* is never
+sent to KMS). See [`docs/security/sub-processors.md`](docs/security/sub-processors.md).
 
 ## Reporting a vulnerability
 

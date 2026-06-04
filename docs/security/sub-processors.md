@@ -15,10 +15,12 @@ Last reviewed: 2026-06-03.
 | --- | --- | --- | --- |
 | **Voyage AI** | Text embeddings for vector search (indexing + per-utterance query embedding) | Chunked source code / document text (with an LLM-generated context prefix) at index time; meeting query text at retrieval time | `packages/engine/src/embed/voyage.ts` (`POST https://api.voyageai.com/v1/embeddings`); driven by `apps/portal/src/inngest/lib/connector-index.ts` and the bot-worker retrieval path |
 | **Anthropic (Claude API)** | Contextualization, document summarization, answer synthesis, relevance/routing classification | Document text + transcript context windows; the question being answered | `packages/engine/src/synthesize/*`, `packages/engine/src/summarize/*`, contextualize/relevance/router call sites |
+| **AWS KMS** | Custody of per-organization encryption keys (envelope encryption — wrap/unwrap of data keys) | **No customer content.** Only key material crosses to KMS: a per-message data key to wrap/unwrap, plus the `org_id` as encryption context. Ciphertext and plaintext stay app-side. | `packages/crypto/src/envelope.ts`, `apps/portal/src/inngest/functions/provision-org-key.ts` |
 
-No other third party receives customer content. Connected sources (GitHub,
-Jira/Confluence, Trello) are **data origins** the customer authorizes, not
-sub-processors we send their data to.
+No other third party receives customer **content**. AWS KMS is an
+**infrastructure** sub-processor that handles encryption *keys*, not content.
+Connected sources (GitHub, Jira/Confluence, Trello) are **data origins** the
+customer authorizes, not sub-processors we send their data to.
 
 ## Data-handling terms
 

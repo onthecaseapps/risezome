@@ -13,7 +13,18 @@ columns that are queried or searched at the DB layer, rely on Supabase/Postgres
 documented choice rather than a silent gap. (Security plan KTD2 / U9, extended by
 F1 + F2.)
 
-## What IS column-encrypted (pgcrypto AES-256, key = `USER_TOKEN_ENCRYPTION_KEY`)
+> **Update (plan `2026-06-03-003`):** the encryption *backend* moved from a single
+> global pgcrypto key to **per-organization AWS KMS envelope encryption** (AWS
+> Encryption SDK; AES-256-GCM app-side via `@risezome/crypto`). The *set* of
+> encrypted columns below is unchanged; what changed is custody — each org has its
+> own KMS CMK, crypto runs app-side so the DB never sees a key or plaintext, and a
+> leaked key is capped to one org (addressing the app/key/insider threat). The
+> pgcrypto SQL helpers are dropped after the one-time migration
+> (`docs/runbooks/encryption-kms-migration.md`). References to
+> `pgp_sym_encrypt` / `transcript_with_text` / `USER_TOKEN_ENCRYPTION_KEY` below
+> describe the superseded scheme.
+
+## What IS column-encrypted (now per-org AWS KMS envelope; formerly pgcrypto)
 
 - **Third-party OAuth tokens** — `user_google_tokens.refresh_token_enc`,
   `atlassian_connections.{access,refresh}_token_enc`, `trello_connections.token_enc`.
@@ -54,14 +65,19 @@ purge-on-disconnect job (content doesn't linger after a source is removed).
 
 A leaked **service-role key** or a SQL-injection read against an app process
 could still expose the disk-only columns in cleartext (the encrypted columns
-would not, absent the env key). The remaining disk-only customer content is the
-search corpus (`doc_chunks.text` + embeddings), which can't be column-encrypted
-without losing FTS/vector search, and speaker names.
+would not — their keys are custodied in per-org KMS, outside the app/DB). The
+remaining disk-only customer content is the search corpus (`doc_chunks.text` +
+embeddings), which can't be column-encrypted without losing FTS/vector search,
+and speaker names. With per-org KMS, an app/key compromise or insider is capped
+to one org for the encrypted columns; the disk-only corpus is the unchanged
+residual (deferred — searchable encryption, below).
 
 ## Follow-up
 
 - A searchable-encryption scheme for `doc_chunks.text` (e.g. deterministic
   encryption for exact-match terms, or client-side blind indexing) if the corpus
   cleartext residual needs closing — non-trivial, deferred.
-- Envelope encryption / KMS for the master key (see
-  `docs/runbooks/encryption-key-rotation.md`).
+- ~~Envelope encryption / KMS for the master key~~ — **done** (plan
+  `2026-06-03-003`): per-org AWS KMS envelope encryption. See
+  `docs/runbooks/encryption-key-rotation.md` and
+  `docs/runbooks/encryption-kms-migration.md`.
