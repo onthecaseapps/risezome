@@ -7,7 +7,7 @@ That means we hold two sensitive things: **customer credentials** (OAuth tokens
 to their tools) and **customer content** (ingested code/docs and meeting
 transcripts). This document describes the controls protecting both.
 
-_Last reviewed: 2026-06-03. Every claim here is intended to be true against the
+_Last reviewed: 2026-06-04. Every claim here is intended to be true against the
 code at the time of writing; update it when controls change._
 
 ## Cryptography policy
@@ -64,8 +64,9 @@ the database, not just the application.
 
 - **Row-Level Security (RLS) is enabled and org-scoped on every customer-data
   table** (ingested docs/chunks/embeddings, meetings, transcripts, captures,
-  syntheses, knowledge gaps). Meeting content is further narrowed to actual
-  **participants**, not just any org member.
+  syntheses, knowledge gaps). Meeting content is further narrowed by a
+  **per-meeting privacy level** (see Roles & meeting privacy below), enforced in
+  RLS across every capture table at once.
 - **Secret tables are service-role-only** (RLS enabled, no policies): token
   connections, install state, indexer cursors — members can never read them.
 - **The server-derived org is the only source of truth.** Tenant-boundary
@@ -85,6 +86,36 @@ the database, not just the application.
   authenticated client so the database enforces isolation as a second layer.
   Every service-role call site is classified in
   [`docs/security/service-role-inventory.md`](docs/security/service-role-inventory.md).
+
+## Roles & meeting privacy
+
+A three-tier role hierarchy and a per-meeting privacy model govern who can see a
+recorded meeting (audio, transcript, AI summary, cards).
+
+- **Roles** (`org_members.role`): **Member**, **Admin** (stored as `manager`),
+  and **Super Admin** (`super_admin`). Admin manages settings, billing,
+  integrations, members, and the org privacy default + floor — but an Admin
+  **cannot** read meetings they aren't otherwise entitled to. Only a **Super
+  Admin** holds the "master key." Role checks run through `SECURITY DEFINER`
+  helpers (`is_org_admin`, `is_super_admin`) to avoid RLS recursion; an org can
+  never be left with zero Super Admins (a DB trigger enforces it).
+- **Per-meeting privacy levels**: **Only Me** (owner only), **Only Participants**
+  (org-member attendees), **Only Teammates** (the whole workspace — the
+  library-by-default). The level is set by the first person to invite the bot
+  (the meeting owner) and is enforced by a single `can_access_meeting()` RLS
+  predicate applied uniformly to `meetings`, `cards`, `syntheses`,
+  `meeting_events`, and the realtime broadcast — so a hidden meeting cannot leak
+  through a sibling table.
+- **Org default + floor**: an Admin sets the org-wide default level and a
+  **privacy floor** (the most private a Member may choose), enforced both in the
+  write action and by a DB trigger so a direct PostgREST write can't go below it.
+- **Master key, audited**: a Super Admin can access any meeting regardless of
+  privacy (an explicit, deliberate exception to the otherwise-absolute privacy
+  rule — Admins are *not* exempt). Every master-key access — and every privacy
+  change and role change — is recorded in an **append-only, Super-Admin-readable
+  audit log** (`permission_audit_log`; no client can write, update, or delete it).
+- **External/anonymous viewing is not supported** — all access stays inside org
+  membership, preserving the per-org KMS encryption boundary.
 
 ## Customer content protection
 

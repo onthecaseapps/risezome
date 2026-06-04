@@ -69,6 +69,27 @@ they were column-scoped via GRANTs (RLS still scopes rows):
 `knowledge_gap_sections` client write policies were **dropped** (all writes are
 service-role).
 
+### B2. Permission writes — role / privacy / audit (service-role + self-checking RPC)
+
+The permissions overhaul (plan `2026-06-04-004`) follows the same Section B
+pattern — RLS reads, service-role writes, no broad client write policies:
+
+| Write | Path | Gate |
+| --- | --- | --- |
+| Role change (incl. Super Admin) | `members/member-actions.ts changeRoleAction` | `requireAdmin` + service-role + `org_id` scope; appends `role_change` audit |
+| Meeting privacy (owner) | `meetings/[id]/privacy-action.ts setMeetingPrivacy` | owner check; floor enforced by DB trigger; appends `privacy_change` audit |
+| Meeting privacy (admin override) | `admin_override_meeting_privacy()` RPC | **SECURITY DEFINER, self-checks `is_org_admin` inside the function**; floor-exempt via a transaction-local GUC; appends `admin_override` audit |
+| Org privacy default + floor | `settings/privacy-action.ts setOrgPrivacyConfig` | `requireAdmin` + service-role upsert of `org_privacy_config` |
+| Master-key access | `_lib/meeting-access.ts` (app layer) | logs `master_key_access` when a Super Admin opens a meeting they aren't otherwise entitled to |
+
+`permission_audit_log` is **append-only and Super-Admin-read-only** (RLS SELECT
+gated by `is_super_admin`; no INSERT/UPDATE/DELETE policy for any client role).
+`org_privacy_config` is member-readable (for the picker), service-role-write only.
+The `admin_override_meeting_privacy` RPC is the one privileged client-callable
+function in the system — it is `SECURITY DEFINER` precisely so it can set the
+floor-bypass GUC, and it re-derives the meeting's org and rejects the call unless
+the caller is an admin of that org.
+
 ### D. Reads — migration to the authenticated client (KTD5)
 
 Server-side **reads** that act on behalf of the signed-in user are being moved
