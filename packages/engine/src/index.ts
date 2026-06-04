@@ -1,5 +1,5 @@
-// Engine package — shared between apps/daemon (legacy, SQLite-backed) and
-// the cloud surfaces (apps/portal Inngest functions, apps/bot-worker).
+// Engine package — shared across the cloud surfaces (apps/portal Inngest
+// functions, apps/bot-worker).
 //
 // Subpath exports are the public API:
 //   @risezome/engine/chunker     — text + code chunking

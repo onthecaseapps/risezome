@@ -1,6 +1,5 @@
-// Embedder surface for both the daemon and the cloud surfaces.
-// Voyage is the only production backend; the local-bge stub stays in
-// apps/daemon/ because it's a daemon-only fallback for offline development.
+// Embedder surface for the cloud surfaces. Voyage is the only
+// production backend.
 
 export * from './contract.js';
 export * from './voyage.js';

@@ -1,8 +1,7 @@
 // Public barrel for @risezome/hud-ui.
 //
-// Consumers (apps/hud-next, apps/portal's live-meeting page) import
-// components and types from here so visual changes are made in one
-// place and apply to both surfaces.
+// apps/portal's live-meeting page imports components and types from
+// here so visual changes are made in one place.
 
 // Types — the WS message union + card/synthesis shapes the engine emits.
 export * from './types';

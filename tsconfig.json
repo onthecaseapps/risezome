@@ -2,7 +2,6 @@
   "extends": "./tsconfig.base.json",
   "files": [],
   "references": [
-    { "path": "./packages/shared-types/tsconfig.build.json" },
-    { "path": "./apps/daemon/tsconfig.build.json" }
+    { "path": "./packages/shared-types/tsconfig.build.json" }
   ]
 }

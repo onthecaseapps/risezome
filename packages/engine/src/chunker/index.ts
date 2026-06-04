@@ -3,9 +3,9 @@
 // Two consumers today:
 //   - The indexer (U5c) uses chunkFile + classifyFile to turn raw file
 //     bytes from GitHub into embedding-shaped chunks.
-//   - The retrieval pipeline (U7 — lifts later from apps/daemon) uses
-//     the text-heuristics helpers (hasEntityLikeToken, buildFtsQuery)
-//     for query rewriting + hybrid retrieval.
+//   - The retrieval pipeline (apps/bot-worker) uses the text-heuristics
+//     helpers (hasEntityLikeToken, buildFtsQuery) for query rewriting +
+//     hybrid retrieval.
 
 export { chunkFile, classifyFile, type FileChunkerOptions } from './file-chunker.js';
 export {
