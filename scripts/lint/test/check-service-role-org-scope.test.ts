@@ -130,6 +130,30 @@ beforeEach(() => {
        return c.from('gaps').select('*').eq('gap_id', 'g'); // service-role, unscoped → VIOLATION
      }`,
   );
+
+  // INLINE service factory call as the chain ROOT (no bound identifier):
+  // createServiceRoleClient().from(orgTable) unscoped → VIOLATION. This is the
+  // bypass hole #5(a) closed; a call-expression root used to be unclassified.
+  write(
+    'apps/portal/app/inline.ts',
+    `import { createServiceRoleClient } from './_lib/supabase-server';
+     export async function inline() {
+       // inline call root, unscoped org-table write → VIOLATION
+       await createServiceRoleClient().from('gaps').update({ title: 'x' }).eq('gap_id', 'g');
+     }`,
+  );
+
+  // A service-role helper whose client arrives as a RENAMED parameter, in a file
+  // that imports the factory. Whole-file import context (#5(b)) means every
+  // org-scoped .from is checked regardless of the param name → VIOLATION.
+  write(
+    'apps/portal/app/renamed-param.ts',
+    `import { createServiceRoleClient } from './_lib/supabase-server';
+     export async function helper(anyClientName: any, orgId: string) {
+       await anyClientName.from('gaps').update({ title: 'x' }).eq('gap_id', 'g'); // unscoped → VIOLATION
+     }
+     export function boot() { return createServiceRoleClient(); }`,
+  );
 });
 
 afterAll(() => {
@@ -147,6 +171,10 @@ describe('check-service-role-org-scope', () => {
     expect(err).toMatch(/apps\/portal\/app\/actions\.ts:\d+: .*'gaps'.*org_id/);
     // raw createClient with secret env marker.
     expect(err).toMatch(/apps\/portal\/app\/raw\.ts:\d+: .*'gaps'.*org_id/);
+    // #5(a): inline createServiceRoleClient().from(orgTable) without scope.
+    expect(err).toMatch(/apps\/portal\/app\/inline\.ts:\d+: .*'gaps'.*org_id/);
+    // #5(b): renamed-param helper in a file importing the factory.
+    expect(err).toMatch(/apps\/portal\/app\/renamed-param\.ts:\d+: .*'gaps'.*org_id/);
   });
 
   it('does NOT flag the authenticated (RLS) client', () => {
@@ -190,6 +218,21 @@ describe('check-service-role-org-scope', () => {
          const c = createClient(process.env.URL!, process.env.SUPABASE_SECRET_KEY!);
          return c.from('gaps').select('*').eq('gap_id', 'g').eq('org_id', 'o');
        }`,
+    );
+    write(
+      'apps/portal/app/inline.ts',
+      `import { createServiceRoleClient } from './_lib/supabase-server';
+       export async function inline() {
+         await createServiceRoleClient().from('gaps').update({ title: 'x' }).eq('gap_id', 'g').eq('org_id', 'o');
+       }`,
+    );
+    write(
+      'apps/portal/app/renamed-param.ts',
+      `import { createServiceRoleClient } from './_lib/supabase-server';
+       export async function helper(anyClientName: any, orgId: string) {
+         await anyClientName.from('gaps').update({ title: 'x' }).eq('gap_id', 'g').eq('org_id', orgId);
+       }
+       export function boot() { return createServiceRoleClient(); }`,
     );
 
     const { code, out } = runChecker();

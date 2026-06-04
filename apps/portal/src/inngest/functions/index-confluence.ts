@@ -56,7 +56,7 @@ export const indexConfluenceFn = inngest.createFunction(
       token = await step.run('token', async () => getValidAtlassianToken(orgId, createServiceRoleClient()));
     } catch (err) {
       if (err instanceof AtlassianAuthError) {
-        await markErrored(step, sourceId);
+        await markErrored(step, orgId, sourceId);
         return { sourceId, pages: 0, chunks: 0, error: 'atlassian_auth' };
       }
       throw err;
@@ -100,12 +100,14 @@ export const indexConfluenceFn = inngest.createFunction(
 
 async function markErrored(
   step: { run: (id: string, fn: () => Promise<unknown>) => Promise<unknown> },
+  orgId: string,
   sourceId: string,
 ): Promise<void> {
   await step.run('mark-token-errored', async () => {
     await createServiceRoleClient()
       .from('sources')
       .update({ status: 'errored', status_message: RECONNECT_MSG })
-      .eq('id', sourceId);
+      .eq('id', sourceId)
+      .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   });
 }

@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Utterance } from '@risezome/engine/transcribe';
-import { CRYPTO_VERSION, encryptForOrgToBytea } from '@risezome/crypto';
+import { CRYPTO_VERSION, encryptForOrgToBytea, EnvelopeCryptoError } from '@risezome/crypto';
 
 /**
  * Service-role Supabase client. The bot-worker writes meeting_events
@@ -90,8 +90,31 @@ export async function persistAndBroadcast(
     // would be JSON-mangled into the column). transcript_key_version=2 marks the
     // KMS-ESDK format (1 = legacy pgcrypto) so the U11 migration can find
     // un-migrated rows.
-    transcriptTextEnc = await encryptForOrgToBytea(args.orgId, textVal);
-    transcriptKeyVersion = CRYPTO_VERSION.KMS_ESDK;
+    //
+    // DEGRADE, never crash the meeting: a KMS blip here must NOT throw out of
+    // this fire-and-forget path (handleMessage awaits nothing), which would lose
+    // the transcript row entirely. On EnvelopeCryptoError we persist the row with
+    // a NULL ciphertext + null version so the speaker/timing metadata still lands
+    // and the live broadcast below (which carries plaintext) is unaffected. The
+    // un-encrypted-at-rest row is acceptable: the verbatim text is simply absent
+    // from durable storage for this utterance rather than the whole row being
+    // dropped. We log at error level WITHOUT any plaintext.
+    try {
+      transcriptTextEnc = await encryptForOrgToBytea(args.orgId, textVal);
+      transcriptKeyVersion = CRYPTO_VERSION.KMS_ESDK;
+    } catch (err) {
+      if (err instanceof EnvelopeCryptoError) {
+        console.error(
+          `[bot-worker.db] transcript encrypt failed (KMS); persisting row without encrypted text ` +
+            `(meetingId=${args.meetingId} orgId=${args.orgId})`,
+          err,
+        );
+        transcriptTextEnc = null;
+        transcriptKeyVersion = null;
+      } else {
+        throw err;
+      }
+    }
   }
   const { data, error } = await client
     .from('meeting_events')

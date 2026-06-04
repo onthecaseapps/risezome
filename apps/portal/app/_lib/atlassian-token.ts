@@ -4,7 +4,26 @@ import {
   requireAtlassianClientId,
   requireAtlassianClientSecret,
 } from './atlassian';
-import { decryptForOrgFromBytea, encryptForOrgToBytea } from '@risezome/crypto';
+import {
+  decryptForOrgFromBytea,
+  encryptForOrgToBytea,
+  EnvelopeCryptoError,
+} from '@risezome/crypto';
+
+/**
+ * A crypto (KMS/keyring) failure while (de/en)crypting the stored Atlassian
+ * tokens. Deliberately DISTINCT from `AtlassianAuthError`: a KMS blip or a brief
+ * deploy-window inconsistency is TRANSIENT/retryable, not a dead refresh token,
+ * so it must NOT surface to the user as "reconnect your Atlassian account".
+ * Callers (the Jira/Confluence indexers) treat it as a normal throw → Inngest
+ * retries the step rather than marking the source errored.
+ */
+export class AtlassianTokenCryptoError extends Error {
+  override readonly name = 'AtlassianTokenCryptoError';
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options as ErrorOptions | undefined);
+  }
+}
 
 /**
  * Atlassian access-token manager. Returns a valid access token for an org's
@@ -71,11 +90,25 @@ async function readConnection(
   // A pre-encryption row (or a wiped one) has no ciphertext → treat as "reconnect".
   if (row.access_token_enc === null || row.refresh_token_enc === null) return null;
   // U10: tokens decrypted app-side under the org's per-org KMS key. The bytea
-  // columns come back as `\x<hex>` strings → decode → decrypt.
-  const [accessToken, refreshToken] = await Promise.all([
-    decryptForOrgFromBytea(orgId, row.access_token_enc),
-    decryptForOrgFromBytea(orgId, row.refresh_token_enc),
-  ]);
+  // columns come back as `\x<hex>` strings → decode → decrypt. A crypto failure
+  // here (KMS down, deploy-window inconsistency) is mapped to a DISTINCT
+  // retryable error so it is not misread as a dead connection ("reconnect").
+  let accessToken: string;
+  let refreshToken: string;
+  try {
+    [accessToken, refreshToken] = await Promise.all([
+      decryptForOrgFromBytea(orgId, row.access_token_enc),
+      decryptForOrgFromBytea(orgId, row.refresh_token_enc),
+    ]);
+  } catch (err) {
+    if (err instanceof EnvelopeCryptoError) {
+      throw new AtlassianTokenCryptoError(
+        `decrypt of Atlassian tokens failed for org ${orgId} (transient KMS/keyring error)`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
   return {
     id: row.id,
     access_token: accessToken,
@@ -141,10 +174,22 @@ async function doRefresh(
   // (a monotonic counter), not the crypto-format sentinel — it must keep
   // incrementing per rotation. The U11 migration therefore identifies un-migrated
   // atlassian rows by ESDK-decrypt probing rather than by token_version.
-  const [accessEnc, refreshEnc] = await Promise.all([
-    encryptForOrgToBytea(orgId, set.accessToken),
-    encryptForOrgToBytea(orgId, set.refreshToken),
-  ]);
+  let accessEnc: string;
+  let refreshEnc: string;
+  try {
+    [accessEnc, refreshEnc] = await Promise.all([
+      encryptForOrgToBytea(orgId, set.accessToken),
+      encryptForOrgToBytea(orgId, set.refreshToken),
+    ]);
+  } catch (err) {
+    if (err instanceof EnvelopeCryptoError) {
+      throw new AtlassianTokenCryptoError(
+        `encrypt of refreshed Atlassian tokens failed for org ${orgId} (transient KMS/keyring error)`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
   const { data } = await service
     .from('atlassian_connections')
     .update({

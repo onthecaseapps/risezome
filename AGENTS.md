@@ -21,6 +21,7 @@ risezome/
 │   └── hud-next/                      # LEGACY standalone HUD app (superseded by portal + @risezome/hud-ui)
 ├── packages/
 │   ├── engine/                        # Shared core: chunker, embed, synthesize, relevance, router, skills, summarize
+│   ├── crypto/                        # Per-org envelope encryption (AWS Encryption SDK + KMS); shared by portal + bot-worker
 │   ├── hud-ui/                        # React components for the live HUD (cards, synthesis, citations)
 │   └── shared-types/                  # Cross-package TypeScript types
 ├── sidecars/
@@ -45,7 +46,7 @@ risezome/
   - `pnpm test` — Vitest run.
   - `pnpm build` — build all packages.
 - **Per-app dev:** run from the app dir (`pnpm --filter @risezome/portal dev`, `pnpm --filter @risezome/bot-worker dev`). Each app has its own `.env.example` and README with setup specifics.
-- **Shared packages** (`@risezome/engine`, `@risezome/hud-ui`, `@risezome/shared-types`) must be built before an app typechecks against fresh changes: `pnpm --filter @risezome/shared-types --filter @risezome/engine --filter @risezome/hud-ui build`.
+- **Shared packages** (`@risezome/engine`, `@risezome/crypto`, `@risezome/hud-ui`, `@risezome/shared-types`) must be built before an app typechecks against fresh changes: `pnpm --filter @risezome/shared-types --filter @risezome/engine --filter @risezome/crypto --filter @risezome/hud-ui build`.
 
 ## Secrets and env files
 

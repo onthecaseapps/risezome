@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceRoleClient } from '../../../_lib/supabase-server';
 import { fetchTrelloMember, requireTrelloApiKey, TrelloAuthError } from '../../../_lib/trello';
-import { CRYPTO_VERSION, encryptForOrgToBytea } from '@risezome/crypto';
+import { CRYPTO_VERSION, encryptForOrgToBytea, EnvelopeCryptoError } from '@risezome/crypto';
 
 /**
  * Finish the Trello connect flow. The client callback page POSTs `{ token,
@@ -65,7 +65,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // U9: encrypt under the org's per-org KMS key (app-side ESDK), stored as a bytea
   // hex-text literal. token_version=2 marks the KMS-ESDK format (1 = legacy
   // pgcrypto) so the U11 migration can find un-migrated rows.
-  const tokenEnc = await encryptForOrgToBytea(orgId, token);
+  let tokenEnc: string;
+  try {
+    tokenEnc = await encryptForOrgToBytea(orgId, token);
+  } catch (err) {
+    if (err instanceof EnvelopeCryptoError) {
+      // KMS blip during connect: surface a typed 502 (Bad Gateway / upstream
+      // crypto failure) rather than a 500 so the client can retry.
+      console.error('[trello.connect] token encrypt failed (KMS):', err);
+      return NextResponse.json({ error: 'trello_encrypt_failed' }, { status: 502 });
+    }
+    throw err;
+  }
   const { error: upsertErr } = await service.from('trello_connections').upsert(
     {
       org_id: orgId,

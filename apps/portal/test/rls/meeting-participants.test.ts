@@ -22,7 +22,7 @@ import {
   decryptForOrgFromBytea,
   encryptForOrgToBytea,
 } from '@risezome/crypto';
-import { transcriptWithText } from '../../app/_lib/token-crypto';
+import { transcriptWithText } from '../../app/_lib/transcript';
 
 // Per-org KMS encryption uses the local RawAES dev fallback so these tests need
 // no AWS. Set early so @risezome/crypto's provider selects the fallback path.

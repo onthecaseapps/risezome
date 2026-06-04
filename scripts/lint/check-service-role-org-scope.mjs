@@ -109,12 +109,10 @@ const SCAN_DIRS = [
 
 // Files where the service client arrives as a parameter; treat the whole file
 // as a service-role context (check every org-scoped .from chain).
-const SERVICE_ROLE_MODULES = new Set(
-  [
-    join(REPO_ROOT, 'apps', 'bot-worker', 'src', 'db.ts'),
-    join(REPO_ROOT, 'apps', 'bot-worker', 'src', 'retrieval.ts'),
-  ].map((p) => p),
-);
+const SERVICE_ROLE_MODULES = new Set([
+  join(REPO_ROOT, 'apps', 'bot-worker', 'src', 'db.ts'),
+  join(REPO_ROOT, 'apps', 'bot-worker', 'src', 'retrieval.ts'),
+]);
 
 // Per-(file, table) exemptions for service-role reads that are legitimately
 // scoped by a non-org key (the signed-in user's own user_id) and are tracked as
@@ -133,6 +131,11 @@ const PATH_TABLE_ALLOWLIST = new Map([
 const SERVICE_FACTORY_NAMES = new Set(['createServiceClient', 'createServiceRoleClient']);
 // Env vars that mark a raw createClient(...) as service-role.
 const SERVICE_ENV_MARKERS = ['SUPABASE_SECRET_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
+// Factory calls that produce the AUTHENTICATED, RLS-respecting client. A chain
+// rooted on one of these is never a service-role query — even inside a file that
+// also uses a service-role client (so whole-file service-role context must not
+// flag these). RLS already scopes them to the caller's org.
+const AUTH_FACTORY_NAMES = new Set(['createServerClient']);
 
 // Predicate methods whose first string-literal arg names a column.
 const COLUMN_PREDICATE_METHODS = new Set(['eq', 'in', 'contains']);
@@ -218,6 +221,51 @@ function createClientIsServiceRole(callExpr, sourceText) {
 }
 
 /**
+ * Does this file import or require a service-role client factory
+ * (createServiceRoleClient / createServiceClient)? If so the whole file is a
+ * service-role context: the client may arrive as a renamed parameter, be called
+ * inline, or be re-wrapped, none of which per-identifier resolution catches. We
+ * still verify every org-scoped `.from` carries an org_id predicate, which is a
+ * pure tightening (it can only ADD checks, never remove the createServerClient
+ * exclusion — that authenticated client is a different import).
+ * @returns {boolean}
+ */
+function fileImportsServiceFactory(sourceFile) {
+  let found = false;
+  function visit(node) {
+    if (found) return;
+    // import { createServiceRoleClient, ... } from '...'
+    if (ts.isImportDeclaration(node) && node.importClause?.namedBindings) {
+      const nb = node.importClause.namedBindings;
+      if (ts.isNamedImports(nb)) {
+        for (const el of nb.elements) {
+          // Match the IMPORTED name (el.propertyName when aliased, else el.name)
+          // so `import { createServiceRoleClient as c }` still counts.
+          const imported = (el.propertyName ?? el.name).text;
+          if (SERVICE_FACTORY_NAMES.has(imported)) {
+            found = true;
+            return;
+          }
+        }
+      }
+    }
+    // const { createServiceRoleClient } = require('...')  /  = await import('...')
+    if (ts.isVariableDeclaration(node) && node.name && ts.isObjectBindingPattern(node.name)) {
+      for (const el of node.name.elements) {
+        const imported = el.propertyName ?? el.name;
+        if (imported && ts.isIdentifier(imported) && SERVICE_FACTORY_NAMES.has(imported.text)) {
+          found = true;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return found;
+}
+
+/**
  * Collect identifier names bound to a service-role client in a source file.
  * @returns {Set<string>}
  */
@@ -244,6 +292,39 @@ function collectServiceRoleIdentifiers(sourceFile, sourceText) {
       if (initIsServiceRole(node.initializer) && ts.isIdentifier(node.name)) {
         names.add(node.name.text);
       }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return names;
+}
+
+/**
+ * Collect identifier names bound to the AUTHENTICATED (RLS-respecting) client in
+ * a file: `const x = await createServerClient()`. Used to EXCLUDE such chains
+ * from whole-file service-role context (a file may use both clients).
+ * @returns {Set<string>}
+ */
+function collectAuthClientIdentifiers(sourceFile) {
+  const names = new Set();
+  function initIsAuth(init) {
+    if (init === undefined || init === null) return false;
+    if (ts.isAwaitExpression(init)) return initIsAuth(init.expression);
+    if (!ts.isCallExpression(init)) return false;
+    const callee = init.expression;
+    let calleeName;
+    if (ts.isIdentifier(callee)) calleeName = callee.text;
+    else if (ts.isPropertyAccessExpression(callee)) calleeName = callee.name.text;
+    return calleeName !== undefined && AUTH_FACTORY_NAMES.has(calleeName);
+  }
+  function visit(node) {
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer !== undefined &&
+      initIsAuth(node.initializer) &&
+      ts.isIdentifier(node.name)
+    ) {
+      names.add(node.name.text);
     }
     ts.forEachChild(node, visit);
   }
@@ -305,7 +386,7 @@ function objectOrArrayHasOrgId(arg) {
  * traverse all PropertyAccess/Call links to collect predicates anywhere in the
  * chain (both before and after .from).
  */
-function analyzeFromCall(fromCall, sourceFile) {
+function analyzeFromCall(fromCall, sourceFile, sourceText) {
   // Find the topmost expression statement / expression that this chain belongs
   // to by climbing parents while we stay within a call/property-access chain.
   let top = fromCall;
@@ -322,7 +403,12 @@ function analyzeFromCall(fromCall, sourceFile) {
 
   // Root identifier: descend the leftmost expression of the chain that ends in
   // .from(...). The object of .from's property access is the chain prefix.
+  // `rootIsServiceCall` is set when the chain root is a DIRECT call to a service
+  // factory (e.g. `createServiceRoleClient().from(...)`) or a `createClient(...)`
+  // carrying a service env marker — an inline pattern that has no bound
+  // identifier to resolve, so without this it would be silently exempt.
   let rootName;
+  let rootIsServiceCall = false;
   {
     // fromCall.expression is a PropertyAccessExpression `<obj>.from`
     let obj = ts.isPropertyAccessExpression(fromCall.expression)
@@ -340,6 +426,18 @@ function analyzeFromCall(fromCall, sourceFile) {
         // for root-name matching, plus expose the property name.
         obj = obj.expression;
       } else if (ts.isCallExpression(obj)) {
+        // A call in the chain root: if it directly invokes a service factory (or
+        // createClient with a service marker) the chain is service-role even with
+        // no bound identifier. Check before descending into its callee.
+        const callee = obj.expression;
+        let calleeName;
+        if (ts.isIdentifier(callee)) calleeName = callee.text;
+        else if (ts.isPropertyAccessExpression(callee)) calleeName = callee.name.text;
+        if (calleeName !== undefined && SERVICE_FACTORY_NAMES.has(calleeName)) {
+          rootIsServiceCall = true;
+        } else if (calleeName === 'createClient' && createClientIsServiceRole(obj, sourceText)) {
+          rootIsServiceCall = true;
+        }
         obj = obj.expression;
       } else if (
         ts.isAwaitExpression(obj) ||
@@ -389,7 +487,7 @@ function analyzeFromCall(fromCall, sourceFile) {
   }
   collectPredicates(top);
 
-  return { rootName, scoped, top };
+  return { rootName, scoped, top, rootIsServiceCall };
 }
 
 /** True if the statement containing `node` (or the line above) is annotated. */
@@ -425,8 +523,12 @@ function main() {
       ts.ScriptKind.TSX,
     );
     const lines = sourceText.split('\n');
-    const isServiceModule = SERVICE_ROLE_MODULES.has(file);
+    // A file is a service-role context if it is in the explicit fallback list OR
+    // it imports/requires a service-role client factory (catches renamed-param
+    // helpers a hardcoded list would miss).
+    const isServiceModule = SERVICE_ROLE_MODULES.has(file) || fileImportsServiceFactory(sourceFile);
     const serviceIdents = collectServiceRoleIdentifiers(sourceFile, sourceText);
+    const authIdents = collectAuthClientIdentifiers(sourceFile);
 
     // Visit every .from(<literal>) call.
     function visit(node) {
@@ -439,9 +541,19 @@ function main() {
       ) {
         const table = node.arguments[0].text;
         if (orgTables.has(table)) {
-          const { rootName, scoped } = analyzeFromCall(node, sourceFile);
+          const { rootName, scoped, rootIsServiceCall } = analyzeFromCall(
+            node,
+            sourceFile,
+            sourceText,
+          );
+          // A chain rooted on the authenticated RLS client is never service-role,
+          // even in a whole-file service-role context (the file may use both).
+          const rootIsAuthClient = rootName !== undefined && authIdents.has(rootName);
           const isServiceRoleQuery =
-            isServiceModule || (rootName !== undefined && serviceIdents.has(rootName));
+            !rootIsAuthClient &&
+            (isServiceModule ||
+              rootIsServiceCall ||
+              (rootName !== undefined && serviceIdents.has(rootName)));
           const relPath = relative(REPO_ROOT, file);
           const pathAllowed = PATH_TABLE_ALLOWLIST.get(relPath)?.has(table) === true;
           if (isServiceRoleQuery && !scoped && !pathAllowed) {

@@ -47,6 +47,9 @@ interface SeededOrg {
   userId: string;
   meetingId: string;
   plaintext: string;
+  /** Second encrypted column type (syntheses) to prove rotation covers >1 column. */
+  synthesisId: string;
+  synthPlaintext: string;
 }
 
 async function seedKmsRecap(
@@ -87,7 +90,23 @@ async function seedKmsRecap(
     })
     .select('meeting_id')
     .single();
-  return { orgId, userId, meetingId: (m as { meeting_id: string }).meeting_id, plaintext };
+  const meetingId = (m as { meeting_id: string }).meeting_id;
+
+  // Second encrypted column type: a done synthesis on the same meeting.
+  const synthPlaintext = `Synthesis for ${name}: cited 3 sources, answer accepted.`;
+  const synthEnc = await encryptForOrgToBytea(orgId, synthPlaintext);
+  const synthesisId = `synth-u12-${name}-${Math.random().toString(36).slice(2)}`;
+  await admin.from('syntheses').insert({
+    synthesis_id: synthesisId,
+    meeting_id: meetingId,
+    org_id: orgId,
+    status: 'done',
+    trace_id: `trace-${synthesisId}`,
+    accumulated_text_enc: synthEnc,
+    synth_key_version: CRYPTO_VERSION.KMS_ESDK,
+  });
+
+  return { orgId, userId, meetingId, plaintext, synthesisId, synthPlaintext };
 }
 
 async function readRecapEnc(admin: SupabaseClient, meetingId: string): Promise<string> {
@@ -139,6 +158,21 @@ if (!stackReachable && !FORCE) {
       const result = await rotateOrgKey(admin, orgA.orgId);
       const recap = result.columns.find((c) => c.column === 'meetings.recap_text_enc');
       expect(recap!.rotated).toBeGreaterThanOrEqual(1);
+      // Second column type rotated too (proves the shared ENCRYPTED_COLUMNS loop).
+      const synth = result.columns.find((c) => c.column === 'syntheses.accumulated_text_enc');
+      expect(synth!.rotated).toBeGreaterThanOrEqual(1);
+      // The rotated synthesis still decrypts to its original plaintext.
+      const { data: sRow } = await admin
+        .from('syntheses')
+        .select('accumulated_text_enc')
+        .eq('synthesis_id', orgA.synthesisId)
+        .single();
+      expect(
+        await decryptForOrgFromBytea(
+          orgA.orgId,
+          (sRow as { accumulated_text_enc: string }).accumulated_text_enc,
+        ),
+      ).toBe(orgA.synthPlaintext);
 
       const aAfter = await readRecapEnc(admin, orgA.meetingId);
       const bAfter = await readRecapEnc(admin, orgB.meetingId);

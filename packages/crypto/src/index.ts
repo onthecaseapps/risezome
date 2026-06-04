@@ -8,7 +8,10 @@
 //   byteaToHex(bytes): string / hexToBuffer(value): Buffer  — bytea bridge helpers
 //   aliasForOrg(orgId): string                         — deterministic KMS alias
 //   EnvelopeCryptoError                                — typed failure
-//   __setKeyringProviderForTests(fn | null)            — test-only injection
+//
+// The test-only keyring-injection hook (__setKeyringProviderForTests) is
+// deliberately NOT re-exported here: it is not production API. Tests import it
+// directly from '../src/envelope.js'.
 export {
   encryptForOrg,
   decryptForOrg,
@@ -19,5 +22,4 @@ export {
   aliasForOrg,
   CRYPTO_VERSION,
   EnvelopeCryptoError,
-  __setKeyringProviderForTests,
 } from './envelope.js';

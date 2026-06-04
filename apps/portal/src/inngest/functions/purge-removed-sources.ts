@@ -68,6 +68,8 @@ export async function purgeRemovedSources(
   opts: { nowMs: number; graceMs: number },
 ): Promise<PurgeResult> {
   const cutoff = new Date(opts.nowMs - opts.graceMs).toISOString();
+  // service-role-cross-org: instance-wide GC sweep — deletes every org's sources
+  // that have been in status='removed' past the grace window; cross-org by design.
   const res = await db
     .from('sources')
     .delete()

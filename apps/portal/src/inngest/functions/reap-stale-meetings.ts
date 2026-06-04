@@ -104,6 +104,8 @@ export async function reapStaleMeetings(
   const reapedIds: string[] = [];
 
   // 1. Recording meetings whose bot is guaranteed gone (started_at known).
+  // service-role-cross-org: instance-wide reaper cron — sweeps stale meetings
+  // across every org by status + age; cross-org by design.
   const byStart = await service
     .from('meetings')
     .update({ status: 'completed', ended_at: completedAt })
@@ -117,6 +119,7 @@ export async function reapStaleMeetings(
 
   // 2. Recording meetings the webhook flipped before any utterance set
   //    started_at — fall back to created_at for the cutoff.
+  // service-role-cross-org: instance-wide reaper cron (see above).
   const byCreated = await service
     .from('meetings')
     .update({ status: 'completed', ended_at: completedAt })
@@ -129,6 +132,7 @@ export async function reapStaleMeetings(
   for (const row of byCreated.data ?? []) reapedIds.push(row.meeting_id);
 
   // 3. Pre-recording states that never started recording in time → failed.
+  // service-role-cross-org: instance-wide reaper cron (see above).
   const prelaunch = await service
     .from('meetings')
     .update({

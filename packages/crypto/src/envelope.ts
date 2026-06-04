@@ -39,9 +39,7 @@ import { hkdfSync } from 'node:crypto';
 
 // REQUIRE_ENCRYPT_REQUIRE_DECRYPT: every message commits to its data key and we
 // refuse to read non-committing messages. Correct default for new data.
-const { encrypt, decrypt } = buildClient(
-  CommitmentPolicy.REQUIRE_ENCRYPT_REQUIRE_DECRYPT,
-);
+const { encrypt, decrypt } = buildClient(CommitmentPolicy.REQUIRE_ENCRYPT_REQUIRE_DECRYPT);
 
 const ENC_CONTEXT_ORG_KEY = 'org_id';
 
@@ -51,9 +49,13 @@ const ENC_CONTEXT_ORG_KEY = 'org_id';
  * the re-encryption migration (U11 selects rows still on LEGACY_PGCRYPTO):
  *
  *   LEGACY_PGCRYPTO (1) — pgcrypto OpenPGP packet under the global
- *     USER_TOKEN_ENCRYPTION_KEY (pre-KMS). NOTE: the original F1/F2 migrations
- *     defaulted these version columns to 0; both 0 and 1 mean "legacy pgcrypto"
- *     and U11 migrates anything `< KMS_ESDK`.
+ *     USER_TOKEN_ENCRYPTION_KEY (pre-KMS). IMPORTANT: real pre-migration rows
+ *     actually default to 0 on disk, NOT 1 — the original F1/F2 migrations
+ *     declared these version columns `default 0`. The constant is named
+ *     LEGACY_PGCRYPTO=1 only as a human label; in practice "legacy" means any
+ *     value `< KMS_ESDK` (i.e. both 0 and 1), and U11 migrates anything that
+ *     matches `.lt(versionColumn, KMS_ESDK)`. Do NOT rely on a column literally
+ *     equalling 1 to detect legacy rows — use the `< KMS_ESDK` predicate.
  *   KMS_ESDK (2)        — AWS Encryption SDK message bytes, wrapped by the
  *     per-org KMS CMK (or the dev RawAES fallback). What every new write stamps.
  */
@@ -97,7 +99,13 @@ type KeyringProvider = (orgId: string) => KeyringNode;
  * must not set (deploy hygiene, mirroring the USER_TOKEN_ENCRYPTION_KEY rule).
  */
 function devKeyringForOrg(orgId: string, devSecret: string): KeyringNode {
-  const keyBytes = hkdfSync('sha256', Buffer.from(devSecret), Buffer.alloc(0), Buffer.from(`org:${orgId}`), 32);
+  const keyBytes = hkdfSync(
+    'sha256',
+    Buffer.from(devSecret),
+    Buffer.alloc(0),
+    Buffer.from(`org:${orgId}`),
+    32,
+  );
   return new RawAesKeyringNode({
     keyNamespace: 'risezome-dev',
     keyName: aliasForOrg(orgId),
@@ -119,6 +127,15 @@ function devKeyringForOrg(orgId: string, devSecret: string): KeyringNode {
 const defaultKeyringProvider: KeyringProvider = (orgId) => {
   const devSecret = process.env.RISEZOME_DEV_CRYPTO_KEY;
   if (devSecret !== undefined && devSecret.length > 0) {
+    // Fail closed: the dev RawAES fallback must NEVER run in production. If a
+    // prod deploy accidentally carries RISEZOME_DEV_CRYPTO_KEY we refuse to use
+    // it (silently encrypting prod data under a non-KMS, env-derived key would
+    // be a catastrophic custody downgrade) and surface a typed error instead.
+    if (process.env.NODE_ENV === 'production') {
+      throw new EnvelopeCryptoError(
+        'refusing dev crypto fallback in production: RISEZOME_DEV_CRYPTO_KEY is set with NODE_ENV=production',
+      );
+    }
     return devKeyringForOrg(orgId, devSecret);
   }
   return new KmsKeyringNode({ generatorKeyId: aliasForOrg(orgId) });
@@ -133,9 +150,7 @@ let keyringProvider: KeyringProvider = defaultKeyringProvider;
  * no AWS network. Pass `null` to restore the production KmsKeyringNode path.
  * Resetting/setting clears the per-org CMM memo so the new keyring takes effect.
  */
-export function __setKeyringProviderForTests(
-  fn: KeyringProvider | null,
-): void {
+export function __setKeyringProviderForTests(fn: KeyringProvider | null): void {
   keyringProvider = fn ?? defaultKeyringProvider;
   cmmByOrg.clear();
 }
@@ -171,21 +186,43 @@ const CMM_MAX_MESSAGES_ENCRYPTED = 1000;
 const CMM_MAX_BYTES_ENCRYPTED = 100 * 1024 * 1024; // ~100 MiB
 const CMM_CACHE_CAPACITY = 100;
 
+// Cap the number of per-org CMMs held in memory. The CMM memo is a PURE perf
+// cache (it only avoids rebuilding the keyring + local materials cache for a hot
+// org); evicting an entry is always safe — the next encrypt/decrypt for that org
+// simply rebuilds it. Without a cap this Map grew once per distinct org for the
+// process lifetime (a slow unbounded leak on a long-lived bot-worker / Inngest
+// process serving many orgs). 512 comfortably covers any realistic working set
+// of concurrently-active orgs on a single process while bounding memory.
+const CMM_MAX_ORGS = 512;
+
+// Tiny insertion-ordered LRU over a Map (JS Maps iterate in insertion order, so
+// the first key is the oldest). On access we delete+re-set to mark the entry
+// most-recently-used; on insert past the cap we evict the oldest. No new dep.
 const cmmByOrg = new Map<string, NodeCachingMaterialsManager>();
 
 function getCmm(orgId: string): NodeCachingMaterialsManager {
-  let cmm = cmmByOrg.get(orgId);
-  if (cmm === undefined) {
-    const keyring = keyringProvider(orgId);
-    const cache = getLocalCryptographicMaterialsCache(CMM_CACHE_CAPACITY);
-    cmm = new NodeCachingMaterialsManager({
-      backingMaterials: keyring,
-      cache,
-      maxAge: CMM_MAX_AGE_MS,
-      maxMessagesEncrypted: CMM_MAX_MESSAGES_ENCRYPTED,
-      maxBytesEncrypted: CMM_MAX_BYTES_ENCRYPTED,
-    });
-    cmmByOrg.set(orgId, cmm);
+  const existing = cmmByOrg.get(orgId);
+  if (existing !== undefined) {
+    // Mark most-recently-used: delete then re-set moves it to the newest slot.
+    cmmByOrg.delete(orgId);
+    cmmByOrg.set(orgId, existing);
+    return existing;
+  }
+  const keyring = keyringProvider(orgId);
+  const cache = getLocalCryptographicMaterialsCache(CMM_CACHE_CAPACITY);
+  const cmm = new NodeCachingMaterialsManager({
+    backingMaterials: keyring,
+    cache,
+    maxAge: CMM_MAX_AGE_MS,
+    maxMessagesEncrypted: CMM_MAX_MESSAGES_ENCRYPTED,
+    maxBytesEncrypted: CMM_MAX_BYTES_ENCRYPTED,
+  });
+  cmmByOrg.set(orgId, cmm);
+  // Evict the oldest entries until we are back within the cap. Safe: pure cache.
+  while (cmmByOrg.size > CMM_MAX_ORGS) {
+    const oldest = cmmByOrg.keys().next().value;
+    if (oldest === undefined) break;
+    cmmByOrg.delete(oldest);
   }
   return cmm;
 }
@@ -199,20 +236,17 @@ function getCmm(orgId: string): NodeCachingMaterialsManager {
  *
  * @throws {EnvelopeCryptoError} on KMS / keyring failure (cause preserved).
  */
-export async function encryptForOrg(
-  orgId: string,
-  plaintext: string,
-): Promise<Buffer> {
+export async function encryptForOrg(orgId: string, plaintext: string): Promise<Buffer> {
   try {
     const { result } = await encrypt(getCmm(orgId), plaintext, {
       encryptionContext: { [ENC_CONTEXT_ORG_KEY]: orgId },
     });
     return result;
   } catch (err) {
-    throw new EnvelopeCryptoError(
-      `encryptForOrg failed for org ${orgId}`,
-      { cause: err },
-    );
+    // Preserve an already-typed envelope error (e.g. the fail-closed prod guard
+    // in the keyring provider) rather than re-wrapping it and losing its message.
+    if (err instanceof EnvelopeCryptoError) throw err;
+    throw new EnvelopeCryptoError(`encryptForOrg failed for org ${orgId}`, { cause: err });
   }
 }
 
@@ -237,10 +271,7 @@ export async function decryptForOrg(
     boundOrgId = result.messageHeader.encryptionContext[ENC_CONTEXT_ORG_KEY];
   } catch (err) {
     if (err instanceof EnvelopeCryptoError) throw err;
-    throw new EnvelopeCryptoError(
-      `decryptForOrg failed for org ${orgId}`,
-      { cause: err },
-    );
+    throw new EnvelopeCryptoError(`decryptForOrg failed for org ${orgId}`, { cause: err });
   }
   if (boundOrgId !== orgId) {
     throw new EnvelopeCryptoError(
@@ -280,9 +311,7 @@ export function byteaToHex(bytes: Buffer | Uint8Array): string {
  */
 export function hexToBuffer(value: unknown): Buffer {
   if (typeof value !== 'string') {
-    throw new EnvelopeCryptoError(
-      `expected bytea hex string from PostgREST, got ${typeof value}`,
-    );
+    throw new EnvelopeCryptoError(`expected bytea hex string from PostgREST, got ${typeof value}`);
   }
   const hex = value.startsWith('\\x') ? value.slice(2) : value;
   if (hex.length % 2 !== 0 || /[^0-9a-fA-F]/.test(hex)) {
@@ -296,10 +325,7 @@ export function hexToBuffer(value: unknown): Buffer {
  * ready to write to a `bytea` column via supabase-js. Equivalent to
  * `byteaToHex(await encryptForOrg(orgId, plaintext))`.
  */
-export async function encryptForOrgToBytea(
-  orgId: string,
-  plaintext: string,
-): Promise<string> {
+export async function encryptForOrgToBytea(orgId: string, plaintext: string): Promise<string> {
   return byteaToHex(await encryptForOrg(orgId, plaintext));
 }
 
@@ -308,9 +334,6 @@ export async function encryptForOrgToBytea(
  * back to the original string. Equivalent to
  * `decryptForOrg(orgId, hexToBuffer(value))`.
  */
-export async function decryptForOrgFromBytea(
-  orgId: string,
-  value: unknown,
-): Promise<string> {
+export async function decryptForOrgFromBytea(orgId: string, value: unknown): Promise<string> {
   return decryptForOrg(orgId, hexToBuffer(value));
 }

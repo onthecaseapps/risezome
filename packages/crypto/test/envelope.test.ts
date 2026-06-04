@@ -25,9 +25,7 @@ import {
 function rawKeyForOrg(orgId: string): Uint8Array {
   const ikm = Buffer.from('risezome-crypto-test-ikm', 'utf8');
   const salt = Buffer.from('risezome-crypto-test-salt', 'utf8');
-  return new Uint8Array(
-    hkdfSync('sha256', ikm, salt, Buffer.from(orgId, 'utf8'), 32),
-  );
+  return new Uint8Array(hkdfSync('sha256', ikm, salt, Buffer.from(orgId, 'utf8'), 32));
 }
 
 // A RawAesKeyringNode swaps ONLY the wrapping-key source for the production
@@ -38,8 +36,7 @@ function rawKeyringFor(orgId: string): RawAesKeyringNode {
     keyName: aliasForOrg(orgId),
     keyNamespace: 'risezome-test',
     unencryptedMasterKey: rawKeyForOrg(orgId),
-    wrappingSuite:
-      RawAesWrappingSuiteIdentifier.AES256_GCM_IV12_TAG16_NO_PADDING,
+    wrappingSuite: RawAesWrappingSuiteIdentifier.AES256_GCM_IV12_TAG16_NO_PADDING,
   });
 }
 
@@ -64,6 +61,28 @@ describe('local dev-fallback keyring (RISEZOME_DEV_CRYPTO_KEY)', () => {
       __setKeyringProviderForTests(null);
     }
   });
+
+  it('FAILS CLOSED: refuses the dev fallback when NODE_ENV=production', async () => {
+    const prevKey = process.env.RISEZOME_DEV_CRYPTO_KEY;
+    const prevEnv = process.env.NODE_ENV;
+    process.env.RISEZOME_DEV_CRYPTO_KEY = 'dev-fallback-secret-for-tests';
+    process.env.NODE_ENV = 'production';
+    __setKeyringProviderForTests(null); // exercise the production default provider
+    try {
+      await expect(encryptForOrg('orgPROD', 'should not encrypt')).rejects.toBeInstanceOf(
+        EnvelopeCryptoError,
+      );
+      await expect(encryptForOrg('orgPROD', 'should not encrypt')).rejects.toThrow(
+        /refusing dev crypto fallback in production/,
+      );
+    } finally {
+      if (prevKey === undefined) delete process.env.RISEZOME_DEV_CRYPTO_KEY;
+      else process.env.RISEZOME_DEV_CRYPTO_KEY = prevKey;
+      if (prevEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prevEnv;
+      __setKeyringProviderForTests(null);
+    }
+  });
 });
 
 describe('envelope crypto', () => {
@@ -81,9 +100,7 @@ describe('envelope crypto', () => {
     __setKeyringProviderForTests(rawKeyringFor);
     const ct = await encryptForOrg('org-alpha', 'alpha-secret');
     // org-beta has a different raw wrapping key -> unwrap fails -> throws.
-    await expect(decryptForOrg('org-beta', ct)).rejects.toBeInstanceOf(
-      EnvelopeCryptoError,
-    );
+    await expect(decryptForOrg('org-beta', ct)).rejects.toBeInstanceOf(EnvelopeCryptoError);
   });
 
   it('produces opaque, non-deterministic ciphertext (c)', async () => {
@@ -111,17 +128,14 @@ describe('envelope crypto', () => {
         keyName: 'shared-test-key',
         keyNamespace: 'risezome-test',
         unencryptedMasterKey: sharedKey,
-        wrappingSuite:
-          RawAesWrappingSuiteIdentifier.AES256_GCM_IV12_TAG16_NO_PADDING,
+        wrappingSuite: RawAesWrappingSuiteIdentifier.AES256_GCM_IV12_TAG16_NO_PADDING,
       });
     __setKeyringProviderForTests(sharedKeyring);
 
     const ct = await encryptForOrg('org-alpha', 'secret');
     // Unwrap would succeed (same key), but enc-context org_id is 'org-alpha'
     // while we ask as 'org-beta' -> the SDK enforces, surfaced as a typed error.
-    await expect(decryptForOrg('org-beta', ct)).rejects.toBeInstanceOf(
-      EnvelopeCryptoError,
-    );
+    await expect(decryptForOrg('org-beta', ct)).rejects.toBeInstanceOf(EnvelopeCryptoError);
   });
 
   it('reuses cached materials across many encrypts for one org (e)', async () => {
@@ -148,6 +162,17 @@ describe('envelope crypto', () => {
     for (let i = 0; i < N; i++) {
       expect(await decryptForOrg(orgId, cts[i]!)).toBe(`message-${i}`);
     }
+  });
+
+  it('round-trips an empty string (f)', async () => {
+    __setKeyringProviderForTests(rawKeyringFor);
+    const orgId = 'org-empty';
+    const ct = await encryptForOrg(orgId, '');
+    expect(Buffer.isBuffer(ct)).toBe(true);
+    expect(await decryptForOrg(orgId, ct)).toBe('');
+    // and through the bytea bridge
+    const hex = await encryptForOrgToBytea(orgId, '');
+    expect(await decryptForOrgFromBytea(orgId, hex)).toBe('');
   });
 
   it('builds the deterministic per-org alias from KMS_ALIAS_PREFIX', () => {

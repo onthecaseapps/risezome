@@ -82,6 +82,35 @@ async function seedLegacyRecap(
   return (data as { meeting_id: string }).meeting_id;
 }
 
+/**
+ * Seed a SECOND legacy column type (syntheses.accumulated_text_enc) under the
+ * old pgcrypto path, so the backfill is exercised on more than meetings.recap.
+ */
+async function seedLegacySynthesis(
+  admin: SupabaseClient,
+  orgId: string,
+  meetingId: string,
+  plaintext: string,
+): Promise<string> {
+  const { data: enc, error: encErr } = await admin.rpc('encrypt_refresh_token', {
+    plaintext,
+    key: process.env['USER_TOKEN_ENCRYPTION_KEY'],
+  });
+  expect(encErr).toBeNull();
+  const synthesisId = `synth-u11-${Math.random().toString(36).slice(2)}`;
+  const { error } = await admin.from('syntheses').insert({
+    synthesis_id: synthesisId,
+    meeting_id: meetingId,
+    org_id: orgId,
+    status: 'done',
+    trace_id: `trace-${synthesisId}`,
+    accumulated_text_enc: enc as unknown as string,
+    synth_key_version: CRYPTO_VERSION.LEGACY_PGCRYPTO,
+  });
+  expect(error).toBeNull();
+  return synthesisId;
+}
+
 if (!stackReachable && !FORCE) {
   describe.skip('U11 migrate-encryption-to-kms (Supabase stack not reachable)', () => {
     it('skipped', () => {
@@ -94,7 +123,9 @@ if (!stackReachable && !FORCE) {
     let orgId: string;
     let userId: string;
     let meetingId: string;
+    let synthesisId: string;
     const plaintext = 'Legacy recap: board approved the Q3 raise of $12.5M.';
+    const synthPlaintext = 'Legacy synthesis: the answer cited the H2 roadmap doc.';
 
     beforeAll(async () => {
       admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -117,6 +148,7 @@ if (!stackReachable && !FORCE) {
         .from('org_members')
         .insert({ org_id: orgId, user_id: userId, role: 'manager', can_invite_bot: true });
       meetingId = await seedLegacyRecap(admin, orgId, userId, plaintext);
+      synthesisId = await seedLegacySynthesis(admin, orgId, meetingId, synthPlaintext);
     });
 
     afterAll(async () => {
@@ -153,6 +185,20 @@ if (!stackReachable && !FORCE) {
       expect(row.recap_key_version).toBe(CRYPTO_VERSION.KMS_ESDK);
       const decrypted = await decryptForOrgFromBytea(orgId, row.recap_text_enc);
       expect(decrypted).toBe(plaintext);
+
+      // Second column type migrated too (syntheses.accumulated_text_enc).
+      const synthCol = result.columns.find(
+        (c) => c.column === 'syntheses.accumulated_text_enc',
+      );
+      expect(synthCol!.migrated).toBeGreaterThanOrEqual(1);
+      const sAfter = await admin
+        .from('syntheses')
+        .select('accumulated_text_enc, synth_key_version')
+        .eq('synthesis_id', synthesisId)
+        .single();
+      const sRow = sAfter.data as { accumulated_text_enc: string; synth_key_version: number };
+      expect(sRow.synth_key_version).toBe(CRYPTO_VERSION.KMS_ESDK);
+      expect(await decryptForOrgFromBytea(orgId, sRow.accumulated_text_enc)).toBe(synthPlaintext);
     });
 
     it('is idempotent — re-running migrates nothing', async () => {

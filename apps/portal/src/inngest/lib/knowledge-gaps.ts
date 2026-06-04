@@ -30,7 +30,7 @@ import {
   type GapToPlace,
   type SectionRef,
 } from '@risezome/engine/gaps';
-import { transcriptWithText } from '../../../app/_lib/token-crypto';
+import { transcriptWithText } from '../../../app/_lib/transcript';
 
 const SECTION_COLORS = ['indigo', 'emerald', 'sky', 'amber', 'rose', 'violet', 'teal', 'slate'];
 

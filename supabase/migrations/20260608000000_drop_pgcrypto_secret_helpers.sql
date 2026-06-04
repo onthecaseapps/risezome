@@ -17,6 +17,31 @@
 -- │   5. apply THIS migration                                                  │
 -- └─────────────────────────────────────────────────────────────────────────┘
 
+-- Self-enforcing guard: a comment is not enforcement. If an automated
+-- migrate-on-deploy applies migrations in timestamp order, this would otherwise
+-- fire right after U8 — before the U11 backfill — dropping decrypt_refresh_token
+-- while legacy ciphertext still needs it, making that data permanently
+-- unrecoverable. Abort if ANY version-marked column still holds a pre-KMS row.
+-- (atlassian_connections.token_version is an optimistic-concurrency counter, not a
+-- format sentinel, so it is verified separately by the runbook's probe step.)
+do $$
+declare
+  legacy_count bigint;
+begin
+  select
+      (select count(*) from public.user_google_tokens where refresh_token_enc is not null and (key_version < 2 or key_org_id is null))
+    + (select count(*) from public.trello_connections where token_enc is not null and token_version < 2)
+    + (select count(*) from public.meetings where recap_text_enc is not null and recap_key_version < 2)
+    + (select count(*) from public.syntheses where accumulated_text_enc is not null and synth_key_version < 2)
+    + (select count(*) from public.meeting_events where transcript_text_enc is not null and transcript_key_version < 2)
+  into legacy_count;
+  if legacy_count > 0 then
+    raise exception
+      'Refusing to drop pgcrypto helpers: % legacy (pre-KMS) encrypted row(s) remain. Run the U11 backfill (risezome/encryption.migrate-to-kms) and verify zero rows < KMS_ESDK first; see docs/runbooks/encryption-kms-migration.md. Also confirm atlassian_connections via the runbook probe step.',
+      legacy_count;
+  end if;
+end $$;
+
 -- The bulk-decrypt RPC the transcript reader used (replaced app-side in U10).
 drop function if exists public.transcript_with_text(uuid, uuid, text);
 

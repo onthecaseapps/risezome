@@ -1,7 +1,7 @@
 import { inngest } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
 import { CRYPTO_VERSION, encryptForOrgToBytea } from '@risezome/crypto';
-import { transcriptWithText } from '../../../app/_lib/token-crypto';
+import { transcriptWithText } from '../../../app/_lib/transcript';
 import { buildTranscriptText, recapMeeting, type TranscriptLine } from '../lib/meeting-recap';
 
 /**

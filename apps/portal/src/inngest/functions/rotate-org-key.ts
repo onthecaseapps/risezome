@@ -1,11 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import {
-  CRYPTO_VERSION,
-  decryptForOrgFromBytea,
-  encryptForOrgToBytea,
-} from '@risezome/crypto';
+import { CRYPTO_VERSION, decryptForOrgFromBytea, encryptForOrgToBytea } from '@risezome/crypto';
 import { inngest } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
+import { DEFAULT_BATCH_SIZE, ENCRYPTED_COLUMNS } from '../lib/encrypted-columns';
 
 /**
  * Per-org key rotation + revocation (security plan 003, U12; KTD2/R4).
@@ -44,8 +41,6 @@ export interface OrgRotationResult {
   readonly orgId: string;
   readonly columns: ColumnRotationResult[];
 }
-
-const DEFAULT_BATCH_SIZE = 200;
 
 /**
  * Re-encrypt one org-scoped column whose rows are already at KMS_ESDK: read the
@@ -115,7 +110,7 @@ async function rotateAtlassian(
   let rotated = 0;
   const { data, error } = await service
     .from('atlassian_connections')
-    .select('id, access_token_enc, refresh_token_enc')
+    .select('id, access_token_enc, refresh_token_enc, token_version')
     .eq('org_id', orgId);
   if (error !== null) {
     throw new Error(`U12 rotate read atlassian_connections failed: ${error.message}`);
@@ -124,6 +119,7 @@ async function rotateAtlassian(
     id: string;
     access_token_enc: string | null;
     refresh_token_enc: string | null;
+    token_version: number;
   }[];
   for (const row of rows) {
     if (row.access_token_enc === null || row.refresh_token_enc === null) continue;
@@ -135,15 +131,22 @@ async function rotateAtlassian(
       encryptForOrgToBytea(orgId, access),
       encryptForOrgToBytea(orgId, refresh),
     ]);
-    const { error: upErr } = await service
+    // Optimistic-concurrency guard: a concurrent token refresh increments
+    // token_version + rewrites the ciphertext; only write if unchanged so we
+    // don't clobber a fresher rotation with our stale re-encrypted bytes.
+    const { data: upData, error: upErr } = await service
       .from('atlassian_connections')
       .update({ access_token_enc: accessEnc, refresh_token_enc: refreshEnc })
       .eq('id', row.id)
-      .eq('org_id', orgId);
+      .eq('org_id', orgId)
+      .eq('token_version', row.token_version)
+      .select('id');
     if (upErr !== null) {
       throw new Error(`U12 rotate atlassian write ${row.id} failed: ${upErr.message}`);
     }
-    rotated += 1;
+    if (Array.isArray(upData) && upData.length > 0) {
+      rotated += 1;
+    }
   }
   return { column: 'atlassian_connections.{access,refresh}_token_enc', rotated };
 }
@@ -193,42 +196,9 @@ export async function rotateOrgKey(
   const batchSize = opts.batchSize ?? DEFAULT_BATCH_SIZE;
   const columns: ColumnRotationResult[] = [];
 
-  columns.push(
-    await rotateColumn(service, orgId, {
-      table: 'meetings',
-      pk: 'meeting_id',
-      encColumn: 'recap_text_enc',
-      versionColumn: 'recap_key_version',
-      batchSize,
-    }),
-  );
-  columns.push(
-    await rotateColumn(service, orgId, {
-      table: 'syntheses',
-      pk: 'synthesis_id',
-      encColumn: 'accumulated_text_enc',
-      versionColumn: 'synth_key_version',
-      batchSize,
-    }),
-  );
-  columns.push(
-    await rotateColumn(service, orgId, {
-      table: 'meeting_events',
-      pk: 'event_id',
-      encColumn: 'transcript_text_enc',
-      versionColumn: 'transcript_key_version',
-      batchSize,
-    }),
-  );
-  columns.push(
-    await rotateColumn(service, orgId, {
-      table: 'trello_connections',
-      pk: 'org_id',
-      encColumn: 'token_enc',
-      versionColumn: 'token_version',
-      batchSize,
-    }),
-  );
+  for (const col of ENCRYPTED_COLUMNS) {
+    columns.push(await rotateColumn(service, orgId, { ...col, batchSize }));
+  }
   columns.push(await rotateAtlassian(service, orgId));
   columns.push(await rotateGoogleTokens(service, orgId));
 
@@ -241,10 +211,7 @@ export async function rotateOrgKey(
  * in AWS KMS, after which every decrypt for the org throws (data unreadable
  * until the CMK is re-enabled). Scoped to one org's row.
  */
-export async function disableOrgKey(
-  service: SupabaseClient,
-  orgId: string,
-): Promise<void> {
+export async function disableOrgKey(service: SupabaseClient, orgId: string): Promise<void> {
   const { error } = await service
     .from('org_encryption_keys')
     .update({ status: 'revoked' })
@@ -268,9 +235,12 @@ export const rotateOrgKeyFn = inngest.createFunction(
     triggers: [{ event: 'risezome/encryption.rotate-org-key' }],
   },
   async ({ event }) => {
-    const data = (event as unknown as {
-      data?: { orgId?: string; mode?: 'rotate' | 'revoke'; batchSize?: number };
-    }).data ?? {};
+    const data =
+      (
+        event as unknown as {
+          data?: { orgId?: string; mode?: 'rotate' | 'revoke'; batchSize?: number };
+        }
+      ).data ?? {};
     if (data.orgId === undefined) {
       throw new Error('rotate-org-key requires data.orgId');
     }

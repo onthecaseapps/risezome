@@ -1,4 +1,5 @@
 import {
+  AlreadyExistsException,
   CreateAliasCommand,
   CreateKeyCommand,
   DescribeKeyCommand,
@@ -82,11 +83,41 @@ export async function provisionOrgKey(
         Tags: [{ TagKey: 'risezome:org_id', TagValue: orgId }],
       }),
     );
-    kmsKeyArn = createdKey.KeyMetadata?.Arn ?? null;
     const keyId = createdKey.KeyMetadata?.KeyId;
     if (keyId === undefined) throw new Error(`KMS CreateKey returned no KeyId for org ${orgId}`);
-    await client.send(new CreateAliasCommand({ AliasName: kmsAlias, TargetKeyId: keyId }));
-    created = true;
+    kmsKeyArn = createdKey.KeyMetadata?.Arn ?? null;
+
+    // Bind the alias to the just-created key. CreateAlias is NOT atomic with
+    // CreateKey: if this Inngest function retries after CreateKey succeeded but
+    // CreateAlias failed, a naive re-run would DescribeKey(alias)→NotFound and
+    // CreateKey AGAIN, orphaning the first key. We narrow that window two ways:
+    //  (1) AlreadyExistsException ⇒ the alias is already bound (a prior partial
+    //      run, or a concurrent provision) — adopt the existing target via a
+    //      re-describe rather than failing or creating a duplicate.
+    //  (2) Any other CreateAlias failure ⇒ re-DescribeKey(alias): if some path
+    //      did bind it, conclude cleanly; otherwise rethrow so Inngest retries
+    //      (the new key carries the risezome:org_id tag, so an operator/sweep
+    //      can reconcile a truly orphaned key out of band).
+    try {
+      await client.send(new CreateAliasCommand({ AliasName: kmsAlias, TargetKeyId: keyId }));
+      created = true;
+    } catch (aliasErr) {
+      if (aliasErr instanceof AlreadyExistsException) {
+        const re = await client.send(new DescribeKeyCommand({ KeyId: kmsAlias }));
+        kmsKeyArn = re.KeyMetadata?.Arn ?? kmsKeyArn;
+        created = false;
+      } else {
+        // Last chance: did the alias get bound despite the error?
+        try {
+          const re = await client.send(new DescribeKeyCommand({ KeyId: kmsAlias }));
+          kmsKeyArn = re.KeyMetadata?.Arn ?? kmsKeyArn;
+          created = true;
+        } catch (reErr) {
+          if (reErr instanceof NotFoundException) throw aliasErr;
+          throw reErr;
+        }
+      }
+    }
   }
 
   await upsertKeyRow(service, orgId, { kms_alias: kmsAlias, kms_key_arn: kmsKeyArn });

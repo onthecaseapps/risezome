@@ -2,8 +2,8 @@ import type { ReactElement } from 'react';
 import { notFound } from 'next/navigation';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServerClient } from '../../../../_lib/supabase-server';
-import { decryptForOrgFromBytea } from '@risezome/crypto';
-import { transcriptWithText } from '../../../../_lib/token-crypto';
+import { decryptForOrgFromBytea, EnvelopeCryptoError } from '@risezome/crypto';
+import { transcriptWithText } from '../../../../_lib/transcript';
 import type { CardEvent, CardTrigger, TranscriptUtterance } from '@risezome/hud-ui';
 import {
   mapSynthesisRow,
@@ -42,9 +42,23 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   if (meeting === null) notFound();
 
   // U9: the recap is encrypted at rest — decrypt server-side (the key stays in
-  // env; the browser never sees it).
+  // env; the browser never sees it). DEGRADE on a crypto failure (KMS blip /
+  // deploy-window, or a legacy pre-backfill row that cannot decrypt under the
+  // org key): render the page with a null recap rather than a 500.
   const recapEnc = meeting.recap_text_enc as string | null;
-  const recapText = recapEnc !== null ? await decryptForOrgFromBytea(orgId, recapEnc) : null;
+  let recapText: string | null = null;
+  if (recapEnc !== null) {
+    try {
+      recapText = await decryptForOrgFromBytea(orgId, recapEnc);
+    } catch (err) {
+      if (err instanceof EnvelopeCryptoError) {
+        console.error(`[review] recap decrypt failed (meetingId=${meetingId}):`, err);
+        recapText = null;
+      } else {
+        throw err;
+      }
+    }
+  }
 
   let title = 'Meeting';
   if (meeting.calendar_event_id !== null) {
@@ -95,11 +109,23 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   const rows = (synthRows ?? []) as Record<string, unknown>[];
   // F1: the answer text is encrypted at rest — decrypt into the field the
   // (sync) mappers expect, server-side. Done syntheses always have ciphertext.
-  for (const s of rows) {
-    const enc = s['accumulated_text_enc'] as string | null;
-    s['accumulated_text'] = enc !== null ? await decryptForOrgFromBytea(orgId, enc) : '';
+  // DEGRADE on a crypto failure: render the page with NO syntheses rather than a
+  // 500 (the recap + transcript still render).
+  let initialSyntheses: InitialSynthesis[];
+  try {
+    for (const s of rows) {
+      const enc = s['accumulated_text_enc'] as string | null;
+      s['accumulated_text'] = enc !== null ? await decryptForOrgFromBytea(orgId, enc) : '';
+    }
+    initialSyntheses = rows.map((s) => mapSynthesisRow(s));
+  } catch (err) {
+    if (err instanceof EnvelopeCryptoError) {
+      console.error(`[review] synthesis decrypt failed (meetingId=${meetingId}):`, err);
+      initialSyntheses = [];
+    } else {
+      throw err;
+    }
   }
-  const initialSyntheses: InitialSynthesis[] = rows.map((s) => mapSynthesisRow(s));
 
   // Cards the syntheses cite → CardEvent for the cards' SOURCES list. Fetched
   // by id REGARDLESS of retraction: a cited card is frequently retracted by

@@ -2,8 +2,8 @@ import type { ReactElement } from 'react';
 import { notFound, redirect } from 'next/navigation';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServerClient } from '../../../../_lib/supabase-server';
-import { decryptForOrgFromBytea } from '@risezome/crypto';
-import { transcriptWithText } from '../../../../_lib/token-crypto';
+import { decryptForOrgFromBytea, EnvelopeCryptoError } from '@risezome/crypto';
+import { transcriptWithText } from '../../../../_lib/transcript';
 import { LiveMeetingClient } from './_client';
 import type { CardEvent, CardTrigger, TranscriptUtterance } from '@risezome/hud-ui';
 import { mapSynthesisRow, type InitialSynthesis } from '../_synthesis-seed';
@@ -123,12 +123,23 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
       unknown
     >[];
     // F1: decrypt the answer text (running rows have none) before the sync mapper.
-    for (const s of liveSynthRows) {
-      const enc = s['accumulated_text_enc'] as string | null;
-      s['accumulated_text'] =
-        enc !== null && enc !== undefined ? await decryptForOrgFromBytea(orgId, enc) : '';
+    // DEGRADE on a crypto failure (KMS blip / deploy-window): seed NO syntheses
+    // rather than 500 — the live channel will stream new ones once KMS recovers.
+    try {
+      for (const s of liveSynthRows) {
+        const enc = s['accumulated_text_enc'] as string | null;
+        s['accumulated_text'] =
+          enc !== null && enc !== undefined ? await decryptForOrgFromBytea(orgId, enc) : '';
+      }
+      initialSyntheses = liveSynthRows.map((s) => mapSynthesisRow(s));
+    } catch (err) {
+      if (err instanceof EnvelopeCryptoError) {
+        console.error(`[live] synthesis decrypt failed (meetingId=${meetingId}):`, err);
+        initialSyntheses = [];
+      } else {
+        throw err;
+      }
     }
-    initialSyntheses = liveSynthRows.map((s) => mapSynthesisRow(s));
 
     // Seed the prior transcript (finals only) so a reload mid-meeting restores
     // what was already said; the live channel + reconnect-replay keep it

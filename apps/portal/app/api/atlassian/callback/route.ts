@@ -6,7 +6,7 @@ import {
   requireAtlassianClientId,
   requireAtlassianClientSecret,
 } from '../../../_lib/atlassian';
-import { encryptForOrgToBytea } from '@risezome/crypto';
+import { encryptForOrgToBytea, EnvelopeCryptoError } from '@risezome/crypto';
 
 /**
  * Completes the Atlassian OAuth flow. Atlassian redirects here with
@@ -78,10 +78,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // Encrypt the token pair at rest under the org's per-org KMS key (U9), stored
   // as bytea hex-text literals. token_version stays the concurrency counter (0 on
   // a fresh connection); it is NOT the crypto-format sentinel for this table.
-  const [accessTokenEnc, refreshTokenEnc] = await Promise.all([
-    encryptForOrgToBytea(orgId, tokens.accessToken),
-    encryptForOrgToBytea(orgId, tokens.refreshToken),
-  ]);
+  let accessTokenEnc: string;
+  let refreshTokenEnc: string;
+  try {
+    [accessTokenEnc, refreshTokenEnc] = await Promise.all([
+      encryptForOrgToBytea(orgId, tokens.accessToken),
+      encryptForOrgToBytea(orgId, tokens.refreshToken),
+    ]);
+  } catch (err) {
+    if (err instanceof EnvelopeCryptoError) {
+      // A KMS blip during the OAuth callback must not 500: send the user back to
+      // /sources with a typed error so they can retry the connect.
+      console.error('[atlassian.callback] token encrypt failed (KMS):', err);
+      return NextResponse.redirect(new URL('/sources?error=atlassian_encrypt_failed', url.origin));
+    }
+    throw err;
+  }
   const { error: upsertErr } = await service.from('atlassian_connections').upsert(
     {
       org_id: orgId,

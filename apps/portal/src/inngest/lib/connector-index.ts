@@ -110,14 +110,18 @@ export async function runConnectorIndex<E>(
     entities = (await step.run('fetch-entities', () => config.fetchEntities() as Promise<unknown>)) as readonly E[];
   } catch (err) {
     if (config.isAuthError(err)) {
-      await markErrored(step, sourceId, config.reconnectMessage);
+      await markErrored(step, orgId, sourceId, config.reconnectMessage);
       return { sourceId, items: 0, chunks: 0, error: 'connector_auth' };
     }
     throw err;
   }
 
   await step.run('set-total', async () => {
-    await createServiceRoleClient().from('sources').update({ total_files: entities.length }).eq('id', sourceId);
+    await createServiceRoleClient()
+      .from('sources')
+      .update({ total_files: entities.length })
+      .eq('id', sourceId)
+      .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   });
 
   // ── Prepare phase: chunk every entity to fingerprint it (no paid embed
@@ -134,7 +138,7 @@ export async function runConnectorIndex<E>(
       })) as PreparedDoc[];
     } catch (err) {
       if (config.isAuthError(err)) {
-        await markErrored(step, sourceId, config.reconnectMessage);
+        await markErrored(step, orgId, sourceId, config.reconnectMessage);
         return { sourceId, items: prepared.length, chunks: totalChunks(prepared), error: 'connector_auth' };
       }
       throw err;
@@ -143,7 +147,11 @@ export async function runConnectorIndex<E>(
     scanned += batch.length;
     const progress = scanned;
     await step.run(`prepare-counter-${String(i)}`, async () => {
-      await createServiceRoleClient().from('sources').update({ indexed_files: progress }).eq('id', sourceId);
+      await createServiceRoleClient()
+        .from('sources')
+        .update({ indexed_files: progress })
+        .eq('id', sourceId)
+        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     });
   }
 
@@ -281,7 +289,8 @@ export async function runConnectorIndex<E>(
         total_files: items,
         chunk_count: chunks,
       })
-      .eq('id', sourceId);
+      .eq('id', sourceId)
+      .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   });
 
   console.info(
@@ -297,12 +306,18 @@ function totalChunks(prepared: readonly PreparedDoc[]): number {
   return prepared.reduce((sum, p) => sum + p.chunks.length, 0);
 }
 
-async function markErrored(step: StepLike, sourceId: string, message: string): Promise<void> {
+async function markErrored(
+  step: StepLike,
+  orgId: string,
+  sourceId: string,
+  message: string,
+): Promise<void> {
   await step.run('mark-auth-errored', async () => {
     await createServiceRoleClient()
       .from('sources')
       .update({ status: 'errored', status_message: message })
-      .eq('id', sourceId);
+      .eq('id', sourceId)
+      .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   });
 }
 

@@ -61,15 +61,27 @@ export const indexRepoFn = inngest.createFunction(
     // retryable state.
     onFailure: async ({ event, error }) => {
       const original = (event as unknown as {
-        data: { event: { data: { sourceId: string } } };
+        data: { event: { data: { sourceId: string; orgId?: string } } };
       }).data.event;
       const sourceId = original?.data?.sourceId;
+      const orgId = original?.data?.orgId;
       if (typeof sourceId !== 'string' || sourceId.length === 0) return;
       const message = error instanceof Error ? error.message : String(error);
-      await createServiceRoleClient()
-        .from('sources')
-        .update({ status: 'errored', status_message: message.slice(0, 500) })
-        .eq('id', sourceId);
+      if (typeof orgId === 'string' && orgId.length > 0) {
+        await createServiceRoleClient()
+          .from('sources')
+          .update({ status: 'errored', status_message: message.slice(0, 500) })
+          .eq('id', sourceId)
+          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+      } else {
+        // service-role-cross-org: onFailure for an event that carried no orgId
+        // (older queued events) — the sources PK (id) is globally unique, so this
+        // targets exactly one row; no org_id is available to scope by.
+        await createServiceRoleClient()
+          .from('sources')
+          .update({ status: 'errored', status_message: message.slice(0, 500) })
+          .eq('id', sourceId);
+      }
     },
   },
   async ({ event, step }) => {
@@ -127,7 +139,8 @@ export const indexRepoFn = inngest.createFunction(
         await createServiceRoleClient()
           .from('sources')
           .update({ default_branch: live })
-          .eq('id', sourceId);
+          .eq('id', sourceId)
+          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
         return live;
       };
       const fetchTreeSha = async (b: string): Promise<string> => {
@@ -183,7 +196,11 @@ export const indexRepoFn = inngest.createFunction(
 
     const totalFiles = targets.length;
     await step.run('set-total', async () => {
-      await createServiceRoleClient().from('sources').update({ total_files: totalFiles }).eq('id', sourceId);
+      await createServiceRoleClient()
+        .from('sources')
+        .update({ total_files: totalFiles })
+        .eq('id', sourceId)
+        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     });
 
     // ── Step 4: reconcile — diff the tree against the corpus ─────────
@@ -219,7 +236,8 @@ export const indexRepoFn = inngest.createFunction(
             last_indexed_at: new Date().toISOString(),
             indexed_files: totalFiles,
           })
-          .eq('id', sourceId);
+          .eq('id', sourceId)
+          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
       });
       console.info(
         `[index-repo] ${source.repo_full_name} (${indexMode}): ` +
@@ -268,7 +286,8 @@ export const indexRepoFn = inngest.createFunction(
         await createServiceRoleClient()
           .from('sources')
           .update({ indexed_files: indexedFiles, chunk_count: chunkCount })
-          .eq('id', sourceId);
+          .eq('id', sourceId)
+          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
       });
     }
 
@@ -277,7 +296,8 @@ export const indexRepoFn = inngest.createFunction(
       await createServiceRoleClient()
         .from('sources')
         .update({ status: 'idle', last_indexed_at: new Date().toISOString(), indexed_files: totalFiles })
-        .eq('id', sourceId);
+        .eq('id', sourceId)
+        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     });
 
     console.info(

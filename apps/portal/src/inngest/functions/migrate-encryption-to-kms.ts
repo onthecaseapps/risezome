@@ -1,12 +1,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   CRYPTO_VERSION,
+  decryptForOrgFromBytea,
   encryptForOrgToBytea,
   EnvelopeCryptoError,
 } from '@risezome/crypto';
 import { inngest } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
 import { provisionOrgKey } from './provision-org-key';
+import { DEFAULT_BATCH_SIZE, ENCRYPTED_COLUMNS } from '../lib/encrypted-columns';
 
 /**
  * One-time re-encryption migration: global pgcrypto → per-org KMS envelope
@@ -63,9 +65,6 @@ export interface OrgMigrationResult {
   readonly columns: ColumnMigrationResult[];
 }
 
-/** Default batch size for paging legacy rows; bounded so a single pass is cheap. */
-const DEFAULT_BATCH_SIZE = 200;
-
 function requireLegacyKey(): string {
   const key = process.env['USER_TOKEN_ENCRYPTION_KEY'];
   if (key === undefined || key.length === 0) {
@@ -82,10 +81,7 @@ function requireLegacyKey(): string {
  * key. This is the ONLY place left that calls the legacy decrypt path; it is
  * removed together with the rpc in U13 after the backfill is verified.
  */
-async function decryptLegacy(
-  service: SupabaseClient,
-  ciphertext: string,
-): Promise<string> {
+async function decryptLegacy(service: SupabaseClient, ciphertext: string): Promise<string> {
   const { data, error } = (await service.rpc('decrypt_refresh_token', {
     ciphertext,
     key: requireLegacyKey(),
@@ -149,7 +145,9 @@ async function migrateVersionedColumn(
           .eq(pk, id)
           .eq('org_id', orgId);
         if (upErr !== null) {
-          throw new Error(`U11 version-stamp ${table}.${pk}=${String(id)} failed: ${upErr.message}`);
+          throw new Error(
+            `U11 version-stamp ${table}.${pk}=${String(id)} failed: ${upErr.message}`,
+          );
         }
         continue;
       }
@@ -248,18 +246,54 @@ async function migrateGoogleTokensForOrg(
  * KMS (skip), EnvelopeCryptoError ⇒ legacy pgcrypto (migrate). Both access and
  * refresh ciphertext are migrated together. token_version is left untouched.
  */
+/**
+ * Decide whether a failed ESDK decrypt of an atlassian row means "this row is
+ * legacy pgcrypto" (migrate it) vs. "KMS is having a transient problem" (abort).
+ *
+ * The probe relies on decrypt THROWING on a legacy row — but it also throws on a
+ * transient KMS outage (5xx / throttle), which is wrapped identically as an
+ * `EnvelopeCryptoError`. Treating a transient outage as "legacy" would re-run the
+ * pgcrypto decrypt against a row that is ALREADY KMS-encrypted, corrupting it.
+ *
+ * So we inspect the wrapped cause: a transient AWS KMS service exception (an
+ * `$metadata.httpStatusCode` in the 5xx range, or a throttling/internal/
+ * unavailable error name) means RETHROW — abort the migration and let Inngest
+ * retry. An ESDK format/decrypt error (the bytes simply are not a valid ESDK
+ * message — i.e. they are legacy pgcrypto) means the row IS legacy → migrate.
+ */
+export function isTransientKmsError(err: EnvelopeCryptoError): boolean {
+  const cause = (err as { cause?: unknown }).cause;
+  if (cause === null || typeof cause !== 'object') return false;
+  const c = cause as {
+    name?: unknown;
+    $metadata?: { httpStatusCode?: unknown };
+  };
+  const status = c.$metadata?.httpStatusCode;
+  if (typeof status === 'number' && status >= 500 && status <= 599) return true;
+  const name = typeof c.name === 'string' ? c.name : '';
+  // AWS SDK service-exception names for transient/retryable KMS failures.
+  return (
+    name === 'ThrottlingException' ||
+    name === 'KMSInternalException' ||
+    name === 'InternalFailure' ||
+    name === 'ServiceUnavailable' ||
+    name === 'KeyUnavailableException' ||
+    name === 'DependencyTimeoutException' ||
+    name === 'TimeoutError' ||
+    /throttl/i.test(name)
+  );
+}
+
 async function migrateAtlassianForOrg(
   service: SupabaseClient,
   orgId: string,
 ): Promise<ColumnMigrationResult> {
-  // Lazy import to avoid a static dep cycle and keep the probe colocated.
-  const { decryptForOrgFromBytea } = await import('@risezome/crypto');
   let scanned = 0;
   let migrated = 0;
 
   const { data, error } = await service
     .from('atlassian_connections')
-    .select('id, access_token_enc, refresh_token_enc')
+    .select('id, access_token_enc, refresh_token_enc, token_version')
     .eq('org_id', orgId);
   if (error !== null) {
     throw new Error(`U11 read atlassian_connections failed: ${error.message}`);
@@ -268,6 +302,7 @@ async function migrateAtlassianForOrg(
     id: string;
     access_token_enc: string | null;
     refresh_token_enc: string | null;
+    token_version: number;
   }[];
 
   for (const row of rows) {
@@ -275,12 +310,20 @@ async function migrateAtlassianForOrg(
     scanned += 1;
 
     // Probe: if the access ciphertext already decrypts under the org's KMS key,
-    // the row is migrated — skip it (idempotent / resumable).
+    // the row is migrated — skip it (idempotent / resumable). If it throws an
+    // EnvelopeCryptoError we must distinguish a legacy-pgcrypto row (migrate)
+    // from a TRANSIENT KMS error (abort) — see isTransientKmsError.
     let isLegacy = false;
     try {
       await decryptForOrgFromBytea(orgId, row.access_token_enc);
     } catch (err) {
       if (err instanceof EnvelopeCryptoError) {
+        if (isTransientKmsError(err)) {
+          // Transient KMS failure: do NOT treat as legacy (that would re-run the
+          // pgcrypto path on an already-KMS row and corrupt it). Abort; Inngest
+          // retries the whole migration step.
+          throw err;
+        }
         isLegacy = true;
       } else {
         throw err;
@@ -296,15 +339,25 @@ async function migrateAtlassianForOrg(
       encryptForOrgToBytea(orgId, access),
       encryptForOrgToBytea(orgId, refresh),
     ]);
-    const { error: upErr } = await service
+    // Optimistic-concurrency guard: only write if token_version is unchanged
+    // since we read it. A concurrent token refresh (getValidAtlassianToken)
+    // increments token_version and rewrites the ciphertext; without this guard
+    // the migration would clobber that fresh rotation with stale re-encrypted
+    // bytes, killing the connection. If we lose the race (0 rows updated), the
+    // winner already wrote KMS-format ciphertext, so skipping this row is correct.
+    const { data: upData, error: upErr } = await service
       .from('atlassian_connections')
       .update({ access_token_enc: accessEnc, refresh_token_enc: refreshEnc })
       .eq('id', row.id)
-      .eq('org_id', orgId);
+      .eq('org_id', orgId)
+      .eq('token_version', row.token_version)
+      .select('id');
     if (upErr !== null) {
       throw new Error(`U11 atlassian write ${row.id} failed: ${upErr.message}`);
     }
-    migrated += 1;
+    if (Array.isArray(upData) && upData.length > 0) {
+      migrated += 1;
+    }
   }
 
   return {
@@ -336,43 +389,10 @@ export async function migrateOrgEncryption(
 
   const columns: ColumnMigrationResult[] = [];
 
-  // The five org-scoped, version-marked columns.
-  columns.push(
-    await migrateVersionedColumn(service, orgId, {
-      table: 'meetings',
-      pk: 'meeting_id',
-      encColumn: 'recap_text_enc',
-      versionColumn: 'recap_key_version',
-      batchSize,
-    }),
-  );
-  columns.push(
-    await migrateVersionedColumn(service, orgId, {
-      table: 'syntheses',
-      pk: 'synthesis_id',
-      encColumn: 'accumulated_text_enc',
-      versionColumn: 'synth_key_version',
-      batchSize,
-    }),
-  );
-  columns.push(
-    await migrateVersionedColumn(service, orgId, {
-      table: 'meeting_events',
-      pk: 'event_id',
-      encColumn: 'transcript_text_enc',
-      versionColumn: 'transcript_key_version',
-      batchSize,
-    }),
-  );
-  columns.push(
-    await migrateVersionedColumn(service, orgId, {
-      table: 'trello_connections',
-      pk: 'org_id',
-      encColumn: 'token_enc',
-      versionColumn: 'token_version',
-      batchSize,
-    }),
-  );
+  // The org-scoped, version-marked columns (shared descriptor list).
+  for (const col of ENCRYPTED_COLUMNS) {
+    columns.push(await migrateVersionedColumn(service, orgId, { ...col, batchSize }));
+  }
 
   // Atlassian (probe-based, OC counter untouched).
   columns.push(await migrateAtlassianForOrg(service, orgId));
@@ -394,17 +414,32 @@ async function orgMembersWhereOrgOfRecord(
   service: SupabaseClient,
   orgId: string,
 ): Promise<string[]> {
+  // Defensive cap: org_members is read whole here (org-of-record spans all of a
+  // user's memberships), but an unbounded full-table read could blow memory at
+  // scale. We bound the read and warn if we hit the cap so it surfaces before it
+  // silently truncates org-of-record resolution. Ordered by user_id then
+  // joined_at so the first row per user (the cap-stable oldest membership) wins
+  // deterministically even at the boundary.
+  const ORG_MEMBERS_READ_CAP = 100_000;
   // service-role-cross-org: org-of-record is defined ACROSS all of a user's
   // memberships (the oldest one wins, KTD4), so resolving it is inherently a
   // cross-org read; we then filter to the target org in memory below.
   const { data, error } = await service
     .from('org_members')
     .select('user_id, org_id, joined_at')
-    .order('joined_at', { ascending: true });
+    .order('user_id', { ascending: true })
+    .order('joined_at', { ascending: true })
+    .limit(ORG_MEMBERS_READ_CAP);
   if (error !== null) {
     throw new Error(`U11 org_members read failed: ${error.message}`);
   }
   const rows = (data ?? []) as { user_id: string; org_id: string; joined_at: string }[];
+  if (rows.length >= ORG_MEMBERS_READ_CAP) {
+    console.warn(
+      `[migrate-encryption] org_members read hit the ${ORG_MEMBERS_READ_CAP}-row cap; ` +
+        `org-of-record resolution may be truncated. Move this to a DISTINCT ON(user_id) RPC.`,
+    );
+  }
   const orgOfRecord = new Map<string, string>();
   for (const r of rows) {
     if (!orgOfRecord.has(r.user_id)) orgOfRecord.set(r.user_id, r.org_id);
