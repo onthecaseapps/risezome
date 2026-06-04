@@ -132,3 +132,34 @@
 {"q": "what is the best way to host a next app on vercel", "bucket": "adjacent", "expect_refusal": true, "note": "generic deploy, not our portal infra"}
 {"q": "how do you summarize a long meeting transcript with an llm in general", "bucket": "adjacent", "expect_refusal": true, "note": "generic, not our rolling summarizer"}
 {"q": "what is websearch to tsquery used for in the postgres docs", "bucket": "adjacent", "expect_refusal": true, "note": "generic postgres docs, not our FTS usage"}
+{"q": "how does authentication work", "bucket": "relevant", "must_surface": ["install"], "note": "EDGE: ownership-light, but about our auth/install flow -> surface"}
+{"q": "what happens when a meeting starts", "bucket": "relevant", "must_surface": ["bot-worker"], "note": "EDGE: conversational, about our bot-join flow"}
+{"q": "where do transcripts get stored", "bucket": "relevant", "must_surface": ["transcribe"], "note": "EDGE: ownership-light, about our storage"}
+{"q": "how do we know which meetings to join", "bucket": "relevant", "must_surface": ["calendar"], "note": "EDGE: about our calendar/opt-in"}
+{"q": "what makes a card actually show up", "bucket": "relevant", "must_surface": ["relevance"], "note": "EDGE: about our relevance gate itself"}
+{"q": "why would an answer get suppressed", "bucket": "relevant", "must_surface": ["synthesize"], "note": "EDGE: about our grounded-or-nothing suppression"}
+{"q": "what triggers a reindex", "bucket": "relevant", "must_surface": ["reconcile"], "note": "EDGE: about our reindex"}
+{"q": "can two people in different orgs see each others data", "bucket": "relevant", "must_surface": ["org"], "note": "EDGE: about our org isolation"}
+{"q": "how does the bot decide what to say", "bucket": "relevant", "must_surface": ["synthesize"], "note": "EDGE: conversational, about our synthesis"}
+{"q": "how do we deploy the bot worker", "bucket": "relevant", "must_surface": ["bot-worker"], "note": "EDGE: 'we deploy' ownership vs the generic fly.io adjacent"}
+{"q": "how fresh is the indexed data", "bucket": "relevant", "must_surface": ["reconcile"], "note": "EDGE: about our indexing freshness"}
+{"q": "what is langchain good for", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: other framework we don't use"}
+{"q": "should we switch to gpt 4o for everything", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: ownership 'we' but about adopting another vendor; corpus can't answer"}
+{"q": "how do embeddings work mathematically", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: generic ML concept"}
+{"q": "is rag better than fine tuning in general", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: generic debate"}
+{"q": "what is the context window of gemini", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: other vendor fact"}
+{"q": "how does pinecone pricing work", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: other vendor pricing"}
+{"q": "can you explain how transformers work", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: generic ML"}
+{"q": "what is the difference between bm25 and tf idf", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: generic IR concept"}
+{"q": "how do i set up a postgres database on my laptop", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: generic setup; postgres is our stack but this is generic how-to"}
+{"q": "what is a webhook", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: generic concept"}
+{"q": "how do you write a good system prompt in general", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: generic best-practice"}
+{"q": "is mongodb a good choice for vector search", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: other platform comparison"}
+{"q": "lets reconcile the budget before we wrap", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: reconcile collision in a logistics statement"}
+{"q": "the s and p index closed up today", "bucket": "adjacent", "expect_refusal": true, "note": "EDGE: index collision, off-topic statement"}
+{"q": "i love how snappy the bot has gotten", "bucket": "offtopic", "expect_refusal": true, "note": "EDGE: mentions the product but is praise, not a question"}
+{"q": "remember when we did all of this by hand", "bucket": "offtopic", "expect_refusal": true, "note": "EDGE: nostalgia, no question"}
+{"q": "the demo yesterday went really well", "bucket": "offtopic", "expect_refusal": true, "note": "EDGE: chatter"}
+{"q": "my laptop fan is so loud on these calls", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "is anyone else starving right now", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "we should get the team some swag", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
