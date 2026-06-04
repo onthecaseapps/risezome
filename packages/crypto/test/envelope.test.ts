@@ -43,6 +43,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('local dev-fallback keyring (RISEZOME_DEV_CRYPTO_KEY)', () => {
+  it('round-trips via the real default provider (no injection) and isolates orgs', async () => {
+    const prev = process.env.RISEZOME_DEV_CRYPTO_KEY;
+    process.env.RISEZOME_DEV_CRYPTO_KEY = 'dev-fallback-secret-for-tests';
+    __setKeyringProviderForTests(null); // exercise the production default provider; clears the CMM memo
+    try {
+      const ct = await encryptForOrg('orgDEV', 'local secret');
+      expect(await decryptForOrg('orgDEV', ct)).toBe('local secret');
+      // A different org derives a different wrapping key, so decrypt fails.
+      await expect(decryptForOrg('orgOTHER', ct)).rejects.toBeInstanceOf(EnvelopeCryptoError);
+    } finally {
+      if (prev === undefined) delete process.env.RISEZOME_DEV_CRYPTO_KEY;
+      else process.env.RISEZOME_DEV_CRYPTO_KEY = prev;
+      __setKeyringProviderForTests(null);
+    }
+  });
+});
+
 describe('envelope crypto', () => {
   it('round-trips a string for an org (a)', async () => {
     __setKeyringProviderForTests(rawKeyringFor);

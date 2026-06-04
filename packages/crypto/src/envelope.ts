@@ -21,15 +21,21 @@
 //   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN (or an
 //     instance/role credential provider) — standard AWS SDK credential chain,
 //     used by the KMS keyring. Not read directly here.
+//   RISEZOME_DEV_CRYPTO_KEY — DEV/CI ONLY. When set, selects a local RawAES
+//     fallback (per-org key = HKDF(secret, org_id)) instead of KMS, so local dev
+//     and CI run without AWS access. Production must NOT set this.
 
 import {
   buildClient,
   CommitmentPolicy,
   KmsKeyringNode,
+  RawAesKeyringNode,
+  RawAesWrappingSuiteIdentifier,
   NodeCachingMaterialsManager,
   getLocalCryptographicMaterialsCache,
   type KeyringNode,
 } from '@aws-crypto/client-node';
+import { hkdfSync } from 'node:crypto';
 
 // REQUIRE_ENCRYPT_REQUIRE_DECRYPT: every message commits to its data key and we
 // refuse to read non-committing messages. Correct default for new data.
@@ -63,11 +69,43 @@ export function aliasForOrg(orgId: string): string {
 
 type KeyringProvider = (orgId: string) => KeyringNode;
 
-/** Production keyring: a KmsKeyringNode whose generator (and only) key is the
- *  org's per-org CMK alias. Region comes from the standard AWS_REGION env var,
- *  consumed by the KMS client the keyring builds internally. */
-const defaultKeyringProvider: KeyringProvider = (orgId) =>
-  new KmsKeyringNode({ generatorKeyId: aliasForOrg(orgId) });
+/**
+ * Local-fallback keyring for dev / CI where there is no AWS KMS access. Derives
+ * a deterministic per-org 32-byte AES key from the `RISEZOME_DEV_CRYPTO_KEY`
+ * secret via HKDF-SHA256 (org_id as the info parameter), so different orgs get
+ * different wrapping keys — the same per-org isolation property KMS provides,
+ * minus the out-of-process custody. node:crypto HKDF + the ESDK RawAES keyring
+ * are vetted primitives (KTD1 — no rolled crypto). NEVER used in production: the
+ * provider only selects this path when RISEZOME_DEV_CRYPTO_KEY is set, which prod
+ * must not set (deploy hygiene, mirroring the USER_TOKEN_ENCRYPTION_KEY rule).
+ */
+function devKeyringForOrg(orgId: string, devSecret: string): KeyringNode {
+  const keyBytes = hkdfSync('sha256', Buffer.from(devSecret), Buffer.alloc(0), Buffer.from(`org:${orgId}`), 32);
+  return new RawAesKeyringNode({
+    keyNamespace: 'risezome-dev',
+    keyName: aliasForOrg(orgId),
+    unencryptedMasterKey: new Uint8Array(keyBytes),
+    wrappingSuite: RawAesWrappingSuiteIdentifier.AES256_GCM_IV12_TAG16_NO_PADDING,
+  });
+}
+
+/**
+ * Production keyring: a KmsKeyringNode whose generator (and only) key is the
+ * org's per-org CMK alias. Region comes from the standard AWS_REGION env var,
+ * consumed by the KMS client the keyring builds internally.
+ *
+ * Backend selection: if `RISEZOME_DEV_CRYPTO_KEY` is set we use the local
+ * RawAES fallback (dev/CI explicitly opt in); otherwise KMS (production default,
+ * requires AWS_REGION + the standard AWS credential chain). Production must never
+ * set RISEZOME_DEV_CRYPTO_KEY.
+ */
+const defaultKeyringProvider: KeyringProvider = (orgId) => {
+  const devSecret = process.env.RISEZOME_DEV_CRYPTO_KEY;
+  if (devSecret !== undefined && devSecret.length > 0) {
+    return devKeyringForOrg(orgId, devSecret);
+  }
+  return new KmsKeyringNode({ generatorKeyId: aliasForOrg(orgId) });
+};
 
 let keyringProvider: KeyringProvider = defaultKeyringProvider;
 
