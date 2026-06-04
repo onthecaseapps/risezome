@@ -16,6 +16,13 @@ export interface AnthropicRelevanceClassifierOptions {
   readonly temperature?: number;
   readonly fetchImpl?: typeof fetch;
   readonly maxRetries?: number;
+  /**
+   * Strict "about-our-work" mode (U3): also skip substantive questions that
+   * aren't about the team's own code/products/work. Defaults to
+   * `RISEZOME_RELEVANCE_STRICT === 'true'` so a single env flag A/Bs it across
+   * the eval, bot-worker, and daemon without touching each construction site.
+   */
+  readonly strict?: boolean;
   readonly onUsage?: (usage: RelevanceClassifierUsage & { readonly model: string }) => void;
   readonly onRetryWait?: (info: {
     readonly attempt: number;
@@ -75,6 +82,7 @@ export class AnthropicRelevanceClassifier implements RelevanceClassifier {
   readonly #maxTokens: number;
   readonly #temperature: number;
   readonly #maxRetries: number;
+  readonly #strict: boolean;
 
   constructor(options: AnthropicRelevanceClassifierOptions) {
     this.#options = options;
@@ -84,6 +92,7 @@ export class AnthropicRelevanceClassifier implements RelevanceClassifier {
     this.#maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
     this.#temperature = options.temperature ?? DEFAULT_TEMPERATURE;
     this.#maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+    this.#strict = options.strict ?? process.env.RISEZOME_RELEVANCE_STRICT === 'true';
   }
 
   async classify(utterance: string, options?: ClassifyOptions): Promise<RelevanceResult> {
@@ -208,7 +217,7 @@ export class AnthropicRelevanceClassifier implements RelevanceClassifier {
       max_tokens: this.#maxTokens,
       temperature: this.#temperature,
       stream: false,
-      system: buildRelevanceSystem(),
+      system: buildRelevanceSystem(this.#strict),
       tools: [tool],
       // FORCE the tool call. With 'auto' the model could emit plain text
       // instead, which we treat as a 'bad-request' misbehavior; forcing the

@@ -285,6 +285,19 @@ describe('buildRelevanceSystem', () => {
     const text = buildRelevanceSystem()[0]!.text;
     expect(text).toMatch(/should_surface/);
   });
+
+  it('strict mode appends the about-our-work gate; default does not (U3)', () => {
+    const legacy = buildRelevanceSystem(false)[0]!.text;
+    const strict = buildRelevanceSystem(true)[0]!.text;
+    expect(legacy).not.toMatch(/about-our-work/i);
+    expect(strict).toMatch(/about-our-work/i);
+    // The strict prompt teaches the ownership discriminator + a leak example.
+    expect(strict).toMatch(/reciprocal rank fusion in general/i);
+    expect(strict.length).toBeGreaterThan(legacy.length);
+    // Still one cached block (the addendum rides in the same ephemeral prefix).
+    expect(buildRelevanceSystem(true)).toHaveLength(1);
+    expect(buildRelevanceSystem(true)[0]!.cache_control).toEqual({ type: 'ephemeral' });
+  });
 });
 
 describe('RelevanceProviderError', () => {
