@@ -20,111 +20,58 @@ import { type ReactElement, type ReactNode } from 'react';
  * either way.
  */
 
-// ── Trace shapes mirrored from apps/bot-worker/src/pipeline/contract.ts ────
-// (The client already mirrors WS event shapes with local interfaces; this
-//  follows that pattern — the StageRecord / PipelineTrace shape verbatim.)
+// ── Trace shapes + indexing now live in _pipeline-model.ts (U2). Re-exported
+//    here so existing callers (_client.tsx, tests) keep their import path. ────
+export type {
+  PipelineStage,
+  StageStatus,
+  StageRecord,
+  TraceHit,
+  TraceEvent,
+  UtteranceTrace,
+} from './_pipeline-model';
+export { indexTrace } from './_pipeline-model';
 
-export type PipelineStage =
-  | 'heuristic-gate'
-  | 'llm-judge'
-  | 'embed'
-  | 'hybrid-search'
-  | 'crag'
-  | 'dedup-expand'
-  | 'synthesis'
-  | 'citation-verify';
-
-export type StageStatus = 'ran' | 'skipped' | 'short_circuited';
-
-/** One ranked retrieved hit carried INLINE on the hybrid-search stage's
- *  `data.hits` (mirrors the bot-worker `TraceHit` in pipeline/contract.ts), so
- *  the trace renders the retrieved set self-contained. */
-export interface TraceHit {
-  rank: number;
-  title: string;
-  score: number;
-  distance: number | null;
-  ftsMatched: boolean;
-  isSummary: boolean;
-}
-
-export interface StageRecord {
-  stage: PipelineStage;
-  status: StageStatus;
-  /** The decision the stage reached (e.g. 'surface', 'skip', 'answer'). */
-  decision?: string;
-  /** Why — the explanation string surfaced on this panel. */
-  reason?: string;
-  latencyMs: number;
-  /** Stage-specific structured payload. For hybrid-search this carries the
-   *  self-contained ranked hits (`hits: TraceHit[]` + `count`); other stages
-   *  carry counts / confidence / citation breakdowns. */
-  data?: Record<string, unknown>;
-}
-
-/** The `trace` WS event payload (the PipelineTrace, plus the `type` tag). */
-export interface TraceEvent {
-  type: 'trace';
-  traceId: string;
-  utteranceId: string;
-  meetingId: string;
-  stages: StageRecord[];
-}
-
-/** What the client stores per utterance (the trace minus the `type` tag). */
-export interface UtteranceTrace {
-  traceId: string;
-  utteranceId: string;
-  meetingId: string;
-  stages: StageRecord[];
-}
-
-// ── Trace indexing (testable, transport-free) ──────────────────────────────
-
-/**
- * Fold a `trace` event into the per-utterance index. Pure + immutable so it's
- * trivially testable (U5's light test): a `trace` event is stored under its
- * `utteranceId`; a later trace for the same utterance replaces the prior one
- * (the latest run wins — utterances are re-traced on revision).
- */
-export function indexTrace(
-  prev: Map<string, UtteranceTrace>,
-  evt: TraceEvent,
-): Map<string, UtteranceTrace> {
-  const next = new Map(prev);
-  next.set(evt.utteranceId, {
-    traceId: evt.traceId,
-    utteranceId: evt.utteranceId,
-    meetingId: evt.meetingId,
-    stages: evt.stages,
-  });
-  return next;
-}
+import type { PipelineStage, StageStatus, StageRecord, TraceHit, UtteranceTrace } from './_pipeline-model';
 
 // ── Rendering ──────────────────────────────────────────────────────────────
 
 /** The canonical stage order (so a partially-run trace still reads top-down
  *  in pipeline order even if events arrive interleaved). */
 const STAGE_ORDER: PipelineStage[] = [
+  'empty-query',
   'heuristic-gate',
   'llm-judge',
+  'router',
   'embed',
   'hybrid-search',
   'crag',
+  'no-hits',
   'dedup-expand',
+  'emit',
+  'skill',
   'synthesis',
+  'refusal-gate',
   'citation-verify',
+  'reveal',
 ];
 
 const STAGE_LABEL: Record<PipelineStage, string> = {
+  'empty-query': 'Empty-query gate',
   'heuristic-gate': 'Heuristic gate',
   'llm-judge': 'LLM judge',
+  router: 'Router',
   embed: 'Embed',
   'hybrid-search': 'Hybrid search',
   crag: 'CRAG',
+  'no-hits': 'No-hits gate',
   'dedup-expand': 'Dedup + parent-expand',
+  emit: 'Emit cards',
+  skill: 'Router collect + skill',
   synthesis: 'Synthesis',
+  'refusal-gate': 'Refusal gate',
   'citation-verify': 'Citation verify',
+  reveal: 'Reveal',
 };
 
 /** A retrieved card the panel renders inline under hybrid-search (the cards
