@@ -1,24 +1,31 @@
 import { type ReactElement } from 'react';
 import { requireManager } from '../../_lib/auth';
-import { createServiceRoleClient } from '../../_lib/supabase-server';
+import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
 import { MembersClient, type MemberRow, type PendingInvite } from './_member-list';
 
 /**
  * Manager-only member management. requireManager() redirects non-managers.
- * Reads membership + pending invites via the service-role client (a manager
- * reading other members would otherwise need the SECURITY DEFINER reader; the
- * explicit requireManager gate makes the service-role read safe here).
  *
- * Last-active comes from auth.users.last_sign_in_at (already reachable via the
- * admin getUserById call we make per member). Invite "invited by" names are
- * resolved from the membership list (the inviter is almost always a current
- * member); unknown inviters fall back to null.
+ * The org_members roster read goes through the RLS-scoped authed client
+ * (createServerClient): the "read own membership or all as manager" SELECT
+ * policy returns every org member because this page is requireManager()-gated,
+ * so is_org_manager(org_id) holds for the caller. RLS is the second layer.
+ *
+ * Two reads MUST stay on service-role (U5 exceptions):
+ *   - auth.users display names / last-active (admin getUserById): the admin
+ *     auth API cannot run under RLS.
+ *   - org_invites: that table has RLS enabled with NO authenticated SELECT
+ *     policy, so the authed client reads 0 rows; the manager gate makes the
+ *     service-role read safe.
+ * Invite "invited by" names are resolved from the membership list (the inviter
+ * is almost always a current member); unknown inviters fall back to null.
  */
 export default async function MembersPage(): Promise<ReactElement> {
   const { orgId, orgName, user } = await requireManager();
+  const supabase = await createServerClient();
   const service = createServiceRoleClient();
 
-  const { data: memberRows } = await service
+  const { data: memberRows } = await supabase
     .from('org_members')
     .select('user_id, role, can_invite_bot, joined_at')
     .eq('org_id', orgId)

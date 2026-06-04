@@ -146,7 +146,11 @@ export default async function GapsPage(): Promise<ReactElement> {
   }
 
   // Resolve org-member display names (owner avatar, actor lines, assignee
-  // picker). Service-role admin reads are safe here — names only, own org.
+  // picker). This stays on service-role (U5 exception): the page is only
+  // requireAuthedUserWithOrg()-gated, so a non-manager caller under RLS would
+  // see only their OWN org_members row ("read own membership or all as
+  // manager"), but the roster/name resolution needs every member. The admin
+  // auth API (listUsers) can't run under RLS either. Names only, own org.
   const service = createServiceRoleClient();
   const { data: memberRows } = await service
     .from('org_members')

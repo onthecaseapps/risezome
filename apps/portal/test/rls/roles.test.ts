@@ -1,3 +1,7 @@
+// @vitest-environment node
+// Pure DB/RLS test — runs in real Node, not jsdom. jsdom's BroadcastChannel
+// shim throws ERR_INVALID_ARG_TYPE on the supabase-js realtime client's
+// MessageEvent, which would crash the worker and skip every test here.
 /**
  * RLS + authorization-helper tests for workspace roles (plan U1).
  *
@@ -117,6 +121,37 @@ if (!stackReachable && !FORCE) {
       const asOutsider = await outsider.client.rpc('org_member_ids', { p_org_id: orgId });
       expect(asOutsider.error).toBeNull();
       expect((asOutsider.data as string[] | null) ?? []).toEqual([]);
+    });
+
+    // Backs the U5 members-page migration: MembersPage reads the org roster via
+    // the RLS-scoped authed client (createServerClient). The page is
+    // requireManager()-gated, so the "read own membership or all as manager"
+    // SELECT policy must return EVERY member for a manager. A regression here
+    // (policy narrowed) would silently empty the members list for managers.
+    it('a manager reads the full org_members roster via RLS; a member reads only their own row', async () => {
+      const asManager = await manager.client
+        .from('org_members')
+        .select('user_id')
+        .eq('org_id', orgId);
+      expect(asManager.error).toBeNull();
+      const managerIds = (asManager.data ?? []).map((r) => r.user_id as string);
+      expect(managerIds).toContain(manager.id);
+      expect(managerIds).toContain(member.id);
+
+      const asMember = await member.client
+        .from('org_members')
+        .select('user_id')
+        .eq('org_id', orgId);
+      expect(asMember.error).toBeNull();
+      const memberIds = (asMember.data ?? []).map((r) => r.user_id as string);
+      expect(memberIds).toEqual([member.id]);
+
+      const asOutsider = await outsider.client
+        .from('org_members')
+        .select('user_id')
+        .eq('org_id', orgId);
+      expect(asOutsider.error).toBeNull();
+      expect((asOutsider.data ?? []).length).toBe(0);
     });
 
     it('a member cannot self-grant can_invite_bot (no user-facing UPDATE policy)', async () => {
