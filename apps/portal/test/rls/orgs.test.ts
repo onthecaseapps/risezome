@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * RLS regression tests for the orgs + org_members tables (U1).
  *

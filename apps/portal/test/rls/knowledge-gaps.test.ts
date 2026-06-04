@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * RLS denial tests for Knowledge Gaps (plan U2).
  *
@@ -181,12 +182,20 @@ if (!stackReachable && !FORCE) {
       expect(await canSelectGap(nonParticipant, gapId)).toBe(false);
     });
 
-    it('managers curate sections; members cannot insert/update/delete', async () => {
+    it('section writes are service-role only; no client (member or manager) can write directly', async () => {
+      // knowledge_gap_sections client write policies were dropped (plan 003,
+      // 20260607080000): curation now flows through service-role server actions,
+      // so NO client write succeeds — including a manager's direct PostgREST write.
       const sectionId = `sec_test_${Math.random().toString(36).slice(2)}`;
-      const mgrInsert = await manager.client
+      const seed = await admin
         .from('knowledge_gap_sections')
         .insert({ section_id: sectionId, org_id: orgA, name: 'Auth & Identity' });
-      expect(mgrInsert.error).toBeNull();
+      expect(seed.error).toBeNull(); // service-role (the real curation path) works
+
+      const mgrInsert = await manager.client
+        .from('knowledge_gap_sections')
+        .insert({ section_id: `sec_mgr_${Math.random().toString(36).slice(2)}`, org_id: orgA, name: 'Direct' });
+      expect(mgrInsert.error).not.toBeNull(); // 42501 — no client write policy
 
       const memInsert = await participant.client
         .from('knowledge_gap_sections')
