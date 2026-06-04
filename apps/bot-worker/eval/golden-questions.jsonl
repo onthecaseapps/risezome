@@ -5,7 +5,7 @@
 {"q": "how do we handle deepgram disconnecting mid meeting", "must_surface": ["transcribe"], "expect_answer_contains": ["reconnect", "backoff"], "note": "Reconnect with backoff (max 3 attempts), then stop with reason."}
 {"q": "how are sources reindexed when files change", "must_surface": ["reconcile"], "expect_answer_contains": ["reconcil", "content"], "note": "Reconcile by content hash: skip unchanged, re-embed changed, prune removed."}
 {"q": "what connectors can a customer connect", "must_surface": ["connector"], "expect_answer_contains": ["Trello", "Jira"], "note": "GitHub, Trello, Jira, Confluence."}
-{"q": "should we order lunch before the next agenda item", "expect_refusal": true, "note": "Off-topic; corpus should refuse, not fabricate."}
+{"q": "should we order lunch before the next agenda item", "bucket": "offtopic", "expect_refusal": true, "note": "Off-topic; corpus should refuse, not fabricate."}
 {"q": "what is the rolling meeting summary for", "must_surface": ["summar"], "expect_answer_contains": ["context"], "note": "Maintains evolving meeting context (current topic, open questions, key terms) for the classifier + synthesizer."}
 {"q": "how are citations verified in synthesis", "must_surface": ["synthesize"], "expect_answer_contains": ["verif", "quote"], "note": "verifyCitations checks each citation's verbatim quote is a substring of the cited source; fabricated quotes are dropped (grounded-or-nothing)."}
 {"q": "is there a plan to surface gaps in a customer's knowledge base", "must_surface": ["gap fill"], "expect_answer_contains": ["gap"], "note": "REGRESSION: the gap-fill answer was suppressed because the doc was split across ranks [1]/[3]/[4] and the model quoted near-verbatim (punctuation drift) — all citations dropped -> 0 grounded -> hidden. Fixed by document-level + loose quote verification and same-doc consolidation. Must produce a grounded (non-suppressed) answer about the Create Gap Fill Process."}
@@ -63,3 +63,72 @@
 {"q": "what external services does the project depend on to run a live meeting", "expect_answer_contains": ["Recall", "Deepgram", "Voyage"], "note": "REGRESSION (over-suppression): multi-source scattered answer was suppressed; focus-aware verification keeps the cross-source quotes."}
 {"q": "how does the github install flow protect against csrf on the oauth callback", "expect_answer_contains": ["state", "pending_installations"], "note": "REGRESSION (over-suppression): correct answer suppressed before focus-aware verification."}
 {"q": "what does the person resolver do to a spoken name before calling the github api and why", "expect_answer_contains": ["injection"], "note": "REGRESSION (over-suppression): correct answer suppressed; now kept (quote downgraded to a bare citation)."}
+{"q": "did everyone catch the game last night", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "how was your weekend", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "is it supposed to rain later this week", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "i still need to finish my holiday shopping", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "did you see the new season of that show finally dropped", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "how are the kids doing these days", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "my flight got delayed again coming back from the conference", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "anyone want to grab coffee after this", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "the traffic on the way in was brutal this morning", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "happy birthday by the way, did you do anything fun", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "i think my cat knocked over my plant during the last call", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "we should plan a team offsite sometime this quarter", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "did you ever fix the leak in your kitchen", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "i am trying that new gym near the office", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "what did everyone think of the all hands yesterday", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "my new standing desk finally arrived", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "is the cafeteria still doing taco tuesday", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "how is the house hunt going", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "did the dog end up being okay after the vet visit", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "i am so ready for vacation next week", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "who is covering the front desk while janet is out", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "let us take a quick five minute break", "bucket": "offtopic", "expect_refusal": true, "note": "meta-meeting filler"}
+{"q": "my headphones keep cutting out, can you hear me okay", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "the wifi in this building is terrible today", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "did you watch that documentary i recommended", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "i think we are going to need a bigger conference room", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "anyone have a phone charger i can borrow", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "is it just me or is it freezing in here", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "great job on the presentation, that was really clean", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "i will be a couple minutes late to the next one, back to back", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "how was the wedding you went to", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "my calendar is a disaster this week", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "who is bringing snacks for the retro", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "did you find parking okay today", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "the coffee machine on the third floor is broken again", "bucket": "offtopic", "expect_refusal": true, "note": "small talk"}
+{"q": "what is the best vector database for a weekend side project", "bucket": "adjacent", "expect_refusal": true, "note": "generic tech, not about our pgvector setup"}
+{"q": "how do i set up deepgram in my own app", "bucket": "adjacent", "expect_refusal": true, "note": "generic tech, not about our transcription path"}
+{"q": "what is reciprocal rank fusion in general", "bucket": "adjacent", "expect_refusal": true, "note": "generic concept, not our hybrid search"}
+{"q": "is postgres better than mongodb for a new startup", "bucket": "adjacent", "expect_refusal": true, "note": "generic tech opinion, not about our corpus db"}
+{"q": "how does retrieval augmented generation work conceptually", "bucket": "adjacent", "expect_refusal": true, "note": "generic concept, not our pipeline"}
+{"q": "what is the difference between an embedding and a token", "bucket": "adjacent", "expect_refusal": true, "note": "generic ml concept"}
+{"q": "should i use pinecone or weaviate for my project", "bucket": "adjacent", "expect_refusal": true, "note": "generic vector db choice, not ours"}
+{"q": "how much does the anthropic api cost per million tokens", "bucket": "adjacent", "expect_refusal": true, "note": "generic pricing, not in our corpus"}
+{"q": "what is the newest claude model out right now", "bucket": "adjacent", "expect_refusal": true, "note": "generic model news, not our config"}
+{"q": "how do websockets work under the hood", "bucket": "adjacent", "expect_refusal": true, "note": "generic protocol, not our recall ws"}
+{"q": "what is a good chunking strategy for pdfs", "bucket": "adjacent", "expect_refusal": true, "note": "generic, not our chunker"}
+{"q": "is next js better than remix these days", "bucket": "adjacent", "expect_refusal": true, "note": "generic framework opinion"}
+{"q": "how do i get a recall ai api key for my own bot", "bucket": "adjacent", "expect_refusal": true, "note": "generic recall.ai usage, not our integration"}
+{"q": "how do you do hybrid search in elasticsearch", "bucket": "adjacent", "expect_refusal": true, "note": "generic, different stack than our pgvector+FTS"}
+{"q": "what does hnsw stand for and when should i use it", "bucket": "adjacent", "expect_refusal": true, "note": "generic index concept, not our table"}
+{"q": "how do i deploy a node app to fly io", "bucket": "adjacent", "expect_refusal": true, "note": "generic deploy, not our infra docs"}
+{"q": "how does prompt caching work on the openai api", "bucket": "adjacent", "expect_refusal": true, "note": "wrong provider; our caching is anthropic"}
+{"q": "how do github apps handle oauth in general", "bucket": "adjacent", "expect_refusal": true, "note": "generic, not our install/csrf flow"}
+{"q": "is rerank 2.5 better than cohere rerank", "bucket": "adjacent", "expect_refusal": true, "note": "generic reranker comparison, not our config"}
+{"q": "i need to reconcile my expense report before friday", "bucket": "adjacent", "expect_refusal": true, "note": "term collision: reconcile != corpus reconcile"}
+{"q": "the retention party for sarah is on friday afternoon", "bucket": "adjacent", "expect_refusal": true, "note": "term collision: retention != zero data retention"}
+{"q": "did you rerank your priorities after the reorg", "bucket": "adjacent", "expect_refusal": true, "note": "term collision: rerank != reranker"}
+{"q": "i got a citation for parking downtown again", "bucket": "adjacent", "expect_refusal": true, "note": "term collision: citation != synthesis citations"}
+{"q": "i am blocked on the migration to my new apartment this weekend", "bucket": "adjacent", "expect_refusal": true, "note": "term collision: migration != db migration"}
+{"q": "my kid is learning about embeddings in his ml class", "bucket": "adjacent", "expect_refusal": true, "note": "term collision: embeddings, but small talk"}
+{"q": "the connector on my monitor cable is loose again", "bucket": "adjacent", "expect_refusal": true, "note": "term collision: connector != data connectors"}
+{"q": "we should index the shared drive folders better", "bucket": "adjacent", "expect_refusal": true, "note": "term collision: index != corpus indexing"}
+{"q": "the token for the parking garage expired", "bucket": "adjacent", "expect_refusal": true, "note": "term collision: token != api/embedding token"}
+{"q": "who is the source of truth on the holiday schedule", "bucket": "adjacent", "expect_refusal": true, "note": "term collision: source != corpus sources"}
+{"q": "what is the going rate for voyage embeddings", "bucket": "adjacent", "expect_refusal": true, "note": "generic pricing, not our usage"}
+{"q": "how do you handle backoff when an api rate limits you in general", "bucket": "adjacent", "expect_refusal": true, "note": "generic, not our deepgram reconnect backoff"}
+{"q": "what is the best way to host a next app on vercel", "bucket": "adjacent", "expect_refusal": true, "note": "generic deploy, not our portal infra"}
+{"q": "how do you summarize a long meeting transcript with an llm in general", "bucket": "adjacent", "expect_refusal": true, "note": "generic, not our rolling summarizer"}
+{"q": "what is websearch to tsquery used for in the postgres docs", "bucket": "adjacent", "expect_refusal": true, "note": "generic postgres docs, not our FTS usage"}

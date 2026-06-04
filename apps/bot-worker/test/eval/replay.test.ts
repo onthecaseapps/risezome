@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bucketOf,
   computeRecall,
   evaluateAnswer,
+  expectsSuppression,
+  loadGoldenSet,
   scoreQuestion,
   summarize,
+  validateGoldenSet,
+  type EvalBucket,
   type GoldenQuestion,
   type RetrievedDoc,
 } from '../../eval/lib/corpus-replay.js';
@@ -115,5 +120,69 @@ describe('summarize', () => {
     expect(s.total).toBe(0);
     expect(s.passRate).toBe(0);
     expect(s.meanRecall).toBeNull();
+  });
+});
+
+// ── U1: three-bucket precision dataset ──────────────────────────────────────
+
+describe('bucketOf', () => {
+  it('defaults an absent bucket to relevant (back-compat with the original set)', () => {
+    expect(bucketOf({ q: 'how does X work', expect_answer_contains: ['x'] })).toBe('relevant');
+  });
+  it('returns the explicit bucket', () => {
+    expect(bucketOf({ q: 'lunch?', bucket: 'offtopic', expect_refusal: true })).toBe('offtopic');
+    expect(bucketOf({ q: 'pinecone vs weaviate?', bucket: 'adjacent', expect_refusal: true })).toBe(
+      'adjacent',
+    );
+  });
+});
+
+describe('expectsSuppression', () => {
+  it('is true for offtopic and adjacent, false for relevant', () => {
+    expect(expectsSuppression({ q: 'a', bucket: 'offtopic', expect_refusal: true })).toBe(true);
+    expect(expectsSuppression({ q: 'b', bucket: 'adjacent', expect_refusal: true })).toBe(true);
+    expect(expectsSuppression({ q: 'c', expect_answer_contains: ['x'] })).toBe(false);
+  });
+  it('honors an explicit expect_refusal even on an untagged item', () => {
+    expect(expectsSuppression({ q: 'd', expect_refusal: true })).toBe(true);
+  });
+});
+
+describe('validateGoldenSet', () => {
+  it('flags a suppress-bucket item missing expect_refusal', () => {
+    const errs = validateGoldenSet([{ q: 'x', bucket: 'adjacent' }]);
+    expect(errs.join(' ')).toMatch(/adjacent must set expect_refusal/);
+  });
+  it('flags a relevant item that sets expect_refusal', () => {
+    const errs = validateGoldenSet([
+      { q: 'x', bucket: 'relevant', expect_refusal: true, expect_answer_contains: ['y'] },
+    ]);
+    expect(errs.join(' ')).toMatch(/relevant must not set expect_refusal/);
+  });
+  it('flags a relevant item with no expected answer or surface', () => {
+    expect(validateGoldenSet([{ q: 'x' }]).join(' ')).toMatch(/needs expect_answer_contains/);
+  });
+  it('passes a well-formed three-bucket set', () => {
+    expect(
+      validateGoldenSet([
+        { q: 'how does corpus search work', expect_answer_contains: ['hybrid'] },
+        { q: 'lunch?', bucket: 'offtopic', expect_refusal: true },
+        { q: 'pinecone vs weaviate?', bucket: 'adjacent', expect_refusal: true },
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe('golden-questions.jsonl (the real dataset)', () => {
+  const set = loadGoldenSet();
+  it('lints clean (no mislabeled bucket/refusal lines)', () => {
+    expect(validateGoldenSet(set)).toEqual([]);
+  });
+  it('contains all three buckets with suppression negatives present', () => {
+    const counts: Record<EvalBucket, number> = { relevant: 0, offtopic: 0, adjacent: 0 };
+    for (const q of set) counts[bucketOf(q)] += 1;
+    expect(counts.relevant).toBeGreaterThan(40);
+    expect(counts.offtopic).toBeGreaterThan(20);
+    expect(counts.adjacent).toBeGreaterThan(20);
   });
 });

@@ -28,20 +28,74 @@ import {
 
 // ── Golden set ──────────────────────────────────────────────────────────
 
+/**
+ * Precision-eval bucket. Drives precision / over-refusal scoring (U2):
+ *  - `relevant`  — a genuine question about THIS repo's code/docs; SHOULD surface.
+ *  - `offtopic`  — ordinary chit-chat / small talk; SHOULD suppress.
+ *  - `adjacent`  — topically near the corpus but not actually about our stuff
+ *                  (the hard negatives that leak today); SHOULD suppress.
+ * Absent on a question ⇒ `relevant` (the original answerable golden set).
+ */
+export type EvalBucket = 'relevant' | 'offtopic' | 'adjacent';
+
 /** One labeled question in eval/golden-questions.jsonl. */
 export interface GoldenQuestion {
   /** The question as a meeting participant would phrase it. */
   readonly q: string;
+  /** Which precision-eval bucket this belongs to (default `relevant`). */
+  readonly bucket?: EvalBucket;
   /** Doc-id or title substrings expected among the retrieved docs
    *  (case-insensitive). INFORMATIONAL ONLY — feeds the reported `meanRecall`
    *  retrieval signal but does NOT gate pass/fail. */
   readonly must_surface?: readonly string[];
   /** Substrings the synthesized answer must contain (case-insensitive). */
   readonly expect_answer_contains?: readonly string[];
-  /** When true, a refusal is the correct outcome. */
+  /** When true, a refusal/suppression is the correct outcome. Implied for the
+   *  `offtopic` and `adjacent` buckets. */
   readonly expect_refusal?: boolean;
   /** Optional free-text note for humans curating the set. */
   readonly note?: string;
+}
+
+/** The bucket a question belongs to, defaulting an absent tag to `relevant`. */
+export function bucketOf(q: GoldenQuestion): EvalBucket {
+  return q.bucket ?? 'relevant';
+}
+
+/** True when the correct outcome is suppression (no card) — the suppress buckets. */
+export function expectsSuppression(q: GoldenQuestion): boolean {
+  const bucket = bucketOf(q);
+  return q.expect_refusal === true || bucket === 'offtopic' || bucket === 'adjacent';
+}
+
+/**
+ * Lint the labeled set for internal consistency. Returns one message per
+ * violation (empty ⇒ clean). Used by the dataset test so a mislabeled line
+ * fails CI rather than silently skewing precision/over-refusal.
+ */
+export function validateGoldenSet(qs: readonly GoldenQuestion[]): string[] {
+  const errors: string[] = [];
+  qs.forEach((q, i) => {
+    const where = `line ${String(i + 1)} (${q.q.slice(0, 48)})`;
+    if (typeof q.q !== 'string' || q.q.trim().length === 0) {
+      errors.push(`${where}: empty question`);
+    }
+    const bucket = bucketOf(q);
+    if ((bucket === 'offtopic' || bucket === 'adjacent') && q.expect_refusal !== true) {
+      errors.push(`${where}: ${bucket} must set expect_refusal:true`);
+    }
+    if (bucket === 'relevant' && q.expect_refusal === true) {
+      errors.push(`${where}: relevant must not set expect_refusal:true`);
+    }
+    if (
+      bucket === 'relevant' &&
+      (q.expect_answer_contains === undefined || q.expect_answer_contains.length === 0) &&
+      (q.must_surface === undefined || q.must_surface.length === 0)
+    ) {
+      errors.push(`${where}: relevant needs expect_answer_contains or must_surface`);
+    }
+  });
+  return errors;
 }
 
 export function goldenFilePath(): string {
