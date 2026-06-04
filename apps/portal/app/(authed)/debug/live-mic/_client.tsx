@@ -16,10 +16,11 @@ import {
 import {
   TracePanel,
   indexTrace,
-  type TraceCard,
   type TraceEvent,
   type UtteranceTrace,
 } from './_trace-panel';
+import { OutputsPanel, type OutputCard, type OutputTab } from './_outputs-panel';
+import { deriveOutcome, type OutcomeType } from './_pipeline-model';
 
 /**
  * Client component for the local-mic debug page. Opens a WebSocket to
@@ -213,6 +214,7 @@ function DebugInner({
     () => new Map(),
   );
   const [selectedUtteranceId, setSelectedUtteranceId] = useState<string | null>(null);
+  const [outputTab, setOutputTab] = useState<OutputTab>('retrievals');
   const wsRef = useRef<WebSocket | null>(null);
 
   const handleEvent = useCallback((evt: DebugEvent) => {
@@ -402,22 +404,36 @@ function DebugInner({
     if (selectedUtteranceId === null) return null;
     return utterances.find((u) => u.utteranceId === selectedUtteranceId)?.text ?? null;
   }, [selectedUtteranceId, utterances]);
-  const selectedCards: TraceCard[] = useMemo(() => {
+  const selectedCards: OutputCard[] = useMemo(() => {
     if (selectedUtteranceId === null) return [];
     return cardGroups
       .filter((g) => g.utteranceId === selectedUtteranceId)
       .flatMap((g) => g.cards)
       .map((c) => ({
+        cardId: c.cardId,
         rank: c.rank,
         title: c.title,
         source: c.source,
         docType: c.docType,
+        url: c.url,
+        snippet: c.snippet,
+        body: c.body,
         ...(c.distance !== undefined ? { distance: c.distance } : {}),
         ...(c.score !== undefined ? { score: c.score } : {}),
         ...(c.ftsMatched !== undefined ? { ftsMatched: c.ftsMatched } : {}),
         ...(c.isSummary !== undefined ? { isSummary: c.isSummary } : {}),
       }));
   }, [selectedUtteranceId, cardGroups]);
+
+  // U5: the selected utterance's terminal outcome (drives the Retrievals
+  // empty-state tone + the rail chip mapping) and the stage→Outputs deep-link.
+  const selectedOutcome: OutcomeType = useMemo(
+    () => deriveOutcome(selectedTrace).type,
+    [selectedTrace],
+  );
+  const onOpenOutput = useCallback((tab: 'retrievals' | 'synthesis') => {
+    setOutputTab(tab);
+  }, []);
 
   return (
     <div className="flex h-dvh flex-col px-6 py-6">
@@ -471,7 +487,7 @@ function DebugInner({
 
       <SummaryStrip summary={currentSummary} summaryAt={summaryAt} />
 
-      <div className="grid min-h-0 flex-1 grid-cols-4 gap-4">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(220px,260px)_1fr_minmax(340px,440px)] gap-4">
         <Panel title={`Utterances (${utterances.length})`}>
           {utterances.length === 0 ? (
             <EmptyHint text="Start a session and start speaking. Partials appear as they stream; finals trigger retrieval." />
@@ -481,7 +497,7 @@ function DebugInner({
                 // U5: final utterances are clickable → select to open the trace
                 // panel. A dot marks utterances that already have a trace.
                 const selected = u.utteranceId === selectedUtteranceId;
-                const hasTrace = tracesByUtterance.has(u.utteranceId);
+                const uTrace = tracesByUtterance.get(u.utteranceId);
                 if (!u.isFinal) {
                   return (
                     <li
@@ -510,14 +526,9 @@ function DebugInner({
                     >
                       <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted">
                         <span>final · rev {String(u.revision)} · {u.utteranceId.slice(-6)}</span>
-                        {hasTrace && (
-                          <span
-                            className="ml-auto inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"
-                            title="trace available"
-                          />
-                        )}
                       </div>
                       <div className="mt-0.5 text-fg">{u.text}</div>
+                      <RailOutcomeChip trace={uTrace} />
                     </button>
                   </li>
                 );
@@ -535,102 +546,69 @@ function DebugInner({
         >
           <TracePanel
             trace={selectedTrace}
-            cards={selectedCards}
             utteranceText={selectedUtteranceText}
+            onOpenOutput={onOpenOutput}
           />
         </Panel>
 
-        <Panel title={`Retrievals (${cardGroups.length})`}>
-          {cardGroups.length === 0 ? (
-            <EmptyHint text="Per-utterance retrieval results land here. Top hits ranked by vector distance." />
-          ) : (
-            <ul className="space-y-3 text-xs">
-              {cardGroups.slice().reverse().map((g) => (
-                <li key={g.traceId} className="rounded border border-border bg-card p-3">
-                  <div className="text-[10px] uppercase tracking-wider text-muted">
-                    {g.traceId.slice(-6)} · {String(g.cards.length)} hit(s)
-                  </div>
-                  <ol className="mt-1 space-y-2">
-                    {g.cards.map((c) => (
-                      <li key={c.cardId} className="border-l-2 border-border pl-2">
-                        <div className="flex items-baseline gap-2">
-                          <span className="font-mono text-[10px] text-muted">
-                            [{String(c.rank)}]
+        <section className="flex min-h-0 flex-col rounded-xl border border-border bg-card/40 p-3">
+          <OutputsPanel
+            tab={outputTab}
+            onTab={setOutputTab}
+            cards={selectedCards}
+            synthesisCount={synthesisCount}
+            trace={selectedTrace}
+            outcomeType={selectedOutcome}
+            synthesis={
+              <>
+                {/* Skill answers: structured tool results (github_count etc.)
+                    shown directly, independent of synthesis. The synthesizer
+                    can refuse; the raw skill answer never hides. */}
+                {skillResults.length > 0 && (
+                  <ul className="mb-3 space-y-2 text-sm">
+                    {skillResults.slice().reverse().map((sr) => (
+                      <li
+                        key={`${sr.traceId}-${sr.skillName}`}
+                        className="rounded border border-accent/50 bg-accent-soft/40 p-3"
+                      >
+                        <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-accent">
+                          <span className="rounded bg-accent/20 px-1.5 py-0.5 font-semibold">Skill</span>
+                          <span className="font-mono normal-case text-muted">
+                            {sr.skillName}({JSON.stringify(sr.args)})
                           </span>
-                          <span className="text-[11px] font-medium">{c.title}</span>
                         </div>
-                        <div className="text-[10px] text-muted">
-                          {c.source} · {c.docType} ·{' '}
-                          {c.distance !== undefined
-                            ? `distance ${c.distance.toFixed(3)}`
-                            : `rrf ${(c.score ?? 0).toFixed(4)}`}
-                          {c.ftsMatched ? ' · fts' : ''}
-                        </div>
-                        <details className="mt-1">
-                          <summary className="cursor-pointer text-[10px] text-muted hover:text-fg">
-                            body ({String(c.body.length)} chars)
-                          </summary>
-                          <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-code-bg p-1 font-mono text-[10px] leading-relaxed">
-                            {c.body}
-                          </pre>
-                        </details>
+                        <div className="mt-1 font-medium">{sr.summary}</div>
+                        {sr.items.length > 0 && (
+                          <ol className="mt-1.5 space-y-1 text-xs">
+                            {sr.items.map((item, i) => (
+                              <li key={`${sr.traceId}-item-${String(i)}`} className="border-l-2 border-accent/40 pl-2">
+                                {item.url !== undefined ? (
+                                  <a href={item.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                                    {item.title}
+                                  </a>
+                                ) : (
+                                  <span>{item.title}</span>
+                                )}
+                                {item.subtitle !== undefined && (
+                                  <span className="text-muted"> — {item.subtitle}</span>
+                                )}
+                              </li>
+                            ))}
+                          </ol>
+                        )}
                       </li>
                     ))}
-                  </ol>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
-
-        <Panel title="AI synthesis">
-          <>
-          {/* Skill answers: structured tool results (github_count etc.)
-              shown directly, independent of synthesis. The synthesizer
-              can refuse; the raw skill answer never hides. */}
-          {skillResults.length > 0 && (
-            <ul className="mb-3 space-y-2 text-sm">
-              {skillResults.slice().reverse().map((sr) => (
-                <li
-                  key={`${sr.traceId}-${sr.skillName}`}
-                  className="rounded border border-accent/50 bg-accent-soft/40 p-3"
-                >
-                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-accent">
-                    <span className="rounded bg-accent/20 px-1.5 py-0.5 font-semibold">Skill</span>
-                    <span className="font-mono normal-case text-muted">
-                      {sr.skillName}({JSON.stringify(sr.args)})
-                    </span>
-                  </div>
-                  <div className="mt-1 font-medium">{sr.summary}</div>
-                  {sr.items.length > 0 && (
-                    <ol className="mt-1.5 space-y-1 text-xs">
-                      {sr.items.map((item, i) => (
-                        <li key={`${sr.traceId}-item-${String(i)}`} className="border-l-2 border-accent/40 pl-2">
-                          {item.url !== undefined ? (
-                            <a href={item.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
-                              {item.title}
-                            </a>
-                          ) : (
-                            <span>{item.title}</span>
-                          )}
-                          {item.subtitle !== undefined && (
-                            <span className="text-muted"> — {item.subtitle}</span>
-                          )}
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-          {synthesisCount === 0 && skillResults.length === 0 ? (
-            <EmptyHint text='Synthesis streams here exactly as on the live meeting page — click a [N] citation to expand the source card with its quote highlighted.' />
-          ) : (
-            <SynthesisStream />
-          )}
-          </>
-        </Panel>
+                  </ul>
+                )}
+                {synthesisCount === 0 && skillResults.length === 0 ? (
+                  <EmptyHint text='Synthesis streams here exactly as on the live meeting page — click a [N] citation to expand the source card with its quote highlighted.' />
+                ) : (
+                  <SynthesisStream />
+                )}
+              </>
+            }
+          />
+        </section>
       </div>
 
       {systemEvents.length > 0 && (
@@ -642,6 +620,32 @@ function DebugInner({
         </footer>
       )}
     </div>
+  );
+}
+
+/** Terminal-outcome chip on a final-utterance rail row (U5). Renders only once
+ *  the utterance has a trace; before that the row is just the transcript line. */
+const RAIL_OUTCOME: Record<OutcomeType, { label: string; color: string } | null> = {
+  grounded: { label: 'GROUNDED', color: '#46c08a' },
+  miss: { label: 'MISS · GAP', color: '#f0616d' },
+  skip: { label: 'SKIPPED', color: '#e6a23c' },
+  ungrounded: { label: 'UNGROUNDED', color: '#f0616d' },
+  refusal: { label: 'REFUSED', color: '#f0616d' },
+  pending: null,
+};
+
+function RailOutcomeChip({ trace }: { trace: UtteranceTrace | undefined }): ReactElement | null {
+  if (!trace) return null;
+  const meta = RAIL_OUTCOME[deriveOutcome(trace).type];
+  if (!meta) return null;
+  return (
+    <span
+      className="mt-1.5 inline-flex items-center gap-1.5 rounded-[5px] px-1.5 py-0.5 font-mono text-[9.5px] font-semibold tracking-wide"
+      style={{ background: `${meta.color}26`, color: meta.color }}
+    >
+      <span className="h-[5px] w-[5px] rounded-full" style={{ background: meta.color }} />
+      {meta.label}
+    </span>
   );
 }
 
