@@ -139,6 +139,19 @@ export const launchBotFn = inngest.createFunction(
         return { meetingId: existing.data.meeting_id as string, created: false };
       }
 
+      // Stamp the org's default privacy onto the new meeting (R8). Read the
+      // org_privacy_config row; if the org has none, fall back to the library-
+      // by-default value 'only_teammates' (same as the column/config defaults).
+      const cfg = await service
+        .from('org_privacy_config')
+        .select('default_privacy')
+        .eq('org_id', eventRow.org_id)
+        .maybeSingle();
+      if (cfg.error !== null) {
+        throw new Error(`read-privacy-config failed: ${cfg.error.message}`);
+      }
+      const defaultPrivacy = (cfg.data?.default_privacy as string | undefined) ?? 'only_teammates';
+
       const inserted = await service
         .from('meetings')
         .insert({
@@ -148,6 +161,7 @@ export const launchBotFn = inngest.createFunction(
           conference_url: conferenceUrl,
           title: eventRow.title,
           status: 'launching',
+          privacy_level: defaultPrivacy,
         })
         .select('meeting_id')
         .single();
