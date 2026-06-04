@@ -10,6 +10,21 @@ Gate: **keep** iff precision ↑ AND relevant over-refusal ↑ ≤ ~2–3 pts AN
 | U3 v1 (strict prompt only) | `RISEZOME_RELEVANCE_STRICT` | 83% | 2% | 13/34 | 3.33s / 4.88s | **revert** — no effect (questions are `clearly_substantive`, bypass the judge) |
 | U3 v2 (strict + route questions to judge) | `RISEZOME_RELEVANCE_STRICT` | 98% | 16% | 1/34 | 1.52s / 5.99s | **revert** — precision win, but over-refusal +14pt breaches guardrail |
 | **U3 v3 (our-stack-aware + route)** | `RISEZOME_RELEVANCE_STRICT` | **98%** | **2%** | **1/34** | 3.48s / 6.16s | **KEEP** — precision +14pt, over-refusal flat |
+| U3 on **expanded set** (165q) | `RISEZOME_RELEVANCE_STRICT` | **99%** | **1%** | **1/48** | 3.37s / 5.87s | **holds** — +31 hard edge cases, no new failure class |
+
+## U5 decision: not pursued
+
+We extended the set with 31 hard edge cases (ownership-light relevant, generic-but-our-stack
+adjacent, product-praise off-topic) specifically to find a failure class U5 (post-retrieval absolute
+grading) could fix. It found none — precision rose to **99%**, over-refusal fell to **1%**, and the
+only two residuals are the same borderline cases:
+- Over-refused "what external services does *the project* depend on" — a **pre-retrieval** judge
+  coin-flip; a post-retrieval grader never sees it, so U5 can't help.
+- Leaked "we should index the shared drive folders better" — retrieves our **real roadmap**; a
+  post-retrieval grader would likely surface it too (it genuinely *is* about our product).
+
+U3 alone meets the precision goal on a stress-tested set. **U5's added latency now outweighs its
+benefit; deferred** (revisit only if a real failure class emerges in production telemetry).
 
 ## U3 learnings
 
