@@ -7,12 +7,39 @@ const h = vi.hoisted(() => ({
   runPipeline: vi.fn((_input: unknown, _deps: unknown, _sink: unknown) =>
     Promise.resolve({ emitted: 1 }),
   ),
+  // Captures each createSupabaseSink({...}) arg so a test can fire onGroundedAnswer.
+  sinkArgs: [] as { onGroundedAnswer?: (t: string) => void }[],
 }));
 vi.mock('../src/pipeline/core.js', () => ({ runPipeline: h.runPipeline }));
-vi.mock('../src/pipeline/sink-supabase.js', () => ({ createSupabaseSink: () => ({}) }));
+vi.mock('../src/pipeline/sink-supabase.js', () => ({
+  createSupabaseSink: (a: { onGroundedAnswer?: (t: string) => void }) => {
+    h.sinkArgs.push(a);
+    return {};
+  },
+}));
 
 import { maybeRetrieveAndEmit, newRetrievalRuntime, type RetrievalRuntime } from '../src/retrieval';
 import type { PipelineInput } from '../src/pipeline/contract';
+
+// Deterministic pseudo-embedder: identical text → identical one-hot vector
+// (cosine distance 0 ⇒ duplicate); different text → (almost always) a different
+// bucket (distance 1 ⇒ not a duplicate).
+function fakeEmbedder() {
+  return {
+    embed: vi.fn((req: { items: { text: string }[] }) => {
+      const text = req.items[0]!.text;
+      const hash = [...text].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
+      const vector = new Float32Array(16);
+      vector[hash % 16] = 1;
+      return Promise.resolve({
+        vectors: [{ index: 0, vector, cached: false }],
+        dimension: 16,
+        inputTokens: 1,
+        cacheHits: 0,
+      });
+    }),
+  };
+}
 
 const baseArgs = (runtime: RetrievalRuntime, utteranceText: string) => ({
   runtime,
@@ -21,9 +48,14 @@ const baseArgs = (runtime: RetrievalRuntime, utteranceText: string) => ({
   meetingId: 'm1',
   orgId: 'o1',
   db: {} as never,
-  embedder: { embed: vi.fn() } as never,
+  embedder: fakeEmbedder() as never,
   logger: { info: () => undefined, warn: () => undefined },
 });
+
+/** Simulate the sink reporting a grounded (non-refusal) answer for the last fire. */
+function fireGroundedAnswer(): void {
+  h.sinkArgs.at(-1)?.onGroundedAnswer?.('a grounded answer');
+}
 
 function lastInput(): PipelineInput {
   return h.runPipeline.mock.calls.at(-1)![0] as PipelineInput;
@@ -128,5 +160,51 @@ describe('maybeRetrieveAndEmit — question-anchored query (U3)', () => {
     // is NOT a question, so it takes the ambient lane and the full window.
     expect(lastInput().lane).toBe('ambient');
     expect(lastInput().queryText).toBe('the build is green we ship on friday and the staging deploy went fine');
+  });
+});
+
+describe('maybeRetrieveAndEmit — near-duplicate question suppression (U5)', () => {
+  beforeEach(() => {
+    h.runPipeline.mockClear();
+    h.sinkArgs.length = 0;
+  });
+
+  it('AE4: the same question, once answered, is suppressed on re-ask', async () => {
+    const rt = newRetrievalRuntime();
+    await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    expect(h.runPipeline).toHaveBeenCalledTimes(1);
+    fireGroundedAnswer(); // the first answer grounded → recorded for dedup
+
+    const res = await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    expect(res.skipped).toBe('duplicate_question');
+    expect(h.runPipeline).toHaveBeenCalledTimes(1); // did not fire again
+  });
+
+  it('a genuinely different question still fires', async () => {
+    const rt = newRetrievalRuntime();
+    await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    fireGroundedAnswer();
+    const res = await maybeRetrieveAndEmit(baseArgs(rt, 'how does reranking improve recall'));
+    expect(res.skipped).toBeUndefined();
+    expect(h.runPipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it('a REFUSED question is not recorded, so a genuine re-ask still fires', async () => {
+    const rt = newRetrievalRuntime();
+    await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    // No fireGroundedAnswer() → the answer was refused, nothing recorded.
+    const res = await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    expect(res.skipped).toBeUndefined();
+    expect(h.runPipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it('a duplicate outside the recency window fires again', async () => {
+    const rt = newRetrievalRuntime();
+    await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    fireGroundedAnswer();
+    // Age the recorded answer past the 5-minute window.
+    rt.answeredQuestions[0]!.at = Date.now() - 6 * 60_000;
+    const res = await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    expect(res.skipped).toBeUndefined();
   });
 });

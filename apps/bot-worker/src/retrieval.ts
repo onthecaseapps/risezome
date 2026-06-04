@@ -4,7 +4,7 @@ import { hybridSearch, isLowConfidenceHits } from './corpus-search';
 import { optionalReranker } from './reranker';
 import { expandWinnersToParents, parentDocEnabled, dedupeByDoc } from './parent-doc';
 import { optionalQueryExpander } from './query-expand';
-import { type MissRecord } from '@risezome/engine/gaps';
+import { type MissRecord, cosineDistance } from '@risezome/engine/gaps';
 import { type RelevanceClassifier, classifySubstantiveQuestion } from '@risezome/engine/relevance';
 import { type Classifier } from '@risezome/engine/router';
 import { type SkillRegistry } from '@risezome/engine/skills';
@@ -76,6 +76,39 @@ const QUESTION_MAX_PER_MEETING =
   Number.parseInt(process.env.RISEZOME_QUESTION_MAX_PER_MEETING ?? '60', 10) || 60;
 const QUESTION_RATE_WINDOW_MS = 60_000;
 
+// Near-duplicate question suppression (KTD4). A question semantically close to
+// one already ANSWERED this meeting (within the recency window) is suppressed so
+// repeats/rephrasings don't re-answer or re-spend. Tighter than the gap-merge
+// distance (0.22) — questions must be genuinely the same to suppress.
+const QUESTION_DUP_DISTANCE = Number.parseFloat(
+  process.env.RISEZOME_QUESTION_DUP_DISTANCE ?? '0.15',
+);
+const QUESTION_DUP_WINDOW_MS =
+  Number.parseInt(process.env.RISEZOME_QUESTION_DUP_WINDOW_MS ?? '300000', 10) || 300_000;
+
+async function embedQuestion(
+  embedder: VoyageEmbedder,
+  text: string,
+): Promise<number[] | undefined> {
+  try {
+    const result = await embedder.embed({ items: [{ text, domain: 'text' }] });
+    const vec = result.vectors[0]?.vector;
+    return vec === undefined ? undefined : Array.from(vec);
+  } catch {
+    return undefined; // dedup is best-effort; never block a fire on an embed error
+  }
+}
+
+function isNearDuplicateQuestion(
+  vec: readonly number[],
+  history: readonly { embedding: number[]; at: number }[],
+  now: number,
+): boolean {
+  return history.some(
+    (e) => now - e.at < QUESTION_DUP_WINDOW_MS && cosineDistance(vec, e.embedding) <= QUESTION_DUP_DISTANCE,
+  );
+}
+
 // Question-anchored query (KTD5). A standalone question embeds as itself so
 // surrounding off-domain talk can't dilute it. A fragment / follow-up needs a
 // referent, so it (and only it) gets a minimal context slice: the immediately-
@@ -112,6 +145,9 @@ export interface RetrievalRuntime {
   questionFireTimestamps: number[];
   /** Total QUESTION-lane fires this meeting (per-meeting ceiling). */
   questionFireCount: number;
+  /** Embeddings + timestamps of questions ANSWERED (grounded) this meeting,
+   *  for near-duplicate suppression. Recency-pruned. */
+  answeredQuestions: { embedding: number[]; at: number }[];
   /**
    * Most recent cardId surfaced for a given docId in this meeting. Drives the
    * stale-card retractor (now in the Supabase sink): a new card for a docId that
@@ -127,6 +163,7 @@ export function newRetrievalRuntime(): RetrievalRuntime {
     lastRetrievalAt: 0,
     questionFireTimestamps: [],
     questionFireCount: 0,
+    answeredQuestions: [],
     liveCardByDocId: new Map<string, string>(),
   };
 }
@@ -207,6 +244,22 @@ export async function maybeRetrieveAndEmit(args: {
   if (mustRespectCooldown && now - args.runtime.lastRetrievalAt < COOLDOWN_MS) {
     return { emitted: 0, skipped: lane === 'question' ? 'question_ceiling' : 'cooldown' };
   }
+
+  // ── Near-duplicate question suppression (KTD4) ───────────────────────
+  // Embed the question and suppress if it's close to one already answered this
+  // meeting. New/rephrased questions fire. Recorded only on a grounded answer
+  // (below), so a refused question can still be genuinely re-asked.
+  let questionVec: number[] | undefined;
+  if (lane === 'question') {
+    args.runtime.answeredQuestions = args.runtime.answeredQuestions.filter(
+      (e) => now - e.at < QUESTION_DUP_WINDOW_MS,
+    );
+    questionVec = await embedQuestion(args.embedder, args.utteranceText);
+    if (questionVec !== undefined && isNearDuplicateQuestion(questionVec, args.runtime.answeredQuestions, now)) {
+      return { emitted: 0, skipped: 'duplicate_question' };
+    }
+  }
+
   args.runtime.utteranceCountSinceLastRetrieval = 0;
   args.runtime.lastRetrievalAt = now;
   if (lane === 'question') {
@@ -290,7 +343,14 @@ export async function maybeRetrieveAndEmit(args: {
     liveCardByDocId: args.runtime.liveCardByDocId,
     logger: args.logger,
     ...(args.onMiss !== undefined ? { onMiss: args.onMiss } : {}),
-    ...(args.onGroundedAnswer !== undefined ? { onGroundedAnswer: args.onGroundedAnswer } : {}),
+    // Record the question embedding for dedup ONLY when the answer grounded
+    // (onGroundedAnswer never fires on a refusal), then forward to the caller.
+    onGroundedAnswer: (text: string): void => {
+      if (lane === 'question' && questionVec !== undefined) {
+        args.runtime.answeredQuestions.push({ embedding: questionVec, at: now });
+      }
+      args.onGroundedAnswer?.(text);
+    },
     ...(args.onSynthesisRequested !== undefined
       ? { onSynthesisRequested: args.onSynthesisRequested }
       : {}),
