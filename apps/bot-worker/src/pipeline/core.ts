@@ -41,6 +41,7 @@ import type {
   PipelineCard,
   StageRecord,
   PipelineStage,
+  TraceHit,
 } from './contract.js';
 
 /** Canonical top-K (U1 resolution): prod used 3, dev/eval 5 — unified to 5
@@ -310,9 +311,12 @@ export async function runPipeline(
     reranker,
     logger: deps.logger,
   });
-  if (trace !== null) {
-    trace.push(stageRecord('hybrid-search', 'ran', searchStart, { data: { hits: hits.length } }));
-  }
+  // The hybrid-search trace stage carries its OWN ranked hits (so a persisted/
+  // after-the-fact trace is self-contained — the panel no longer has to splice
+  // the separate `card` events back in). Built once we've enriched titles/
+  // isSummary below; here we just freeze the search latency. Zero-cost when
+  // untraced: the array + the per-hit push are all inside `trace !== null`.
+  const searchLatencyMs = trace !== null ? Date.now() - searchStart : 0;
 
   // ── Stage: CRAG expansion on miss/weak (bounded to one retry) ─────────
   const cragStart = Date.now();
@@ -394,7 +398,17 @@ export async function runPipeline(
         reason: 'no_hits',
       });
     }
-    if (trace !== null) emitTrace();
+    if (trace !== null) {
+      // Self-contained empty hybrid-search stage (no cards survived). Same
+      // shape as the populated case so the panel's `data.hits` path is uniform.
+      trace.push({
+        stage: 'hybrid-search',
+        status: 'ran',
+        latencyMs: searchLatencyMs,
+        data: { hits: [], count: 0 },
+      });
+      emitTrace();
+    }
     return { emitted: 0, skipped: 'no_hits' };
   }
 
@@ -427,6 +441,12 @@ export async function runPipeline(
   let emitted = 0;
   const surfacedCardIds: string[] = [];
   const synthesisSources: SynthesisSource[] = [];
+  // Self-contained hybrid-search trace hits (R6 follow-up): collected per
+  // surfaced card so the `hybrid-search` stage carries its own ranked set and
+  // the panel needn't splice the separate `card` events. ONLY allocated when
+  // tracing — zero-cost when no trace sink (prod allocates nothing, pushes
+  // nothing). Pushed as the stage's `data.hits` after the loop.
+  const traceHits: TraceHit[] | null = trace !== null ? [] : null;
   for (let i = 0; i < sourceHits.length; i += 1) {
     const hit = sourceHits[i];
     if (hit === undefined) continue;
@@ -474,11 +494,40 @@ export async function runPipeline(
       docId: chunk.docId,
       title: doc.title,
     });
+    if (traceHits !== null) {
+      traceHits.push({
+        rank: i + 1, // 1-indexed, matching the `card` event the panel rendered
+        title: doc.title,
+        score,
+        distance: hit.distance,
+        ftsMatched: hit.ftsMatched,
+        isSummary: chunk.isSummary,
+      });
+    }
     emitted += 1;
   }
 
+  // Push the self-contained hybrid-search stage record now that titles/
+  // isSummary are enriched (latency frozen at search time). Inside the trace
+  // guard — prod (no trace sink) does none of this.
+  if (trace !== null && traceHits !== null) {
+    trace.push({
+      stage: 'hybrid-search',
+      status: 'ran',
+      latencyMs: searchLatencyMs,
+      data: { hits: traceHits, count: traceHits.length },
+    });
+  }
+
   // ── Router result collection + skill execution ───────────────────────
-  const toolSource = await collectToolSource(input, deps, classifierController, classifierPromise);
+  const toolSource = await collectToolSource(
+    input,
+    deps,
+    sink,
+    traceId,
+    classifierController,
+    classifierPromise,
+  );
 
   // ── Stage: synthesis (grounded-or-nothing) ───────────────────────────
   if (deps.synthesizer !== undefined && (synthesisSources.length > 0 || toolSource !== null)) {
@@ -597,6 +646,8 @@ async function enrichHits(
 async function collectToolSource(
   input: PipelineInput,
   deps: PipelineDeps,
+  sink: PipelineSink,
+  traceId: string,
   controller: AbortController | null,
   classifierPromise: ReturnType<NonNullable<PipelineDeps['routerClassifier']>['classify']> | null,
 ): Promise<SynthesisSource | null> {
@@ -624,6 +675,21 @@ async function collectToolSource(
         ...(controller !== null ? { signal: controller.signal } : {}),
       };
       const skillResult = await skill.handler(result.args, skillContext);
+      // Surface the raw structured answer as a standalone signal (the dev page
+      // renders it as its own card) so the executed-skill result is always
+      // visible, INDEPENDENT of whether the synthesizer relays it (it can
+      // refuse) and of whether the safety-net keeps the tool source below. The
+      // tool result still rides into synthesis at [0] either way. Optional +
+      // `?.`-guarded so prod/eval sinks (which omit it) are unaffected.
+      sink.recordSkillResult?.({
+        traceId,
+        utteranceId: input.utteranceId,
+        skillName: result.skillName,
+        args: result.args,
+        kind: skillResult.kind,
+        summary: skillResult.summary,
+        items: skillResult.items ?? [],
+      });
       const decision = decideToolSource(skillResult);
       if (decision.keep) {
         return formatAsSource(skillResult, result.skillName, result.args);

@@ -12,12 +12,12 @@ import { type ReactElement, type ReactNode } from 'react';
  * the ordered stages, a ran/skip/short-circuit badge each, the WHY (reason),
  * latency, and an expandable per-stage data payload.
  *
- * NOTE — the `trace` event's hybrid-search stage data only carries a hit
- * COUNT (`data.hits`), not the retrieved cards/scores. The retrieved cards
- * arrive as separate `card` events (keyed by traceId/utteranceId), so the
- * panel takes them as a prop (`cards`) rather than reading them off the stage
- * record. See the follow-up note in U5's report for the sink enrichments the
- * panel would otherwise want inline.
+ * The `trace` event's hybrid-search stage carries its OWN ranked hits inline
+ * (`data.hits: TraceHit[]` + `data.count`), so the panel renders the retrieved
+ * set self-contained — no need to splice the separate `card` events back in.
+ * The `cards` prop is kept as a graceful FALLBACK for older traces that carried
+ * only a count (pre-enrichment), so a persisted/after-the-fact trace renders
+ * either way.
  */
 
 // ── Trace shapes mirrored from apps/bot-worker/src/pipeline/contract.ts ────
@@ -36,6 +36,18 @@ export type PipelineStage =
 
 export type StageStatus = 'ran' | 'skipped' | 'short_circuited';
 
+/** One ranked retrieved hit carried INLINE on the hybrid-search stage's
+ *  `data.hits` (mirrors the bot-worker `TraceHit` in pipeline/contract.ts), so
+ *  the trace renders the retrieved set self-contained. */
+export interface TraceHit {
+  rank: number;
+  title: string;
+  score: number;
+  distance: number | null;
+  ftsMatched: boolean;
+  isSummary: boolean;
+}
+
 export interface StageRecord {
   stage: PipelineStage;
   status: StageStatus;
@@ -44,8 +56,9 @@ export interface StageRecord {
   /** Why — the explanation string surfaced on this panel. */
   reason?: string;
   latencyMs: number;
-  /** Stage-specific structured payload (hit counts, confidence, citation
-   *  breakdown, …). */
+  /** Stage-specific structured payload. For hybrid-search this carries the
+   *  self-contained ranked hits (`hits: TraceHit[]` + `count`); other stages
+   *  carry counts / confidence / citation breakdowns. */
   data?: Record<string, unknown>;
 }
 
@@ -148,6 +161,43 @@ function num(data: Record<string, unknown> | undefined, key: string): number | n
   return typeof v === 'number' ? v : null;
 }
 
+/** A row the hybrid-search detail renders — either an inline `TraceHit` (no
+ *  source/docType) or a `TraceCard` from a `card` event (with them). */
+interface HybridRow {
+  rank: number;
+  title: string;
+  source: string;
+  docType: string;
+  distance?: number;
+  score?: number;
+  ftsMatched?: boolean;
+  isSummary?: boolean;
+}
+
+/** Read the self-contained ranked hits off a hybrid-search stage's `data.hits`.
+ *  Returns null when absent (older traces carried only a numeric `hits` count,
+ *  so the panel falls back to the `cards` prop). Defensive: validates each
+ *  element's shape since the trace can arrive from an after-the-fact source. */
+function traceHitsFrom(data: Record<string, unknown> | undefined): TraceHit[] | null {
+  const raw = data?.hits;
+  if (!Array.isArray(raw)) return null; // older trace: `hits` was a number
+  const hits: TraceHit[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const h = item as Record<string, unknown>;
+    if (typeof h.rank !== 'number' || typeof h.title !== 'string') continue;
+    hits.push({
+      rank: h.rank,
+      title: h.title,
+      score: typeof h.score === 'number' ? h.score : 0,
+      distance: typeof h.distance === 'number' ? h.distance : null,
+      ftsMatched: h.ftsMatched === true,
+      isSummary: h.isSummary === true,
+    });
+  }
+  return hits;
+}
+
 /** Render the stage-specific "what happened" detail line. Mirrors the field
  *  set the core writes into each stage's `data` (see pipeline/core.ts). */
 function StageDetail({ rec, cards }: { rec: StageRecord; cards: TraceCard[] }): ReactElement | null {
@@ -177,15 +227,35 @@ function StageDetail({ rec, cards }: { rec: StageRecord; cards: TraceCard[] }): 
   }
 
   if (rec.stage === 'hybrid-search') {
-    const hits = num(d, 'hits');
+    // Self-contained path: the stage carries its own ranked hits inline. Fall
+    // back to the `cards` prop (resolved from `card` events) for older traces
+    // that carried only a numeric count.
+    const inlineHits = traceHitsFrom(d);
+    const rows: HybridRow[] =
+      inlineHits !== null
+        ? inlineHits.map((h) => ({
+            rank: h.rank,
+            title: h.title,
+            score: h.score,
+            ftsMatched: h.ftsMatched,
+            isSummary: h.isSummary,
+            // The inline hits don't carry source/docType (the panel led with the
+            // title + score line); leave them blank rather than guess.
+            source: '',
+            docType: '',
+            // `distance` is optional (omit, never set undefined — exactOptional).
+            ...(h.distance !== null ? { distance: h.distance } : {}),
+          }))
+        : cards.slice().map((c) => ({ ...c }));
+    const count = inlineHits !== null ? inlineHits.length : num(d, 'hits') ?? rows.length;
     return (
       <div className="space-y-1">
         <div className="text-[11px] text-muted">
-          {hits !== null ? `${hits} hit(s)` : 'searched'}
+          {count !== null ? `${count} hit(s)` : 'searched'}
         </div>
-        {cards.length > 0 && (
+        {rows.length > 0 && (
           <ol className="space-y-1">
-            {cards
+            {rows
               .slice()
               .sort((a, b) => a.rank - b.rank)
               .map((c) => (
@@ -200,7 +270,7 @@ function StageDetail({ rec, cards }: { rec: StageRecord; cards: TraceCard[] }): 
                     )}
                   </div>
                   <div className="text-[10px] text-muted">
-                    {c.source} · {c.docType} ·{' '}
+                    {c.source !== '' ? `${c.source} · ${c.docType} · ` : ''}
                     {c.distance !== undefined
                       ? `dist ${c.distance.toFixed(3)}`
                       : `rrf ${(c.score ?? 0).toFixed(4)}`}

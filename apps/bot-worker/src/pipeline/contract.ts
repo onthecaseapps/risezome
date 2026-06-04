@@ -23,7 +23,7 @@ import type { Synthesizer, CitationDetail } from '@risezome/engine/synthesize';
 import type { MissRecord } from '@risezome/engine/gaps';
 import type { RelevanceClassifier, RelevanceContext } from '@risezome/engine/relevance';
 import type { Classifier } from '@risezome/engine/router';
-import type { SkillRegistry } from '@risezome/engine/skills';
+import type { SkillRegistry, SkillResultKind, SkillResultItem } from '@risezome/engine/skills';
 import type { Reranker } from '@risezome/engine/embed';
 import type { QueryExpander } from '@risezome/engine/query-expand';
 import type { MeetingSummary } from '@risezome/engine/summarize';
@@ -275,6 +275,24 @@ export interface SkipInfo {
 }
 
 /**
+ * A raw tool/skill answer the router stage produced — the structured result of
+ * an executed skill (e.g. `github_count`), surfaced INDEPENDENTLY of synthesis.
+ * The tool result still rides into synthesis at source[0]; this is the standalone
+ * "the skill answered" signal a dev surface renders as its own card so the raw
+ * answer is always visible even when the synthesizer refuses. Mirrors
+ * `SkillResult` (kind/summary/items) plus the skill name + args + trace anchors.
+ */
+export interface SkillResultInfo {
+  readonly traceId: string;
+  readonly utteranceId: string;
+  readonly skillName: string;
+  readonly args: Record<string, unknown>;
+  readonly kind: SkillResultKind;
+  readonly summary: string;
+  readonly items: readonly SkillResultItem[];
+}
+
+/**
  * The output seam (KTD6). The core calls these at each emit point and never
  * imports a transport. `emitCard` returns the sink's card id so the core can
  * build the synthesis's source-card list. `recordTrace` is OPTIONAL — when a
@@ -294,6 +312,12 @@ export interface PipelineSink {
   synthesisRefusal(info: SynthesisRefusalInfo): void;
   recordMiss(miss: MissRecord): void;
   recordSkip(info: SkipInfo): void;
+  /** OPTIONAL. Present ⇒ the core emits the raw executed-skill answer as a
+   *  standalone signal (the dev page renders it as its own card, independent of
+   *  synthesis). Absent (prod/eval) ⇒ the core skips it; the tool result still
+   *  rides into synthesis at source[0] either way. Guarded with `?.` at the
+   *  call site so a sink that omits it is unaffected. */
+  recordSkillResult?(result: SkillResultInfo): void;
   /** OPTIONAL (KTD4/R5). Present ⇒ the core assembles + emits a per-stage
    *  trace; absent ⇒ the core does zero trace work. */
   recordTrace?(trace: PipelineTrace): void;
@@ -335,6 +359,27 @@ export interface StageRecord {
   /** Stage-specific structured payload (hit counts, scores, citation
    *  breakdown, …). */
   readonly data?: Record<string, unknown>;
+}
+
+/**
+ * One ranked retrieved hit, carried INLINE on the `hybrid-search` stage's
+ * `data.hits` so the trace is self-contained (a future persisted/after-the-fact
+ * trace needs no separate `card` events to render the retrieved set). Built only
+ * when tracing is on — zero-cost when no trace sink (it stays inside the
+ * `trace !== null` guard in core.ts). Mirrors the card surface the panel renders.
+ */
+export interface TraceHit {
+  /** 1-indexed rank within this retrieval batch (matches the `card` event). */
+  readonly rank: number;
+  readonly title: string;
+  /** Derived [0,1] similarity (the card's `score`). */
+  readonly score: number;
+  /** Cosine distance for a vector candidate; null for an FTS-only hit. */
+  readonly distance: number | null;
+  /** True when the chunk was a lexical (full-text-search) match. */
+  readonly ftsMatched: boolean;
+  /** Matched chunk is the doc's generated summary (U6). */
+  readonly isSummary: boolean;
 }
 
 /** The full per-utterance trace: one ordered list of stage records, anchored

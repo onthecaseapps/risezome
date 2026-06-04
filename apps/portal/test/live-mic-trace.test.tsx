@@ -67,6 +67,55 @@ describe('TracePanel', () => {
     expect(screen.getByText('clearly_filler')).toBeInTheDocument();
   });
 
+  it('renders hybrid-search cards from the stage data.hits (self-contained trace)', () => {
+    const trace: UtteranceTrace = {
+      traceId: 'tr_u3',
+      utteranceId: 'u3',
+      meetingId: 'm1',
+      stages: [
+        {
+          stage: 'hybrid-search',
+          status: 'ran',
+          latencyMs: 8,
+          data: {
+            count: 2,
+            hits: [
+              { rank: 1, title: 'Launch Plan', score: 0.9, distance: 0.12, ftsMatched: true, isSummary: true },
+              { rank: 2, title: 'Spec Doc', score: 0.7, distance: null, ftsMatched: false, isSummary: false },
+            ],
+          },
+        },
+      ],
+    };
+    // Pass NO `cards` prop content — the panel must render purely from data.hits.
+    render(<TracePanel trace={trace} cards={[]} utteranceText="what's the launch date?" />);
+    expect(screen.getByText('Launch Plan')).toBeInTheDocument();
+    expect(screen.getByText('Spec Doc')).toBeInTheDocument();
+    expect(screen.getByText('2 hit(s)')).toBeInTheDocument();
+    expect(screen.getByText('summary')).toBeInTheDocument(); // isSummary badge
+    expect(screen.getByText(/dist 0\.120/)).toBeInTheDocument(); // vector hit
+    expect(screen.getByText(/rrf 0\.7000/)).toBeInTheDocument(); // fts-only hit
+  });
+
+  it('falls back to the `cards` prop when an older trace carried only a count', () => {
+    const trace: UtteranceTrace = {
+      traceId: 'tr_u4',
+      utteranceId: 'u4',
+      meetingId: 'm1',
+      // `hits` is a NUMBER (the pre-enrichment shape), not an array.
+      stages: [{ stage: 'hybrid-search', status: 'ran', latencyMs: 8, data: { hits: 1 } }],
+    };
+    render(
+      <TracePanel
+        trace={trace}
+        cards={[{ rank: 1, title: 'Legacy Card', source: 'github', docType: 'doc', distance: 0.2 }]}
+        utteranceText="legacy"
+      />,
+    );
+    expect(screen.getByText('Legacy Card')).toBeInTheDocument();
+    expect(screen.getByText('1 hit(s)')).toBeInTheDocument();
+  });
+
   it('renders the synthesis STATUS + citation count for an answered utterance', () => {
     const trace: UtteranceTrace = {
       traceId: 'tr_u2',

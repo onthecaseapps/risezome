@@ -191,6 +191,37 @@ describe('synthesis events', () => {
   });
 });
 
+describe('recordSkillResult → `skillResult` event', () => {
+  it('DEFINES recordSkillResult (the dev card; prod/eval omit it)', () => {
+    const { socket } = recordingSocket();
+    const sink = createWsSink({ socket, synthesisId: 'synth_1', logger: noopLogger });
+    expect(sink.recordSkillResult).toBeDefined();
+  });
+
+  it('emits the standalone skillResult event in the exact pre-U3 shape', () => {
+    const { socket, sent } = recordingSocket();
+    const sink = createWsSink({ socket, synthesisId: 'synth_1', logger: noopLogger });
+    sink.recordSkillResult?.({
+      traceId: 'trace_7',
+      utteranceId: 'utt_7',
+      skillName: 'github_count',
+      args: { state: 'open' },
+      kind: 'count',
+      summary: '12 open issues',
+      items: [{ title: 'issue-1', url: 'https://x/1' }],
+    });
+    const ev = sent.find((e) => e.type === 'skillResult');
+    expect(ev).toBeDefined();
+    expect(ev?.traceId).toBe('trace_7');
+    expect(ev?.utteranceId).toBe('utt_7');
+    expect(ev?.skillName).toBe('github_count');
+    expect(ev?.args).toEqual({ state: 'open' });
+    expect(ev?.kind).toBe('count');
+    expect(ev?.summary).toBe('12 open issues');
+    expect(ev?.items).toEqual([{ title: 'issue-1', url: 'https://x/1' }]);
+  });
+});
+
 describe('recordTrace → `trace` event', () => {
   it('emits a trace event carrying the per-stage records', () => {
     const { socket, sent } = recordingSocket();
@@ -328,6 +359,75 @@ function gatedInput(): PipelineInput {
     queryText: 'What is the answer to the substantive question?',
   };
 }
+
+// ── Item B: the hybrid-search trace stage carries its OWN ranked hits ───────
+//
+// Drive the real core through the WS sink with a search that returns hits +
+// chunk/doc enrichment, and assert the emitted `trace` event's hybrid-search
+// stage carries `data.hits` (the self-contained ranked set) — not just a count
+// — so a persisted/after-the-fact trace is renderable without the `card` events.
+
+function fakeDbWithRows(chunkRows: object[], docRows: object[]): SupabaseClient {
+  const from = (table: string): unknown => {
+    const rows = table === 'doc_chunks' ? chunkRows : docRows;
+    const chain = {
+      select: () => chain,
+      in: () => chain,
+      eq: () => Promise.resolve({ data: rows, error: null }),
+    };
+    return chain;
+  };
+  return { from } as unknown as SupabaseClient;
+}
+
+describe('hybrid-search trace carries its own ranked hits (self-contained)', () => {
+  it('the `trace` event hybrid-search stage data carries hits[] + count', async () => {
+    const { socket, sent } = recordingSocket();
+    const wsSink = createWsSink({ socket, synthesisId: 'synth_1', logger: noopLogger });
+    const search = vi.fn(
+      async (..._a: Parameters<HybridSearchFn>): Promise<HybridHit[]> => [
+        { chunk_id: 'chunk_1', distance: 0.1, score: 0.42, ftsMatched: true },
+      ],
+    );
+    const db = fakeDbWithRows(
+      [{ chunk_id: 'chunk_1', doc_id: 'doc_1', domain: 'text', text: 'forty two', position: 0, is_summary: true }],
+      [{ id: 'doc_1', source: 'github', type: 'doc', title: 'Doc One', url: null }],
+    );
+    const { deps } = strictDeps({
+      db,
+      hybridSearch: search,
+      relevanceStrict: false, // no classifier needed: heuristic alone surfaces
+    });
+
+    await runPipeline(
+      {
+        utteranceText: 'What is the answer to the substantive question?',
+        utteranceId: 'utt_h',
+        meetingId: ORG,
+        orgId: ORG,
+        queryText: 'What is the answer to the substantive question?',
+      },
+      deps,
+      wsSink,
+    );
+
+    const trace = sent.find((e) => e.type === 'trace');
+    expect(trace).toBeDefined();
+    const stages = trace?.stages as PipelineTrace['stages'];
+    const hybrid = stages.find((s) => s.stage === 'hybrid-search');
+    expect(hybrid).toBeDefined();
+    const data = hybrid?.data as { hits: unknown[]; count: number };
+    expect(data.count).toBe(1);
+    expect(Array.isArray(data.hits)).toBe(true);
+    const h0 = data.hits[0] as Record<string, unknown>;
+    expect(h0.rank).toBe(1); // 1-indexed, matching the card event
+    expect(h0.title).toBe('Doc One');
+    expect(h0.distance).toBe(0.1);
+    expect(h0.ftsMatched).toBe(true);
+    expect(h0.isSummary).toBe(true);
+    expect(typeof h0.score).toBe('number'); // derived [0,1] similarity
+  });
+});
 
 describe('dev/prod parity — shared core, same surface/suppress decision', () => {
   it('a gated utterance: WS sink → retrieval-skip + trace(gate skip), no card; prod sink → same skip, no embed/search', async () => {
