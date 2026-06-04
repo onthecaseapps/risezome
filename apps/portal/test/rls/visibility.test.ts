@@ -1,9 +1,27 @@
+// @vitest-environment node
+// Pure DB/RLS test — runs in real Node, not jsdom. jsdom's BroadcastChannel
+// shim throws ERR_INVALID_ARG_TYPE on the supabase-js realtime client's
+// MessageEvent, which crashes the worker and aborts every test here (the same
+// reason meeting-participants.test.ts / meeting-privacy.test.ts pin node).
 /**
- * Per-person visibility RLS tests (plan U4). Verifies the narrowing from
- * org-wide to participant/owner scope across every captures-bearing table.
+ * Per-person visibility RLS tests (plan U4). Verifies that participant-scoped
+ * access is enforced across every captures-bearing table, with NO sibling leak.
  *
  * Covers R5, R6, R14, AE3, AE7. Same harness as orgs.test.ts; auto-skips
  * without a local Supabase stack unless RISEZOME_RUN_RLS_TESTS=1.
+ *
+ * ── ADAPTED FOR THE PRIVACY MODEL (permissions overhaul U2/U3) ───────────────
+ * These tests originally relied on the global participant-scoping invariant
+ * (is_meeting_participant). U3 replaced that with per-meeting privacy levels via
+ * can_access_meeting, and the new DEFAULT is `only_teammates` (org-wide), which
+ * would make every org member see every meeting and break the participant-deny
+ * assertions below. The INTENT here — "a non-participant teammate cannot read a
+ * meeting they didn't attend, on `meetings` OR any sibling capture table" — is
+ * exactly the `only_participants` privacy level, so insertMeeting() now stamps
+ * privacy_level='only_participants'. The org's privacy_floor is left at the
+ * permissive default (only_me) so that level is allowed. Behaviour and intent
+ * are preserved; only the explicit privacy level is now pinned (it used to be
+ * the implicit global default).
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -59,6 +77,8 @@ if (!stackReachable && !FORCE) {
 
       orgId = await createOrgWithMember(admin, 'Vis Org', manager.id, 'manager');
       await addMember(admin, orgId, member.id, 'member', false);
+      // Permissive floor (only_me) so insertMeeting can stamp only_participants.
+      await admin.from('org_privacy_config').insert({ org_id: orgId });
 
       meetingOfManager = await insertMeeting(admin, orgId, manager.id, 'https://meet/m1');
       await addParticipant(admin, meetingOfManager, manager.id);
@@ -78,6 +98,7 @@ if (!stackReachable && !FORCE) {
     });
 
     afterAll(async () => {
+      await admin.from('org_privacy_config').delete().eq('org_id', orgId);
       await admin.auth.admin.deleteUser(manager.id).catch(() => undefined);
       await admin.auth.admin.deleteUser(member.id).catch(() => undefined);
     });
@@ -231,7 +252,15 @@ async function insertMeeting(
 ): Promise<string> {
   const { data, error } = await admin
     .from('meetings')
-    .insert({ org_id: orgId, user_id: launcherId, conference_url: url, status: 'completed' })
+    .insert({
+      org_id: orgId,
+      user_id: launcherId,
+      conference_url: url,
+      status: 'completed',
+      // Pin to only_participants so the participant-scoped deny assertions hold
+      // under the U3 privacy model (the new default only_teammates is org-wide).
+      privacy_level: 'only_participants',
+    })
     .select('meeting_id')
     .single();
   if (error !== null || data === null)

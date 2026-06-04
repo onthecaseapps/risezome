@@ -237,6 +237,205 @@ if (!stackReachable && !FORCE) {
       expect(data?.privacy_floor).toBe('only_participants');
     });
   });
+
+  /**
+   * Privacy-aware RLS access matrix (permissions overhaul U3; KTD3/KTD4).
+   *
+   * Seeds ONE org with six personas and one meeting, then drives the meeting's
+   * privacy_level across all three levels, asserting via each persona's anon
+   * (RLS) client whether they can SELECT the `meetings` row:
+   *
+   *   persona               only_me   only_participants   only_teammates
+   *   owner (launcher)       YES        YES                 YES
+   *   participant-teammate   NO         YES                 YES
+   *   nonparticipant-team    NO         NO                  YES
+   *   admin (manager)        NO         NO                  YES
+   *   super_admin            YES        YES                 YES   (master key)
+   *   outsider (other org)   NO         NO                  NO
+   *
+   * [AE1/AE5] only_me hides the meeting from everyone but owner + super_admin.
+   * [AE6] only_participants is participant-scoped (degenerate all-external =
+   *       owner-only). [AE2] only_teammates is org-wide. The owner here is a
+   *       PLAIN member (not the super_admin) so "owner YES" is distinguishable
+   *       from the master-key bypass.
+   *
+   * The SIBLING-LEAK CHECK is the critical anti-leak guarantee (KTD3): for an
+   * only_me meeting, a denied non-participant teammate must ALSO be denied the
+   * meeting's cards / syntheses / meeting_events rows — not just `meetings` —
+   * while the owner and super_admin still see them.
+   */
+  describe('privacy-aware RLS access matrix (U3)', () => {
+    let admin: SupabaseClient;
+    let owner: TestUser; // plain member, launcher/owner of the meeting
+    let participant: TestUser; // teammate who attended the meeting
+    let nonParticipant: TestUser; // org member who did NOT attend
+    let adminMgr: TestUser; // manager (admin tier), not a participant
+    let superAdmin: TestUser; // super_admin, not a participant
+    let outsider: TestUser; // member of a DIFFERENT org
+    let orgId: string;
+    let otherOrgId: string;
+    let meetingId: string;
+
+    beforeAll(async () => {
+      admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      owner = await createTestUser(admin, 'rls-u3-owner@example.com');
+      participant = await createTestUser(admin, 'rls-u3-part@example.com');
+      nonParticipant = await createTestUser(admin, 'rls-u3-nonpart@example.com');
+      adminMgr = await createTestUser(admin, 'rls-u3-mgr@example.com');
+      superAdmin = await createTestUser(admin, 'rls-u3-sa@example.com');
+      outsider = await createTestUser(admin, 'rls-u3-out@example.com');
+
+      // Primary org: super_admin seeds it (so the last-super_admin invariant
+      // holds), then add the rest.
+      orgId = await createOrgWithMember(admin, 'U3 Access Org', superAdmin.id, 'super_admin');
+      await addMember(admin, orgId, owner.id, 'member', false);
+      await addMember(admin, orgId, participant.id, 'member', false);
+      await addMember(admin, orgId, nonParticipant.id, 'member', false);
+      await addMember(admin, orgId, adminMgr.id, 'manager', true);
+      await admin.from('org_privacy_config').insert({ org_id: orgId });
+
+      // A second org for the outsider (different org => never an org member here).
+      otherOrgId = await createOrgWithMember(admin, 'U3 Other Org', outsider.id, 'super_admin');
+      await admin.from('org_privacy_config').insert({ org_id: otherOrgId });
+
+      // Owner is a plain member; the meeting's user_id = owner.id.
+      const { data: m, error: mErr } = await admin
+        .from('meetings')
+        .insert({ org_id: orgId, user_id: owner.id, status: 'completed' })
+        .select('meeting_id')
+        .single();
+      if (mErr !== null || m === null) {
+        throw new Error(`Failed to create U3 meeting: ${mErr?.message ?? 'no row'}`);
+      }
+      meetingId = m.meeting_id as string;
+
+      // Only `participant` attended.
+      await admin
+        .from('meeting_participants')
+        .insert({ meeting_id: meetingId, user_id: participant.id });
+
+      // Seed one row in each sibling capture table for the sibling-leak check.
+      const cardSeed = await admin.from('cards').insert({
+        card_id: `u3-card-${meetingId}`,
+        meeting_id: meetingId,
+        org_id: orgId,
+        source: 'test',
+        type: 'test',
+        triggered_by: 'test',
+        trace_id: 'u3-trace',
+      });
+      if (cardSeed.error !== null) throw new Error(`card seed: ${cardSeed.error.message}`);
+      const synSeed = await admin.from('syntheses').insert({
+        synthesis_id: `u3-syn-${meetingId}`,
+        meeting_id: meetingId,
+        org_id: orgId,
+        status: 'done',
+        trace_id: 'u3-trace',
+      });
+      if (synSeed.error !== null) throw new Error(`synthesis seed: ${synSeed.error.message}`);
+      const evSeed = await admin.from('meeting_events').insert({
+        meeting_id: meetingId,
+        org_id: orgId,
+        type: 'test',
+      });
+      if (evSeed.error !== null) throw new Error(`event seed: ${evSeed.error.message}`);
+    });
+
+    afterAll(async () => {
+      await admin.from('cards').delete().eq('meeting_id', meetingId);
+      await admin.from('syntheses').delete().eq('meeting_id', meetingId);
+      await admin.from('meeting_events').delete().eq('meeting_id', meetingId);
+      await admin.from('meeting_participants').delete().eq('meeting_id', meetingId);
+      await admin.from('meetings').delete().eq('org_id', orgId);
+      await admin.from('org_privacy_config').delete().eq('org_id', orgId);
+      await admin.from('org_privacy_config').delete().eq('org_id', otherOrgId);
+      await admin.auth.admin.deleteUser(owner.id).catch(() => undefined);
+      await admin.auth.admin.deleteUser(participant.id).catch(() => undefined);
+      await admin.auth.admin.deleteUser(nonParticipant.id).catch(() => undefined);
+      await admin.auth.admin.deleteUser(adminMgr.id).catch(() => undefined);
+      // super_admin org rows are blocked from deletion by the last-super_admin
+      // trigger (documented residue; psql pre-clean clears the users + orphans).
+      await admin.auth.admin.deleteUser(superAdmin.id).catch(() => undefined);
+      await admin.auth.admin.deleteUser(outsider.id).catch(() => undefined);
+    });
+
+    /** Can this persona SELECT the meetings row? (RLS via their anon client.) */
+    async function canSeeMeeting(u: TestUser): Promise<boolean> {
+      const { data } = await u.client
+        .from('meetings')
+        .select('meeting_id')
+        .eq('meeting_id', meetingId);
+      return (data ?? []).length > 0;
+    }
+
+    /** Set the meeting's privacy via service-role (bypasses RLS + floor=only_me). */
+    async function setPrivacy(level: string): Promise<void> {
+      const { error } = await admin
+        .from('meetings')
+        .update({ privacy_level: level })
+        .eq('meeting_id', meetingId)
+        .eq('org_id', orgId);
+      if (error !== null) throw new Error(`setPrivacy(${level}) failed: ${error.message}`);
+    }
+
+    it('only_me: owner+super_admin YES; participant/nonparticipant/admin/outsider NO [AE1,AE5]', async () => {
+      await setPrivacy('only_me');
+      expect(await canSeeMeeting(owner)).toBe(true);
+      expect(await canSeeMeeting(superAdmin)).toBe(true); // master key
+      expect(await canSeeMeeting(participant)).toBe(false);
+      expect(await canSeeMeeting(nonParticipant)).toBe(false);
+      expect(await canSeeMeeting(adminMgr)).toBe(false); // managers NOT exempt
+      expect(await canSeeMeeting(outsider)).toBe(false);
+    });
+
+    it('only_participants: owner+participant+super_admin YES; nonparticipant/admin/outsider NO [AE6]', async () => {
+      await setPrivacy('only_participants');
+      expect(await canSeeMeeting(owner)).toBe(true);
+      expect(await canSeeMeeting(participant)).toBe(true);
+      expect(await canSeeMeeting(superAdmin)).toBe(true);
+      expect(await canSeeMeeting(nonParticipant)).toBe(false);
+      expect(await canSeeMeeting(adminMgr)).toBe(false);
+      expect(await canSeeMeeting(outsider)).toBe(false);
+    });
+
+    it('only_teammates: every org member YES; outsider NO [AE2]', async () => {
+      await setPrivacy('only_teammates');
+      expect(await canSeeMeeting(owner)).toBe(true);
+      expect(await canSeeMeeting(participant)).toBe(true);
+      expect(await canSeeMeeting(nonParticipant)).toBe(true);
+      expect(await canSeeMeeting(adminMgr)).toBe(true);
+      expect(await canSeeMeeting(superAdmin)).toBe(true);
+      expect(await canSeeMeeting(outsider)).toBe(false);
+    });
+
+    it('SIBLING-LEAK: only_me denied teammate sees 0 cards/syntheses/events; owner+SA see >0', async () => {
+      await setPrivacy('only_me');
+
+      // Denied non-participant teammate: zero rows across EVERY sibling table.
+      const np = nonParticipant.client;
+      expect(((await np.from('cards').select('card_id').eq('meeting_id', meetingId)).data ?? []).length).toBe(0);
+      expect(((await np.from('syntheses').select('synthesis_id').eq('meeting_id', meetingId)).data ?? []).length).toBe(0);
+      expect(((await np.from('meeting_events').select('event_id').eq('meeting_id', meetingId)).data ?? []).length).toBe(0);
+
+      // Owner sees its own only_me meeting's payload.
+      const ow = owner.client;
+      expect(((await ow.from('cards').select('card_id').eq('meeting_id', meetingId)).data ?? []).length).toBeGreaterThan(0);
+      expect(((await ow.from('syntheses').select('synthesis_id').eq('meeting_id', meetingId)).data ?? []).length).toBeGreaterThan(0);
+      expect(((await ow.from('meeting_events').select('event_id').eq('meeting_id', meetingId)).data ?? []).length).toBeGreaterThan(0);
+    });
+
+    it('super_admin master key sees rows across ALL capture tables for an only_me meeting [R3]', async () => {
+      await setPrivacy('only_me');
+      const sa = superAdmin.client;
+      expect(((await sa.from('meetings').select('meeting_id').eq('meeting_id', meetingId)).data ?? []).length).toBeGreaterThan(0);
+      expect(((await sa.from('cards').select('card_id').eq('meeting_id', meetingId)).data ?? []).length).toBeGreaterThan(0);
+      expect(((await sa.from('syntheses').select('synthesis_id').eq('meeting_id', meetingId)).data ?? []).length).toBeGreaterThan(0);
+      expect(((await sa.from('meeting_events').select('event_id').eq('meeting_id', meetingId)).data ?? []).length).toBeGreaterThan(0);
+    });
+  });
 }
 
 async function createTestUser(admin: SupabaseClient, email: string): Promise<TestUser> {
