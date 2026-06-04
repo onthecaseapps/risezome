@@ -270,6 +270,7 @@ describe('synthesis — flash-fix (the sink only persists once the core grounds)
       reason: 'ungrounded',
       latencyMs: 30,
       utteranceId: 'utt_2',
+      traceId: 'trace_x',
     };
     sink.synthesisRefusal(refusal);
     // The core records the miss separately (here we assert the sink forwards it).
@@ -288,6 +289,8 @@ describe('synthesis — flash-fix (the sink only persists once the core grounds)
     expect(insert?.row?.org_id).toBe(ORG);
     expect(insert?.row?.status).toBe('retracted');
     expect(insert?.row?.retracted_reason).toBe('ungrounded');
+    // trace_id is NOT NULL — refusals skip synthesisStart, so it must be set here.
+    expect(insert?.row?.trace_id).toBe('trace_x');
     expect(persistCalls.some((c) => c.type === 'synthesisRetracted')).toBe(true);
     expect(misses).toHaveLength(1);
     expect(misses[0]?.reason).toBe('ungrounded');

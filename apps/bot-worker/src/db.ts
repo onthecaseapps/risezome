@@ -116,16 +116,25 @@ export async function persistAndBroadcast(
       }
     }
   }
+  // transcript_key_version is `NOT NULL DEFAULT 1` (legacy marker). Only
+  // transcript rows with actual ciphertext carry a version (KMS_ESDK=2); for
+  // every other row — non-transcript events AND degraded transcript rows whose
+  // encryption failed (null ciphertext) — we OMIT both columns so the column
+  // default (1) applies. Writing an explicit null here defeats the default and
+  // violates the NOT NULL constraint, which would drop every event.
+  const insertRow: Record<string, unknown> = {
+    meeting_id: args.meetingId,
+    org_id: args.orgId,
+    type: args.type,
+    payload: storedPayload,
+  };
+  if (transcriptTextEnc !== null) {
+    insertRow.transcript_text_enc = transcriptTextEnc;
+    insertRow.transcript_key_version = transcriptKeyVersion;
+  }
   const { data, error } = await client
     .from('meeting_events')
-    .insert({
-      meeting_id: args.meetingId,
-      org_id: args.orgId,
-      type: args.type,
-      payload: storedPayload,
-      transcript_text_enc: transcriptTextEnc,
-      transcript_key_version: transcriptKeyVersion,
-    })
+    .insert(insertRow)
     .select('event_id')
     .single();
 

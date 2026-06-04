@@ -181,6 +181,7 @@ describe('synthesis events', () => {
       reason: 'ungrounded',
       latencyMs: 30,
       utteranceId: 'utt_1',
+      traceId: 'trace_1',
     };
     sink.synthesisRefusal(refusal);
     const ev = sent.find((e) => e.type === 'synthesisRefusal');

@@ -253,6 +253,9 @@ export interface SynthesisRefusalInfo {
   readonly reason: 'refusal' | 'ungrounded';
   readonly latencyMs: number;
   readonly utteranceId: string;
+  /** Per-run trace id. Refusals skip synthesisStart, so the supabase sink needs
+   *  it here to satisfy syntheses.trace_id (NOT NULL) on the retracted row. */
+  readonly traceId: string;
   // ── Eval-only intermediates (ignored by the supabase + ws sinks) ──
   /** Raw synthesizer output (with the STATUS line) — for an ungrounded answer
    *  this is the suppressed body; for a refusal it's the no_relevant_context

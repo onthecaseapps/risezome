@@ -283,6 +283,7 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
           retracted_reason: info.reason,
           citations: [],
           latency_ms: info.latencyMs,
+          trace_id: info.traceId,
           trigger_utterance_id: info.utteranceId,
         });
         if (insertResult.error !== null) {
