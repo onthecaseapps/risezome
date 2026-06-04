@@ -61,6 +61,9 @@ async function main(): Promise<void> {
     // Run the FULL real-time path so off-topic/adjacent suppression is measured
     // at the relevance gate (where production suppresses it), not just retrieval.
     relevanceClassifier: new AnthropicRelevanceClassifier({ apiKey: anthropicKey }),
+    // Strict routes substantive questions through the judge so the about-our-
+    // work gate (U3) can fire on them, not just on ambiguous utterances.
+    relevanceStrict: process.env.RISEZOME_RELEVANCE_STRICT === 'true',
   };
 
   const views: EvalQuestionView[] = [];

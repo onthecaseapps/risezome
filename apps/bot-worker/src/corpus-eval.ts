@@ -259,6 +259,14 @@ export interface EvalDeps {
   readonly relevanceSkipThreshold?: number;
   /** Optional rolling-summary context for the classifier (omitted in eval). */
   readonly relevanceContext?: RelevanceContext;
+  /**
+   * Strict routing (U3): when true, route `clearly_substantive` utterances
+   * through the LLM judge too (not just `ambiguous`), so the about-our-work
+   * gate can fire on questions. Without this, substantive questions bypass the
+   * judge and the strict prompt never sees them. Pairs with
+   * RISEZOME_RELEVANCE_STRICT on the classifier.
+   */
+  readonly relevanceStrict?: boolean;
 }
 
 /** A source exactly as the synthesizer saw it, plus retrieval scores. */
@@ -352,7 +360,13 @@ export async function evaluateQuestion(
   if (heuristic === 'clearly_filler') {
     return emptyView(question, 'relevance-gate: heuristic clearly_filler', elapsed(), true);
   }
-  if (heuristic === 'ambiguous' && deps.relevanceClassifier != null) {
+  // Route to the LLM judge on `ambiguous` always, and on `clearly_substantive`
+  // too when strict — otherwise substantive questions bypass the about-our-work
+  // gate (the reason a plain strict prompt couldn't catch the adjacent leaks).
+  const routeToJudge =
+    heuristic === 'ambiguous' ||
+    (deps.relevanceStrict === true && heuristic === 'clearly_substantive');
+  if (routeToJudge && deps.relevanceClassifier != null) {
     const threshold = deps.relevanceSkipThreshold ?? DEFAULT_RELEVANCE_SKIP_THRESHOLD;
     let decision;
     try {

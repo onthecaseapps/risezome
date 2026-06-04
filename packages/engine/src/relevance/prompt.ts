@@ -635,32 +635,38 @@ const STRICT_ABOUT_OUR_WORK = `
 
 ═══ ABOUT-OUR-WORK GATE (strict mode) ═══
 
-This refines the earlier "questions of any kind → surface" rule. You now have a SECOND reason to SKIP: the utterance is a real, substantive question — but it is NOT about THIS team's own work.
+This refines the earlier rules. You still SURFACE real questions about THIS team's own work — that remains the default. You now ALSO skip a NARROW class: a real question that is clearly NOT about their work.
 
-"This team's own work" = their own codebase, products, documentation, issues/PRs, infrastructure, and decisions — the things in THEIR indexed corpus. Surfacing context only helps when the question is about THEIR stuff.
+OUR STACK — tools this team actually uses. A question about how WE use any of these is ABOUT OUR WORK → SURFACE. Mentioning one of these is NOT a skip signal:
+Voyage (embeddings + reranker), Postgres / pgvector / Supabase, Anthropic / Claude / Haiku, Deepgram, Recall.ai, GitHub, Trello, Jira, Confluence, Inngest, Fly.io, Vercel, Next.js, Fastify.
 
-SKIP a substantive question (confidence 0.80–0.90) when it is any of:
-- GENERIC or CONCEPTUAL — "what is X", "how does X work in general / conceptually", "what's a good way to do X": asking about a concept or best practice in the abstract, not how THIS team does it.
-- ABOUT A DIFFERENT PLATFORM / VENDOR / TOOL — names another product (Elasticsearch, OpenAI, MongoDB, Pinecone, Weaviate, Cohere, Fly.io as a how-to, etc.): they're asking about that thing, not ours.
-- AN EXTERNAL FACT — third-party pricing, version news, public docs of someone else's API.
-- UNRELATED personal/logistical content that merely shares a word with a technical term ("reconcile my expenses", "the retention party", "a parking citation").
+SURFACE (about our work) is the DEFAULT for substantive questions. In particular, ALWAYS surface a question that asks for a SPECIFIC IMPLEMENTATION DETAIL — a constant, threshold, function name, model name, config value, table, env var, port, or a specific behavior/mechanism — because that answer lives in their own code/docs. This holds even when it names a stack tool and has no "our"/"we":
+- "what algorithm fuses the vector and full-text results in hybrid search" → SURFACE (our hybrid search)
+- "what cap on prompt size keeps anthropic prompt caching engaged for synthesis" → SURFACE (our synthesis)
+- "what postgres function parses the full-text search query" → SURFACE (our code)
+- "what embedding model does voyage use for text versus code" → SURFACE (our config)
+- "how does the github install flow protect against csrf on the oauth callback" → SURFACE (our install flow)
+- "what external services does the project depend on to run a live meeting" → SURFACE ("the project" = ours)
 
-The discriminator is OWNERSHIP, not topic — the same topic can go either way. SURFACE when the signal is ownership ("our", "the", "this codebase/repo/project", "we", or an obvious reference to their own components):
-- "how does OUR corpus search work" → SURFACE   vs   "what is reciprocal rank fusion in general" → SKIP
-- "how do WE chunk documents" → SURFACE          vs   "what's a good chunking strategy for pdfs" → SKIP
-- "what reranker do we use" → SURFACE            vs   "is rerank-2.5 better than cohere rerank" → SKIP
+SKIP (confidence 0.80–0.90) ONLY when the question clearly falls into one of these four:
+- ANOTHER PLATFORM WE DON'T USE — Elasticsearch, OpenAI, MongoDB, Pinecone, Weaviate, Cohere, DynamoDB, Redis-as-vector, etc. ("hybrid search in elasticsearch", "prompt caching on the openai api", "pinecone vs weaviate").
+- EXPLICITLY GENERIC / CONCEPTUAL — has "in general", "conceptually", a definitional "what is X", or "what's a good way / good strategy for X" with no tie to our system ("what is RRF in general", "how does RAG work conceptually", "good chunking strategy for pdfs").
+- AN EXTERNAL FACT — third-party pricing or version news ("how much does the anthropic api cost", "what's the newest claude model").
+- UNRELATED personal/logistical content sharing a word with a technical term ("reconcile my expenses", "the retention party", "a parking citation").
 
-Strict-skip examples (real questions, NOT about our work):
+If none of those four CLEARLY applies, SURFACE. When unsure whether a question is about our work or generic, SURFACE — a false skip silently drops a real question. The skip is for confident not-ours cases only.
+
+Strict-skip examples (NOT about our work):
 
 Utterance: "what is reciprocal rank fusion in general"
 Decision: skip
 Confidence: 0.85
-Reason: generic concept, not about our system
+Reason: explicitly generic concept
 
 Utterance: "how does retrieval augmented generation work conceptually"
 Decision: skip
 Confidence: 0.85
-Reason: conceptual, not about our pipeline
+Reason: explicitly conceptual
 
 Utterance: "how do you do hybrid search in elasticsearch"
 Decision: skip
@@ -670,67 +676,77 @@ Reason: different platform (elasticsearch), not our stack
 Utterance: "how does prompt caching work on the openai api"
 Decision: skip
 Confidence: 0.85
-Reason: different vendor (openai), not our usage
+Reason: different vendor (openai), we use anthropic
 
 Utterance: "how much does the anthropic api cost per million tokens"
 Decision: skip
 Confidence: 0.82
-Reason: external pricing fact, not about our code
+Reason: external pricing fact, not our implementation
 
 Utterance: "what is a good chunking strategy for pdfs"
 Decision: skip
-Confidence: 0.82
-Reason: generic best-practice, not our chunker
+Confidence: 0.80
+Reason: generic best-practice, no tie to our chunker
 
 Utterance: "how do i deploy a node app to fly io"
 Decision: skip
-Confidence: 0.83
-Reason: generic how-to, not our deployment
-
-Utterance: "how do github apps handle oauth in general"
-Decision: skip
-Confidence: 0.83
-Reason: generic, not our install flow
+Confidence: 0.82
+Reason: generic how-to
 
 Utterance: "is rerank 2.5 better than cohere rerank"
 Decision: skip
-Confidence: 0.82
-Reason: generic comparison, not our config
-
-Utterance: "how do you handle backoff when an api rate limits you in general"
-Decision: skip
-Confidence: 0.82
-Reason: generic, not our reconnect logic
+Confidence: 0.80
+Reason: generic comparison vs another vendor
 
 Utterance: "what is websearch to tsquery used for in the postgres docs"
 Decision: skip
 Confidence: 0.80
-Reason: generic postgres docs, not our usage
+Reason: explicitly the generic postgres docs, not our usage
 
 Utterance: "i need to reconcile my expense report before friday"
 Decision: skip
 Confidence: 0.88
-Reason: personal logistics; shares a word with a technical term
+Reason: personal logistics; word-collision only
 
-Still-SURFACE examples (about our work, even with generic terms):
+Still-SURFACE examples (about our work — specific implementation detail, even naming a stack tool):
 
-Utterance: "how is the corpus searched at query time"
+Utterance: "what embedding model does voyage use for text versus code"
 Decision: surface
-Reason: about our retrieval system
+Reason: our embedding config
 
-Utterance: "how does the rag pipeline work"
+Utterance: "what postgres function parses the full-text search query"
 Decision: surface
-Reason: about our pipeline
+Reason: our FTS code
 
-Utterance: "what reranker do we use"
+Utterance: "what algorithm fuses the vector and full-text results in hybrid search"
 Decision: surface
-Reason: about our config
+Reason: our hybrid search
 
-Utterance: "what embedding model do we use for code"
+Utterance: "what cap on prompt size keeps anthropic prompt caching engaged for synthesis"
 Decision: surface
-Reason: about our setup
+Reason: our synthesis caching detail
 
-DO NOT OVER-SKIP. When the utterance plausibly refers to THIS team's own code/product/docs, SURFACE. The about-our-work skip is for CONFIDENT not-ours cases (≥0.80) only — generic, another platform/vendor, an external fact, or unrelated. A borderline "could be about our stuff" still surfaces.`;
+Utterance: "what is the rrf constant and the vector distance floor in hybrid search"
+Decision: surface
+Reason: our specific constants
+
+Utterance: "what confidence does a relevance skip decision need before it is honored"
+Decision: surface
+Reason: our relevance threshold
+
+Utterance: "what is the difference between a delta reindex and a full reindex"
+Decision: surface
+Reason: our reindex behavior
+
+Utterance: "how does the github install flow protect against csrf on the oauth callback"
+Decision: surface
+Reason: our install flow
+
+Utterance: "what external services does the project depend on to run a live meeting"
+Decision: surface
+Reason: "the project" = ours
+
+DO NOT OVER-SKIP. A specific-implementation question, or anything that plausibly refers to THIS team's own code/product/docs, SURFACES — even if it names a tool from our stack and lacks "our"/"we". Skip only on the four clear not-ours cases above.`;
 
 /**
  * Build the relevance system prompt. With `strict`, appends the about-our-work
