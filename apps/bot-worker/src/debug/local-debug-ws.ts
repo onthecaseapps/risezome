@@ -36,46 +36,25 @@ import { SidecarRunner } from './sidecar-runner.js';
 import { DeepgramTranscriptionEngine } from './deepgram.js';
 import { logTranscripts } from '../transcript-log.js';
 import { VoyageEmbedder } from '@risezome/engine/embed';
-import {
-  AnthropicSynthesizer,
-  parseSynthesisOutput,
-  verifyCitations,
-  type SynthesisSource,
-} from '@risezome/engine/synthesize';
-import { hybridSearch } from '../corpus-search';
+import { AnthropicSynthesizer } from '@risezome/engine/synthesize';
+import { hybridSearch, isLowConfidenceHits } from '../corpus-search';
 import { optionalReranker } from '../reranker';
-import {
-  expandWinnersToParents,
-  parentDocEnabled,
-  dedupeByDoc,
-  type WinningChunk,
-} from '../parent-doc';
+import { expandWinnersToParents, parentDocEnabled, dedupeByDoc } from '../parent-doc';
 import { optionalQueryExpander } from '../query-expand';
-import { augmentQuery } from '@risezome/engine/query-expand';
-import { shouldExpandOnMiss } from '@risezome/engine/query-route';
 import { AnthropicSummarizer, type MeetingSummary } from '@risezome/engine/summarize';
 import {
   AnthropicRelevanceClassifier,
-  classifyRelevanceHeuristic,
   type RelevanceClassifier,
 } from '@risezome/engine/relevance';
-import {
-  AnthropicClassifier,
-  ClassifierProviderError,
-  isToolShaped,
-  type Classifier,
-} from '@risezome/engine/router';
-import {
-  SkillExecutionError,
-  formatAsSource,
-  type Skill,
-  type SkillContext,
-  type SkillRegistry,
-} from '@risezome/engine/skills';
+import { AnthropicClassifier, type Classifier } from '@risezome/engine/router';
+import { type SkillRegistry } from '@risezome/engine/skills';
 import type { AudioFrame } from '@risezome/shared-types';
 import type { Utterance } from '@risezome/engine/transcribe';
 import { MeetingSummarizerRuntime } from '../summarizer-runtime.js';
 import { buildSkillRegistry } from '../skills/index.js';
+import { runPipeline } from '../pipeline/core.js';
+import type { PipelineDeps, PipelineInput } from '../pipeline/contract.js';
+import { createWsSink } from '../pipeline/sink-ws.js';
 
 export interface LocalDebugHandlerArgs {
   readonly db: SupabaseClient;
@@ -92,20 +71,17 @@ export interface LocalDebugHandlerArgs {
   };
 }
 
+// Dev-only TOP_K — the broader recall the dev page intentionally used (the
+// canonical core default is also 5; passed explicitly via deps.topK).
 const TOP_K = 5;
 const SYNTHESIS_MAX_TOKENS = 200;
 
-// Relevance gate config — mirrors apps/bot-worker/src/retrieval.ts so the
-// debug pipeline has the same cost shape as production Recall.
-const RELEVANCE_SKIP_THRESHOLD = 0.7;
-const RELEVANCE_TIMEOUT_MS = 3_000;
-
-// Voyage embeddings are trained on natural sentences, not keyword bags.
-// Concatenating key_terms can EITHER boost recall on short follow-up
-// utterances OR degrade similarity. Ship gated behind an env flag for
-// the first live test so the behavior can be A/B'd against a recorded
-// session. Default OFF.
-const KEY_TERMS_BOOST_ENABLED = process.env.RISEZOME_DEBUG_KEY_TERMS_BOOST === 'true';
+// U3 strict "about-our-work" routing — route `clearly_substantive` through the
+// LLM judge too, not just `ambiguous`. Read from the SAME env var as the prod
+// Recall path (apps/bot-worker/src/retrieval.ts) so the dev sidecar and prod
+// make the same surface/suppress decision for a given utterance (the gate lives
+// in the shared core).
+const RELEVANCE_STRICT = process.env.RISEZOME_RELEVANCE_STRICT === 'true';
 
 // Rolling-context tuning. Five utterances or 60 seconds, whichever is
 // hit first — long enough to chain a question across 2-3 splits without
@@ -432,12 +408,11 @@ interface PipelineArgs {
   readonly utteranceId: string;
   /** Rolling prior-utterance context passed to the synthesizer. */
   readonly recentContext: readonly string[];
-  /** Snapshot of the rolling summary at call-fire time. The pipeline
-   *  reads `current_topic` + `open_questions` from this for the
-   *  classifier's coherence-in-context judgment, and reads `key_terms`
-   *  for the embedding-query boost (env-gated). Captured by the caller
-   *  ONCE at fire time so a mid-flight summary refresh can't produce
-   *  a torn read. */
+  /** Snapshot of the rolling summary at call-fire time. The core reads
+   *  `current_topic` + `open_questions` from this for the classifier's
+   *  coherence-in-context judgment, and reads `key_terms` for the embedding-
+   *  query boost (env-gated). Captured by the caller ONCE at fire time so a
+   *  mid-flight summary refresh can't produce a torn read. */
   readonly lastSummary: MeetingSummary | null;
   readonly socket: WebSocket;
   readonly args: LocalDebugHandlerArgs;
@@ -458,13 +433,21 @@ interface PipelineArgs {
 }
 
 /**
- * Per-utterance pipeline. Embeds → searches → emits cards → runs
- * synthesizer → streams textDeltas → emits done with citations. No
- * persistence; everything goes to the WS as JSON events.
+ * Per-utterance pipeline — a THIN ADAPTER onto the shared core (U3). It builds
+ * `PipelineInput` (single utterance + queryText + recentContext + lastSummary)
+ * and `PipelineDeps` (the same bot-worker search fns + classifiers as prod),
+ * then runs `runPipeline` behind a WS sink. The dev sidecar therefore runs the
+ * SAME core as production — so the U3 strict gate (`RISEZOME_RELEVANCE_STRICT`)
+ * now applies here too, fixing the drift where the dev page lacked it.
+ *
+ * Everything pipeline-specific (relevance gate → embed → search → CRAG →
+ * dedup/expand → cards → synthesis → citation-verify) lives in the core; this
+ * adapter keeps ONLY the dev transcription-source plumbing (continuation merge,
+ * rolling finals, abort-on-new-utterance) in the handler above. The WS sink
+ * defines `recordTrace`, so the core assembles + streams a per-stage `trace`
+ * event to the page (dev = trace ON; prod's sink omits recordTrace).
  */
 async function runDebugPipeline(p: PipelineArgs): Promise<void> {
-  const traceId = randomUUID();
-  const synthesisId = p.synthesisId;
   const {
     socket,
     args,
@@ -473,627 +456,61 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     relevanceClassifier,
     routerClassifier,
     skillRegistry,
-    abortSignal,
   } = p;
 
   args.logger.info(
-    { traceId, synthesisId, utteranceId: p.utteranceId, text: p.utteranceText },
+    { synthesisId: p.synthesisId, utteranceId: p.utteranceId, text: p.utteranceText },
     'local-debug.pipeline.start',
   );
 
-  // ── Relevance gate: heuristic first, LLM only on ambiguous.
-  // Mirrors the production pipeline's two-stage gate so debug-cost shape
-  // matches production. Pass classifier context (current_topic +
-  // open_questions) from the rolling summary so a fragment like "in the
-  // app and where in the code base are they" is judged in-context as a
-  // coherent continuation rather than as isolated filler.
-  const heuristic = classifyRelevanceHeuristic(p.utteranceText);
-  if (heuristic === 'clearly_filler') {
-    args.logger.info(
-      { traceId, utteranceId: p.utteranceId, relevance: heuristic },
-      'local-debug.relevance.skip.filler',
-    );
-    send(socket, {
-      type: 'retrieval-skip',
-      reason: 'heuristic-filler',
-      traceId,
-      utteranceId: p.utteranceId,
-    });
-    return;
-  }
-  if (heuristic === 'ambiguous') {
-    const controller = new AbortController();
-    const timeoutHandle = setTimeout(() => controller.abort(), RELEVANCE_TIMEOUT_MS);
-    try {
-      const result = await relevanceClassifier.classify(p.utteranceText, {
-        signal: controller.signal,
-        ...(p.lastSummary !== null && {
-          context: {
-            current_topic: p.lastSummary.current_topic,
-            open_questions: p.lastSummary.open_questions,
-          },
-        }),
-      });
-      if (result.decision === 'skip' && result.confidence >= RELEVANCE_SKIP_THRESHOLD) {
-        args.logger.info(
-          {
-            traceId,
-            utteranceId: p.utteranceId,
-            confidence: result.confidence,
-            reason: result.reason,
-            hadContext: p.lastSummary !== null,
-          },
-          'local-debug.relevance.skip.llm',
-        );
-        send(socket, {
-          type: 'retrieval-skip',
-          reason: 'classifier-skip',
-          traceId,
-          utteranceId: p.utteranceId,
-          confidence: result.confidence,
-        });
-        return;
-      }
-    } catch (err) {
-      // Fail-open: classifier error doesn't block retrieval. Log and continue.
-      args.logger.warn(
-        { traceId, err: String(err), utteranceId: p.utteranceId },
-        'local-debug.relevance.llm.failed',
-      );
-    } finally {
-      clearTimeout(timeoutHandle);
-    }
-    if (abortSignal.aborted) {
-      args.logger.info({ traceId }, 'local-debug.pipeline.aborted.post-relevance');
-      return;
-    }
-  }
+  const lastSummary = p.lastSummary ?? undefined;
 
-  // ── Router gate: launch the classifier in parallel with embed when
-  // the utterance is tool-shaped and at least one skill is registered.
-  // Resolved after retrieval, before synthesis. On a tool intent the
-  // chosen skill's result becomes source[0] (cited as [1]).
-  let classifierPromise: ReturnType<Classifier['classify']> | null = null;
-  let classifierStartedAt = 0;
-  if (skillRegistry.size() > 0 && isToolShaped(p.utteranceText)) {
-    classifierStartedAt = Date.now();
-    const hasContext =
-      p.lastSummary !== null &&
-      ((p.lastSummary.current_topic?.length ?? 0) > 0 || p.lastSummary.open_questions.length > 0);
-    args.logger.info(
-      { traceId, utteranceId: p.utteranceId, hadContext: hasContext },
-      'local-debug.classifier.start',
-    );
-    classifierPromise = routerClassifier.classify(
-      {
-        utterance: p.utteranceText,
-        registry: skillRegistry,
-        ...(hasContext && {
-          context: {
-            current_topic: p.lastSummary.current_topic,
-            open_questions: p.lastSummary.open_questions,
-          },
-        }),
-      },
-      abortSignal,
-    );
-    classifierPromise.catch(() => undefined);
-  }
-
-  // ── Embed
-  // Optional key_terms boost: append project nouns the rolling summary
-  // extracted so short follow-up utterances ("about that auth flow")
-  // carry the topic vocabulary into the embedding. Env-gated default-
-  // off; see KEY_TERMS_BOOST_ENABLED comment for rationale.
-  const keyTermsBoost =
-    KEY_TERMS_BOOST_ENABLED && p.lastSummary !== null && p.lastSummary.key_terms.length > 0
-      ? ` ${p.lastSummary.key_terms.join(' ')}`
-      : '';
-  const embedText = p.utteranceText + keyTermsBoost;
-  send(socket, { type: 'embed-start', utteranceId: p.utteranceId, traceId });
-  const embedStartMs = Date.now();
-  const embedResult = await embedder.embed({
-    items: [{ text: embedText, domain: 'text' }],
-  });
-  args.logger.info({ traceId, latencyMs: Date.now() - embedStartMs }, 'local-debug.embed.done');
-  if (abortSignal.aborted) {
-    args.logger.info({ traceId }, 'local-debug.pipeline.aborted.post-embed');
-    return;
-  }
-  const vec = embedResult.vectors[0]?.vector;
-  if (vec === undefined) {
-    send(socket, { type: 'retrieval-skip', reason: 'embed_no_vector', traceId });
-    return;
-  }
-
-  // ── Hybrid search: dense (vector) + lexical (FTS) fused with RRF and
-  // gated by a relevance floor (see corpus-search.ts). Lexical recall is
-  // what surfaces specific-noun chunks ("what ai models") pure vector
-  // missed; the floor drops weak-tail noise.
-  const queryLiteral = `[${Array.from(vec).join(',')}]`;
-  const reranker = optionalReranker();
-  let hits = await hybridSearch(args.db, {
-    orgId: args.orgId,
-    queryVectorLiteral: queryLiteral,
-    queryText: embedText,
-    limit: TOP_K,
-    reranker,
-    logger: args.logger,
-  });
-
-  // CRAG on-miss expansion (U9) gated by adaptive routing (U10): on a miss,
-  // expand the query with candidate terms and re-retrieve once.
-  if (hits.length === 0) {
-    const expander = optionalQueryExpander();
-    if (expander !== undefined && shouldExpandOnMiss(embedText)) {
-      try {
-        const augmented = augmentQuery(embedText, await expander(embedText));
-        if (augmented !== embedText) {
-          const expandedVec = (
-            await embedder.embed({ items: [{ text: augmented, domain: 'text' }] })
-          ).vectors[0]?.vector;
-          if (expandedVec !== undefined) {
-            hits = await hybridSearch(args.db, {
-              orgId: args.orgId,
-              queryVectorLiteral: `[${Array.from(expandedVec).join(',')}]`,
-              queryText: augmented,
-              limit: TOP_K,
-              reranker,
-              logger: args.logger,
-            });
-            args.logger.info({ traceId, hits: hits.length }, 'local-debug.crag.expanded');
-          }
-        }
-      } catch (err) {
-        args.logger.warn({ traceId, err: String(err) }, 'local-debug.crag.failed');
-      }
-    }
-  }
-
-  // ── Resolve the router classifier + run the chosen skill (if any).
-  // Done here, after retrieval, so a tool answer survives an empty
-  // retrieval: "how many open issues" gets github_count even when no
-  // vector hits are relevant.
-  const toolSource = await resolveToolSource({
-    classifierPromise,
-    classifierStartedAt,
-    skillRegistry,
-    db: args.db,
-    orgId: args.orgId,
-    socket,
+  // ── Source seam: build PipelineInput. The dev sidecar embeds/searches the
+  // single (continuation-merged) utterance — a legitimate per-source difference
+  // from prod's rolling-window queryText (KTD).
+  const input: PipelineInput = {
+    utteranceText: p.utteranceText,
     utteranceId: p.utteranceId,
-    abortSignal,
+    meetingId: args.orgId, // dev sidecar has no meeting; org doubles as the scope id
+    orgId: args.orgId,
+    queryText: p.utteranceText,
+    ...(p.recentContext.length > 0 ? { recentContext: p.recentContext } : {}),
+    ...(lastSummary !== undefined ? { lastSummary } : {}),
+  };
+
+  // ── PipelineDeps: the same bot-worker Supabase-bound capabilities prod
+  // injects. relevanceStrict comes from RISEZOME_RELEVANCE_STRICT so the dev
+  // page gets the U3 about-our-work routing prod has.
+  const deps: PipelineDeps = {
+    db: args.db,
+    embedder,
+    synthesizer,
+    relevanceClassifier,
+    routerClassifier,
+    skillRegistry,
+    hybridSearch: (params) => hybridSearch(args.db, params),
+    isLowConfidenceHits,
+    optionalReranker,
+    optionalQueryExpander,
+    dedupeByDoc,
+    expandWinnersToParents: (orgId, winners) =>
+      expandWinnersToParents(args.db, orgId, winners),
+    parentDocEnabled,
     logger: args.logger,
-    traceId,
+    relevanceStrict: RELEVANCE_STRICT,
+    topK: TOP_K,
+  };
+
+  // ── WS sink: maps every core result onto the existing local-debug events and
+  // adds the `trace` event (dev = trace ON).
+  const sink = createWsSink({
+    socket,
+    synthesisId: p.synthesisId,
+    logger: args.logger,
+    onComplete: p.onComplete,
   });
 
-  if (hits.length === 0 && toolSource === null) {
-    send(socket, { type: 'retrieval-skip', reason: 'no_hits', traceId });
-    return;
-  }
-
-  // ── Build per-rank source list + emit card events (skip enrichment
-  // entirely when retrieval found nothing but a tool answered).
-  const sources: SynthesisSource[] = [];
-  const cardIds: string[] = [];
-  if (hits.length > 0) {
-    // ── Enrich with chunk + doc metadata
-    const chunkIds = hits.map((h) => h.chunk_id);
-    const { data: chunkRows } = await args.db
-      .from('doc_chunks')
-      .select('chunk_id, doc_id, domain, text, position, is_summary')
-      .in('chunk_id', chunkIds);
-    const chunkById = new Map(
-      (chunkRows ?? []).map((c) => [
-        c.chunk_id as string,
-        {
-          doc_id: c.doc_id as string,
-          domain: c.domain as string,
-          text: c.text as string,
-          position: c.position as number,
-          isSummary: c.is_summary === true,
-        },
-      ]),
-    );
-    const docIds = Array.from(new Set(Array.from(chunkById.values()).map((c) => c.doc_id)));
-    const { data: docRows } = await args.db
-      .from('docs')
-      .select('id, source, type, title, url')
-      .in('id', docIds);
-    const docById = new Map(
-      (docRows ?? []).map((d) => [
-        d.id as string,
-        {
-          source: d.source as string,
-          type: d.type as string,
-          title: d.title as string,
-          url: (d.url as string | null) ?? null,
-        },
-      ]),
-    );
-
-    // Parent-document retrieval (U8): collapse multiple retrieved chunks of one
-    // doc to a single best-ranked source, then expand that survivor to its
-    // parent context. Expanded text becomes BOTH card body and source text so
-    // the model's verbatim quote stays findable for citation verification +
-    // highlight. One card per doc. No-op (raw per-chunk hits) when off.
-    const sourceHits = parentDocEnabled()
-      ? dedupeByDoc(hits, (h) => chunkById.get(h.chunk_id)?.doc_id)
-      : hits;
-    const winners: WinningChunk[] = sourceHits.flatMap((h) => {
-      const c = chunkById.get(h.chunk_id);
-      return c === undefined
-        ? []
-        : [{ chunkId: h.chunk_id, docId: c.doc_id, position: c.position, text: c.text }];
-    });
-    const expandedByChunk = parentDocEnabled()
-      ? await expandWinnersToParents(args.db, args.orgId, winners)
-      : new Map<string, string>();
-
-    for (let i = 0; i < sourceHits.length; i++) {
-      const hit = sourceHits[i]!;
-      const chunk = chunkById.get(hit.chunk_id);
-      if (chunk === undefined) continue;
-      const doc = docById.get(chunk.doc_id);
-      if (doc === undefined) continue;
-      const cardId = `dbg_${randomUUID()}`;
-      cardIds.push(cardId);
-      const expanded = expandedByChunk.get(hit.chunk_id) ?? chunk.text;
-      // Card body leads with the matched excerpt (focus) when U8 expanded a
-      // SUMMARY chunk to body chunks (so the summary the model quoted is in the
-      // displayed body and highlights land); synthesis text stays the expanded
-      // parent (the summary is passed separately as `focus`).
-      const cardBody = expanded.includes(chunk.text) ? expanded : `${chunk.text}\n\n${expanded}`;
-      // U8: judge relevance from the tight child (`focus`), formulate from the
-      // expanded parent (`text`). docId lets citation verification accept a
-      // quote verbatim in a sibling chunk of the same doc at another rank.
-      sources.push({
-        rank: i + 1,
-        title: doc.title,
-        text: expanded,
-        focus: chunk.text,
-        docId: chunk.doc_id,
-      });
-      send(socket, {
-        type: 'card',
-        traceId,
-        utteranceId: p.utteranceId,
-        cardId,
-        rank: i + 1,
-        docId: chunk.doc_id,
-        title: doc.title,
-        source: doc.source,
-        docType: doc.type,
-        url: doc.url,
-        snippet: cardBody.slice(0, 400),
-        body: cardBody,
-        // True when the matched chunk is the doc's generated summary (U6).
-        isSummary: chunk.isSummary,
-        // FTS-only hits have no cosine distance; surface the fused RRF score
-        // instead so the debug panel still shows a relevance signal.
-        distance: hit.distance ?? undefined,
-        score: hit.score,
-        ftsMatched: hit.ftsMatched,
-      });
-    }
-  }
-  if (sources.length === 0 && toolSource === null) {
-    send(socket, { type: 'retrieval-skip', reason: 'enrichment_empty', traceId });
-    return;
-  }
-
-  if (abortSignal.aborted) {
-    args.logger.info({ traceId }, 'local-debug.pipeline.aborted.post-cards');
-    return;
-  }
-
-  // Tool result, when present, takes source[0]; cards follow at
-  // [1..N]. The synthesizer cites by 1-indexed array position.
-  const synthesisSources = toolSource !== null ? [toolSource, ...sources] : sources;
-  const cardRankOffset = toolSource !== null ? 1 : 0;
-
-  // ── Synthesize, stream textDeltas, parse on done
-  args.logger.info(
-    {
-      traceId,
-      synthesisId,
-      sources: synthesisSources.length,
-      hasToolSource: toolSource !== null,
-      totalSourceChars: synthesisSources.reduce((n, s) => n + s.text.length, 0),
-      recentContextSize: p.recentContext.length,
-    },
-    'local-debug.synthesis.start',
-  );
-  // Flash fix: do NOT emit synthesisStart up front. Grounded-or-nothing can't
-  // be decided until `done`, and streaming a body optimistically then
-  // retracting an ungrounded/refused answer is exactly what made the debug
-  // panel flash text that then vanished (frequent when talking off-corpus).
-  // Buffer here; reveal the whole answer at once on `done`, and only when it
-  // actually grounds. A prior grounded answer therefore survives subsequent
-  // filler instead of being wiped by a replace-then-refuse.
-  let accumulated = '';
-  let deltaCount = 0;
-  let sawStart = false;
-  let sawDone = false;
-  const synthStartMs = Date.now();
-  try {
-    for await (const chunk of synthesizer.synthesize(
-      {
-        utterance: p.utteranceText,
-        sources: synthesisSources,
-        ...(p.recentContext.length > 0 ? { recentContext: p.recentContext } : {}),
-      },
-      abortSignal,
-    )) {
-      if (abortSignal.aborted) {
-        args.logger.info({ traceId, deltaCount }, 'local-debug.synthesis.aborted');
-        return;
-      }
-      if (chunk.type === 'start') {
-        sawStart = true;
-        args.logger.info(
-          {
-            traceId,
-            model: chunk.model,
-            inputTokens: chunk.usage.inputTokens,
-            cacheRead: chunk.usage.cacheReadTokens,
-          },
-          'local-debug.synthesis.upstream-start',
-        );
-      } else if (chunk.type === 'textDelta') {
-        // Buffer only (see the flash-fix note above): accumulate so we can
-        // parse + verify citations on `done`; nothing is streamed mid-flight.
-        accumulated += chunk.delta;
-        deltaCount += 1;
-      } else if (chunk.type === 'done') {
-        sawDone = true;
-        const parsed = parseSynthesisOutput(accumulated, synthesisSources.length);
-        const { verified, droppedQuoted, downgradedToBare } = verifyCitations(
-          parsed.citations,
-          synthesisSources,
-        );
-        const richCitations = verified.flatMap((c) => {
-          // With a tool source at [1], card N is at rank N+1. Subtract
-          // the offset to map a citation rank back to its cardId.
-          const cardId = cardIds[c.rank - 1 - cardRankOffset];
-          if (cardId === undefined) return [];
-          return [
-            {
-              rank: c.rank,
-              cardId,
-              position: c.position,
-              ...(c.quote !== undefined ? { quote: c.quote } : {}),
-            },
-          ];
-        });
-        args.logger.info(
-          {
-            traceId,
-            synthesisId,
-            latencyMs: Date.now() - synthStartMs,
-            deltaCount,
-            outputChars: accumulated.length,
-            isRefusal: parsed.isRefusal,
-            citationCount: richCitations.length,
-            droppedQuoted,
-            downgradedToBare,
-            // Diagnostic: what the model actually cited (rank + quote prefix)
-            // and a preview of the answer, so a grounded-in-0 result can be
-            // traced to "no citations emitted" vs "verifier dropped them".
-            rawCitations: parsed.citations.map((c) => ({
-              rank: c.rank,
-              quote: c.quote?.slice(0, 60),
-            })),
-            answerPreview: parsed.text.slice(0, 200),
-            sourceTitles: synthesisSources.map(
-              (s, i) => `[${String(i + 1)}] ${s.title.slice(0, 60)}`,
-            ),
-            stopReason: chunk.stopReason,
-            usage: chunk.usage,
-          },
-          'local-debug.synthesis.done',
-        );
-        // Grounded-or-nothing: an answer with no surviving citation isn't
-        // grounded in the retrieved sources (the model cited nothing, or
-        // every quote failed verification). Treat it like a refusal so the
-        // page doesn't show a confident, unsourced paragraph. The debug
-        // view surfaces WHY (production would simply render nothing).
-        const ungrounded = !parsed.isRefusal && richCitations.length === 0;
-        const declined = parsed.isRefusal || ungrounded;
-        const debugText = parsed.isRefusal
-          ? (parsed.refusalReason ?? 'No relevant context.')
-          : ungrounded
-            ? 'Ungrounded: the answer had no citation matching a retrieved source, so it was suppressed.'
-            : parsed.text;
-        if (declined) {
-          // No synthesisStart was emitted, so this is a UI no-op (the reducer
-          // ignores a refusal for an unknown synthesisId) — nothing flashes.
-          // The reason is captured in the log above + the event payload.
-          send(socket, {
-            type: 'synthesisRefusal',
-            synthesisId,
-            stopReason: chunk.stopReason,
-            accumulatedText: debugText,
-            citations: richCitations,
-            usage: chunk.usage,
-          });
-          return;
-        }
-        // Grounded: reveal the whole answer in one shot — start, a single full
-        // delta, then done — so a complete, cited synthesis appears at once
-        // with no optimistic-then-retracted flash.
-        send(socket, {
-          type: 'synthesisStart',
-          synthesisId,
-          sourceCardIds: cardIds,
-          traceId,
-          utteranceId: p.utteranceId,
-        });
-        send(socket, { type: 'synthesisDelta', synthesisId, delta: parsed.text });
-        send(socket, {
-          type: 'synthesisDone',
-          synthesisId,
-          stopReason: chunk.stopReason,
-          accumulatedText: debugText,
-          citations: richCitations,
-          usage: chunk.usage,
-        });
-        // Close the loop: feed the grounded answer to the summarizer so the
-        // question it resolved retires from the next rolling summary (grounded
-        // only — a declined answer resolves nothing).
-        p.onComplete(parsed.text);
-        return;
-      }
-    }
-    // for-await fell through without seeing 'done' — that's a stream
-    // close mid-flight (the most likely cause of the user-reported
-    // "stuck at The" symptom). Surface it loudly so we don't silently
-    // wedge.
-    args.logger.warn(
-      {
-        traceId,
-        synthesisId,
-        sawStart,
-        sawDone,
-        deltaCount,
-        accumulatedSoFar: accumulated.slice(0, 200),
-        latencyMs: Date.now() - synthStartMs,
-      },
-      'local-debug.synthesis.stream-ended-without-done',
-    );
-    send(socket, {
-      type: 'synthesisError',
-      synthesisId,
-      message: `Stream ended after ${String(deltaCount)} delta(s) without a done event`,
-    });
-  } catch (err) {
-    if (abortSignal.aborted) {
-      args.logger.info({ traceId, deltaCount }, 'local-debug.synthesis.aborted.catch');
-      return;
-    }
-    args.logger.error(
-      {
-        err: err instanceof Error ? err.message : String(err),
-        stack: err instanceof Error ? err.stack : undefined,
-        traceId,
-        synthesisId,
-        deltaCount,
-        accumulatedSoFar: accumulated.slice(0, 200),
-      },
-      'local-debug.synthesis.error',
-    );
-    send(socket, {
-      type: 'synthesisError',
-      synthesisId,
-      message: (err as Error).message,
-    });
-  }
-}
-
-/**
- * Resolve the router classifier promise (if one was launched) and, on
- * a tool intent, dispatch the chosen skill. Returns the formatted
- * SynthesisSource for the synthesizer's source[0], or null when the
- * classifier returned `rag`, the skill was unknown, or anything failed
- * (fail-open — the pipeline falls through to RAG-only). Mirrors the
- * production Recall path in apps/bot-worker/src/retrieval.ts.
- */
-async function resolveToolSource(p: {
-  classifierPromise: ReturnType<Classifier['classify']> | null;
-  classifierStartedAt: number;
-  skillRegistry: SkillRegistry;
-  db: SupabaseClient;
-  orgId: string;
-  socket: WebSocket;
-  utteranceId: string;
-  abortSignal: AbortSignal;
-  logger: { info: (obj: object, msg?: string) => void; warn: (obj: object, msg?: string) => void };
-  traceId: string;
-}): Promise<SynthesisSource | null> {
-  if (p.classifierPromise === null) return null;
-  try {
-    const result = await p.classifierPromise;
-    p.logger.info(
-      {
-        traceId: p.traceId,
-        utteranceId: p.utteranceId,
-        intent: result.intent,
-        ...(result.intent === 'tool' && { skillName: result.skillName }),
-        latencyMs: Date.now() - p.classifierStartedAt,
-      },
-      'local-debug.classifier.done',
-    );
-    if (result.intent !== 'tool') return null;
-
-    const skill: Skill | undefined = p.skillRegistry.lookup(result.skillName);
-    if (skill === undefined) {
-      p.logger.warn(
-        { traceId: p.traceId, skillName: result.skillName, code: 'unknown-skill' },
-        'local-debug.skill.failed',
-      );
-      return null;
-    }
-    const skillStartedAt = Date.now();
-    p.logger.info(
-      { traceId: p.traceId, skillName: result.skillName, args: result.args },
-      'local-debug.skill.start',
-    );
-    try {
-      const skillContext: SkillContext = {
-        db: p.db,
-        orgId: p.orgId,
-        signal: p.abortSignal,
-      };
-      const skillResult = await skill.handler(result.args, skillContext);
-      p.logger.info(
-        {
-          traceId: p.traceId,
-          skillName: result.skillName,
-          latencyMs: Date.now() - skillStartedAt,
-          resultShape: skillResult.kind,
-          summary: skillResult.summary,
-        },
-        'local-debug.skill.done',
-      );
-      // Emit the structured tool answer as its own card so it's always
-      // visible on the page — independent of whether the synthesizer
-      // chooses to relay it (it can refuse). The synthesizer still gets
-      // the source for prose framing, but the raw answer never hides.
-      send(p.socket, {
-        type: 'skillResult',
-        traceId: p.traceId,
-        utteranceId: p.utteranceId,
-        skillName: result.skillName,
-        args: result.args,
-        kind: skillResult.kind,
-        summary: skillResult.summary,
-        items: skillResult.items ?? [],
-      });
-      return formatAsSource(skillResult, result.skillName, result.args);
-    } catch (err) {
-      const code = err instanceof SkillExecutionError ? err.executionCode : 'execution-error';
-      p.logger.warn(
-        { traceId: p.traceId, skillName: result.skillName, code, message: (err as Error).message },
-        'local-debug.skill.failed',
-      );
-      return null;
-    }
-  } catch (err) {
-    if (err instanceof ClassifierProviderError) {
-      p.logger.warn(
-        { traceId: p.traceId, code: err.kind, message: err.message },
-        'local-debug.classifier.error',
-      );
-    } else if (err instanceof Error && err.name === 'AbortError') {
-      // Aborted — silent.
-    } else {
-      p.logger.warn(
-        { traceId: p.traceId, message: (err as Error).message },
-        'local-debug.classifier.error',
-      );
-    }
-    return null;
-  }
+  await runPipeline(input, deps, sink);
 }
 
 function forwardUtterance(socket: WebSocket, utt: Utterance): void {
