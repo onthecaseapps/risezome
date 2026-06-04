@@ -454,6 +454,13 @@ export async function runPipeline(
       utteranceId: input.utteranceId,
       traceId,
       ...(doc.url !== null ? { url: doc.url } : {}),
+      // Eval-only source intermediates (the supabase + ws sinks ignore these).
+      rrfScore: hit.score,
+      distance: hit.distance,
+      ftsMatched: hit.ftsMatched,
+      position: chunk.position,
+      focus: chunk.text,
+      chunkId: hit.chunk_id,
     };
 
     const emittedCard = await sink.emitCard(card);
@@ -702,6 +709,10 @@ async function runSynthesis(args: {
             reason: 'refusal',
             latencyMs,
             utteranceId: input.utteranceId,
+            rawSynthesis: accumulated,
+            answer: parsed.text,
+            refusalReason: parsed.refusalReason ?? null,
+            citationDetails: [],
           });
           sink.recordMiss({
             verbatimQuestion: input.queryText,
@@ -759,6 +770,10 @@ async function runSynthesis(args: {
             reason: 'ungrounded',
             latencyMs,
             utteranceId: input.utteranceId,
+            rawSynthesis: accumulated,
+            answer: parsed.text,
+            refusalReason: parsed.refusalReason ?? null,
+            citationDetails: detail,
           });
           sink.recordMiss({
             verbatimQuestion: input.queryText,
@@ -795,6 +810,8 @@ async function runSynthesis(args: {
           stopReason: chunk.stopReason,
           latencyMs,
           utteranceId: input.utteranceId,
+          rawSynthesis: accumulated,
+          citationDetails: detail,
         });
         if (trace !== null) {
           trace.push(

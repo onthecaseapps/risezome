@@ -19,7 +19,7 @@
 //        recordMiss, recordSkip, and the optional recordTrace.
 
 import type { VoyageEmbedder } from '@risezome/engine/embed';
-import type { Synthesizer } from '@risezome/engine/synthesize';
+import type { Synthesizer, CitationDetail } from '@risezome/engine/synthesize';
 import type { MissRecord } from '@risezome/engine/gaps';
 import type { RelevanceClassifier, RelevanceContext } from '@risezome/engine/relevance';
 import type { Classifier } from '@risezome/engine/router';
@@ -181,6 +181,25 @@ export interface PipelineCard {
   readonly utteranceId: string;
   readonly traceId: string;
   readonly url?: string;
+  // ── Eval-only source intermediates (ignored by the supabase + ws sinks) ──
+  // The eval collector rebuilds `EvalSourceView` / `RetrievedDoc` from these.
+  // The prod card's `score` is the derived [0,1] similarity; the eval needs the
+  // RAW fused RRF score + the lexical-match flag + the tight child excerpt the
+  // synthesizer keyed on, none of which the card surface carries otherwise.
+  /** Fused RRF score (higher = better) — what the eval reports as the source
+   *  `score`, distinct from the card's derived [0,1] `score`. */
+  readonly rrfScore?: number;
+  /** Cosine distance for a vector candidate; null for an FTS-only hit. */
+  readonly distance?: number | null;
+  /** True when the chunk was a lexical (full-text-search) match. */
+  readonly ftsMatched?: boolean;
+  /** Chunk position within its doc. */
+  readonly position?: number;
+  /** The tight child excerpt that matched (U8 focus) — the synthesizer's
+   *  per-source `focus`. */
+  readonly focus?: string;
+  /** The matched chunk id (the eval's `RetrievedDoc.chunkId`). */
+  readonly chunkId?: string;
 }
 
 /** The card the sink persisted/echoed, plus the synthesis source it backs.
@@ -216,6 +235,14 @@ export interface SynthesisDoneInfo {
   readonly stopReason: string;
   readonly latencyMs: number;
   readonly utteranceId: string;
+  // ── Eval-only intermediates (ignored by the supabase + ws sinks) ──
+  /** The raw synthesizer output including the leading STATUS line (the eval's
+   *  `rawSynthesis`). The card surface only needs the parsed body. */
+  readonly rawSynthesis?: string;
+  /** The FULL per-citation verification detail — including the `dropped` ones
+   *  the grounded `citations` list excludes. The eval reports every status +
+   *  the dropped/downgraded counts. */
+  readonly citationDetails?: readonly CitationDetail[];
 }
 
 /** A refused or suppressed (ungrounded) synthesis. */
@@ -226,6 +253,18 @@ export interface SynthesisRefusalInfo {
   readonly reason: 'refusal' | 'ungrounded';
   readonly latencyMs: number;
   readonly utteranceId: string;
+  // ── Eval-only intermediates (ignored by the supabase + ws sinks) ──
+  /** Raw synthesizer output (with the STATUS line) — for an ungrounded answer
+   *  this is the suppressed body; for a refusal it's the no_relevant_context
+   *  output. */
+  readonly rawSynthesis?: string;
+  /** The parsed answer body (STATUS line stripped). Empty for a true refusal;
+   *  the suppressed body for an ungrounded one. */
+  readonly answer?: string;
+  /** The model's refusal reason string, when it emitted no_relevant_context. */
+  readonly refusalReason?: string | null;
+  /** FULL per-citation verification detail (ungrounded case — every status). */
+  readonly citationDetails?: readonly CitationDetail[];
 }
 
 /** A skip decision the gate made (no embed/search ran). */

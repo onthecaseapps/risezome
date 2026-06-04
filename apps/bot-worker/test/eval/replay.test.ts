@@ -218,6 +218,120 @@ describe('evaluateQuestion relevance gate', () => {
   });
 });
 
+// ── U4: evaluateQuestion runs the SHARED pipeline core ───────────────────────
+// These exercise the consolidation (the eval validates prod by construction):
+// a relevant question surfaces sources + a scored view; an off-topic/adjacent
+// gated question yields gateSuppressed + isRefusal (pass-on-suppress); every
+// evaluated question carries a per-stage PipelineTrace.
+
+/** A fake SupabaseClient covering the reads the core does for a hit:
+ *  hybridSearch's two rpc legs + the chunk/doc enrichment selects. */
+function fakeDb(opts: {
+  vector?: { chunk_id: string; distance: number }[];
+  chunks?: { chunk_id: string; doc_id: string; text: string; position: number; is_summary: boolean }[];
+  docs?: { id: string; source: string; type: string; title: string; url: string | null }[];
+}): EvalDeps['db'] {
+  const rpc = (fn: string): Promise<{ data: unknown; error: null }> => {
+    if (fn === 'search_corpus_vector') return Promise.resolve({ data: opts.vector ?? [], error: null });
+    return Promise.resolve({ data: [], error: null }); // fts leg: no lexical hits
+  };
+  const from = (table: string) => {
+    const rows = table === 'docs' ? (opts.docs ?? []) : (opts.chunks ?? []);
+    // Chainable .select().in().eq() → resolves to { data, error }.
+    const builder: Record<string, unknown> = {};
+    const thenable = { data: rows, error: null };
+    const chain = () => builder;
+    builder.select = chain;
+    builder.in = chain;
+    builder.eq = chain;
+    builder.then = (resolve: (v: typeof thenable) => unknown) => resolve(thenable);
+    return builder;
+  };
+  return { rpc, from } as unknown as EvalDeps['db'];
+}
+
+/** A synthesizer that streams a fixed grounded (or refusal) body. */
+function fakeSynth(body: string): EvalDeps['synthesizer'] {
+  return {
+    async *synthesize() {
+      yield { type: 'start', synthesisId: 's', model: 'fake', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 } };
+      yield { type: 'textDelta', synthesisId: 's', delta: body };
+      yield { type: 'done', synthesisId: 's', stopReason: 'end_turn', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 } };
+    },
+  } as unknown as EvalDeps['synthesizer'];
+}
+
+describe('evaluateQuestion via the shared core', () => {
+  it('surfaces sources + a scored view for a relevant question', async () => {
+    const sourceText = 'Hybrid retrieval fuses vector and full-text search with reciprocal rank fusion.';
+    const deps = {
+      db: fakeDb({
+        vector: [{ chunk_id: 'c1', distance: 0.1 }], // strong vector hit (under the floor)
+        chunks: [{ chunk_id: 'c1', doc_id: 'd1', text: sourceText, position: 0, is_summary: false }],
+        docs: [{ id: 'd1', source: 'github', type: 'doc', title: 'corpus-search.ts', url: null }],
+      }),
+      embedder: { embed: vi.fn().mockResolvedValue({ vectors: [{ vector: new Float32Array([0.1, 0.2]) }] }) },
+      // Ground the answer on a verbatim substring of the source.
+      synthesizer: fakeSynth('STATUS: answer\nIt fuses vector and full-text search [1: "reciprocal rank fusion"].'),
+      orgId: 'org_1',
+      judge: null,
+    } as unknown as EvalDeps;
+
+    const view = await evaluateQuestion(deps, {
+      q: 'how does hybrid retrieval work',
+      must_surface: ['corpus-search'],
+      expect_answer_contains: ['fuses'],
+    });
+
+    expect(view.gateSuppressed).toBe(false);
+    expect(view.sources).toHaveLength(1);
+    expect(view.sources[0]).toMatchObject({ rank: 1, docId: 'd1', title: 'corpus-search.ts', ftsMatched: false });
+    expect(view.isRefusal).toBe(false);
+    expect(view.suppressed).toBe(false);
+    expect(view.answer).toContain('fuses');
+    expect(view.citations.length).toBeGreaterThan(0);
+    expect(view.result.pass).toBe(true);
+    expect(view.result.recall).toBe(1); // corpus-search surfaced
+    // The view carries a per-stage trace through the grounded path.
+    expect(view.trace).not.toBeNull();
+    const stages = view.trace?.stages.map((s) => s.stage) ?? [];
+    expect(stages).toContain('hybrid-search');
+    expect(stages).toContain('synthesis');
+  });
+
+  it('yields gateSuppressed + isRefusal (pass-on-suppress) for an adjacent gated question', async () => {
+    const embed = vi.fn();
+    const classify = vi.fn().mockResolvedValue({ decision: 'skip', confidence: 0.95, reason: 'not-about-our-work' });
+    const deps = {
+      db: {} as never,
+      embedder: { embed },
+      synthesizer: {} as never,
+      orgId: 'org_1',
+      judge: null,
+      relevanceClassifier: { classify },
+      relevanceStrict: true, // route the substantive question through the judge
+    } as unknown as EvalDeps;
+
+    const view = await evaluateQuestion(deps, {
+      q: 'how does pinecone compare to weaviate for vector search',
+      bucket: 'adjacent',
+      expect_refusal: true,
+    });
+
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(embed).not.toHaveBeenCalled(); // judge skip short-circuited before embed
+    expect(view.gateSuppressed).toBe(true);
+    expect(view.isRefusal).toBe(true);
+    expect(view.sources).toHaveLength(0);
+    expect(view.result.pass).toBe(true); // adjacent expect_refusal ⇒ suppression is correct
+    // The trace records the gate skip at the llm-judge stage.
+    expect(view.trace).not.toBeNull();
+    const judge = view.trace?.stages.find((s) => s.stage === 'llm-judge');
+    expect(judge?.status).toBe('short_circuited');
+    expect(judge?.decision).toBe('skip');
+  });
+});
+
 describe('summarizePrecision', () => {
   function view(bucket: EvalBucket, surfaced: boolean, latencyMs: number): EvalQuestionView {
     return {

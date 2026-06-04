@@ -10,15 +10,11 @@ import { dirname, join } from 'node:path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { VoyageEmbedder } from '@risezome/engine/embed';
 import {
-  parseSynthesisOutput,
-  verifyCitationsDetailed,
   type AnthropicSynthesizer,
-  type SynthesisSource,
   type CitationStatus,
 } from '@risezome/engine/synthesize';
 import { scoreRagas, type Judge, type RagasScores } from '@risezome/engine/eval';
 import {
-  classifyRelevanceHeuristic,
   type RelevanceClassifier,
   type RelevanceContext,
 } from '@risezome/engine/relevance';
@@ -28,8 +24,10 @@ import {
   expandWinnersToParents,
   parentDocEnabled,
   dedupeByDoc,
-  type WinningChunk,
 } from './parent-doc.js';
+import { runPipeline } from './pipeline/core.js';
+import { EvalCollectorSink } from './pipeline/sink-eval.js';
+import type { PipelineDeps, PipelineInput, PipelineTrace } from './pipeline/contract.js';
 
 // ── Golden set ──────────────────────────────────────────────────────────
 
@@ -239,8 +237,6 @@ export function summarize(results: readonly QuestionResult[]): ReplaySummary {
 const TOP_K = 5;
 const silentLogger = { warn: () => undefined };
 
-const DEFAULT_RELEVANCE_SKIP_THRESHOLD = 0.7;
-
 export interface EvalDeps {
   readonly db: SupabaseClient;
   readonly embedder: VoyageEmbedder;
@@ -313,6 +309,10 @@ export interface EvalQuestionView {
   readonly latencyMs: number;
   /** True when the relevance gate suppressed the utterance before retrieval. */
   readonly gateSuppressed: boolean;
+  /** The per-stage pipeline trace for this question (the eval runs the shared
+   *  core with a trace sink, so each evaluated question carries one). Null only
+   *  if the core returned before assembling a trace. */
+  readonly trace: PipelineTrace | null;
 }
 
 function emptyView(
@@ -320,6 +320,7 @@ function emptyView(
   reason: string,
   latencyMs: number,
   gateSuppressed = false,
+  trace: PipelineTrace | null = null,
 ): EvalQuestionView {
   return {
     question,
@@ -336,14 +337,18 @@ function emptyView(
     ragas: null,
     latencyMs,
     gateSuppressed,
+    trace,
   };
 }
 
 /**
- * Run one golden question through the real retrieval + synthesis path and
- * return rich intermediates for inspection + the scored result. Mirrors
- * apps/bot-worker/src/retrieval.ts (hybrid search, U8 dedupe + parent expand,
- * grounded-or-nothing) so the eval reflects production.
+ * Run one golden question through the SHARED pipeline core (the same
+ * `runPipeline` prod + the dev sidecar run) with an in-memory collector sink,
+ * then assemble the rich `EvalQuestionView` from the collected intermediates +
+ * the existing scorer. This is U4's faithfulness gate: the eval now validates
+ * prod by construction — there is no second copy of the retrieval/synthesis
+ * stages here. The collector reproduces the exact surface/suppress + sources +
+ * synthesis result the old hand-mirrored body did.
  */
 export async function evaluateQuestion(
   deps: EvalDeps,
@@ -352,151 +357,130 @@ export async function evaluateQuestion(
   const started = performance.now();
   const elapsed = (): number => performance.now() - started;
 
-  // FULL real-time path: run the relevance gate before retrieval (mirrors
-  // maybeRetrieveAndEmit). A gate skip = suppressed (no card) — correct for
-  // offtopic/adjacent, an over-refusal for relevant. Only runs when a
-  // classifier is wired; otherwise the heuristic still short-circuits filler.
-  const heuristic = classifyRelevanceHeuristic(question.q);
-  if (heuristic === 'clearly_filler') {
-    return emptyView(question, 'relevance-gate: heuristic clearly_filler', elapsed(), true);
-  }
-  // Route to the LLM judge on `ambiguous` always, and on `clearly_substantive`
-  // too when strict — otherwise substantive questions bypass the about-our-work
-  // gate (the reason a plain strict prompt couldn't catch the adjacent leaks).
-  const routeToJudge =
-    heuristic === 'ambiguous' ||
-    (deps.relevanceStrict === true && heuristic === 'clearly_substantive');
-  if (routeToJudge && deps.relevanceClassifier != null) {
-    const threshold = deps.relevanceSkipThreshold ?? DEFAULT_RELEVANCE_SKIP_THRESHOLD;
-    let decision;
-    try {
-      decision = await deps.relevanceClassifier.classify(
-        question.q,
-        deps.relevanceContext !== undefined ? { context: deps.relevanceContext } : undefined,
-      );
-    } catch {
-      decision = { decision: 'surface' as const }; // fail-open on classifier error
-    }
-    if (decision.decision === 'skip' && decision.confidence >= threshold) {
-      return emptyView(
-        question,
-        `relevance-gate: classifier skip (${decision.confidence.toFixed(2)})`,
-        elapsed(),
-        true,
-      );
-    }
-  }
-
-  const embedResult = await deps.embedder.embed({ items: [{ text: question.q, domain: 'text' }] });
-  const vec = embedResult.vectors[0]?.vector;
-  if (vec === undefined) return emptyView(question, 'embed produced no vector', elapsed());
-
-  const hits = await hybridSearch(deps.db, {
-    orgId: deps.orgId,
-    queryVectorLiteral: `[${Array.from(vec).join(',')}]`,
+  const collector = new EvalCollectorSink();
+  const input: PipelineInput = {
+    // The eval's single golden question is BOTH the gated utterance and the
+    // embedded/searched query (no rolling window — that's a prod source detail).
+    utteranceText: question.q,
     queryText: question.q,
-    limit: TOP_K,
-    reranker: optionalReranker(),
-    logger: silentLogger,
-  });
-  if (hits.length === 0) return emptyView(question, 'no retrieval hits', elapsed());
+    utteranceId: `eval_${started.toString(36)}`,
+    meetingId: 'eval',
+    orgId: deps.orgId,
+    ...(deps.relevanceContext !== undefined ? { relevanceContext: deps.relevanceContext } : {}),
+  };
 
-  const chunkIds = hits.map((h) => h.chunk_id);
-  const { data: chunkRows } = await deps.db
-    .from('doc_chunks')
-    .select('chunk_id, doc_id, text, position, is_summary')
-    .eq('org_id', deps.orgId) // U11: redundant org scope (defense-in-depth)
-    .in('chunk_id', chunkIds);
-  const chunkById = new Map(
-    (chunkRows ?? []).map((c) => [
-      c.chunk_id as string,
-      {
-        docId: c.doc_id as string,
-        text: c.text as string,
-        position: c.position as number,
-        isSummary: c.is_summary === true,
-      },
-    ]),
-  );
-  const docIds = [...new Set([...chunkById.values()].map((c) => c.docId))];
-  const { data: docRows } = await deps.db
-    .from('docs')
-    .select('id, title')
-    .eq('org_id', deps.orgId) // U11: redundant org scope (defense-in-depth)
-    .in('id', docIds);
-  const titleById = new Map((docRows ?? []).map((d) => [d.id as string, d.title as string]));
+  // The same bot-worker search fns prod injects + the eval's embedder /
+  // synthesizer / relevance judge. NO router/skills (the eval has none) and NO
+  // CRAG (the old eval never expanded — `optionalQueryExpander` returns
+  // undefined, so the core skips the CRAG stage), so behavior matches the old
+  // pre-retrieval-gate path exactly.
+  const pipelineDeps: PipelineDeps = {
+    db: deps.db,
+    embedder: deps.embedder,
+    synthesizer: deps.synthesizer,
+    ...(deps.relevanceClassifier != null ? { relevanceClassifier: deps.relevanceClassifier } : {}),
+    hybridSearch: (params) =>
+      hybridSearch(deps.db, {
+        orgId: params.orgId,
+        queryVectorLiteral: params.queryVectorLiteral,
+        queryText: params.queryText,
+        limit: params.limit,
+        ...(params.reranker !== undefined ? { reranker: params.reranker } : {}),
+        logger: params.logger ?? silentLogger,
+      }),
+    isLowConfidenceHits: () => false, // no CRAG in the eval (expander disabled below)
+    optionalReranker,
+    optionalQueryExpander: () => undefined, // CRAG off — matches the old eval path
+    dedupeByDoc,
+    expandWinnersToParents: (orgId, winners) => expandWinnersToParents(deps.db, orgId, winners),
+    parentDocEnabled,
+    logger: { info: () => undefined, warn: () => undefined },
+    ...(deps.relevanceSkipThreshold !== undefined
+      ? { relevanceSkipThreshold: deps.relevanceSkipThreshold }
+      : {}),
+    relevanceStrict: deps.relevanceStrict === true,
+    topK: TOP_K,
+  };
 
-  // U8: collapse same-doc chunks to the best-ranked, then parent-expand.
-  const sourceHits = parentDocEnabled()
-    ? dedupeByDoc(hits, (h) => chunkById.get(h.chunk_id)?.docId)
-    : hits;
-  const winners: WinningChunk[] = sourceHits.flatMap((h) => {
-    const c = chunkById.get(h.chunk_id);
-    return c === undefined
-      ? []
-      : [{ chunkId: h.chunk_id, docId: c.docId, position: c.position, text: c.text }];
-  });
-  const expandedByChunk = parentDocEnabled()
-    ? await expandWinnersToParents(deps.db, deps.orgId, winners)
-    : new Map<string, string>();
+  await runPipeline(input, pipelineDeps, collector);
 
-  const retrieved: RetrievedDoc[] = [];
-  const sources: SynthesisSource[] = [];
-  const sourceViews: EvalSourceView[] = [];
-  sourceHits.forEach((h, i) => {
-    const chunk = chunkById.get(h.chunk_id);
-    if (chunk === undefined) return;
-    const title = titleById.get(chunk.docId) ?? chunk.docId;
-    const text = expandedByChunk.get(h.chunk_id) ?? chunk.text;
-    retrieved.push({ chunkId: h.chunk_id, docId: chunk.docId, title, score: h.score });
-    sources.push({ rank: i + 1, title, text, focus: chunk.text, docId: chunk.docId });
-    sourceViews.push({
-      rank: i + 1,
-      docId: chunk.docId,
-      title,
-      score: h.score,
-      distance: h.distance,
-      ftsMatched: h.ftsMatched,
-      position: chunk.position,
-      focus: chunk.text,
-      text,
-      isSummary: chunk.isSummary,
-    });
-  });
+  const trace = collector.trace;
 
-  let accumulated = '';
-  for await (const chunk of deps.synthesizer.synthesize({ utterance: question.q, sources })) {
-    if (chunk.type === 'textDelta') accumulated += chunk.delta;
+  // ── Gate short-circuit (the precision signal) ────────────────────────────
+  // `recordSkip` fired ONLY when the relevance gate (heuristic-filler or judge
+  // skip) stopped the utterance BEFORE retrieval — the exact `gateSuppressed`
+  // semantics the old eval's `emptyView(..., true)` used.
+  if (collector.skip !== null) {
+    const reason =
+      collector.skip.stage === 'heuristic-gate'
+        ? 'relevance-gate: heuristic clearly_filler'
+        : `relevance-gate: classifier skip (${(collector.skip.confidence ?? 0).toFixed(2)})`;
+    return emptyView(question, reason, elapsed(), true, trace);
   }
-  const parsed = parseSynthesisOutput(accumulated, sources.length);
-  const detail = verifyCitationsDetailed(parsed.citations, sources);
-  const survivingCount = detail.filter((d) => d.status !== 'dropped').length;
-  const suppressed = !parsed.isRefusal && survivingCount === 0;
-  const effectiveRefusal = parsed.isRefusal || suppressed;
+
+  // ── Retrieval produced no sources (no hits / embed fail) ─────────────────
+  // Not a gate suppression — the old eval returned an empty (refusal) view with
+  // gateSuppressed:false here.
+  if (collector.sources.length === 0) {
+    const reason = collector.misses.some((m) => m.reason === 'no_hits')
+      ? 'no retrieval hits'
+      : 'no retrieval sources';
+    return emptyView(question, reason, elapsed(), false, trace);
+  }
+
+  // ── Build the source + retrieved views from the collected cards ──────────
+  const retrieved: RetrievedDoc[] = collector.sources.map((s) => ({
+    chunkId: s.chunkId,
+    docId: s.docId,
+    title: s.title,
+    score: s.score,
+  }));
+  const sourceViews: EvalSourceView[] = collector.sources.map((s) => ({
+    rank: s.rank,
+    docId: s.docId,
+    title: s.title,
+    score: s.score,
+    distance: s.distance,
+    ftsMatched: s.ftsMatched,
+    position: s.position,
+    focus: s.focus,
+    text: s.text,
+    isSummary: s.isSummary,
+  }));
+
+  // ── Synthesis outcome (refusal / ungrounded / grounded) ──────────────────
+  const synth = collector.synthesis;
+  const isRefusal = synth?.kind === 'refusal';
+  const suppressed = synth?.kind === 'ungrounded';
+  const effectiveRefusal = isRefusal || suppressed || synth === null;
+  const answer = synth?.answer ?? '';
+  const rawSynthesis = synth?.rawSynthesis ?? '';
+  const details = synth?.citationDetails ?? [];
 
   let ragas: RagasScores | null = null;
   if (deps.judge !== null && !effectiveRefusal) {
     ragas = await scoreRagas(
-      { question: question.q, answer: parsed.text, contexts: sources.map((s) => s.text) },
+      { question: question.q, answer, contexts: collector.sources.map((s) => s.text) },
       deps.judge,
     );
   }
 
   return {
     question,
-    result: scoreQuestion(question, retrieved, parsed.text, effectiveRefusal),
+    result: scoreQuestion(question, retrieved, answer, effectiveRefusal),
     sources: sourceViews,
-    rawSynthesis: accumulated,
-    answer: parsed.text,
-    isRefusal: parsed.isRefusal,
+    rawSynthesis,
+    answer,
+    isRefusal,
     suppressed,
-    refusalReason: parsed.refusalReason ?? null,
-    citations: detail.map((d) => ({ rank: d.rank, quote: d.quote ?? null, status: d.status })),
-    droppedQuoted: detail.filter((d) => d.status === 'dropped').length,
-    downgradedToBare: detail.filter((d) => d.status === 'downgraded').length,
+    refusalReason: synth?.refusalReason ?? null,
+    citations: details.map((d) => ({ rank: d.rank, quote: d.quote ?? null, status: d.status })),
+    droppedQuoted: details.filter((d) => d.status === 'dropped').length,
+    downgradedToBare: details.filter((d) => d.status === 'downgraded').length,
     ragas,
     latencyMs: elapsed(),
     gateSuppressed: false,
+    trace,
   };
 }
 
