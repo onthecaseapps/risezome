@@ -23,10 +23,14 @@ export async function requireAuthedUser(): Promise<User> {
  * Returns the user's org memberships. Used by the topbar to render the org
  * switcher. Returns [] if the user has no memberships yet (pre-onboarding).
  */
+/** A user's role within an org. Stored `manager` is the "Admin" tier (KTD1);
+ *  `super_admin` inherits all admin powers plus the audited master key. */
+export type OrgRole = 'member' | 'manager' | 'super_admin';
+
 export interface UserOrg {
   id: string;
   name: string;
-  role: string;
+  role: OrgRole;
   canInviteBot: boolean;
 }
 
@@ -47,7 +51,7 @@ export async function listUserOrgs(): Promise<UserOrg[]> {
     out.push({
       id: org.id,
       name: org.name,
-      role: row.role as string,
+      role: row.role as OrgRole,
       canInviteBot: (row.can_invite_bot as boolean | null) ?? false,
     });
   }
@@ -73,8 +77,9 @@ export interface AuthedOrgContext {
   user: User;
   orgId: string;
   orgName: string;
-  /** The user's role in the resolved org: 'manager' | 'member'. */
-  role: string;
+  /** The user's role in the resolved org: 'member' | 'manager' | 'super_admin'.
+   *  Stored `manager` is the "Admin" tier (KTD1). */
+  role: OrgRole;
   /** Whether the user may launch the bot into their own meetings. Managers
    *  are implicitly allowed; for members this reflects the granted flag. */
   canInviteBot: boolean;
@@ -96,19 +101,42 @@ export async function requireAuthedUserWithOrg(): Promise<AuthedOrgContext> {
     orgId: chosen.id,
     orgName: chosen.name,
     role: chosen.role,
-    canInviteBot: chosen.role === 'manager' || chosen.canInviteBot,
+    canInviteBot:
+      chosen.role === 'manager' || chosen.role === 'super_admin' || chosen.canInviteBot,
   };
 }
 
 /**
- * Like {@link requireAuthedUserWithOrg}, but redirects non-managers away.
- * Use to gate manager-only pages and server actions (Sources, Settings,
- * member management). RLS is the real authorization boundary; this is the
- * app-layer defense-in-depth that also keeps members out of the UI.
+ * Like {@link requireAuthedUserWithOrg}, but redirects users without ADMIN
+ * POWER away. "Admin power" = role 'manager' (the stored Admin tier, KTD1) OR
+ * 'super_admin' (which inherits all admin powers, KTD2). Use to gate admin-only
+ * pages and server actions (Sources, Settings, member management). RLS (via
+ * is_org_admin) is the real authorization boundary; this is the app-layer
+ * defense-in-depth that also keeps members out of the UI.
  */
-export async function requireManager(): Promise<AuthedOrgContext> {
+export async function requireAdmin(): Promise<AuthedOrgContext> {
   const ctx = await requireAuthedUserWithOrg();
-  if (ctx.role !== 'manager') {
+  if (ctx.role !== 'manager' && ctx.role !== 'super_admin') {
+    redirect('/upcoming');
+  }
+  return ctx;
+}
+
+/**
+ * Back-compat alias for {@link requireAdmin}. Existing callers named this gate
+ * "requireManager"; its meaning is "admin power", which now includes
+ * super_admin, so super_admins are no longer redirected away from admin pages.
+ */
+export const requireManager = requireAdmin;
+
+/**
+ * Like {@link requireAuthedUserWithOrg}, but redirects everyone except a
+ * super_admin away. Reserved for the audited master-key surfaces (audit-log
+ * view). super_admin is the only role with role === 'super_admin'.
+ */
+export async function requireSuperAdmin(): Promise<AuthedOrgContext> {
+  const ctx = await requireAuthedUserWithOrg();
+  if (ctx.role !== 'super_admin') {
     redirect('/upcoming');
   }
   return ctx;

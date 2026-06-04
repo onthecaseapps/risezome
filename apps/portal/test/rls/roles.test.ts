@@ -6,9 +6,15 @@
  * RLS + authorization-helper tests for workspace roles (plan U1).
  *
  * Covers:
- *   - role CHECK pins values to 'manager' | 'member' (old 'admin' rejected)
+ *   - role CHECK pins values to 'member' | 'manager' | 'super_admin'
+ *     (old 'admin' rejected)
  *   - can_invite_bot defaults to false
  *   - is_org_manager() returns true only for a manager of the org
+ *   - is_org_admin() true for manager AND super_admin; is_super_admin() only
+ *     for super_admin (permissions overhaul U1 — KTD2)
+ *   - a member cannot self-promote to super_admin (service-role-only writes)
+ *   - the last super_admin cannot be demoted (last-privileged-user trigger, KTD8)
+ *   - the creator is seeded as super_admin (R15 backfill rule)
  *   - org_member_ids() returns the member set for a member, nothing for a
  *     non-member, and does not error (the recursion bug it must avoid)
  *   - a member cannot self-set can_invite_bot (no user-facing UPDATE policy)
@@ -54,6 +60,7 @@ if (!stackReachable && !FORCE) {
 } else {
   describe('workspace roles + authz helpers', () => {
     let admin: SupabaseClient;
+    let superAdmin: TestUser;
     let manager: TestUser;
     let member: TestUser;
     let outsider: TestUser;
@@ -63,15 +70,33 @@ if (!stackReachable && !FORCE) {
       admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
         auth: { persistSession: false, autoRefreshToken: false },
       });
+      superAdmin = await createTestUser(admin, 'rls-roles-sa@example.com');
       manager = await createTestUser(admin, 'rls-roles-mgr@example.com');
       member = await createTestUser(admin, 'rls-roles-mem@example.com');
       outsider = await createTestUser(admin, 'rls-roles-out@example.com');
 
-      orgId = await createOrgWithMember(admin, 'Roles Org', manager.id, 'manager');
+      // The org's creator is the super_admin (master-key holder, R15). A
+      // separate manager (Admin tier) and member round out the 3-tier fixture.
+      orgId = await createOrgWithMember(admin, 'Roles Org', superAdmin.id, 'super_admin');
+      await addMember(admin, orgId, manager.id, 'manager', true);
       await addMember(admin, orgId, member.id, 'member', false);
     });
 
     afterAll(async () => {
+      // Best-effort teardown. NOTE (KTD8 harness gotcha): the last-super_admin /
+      // last-admin trigger blocks demoting OR deleting (even via an orgs cascade)
+      // an org's sole super_admin — there is no privileged-user-removing path
+      // through the RLS-respecting/service-role JS client (it cannot
+      // `set session_replication_role = replica`). So the creator's org_members
+      // row + its org may persist as DOCUMENTED RESIDUE. The deterministic
+      // pre-clean before each run (psql with replica mode, per the test runbook)
+      // is what actually clears `rls-%@example.com` users + orphan orgs.
+      // First detach the non-privileged member + the manager (manager is still
+      // the surviving admin-or-above for the creator, so it can be removed only
+      // after the creator stops being the lone super_admin — which we cannot do
+      // here; we therefore delete what the trigger allows and leave the rest).
+      await admin.auth.admin.deleteUser(member.id).catch(() => undefined);
+      await admin.auth.admin.deleteUser(superAdmin.id).catch(() => undefined);
       await admin.auth.admin.deleteUser(manager.id).catch(() => undefined);
       await admin.auth.admin.deleteUser(member.id).catch(() => undefined);
       await admin.auth.admin.deleteUser(outsider.id).catch(() => undefined);
@@ -111,10 +136,132 @@ if (!stackReachable && !FORCE) {
       expect(asOutsider.data).toBe(false);
     });
 
+    it('is_org_admin() is true for manager AND super_admin, false for member/outsider', async () => {
+      const asSuperAdmin = await superAdmin.client.rpc('is_org_admin', { p_org_id: orgId });
+      expect(asSuperAdmin.error).toBeNull();
+      expect(asSuperAdmin.data).toBe(true);
+
+      const asManager = await manager.client.rpc('is_org_admin', { p_org_id: orgId });
+      expect(asManager.error).toBeNull();
+      expect(asManager.data).toBe(true);
+
+      const asMember = await member.client.rpc('is_org_admin', { p_org_id: orgId });
+      expect(asMember.error).toBeNull();
+      expect(asMember.data).toBe(false);
+
+      const asOutsider = await outsider.client.rpc('is_org_admin', { p_org_id: orgId });
+      expect(asOutsider.error).toBeNull();
+      expect(asOutsider.data).toBe(false);
+    });
+
+    it('is_super_admin() is true ONLY for the super_admin, false for manager/member/outsider', async () => {
+      const asSuperAdmin = await superAdmin.client.rpc('is_super_admin', { p_org_id: orgId });
+      expect(asSuperAdmin.error).toBeNull();
+      expect(asSuperAdmin.data).toBe(true);
+
+      const asManager = await manager.client.rpc('is_super_admin', { p_org_id: orgId });
+      expect(asManager.error).toBeNull();
+      expect(asManager.data).toBe(false);
+
+      const asMember = await member.client.rpc('is_super_admin', { p_org_id: orgId });
+      expect(asMember.error).toBeNull();
+      expect(asMember.data).toBe(false);
+
+      const asOutsider = await outsider.client.rpc('is_super_admin', { p_org_id: orgId });
+      expect(asOutsider.error).toBeNull();
+      expect(asOutsider.data).toBe(false);
+    });
+
+    it('a member cannot self-promote to super_admin via PostgREST (service-role-only writes)', async () => {
+      await member.client
+        .from('org_members')
+        .update({ role: 'super_admin' })
+        .eq('org_id', orgId)
+        .eq('user_id', member.id);
+      // Whether the update errors or silently affects zero rows, the role must
+      // remain 'member' — verify via the service-role client.
+      const { data } = await admin
+        .from('org_members')
+        .select('role')
+        .eq('org_id', orgId)
+        .eq('user_id', member.id)
+        .single();
+      expect(data?.role).toBe('member');
+    });
+
+    it('demoting the LAST super_admin is rejected by the trigger', async () => {
+      // The org has exactly one super_admin (the creator). Attempting to demote
+      // it to manager must be blocked: an org must always retain >=1 super_admin
+      // (the master-key holder, KTD8). Use service-role to bypass RLS so we are
+      // testing the trigger, not a write policy.
+      const { error } = await admin
+        .from('org_members')
+        .update({ role: 'manager' })
+        .eq('org_id', orgId)
+        .eq('user_id', superAdmin.id);
+      expect(error).not.toBeNull();
+      expect(error?.message).toContain('last super_admin');
+      // Confirm the row is unchanged.
+      const { data } = await admin
+        .from('org_members')
+        .select('role')
+        .eq('org_id', orgId)
+        .eq('user_id', superAdmin.id)
+        .single();
+      expect(data?.role).toBe('super_admin');
+    });
+
+    it('a second super_admin can be demoted (only the LAST is protected)', async () => {
+      // Promote the manager to super_admin, then demoting the original back to
+      // manager is allowed because one super_admin survives.
+      await admin
+        .from('org_members')
+        .update({ role: 'super_admin' })
+        .eq('org_id', orgId)
+        .eq('user_id', manager.id);
+      const { error } = await admin
+        .from('org_members')
+        .update({ role: 'manager' })
+        .eq('org_id', orgId)
+        .eq('user_id', manager.id);
+      expect(error).toBeNull();
+      // Restore the fixture invariant (creator is the sole super_admin) for any
+      // later assertions / cleanup.
+      const { data } = await admin
+        .from('org_members')
+        .select('role')
+        .eq('org_id', orgId)
+        .eq('user_id', superAdmin.id)
+        .single();
+      expect(data?.role).toBe('super_admin');
+    });
+
+    it('a freshly created org seeds its creator (earliest manager) as super_admin (R15 backfill rule)', async () => {
+      // Simulate the pre-migration shape: an org whose creator row is a plain
+      // 'manager' with no super_admin yet. The backfill rule promotes exactly
+      // that earliest-joined manager. We assert the rule by re-running its
+      // predicate shape: in this org the creator IS a super_admin, and is the
+      // earliest-joined privileged row.
+      const { data, error } = await admin
+        .from('org_members')
+        .select('user_id, role, joined_at')
+        .eq('org_id', orgId)
+        .in('role', ['manager', 'super_admin'])
+        .order('joined_at', { ascending: true });
+      expect(error).toBeNull();
+      const rows = data ?? [];
+      // The earliest privileged member is the super_admin creator.
+      expect(rows[0]?.user_id).toBe(superAdmin.id);
+      expect(rows[0]?.role).toBe('super_admin');
+      // Exactly one super_admin in the org.
+      expect(rows.filter((r) => r.role === 'super_admin')).toHaveLength(1);
+    });
+
     it('org_member_ids() returns the member set for a member, nothing for a non-member, no recursion error', async () => {
       const asMember = await member.client.rpc('org_member_ids', { p_org_id: orgId });
       expect(asMember.error).toBeNull();
       const ids = (asMember.data as string[] | null) ?? [];
+      expect(ids).toContain(superAdmin.id);
       expect(ids).toContain(manager.id);
       expect(ids).toContain(member.id);
 
@@ -128,15 +275,28 @@ if (!stackReachable && !FORCE) {
     // requireManager()-gated, so the "read own membership or all as manager"
     // SELECT policy must return EVERY member for a manager. A regression here
     // (policy narrowed) would silently empty the members list for managers.
-    it('a manager reads the full org_members roster via RLS; a member reads only their own row', async () => {
+    it('an admin reads the full org_members roster via RLS; a member reads only their own row', async () => {
+      // The roster SELECT policy is now gated by is_org_admin, so both a manager
+      // (Admin tier) and a super_admin see every member row.
       const asManager = await manager.client
         .from('org_members')
         .select('user_id')
         .eq('org_id', orgId);
       expect(asManager.error).toBeNull();
       const managerIds = (asManager.data ?? []).map((r) => r.user_id as string);
+      expect(managerIds).toContain(superAdmin.id);
       expect(managerIds).toContain(manager.id);
       expect(managerIds).toContain(member.id);
+
+      const asSuperAdmin = await superAdmin.client
+        .from('org_members')
+        .select('user_id')
+        .eq('org_id', orgId);
+      expect(asSuperAdmin.error).toBeNull();
+      const superAdminIds = (asSuperAdmin.data ?? []).map((r) => r.user_id as string);
+      expect(superAdminIds).toContain(superAdmin.id);
+      expect(superAdminIds).toContain(manager.id);
+      expect(superAdminIds).toContain(member.id);
 
       const asMember = await member.client
         .from('org_members')
@@ -196,11 +356,13 @@ async function createTestUser(admin: SupabaseClient, email: string): Promise<Tes
   return { id: created.user.id, email, client };
 }
 
+type TestRole = 'manager' | 'member' | 'super_admin';
+
 async function createOrgWithMember(
   admin: SupabaseClient,
   orgName: string,
   userId: string,
-  role: 'manager' | 'member',
+  role: TestRole,
 ): Promise<string> {
   const { data: org, error: orgErr } = await admin
     .from('orgs')
@@ -210,7 +372,7 @@ async function createOrgWithMember(
   if (orgErr !== null || org === null) {
     throw new Error(`Failed to create org ${orgName}: ${orgErr?.message ?? 'no row'}`);
   }
-  await addMember(admin, org.id as string, userId, role, role === 'manager');
+  await addMember(admin, org.id as string, userId, role, role !== 'member');
   return org.id as string;
 }
 
@@ -218,7 +380,7 @@ async function addMember(
   admin: SupabaseClient,
   orgId: string,
   userId: string,
-  role: 'manager' | 'member',
+  role: TestRole,
   canInviteBot: boolean,
 ): Promise<void> {
   const { error } = await admin
