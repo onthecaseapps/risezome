@@ -43,3 +43,7 @@ tmp/
 # Supabase CLI local state (link metadata, cached versions)
 supabase/.temp/
 supabase/.branches/
+
+# AWS CLI v2 installer artifacts (do not commit — ~336MB)
+/aws/
+/awscliv2.zip
