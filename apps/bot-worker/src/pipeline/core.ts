@@ -124,9 +124,27 @@ export async function runPipeline(
     }
   };
 
+  const emptyStart = Date.now();
   const queryText = input.queryText.trim();
   if (queryText.length === 0) {
+    if (trace !== null) {
+      trace.push(
+        stageRecord('empty-query', 'short_circuited', emptyStart, {
+          decision: 'skip',
+          reason: 'empty_query',
+        }),
+      );
+      emitTrace();
+    }
     return { emitted: 0, skipped: 'empty_query' };
+  }
+  if (trace !== null) {
+    trace.push(
+      stageRecord('empty-query', 'ran', emptyStart, {
+        decision: 'pass',
+        data: { chars: queryText.length },
+      }),
+    );
   }
 
   // ── Stage: pre-retrieval relevance gate (KTD3) ────────────────────────
@@ -269,6 +287,20 @@ export async function runPipeline(
     );
     classifierPromise.catch(() => undefined); // collected on await below
   }
+  if (trace !== null) {
+    trace.push(
+      stageRecord('router', 'ran', Date.now(), {
+        decision: routerEligible ? 'fired' : 'not_fired',
+        reason: routerEligible
+          ? 'tool_shaped — classifying in parallel'
+          : deps.routerClassifier === undefined || deps.skillRegistry === undefined
+            ? 'no_classifier_or_registry'
+            : deps.skillRegistry.size() === 0
+              ? 'empty_skill_registry'
+              : 'not_tool_shaped',
+      }),
+    );
+  }
 
   // ── Stage: embed ──────────────────────────────────────────────────────
   const embedStart = Date.now();
@@ -380,16 +412,16 @@ export async function runPipeline(
   }
 
   // ── 0 hits ⇒ recordMiss(no_hits) gated by the heuristic ──────────────
+  const nohitsStart = Date.now();
   if (hits.length === 0) {
     // Re-apply the cheap heuristic: a clearly-filler utterance that happened to
     // retrieve nothing is not a gap (AE6). (The gate already let filler short-
     // circuit above, but `shouldRecordMiss` is the canonical gap predicate.)
-    if (
-      shouldRecordMiss({
-        reason: 'no_hits',
-        relevance: classifyRelevanceHeuristic(input.utteranceText),
-      })
-    ) {
+    const notFiller = shouldRecordMiss({
+      reason: 'no_hits',
+      relevance: classifyRelevanceHeuristic(input.utteranceText),
+    });
+    if (notFiller) {
       sink.recordMiss({
         verbatimQuestion: input.utteranceText,
         utteranceId: input.utteranceId,
@@ -407,9 +439,24 @@ export async function runPipeline(
         latencyMs: searchLatencyMs,
         data: { hits: [], count: 0 },
       });
+      trace.push(
+        stageRecord('no-hits', 'short_circuited', nohitsStart, {
+          decision: 'miss',
+          reason: 'no_hits_after_crag',
+          data: { filler: !notFiller, recordedGap: notFiller },
+        }),
+      );
       emitTrace();
     }
     return { emitted: 0, skipped: 'no_hits' };
+  }
+  if (trace !== null) {
+    trace.push(
+      stageRecord('no-hits', 'ran', nohitsStart, {
+        decision: 'pass',
+        data: { hits: hits.length },
+      }),
+    );
   }
 
   // ── Stage: chunk/doc enrichment + dedup/parent-expand ────────────────
@@ -517,6 +564,12 @@ export async function runPipeline(
       latencyMs: searchLatencyMs,
       data: { hits: traceHits, count: traceHits.length },
     });
+    trace.push(
+      stageRecord('emit', 'ran', dedupStart, {
+        decision: emitted > 0 ? 'emitted' : 'none',
+        data: { emitted, cards: surfacedCardIds.length },
+      }),
+    );
   }
 
   // ── Router result collection + skill execution ───────────────────────
@@ -527,6 +580,7 @@ export async function runPipeline(
     traceId,
     classifierController,
     classifierPromise,
+    trace,
   );
 
   // ── Stage: synthesis (grounded-or-nothing) ───────────────────────────
@@ -650,11 +704,24 @@ async function collectToolSource(
   traceId: string,
   controller: AbortController | null,
   classifierPromise: ReturnType<NonNullable<PipelineDeps['routerClassifier']>['classify']> | null,
+  trace: TraceBuilder | null,
 ): Promise<SynthesisSource | null> {
-  if (classifierPromise === null || deps.skillRegistry === undefined) return null;
+  const skillStart = Date.now();
+  const pushSkill = (decision: string, reason: string): void => {
+    if (trace !== null) {
+      trace.push(stageRecord('skill', 'ran', skillStart, { decision, reason }));
+    }
+  };
+  if (classifierPromise === null || deps.skillRegistry === undefined) {
+    pushSkill('none', 'router_not_fired');
+    return null;
+  }
   try {
     const result = await classifierPromise;
-    if (result.intent !== 'tool') return null;
+    if (result.intent !== 'tool') {
+      pushSkill('none', 'not_tool_intent');
+      return null;
+    }
     const skill: Skill | undefined = deps.skillRegistry.lookup(result.skillName);
     if (skill === undefined) {
       deps.logger.warn(
@@ -666,6 +733,7 @@ async function collectToolSource(
         },
         'pipeline.skill.failed',
       );
+      pushSkill('dropped', `unknown_skill:${result.skillName}`);
       return null;
     }
     try {
@@ -692,8 +760,10 @@ async function collectToolSource(
       });
       const decision = decideToolSource(skillResult);
       if (decision.keep) {
+        pushSkill('kept', `${result.skillName} → source[0]`);
         return formatAsSource(skillResult, result.skillName, result.args);
       }
+      pushSkill('dropped', `safety_net:${decision.status}`);
       return null;
     } catch (err) {
       const code = err instanceof SkillExecutionError ? err.executionCode : 'execution-error';
@@ -707,6 +777,7 @@ async function collectToolSource(
         },
         'pipeline.skill.failed',
       );
+      pushSkill('dropped', `skill_error:${code}`);
       return null;
     }
   } catch (err) {
@@ -715,13 +786,16 @@ async function collectToolSource(
         { meetingId: input.meetingId, code: err.kind, message: err.message },
         'pipeline.classifier.error',
       );
+      pushSkill('none', `classifier_error:${err.kind}`);
     } else if (err instanceof Error && err.name === 'AbortError') {
       // timeout — silent
+      pushSkill('none', 'classifier_timeout');
     } else {
       deps.logger.warn(
         { meetingId: input.meetingId, message: (err as Error).message },
         'pipeline.classifier.error',
       );
+      pushSkill('none', 'classifier_error');
     }
     return null;
   }
@@ -768,6 +842,15 @@ async function runSynthesis(args: {
       } else if (chunk.type === 'done') {
         const latencyMs = Date.now() - synthStart;
         const parsed = parseSynthesisOutput(accumulated, sources.length);
+        // S14 — the model produced output (buffered, not yet revealed).
+        if (trace !== null) {
+          trace.push(
+            stageRecord('synthesis', 'ran', synthStart, {
+              decision: 'generated',
+              data: { chars: accumulated.length, sources: sources.length },
+            }),
+          );
+        }
 
         if (parsed.isRefusal) {
           sink.synthesisRefusal({
@@ -788,9 +871,10 @@ async function runSynthesis(args: {
             reason: 'refusal',
             sourcesSearched: sources.map((s) => s.title),
           });
+          // S15 — refusal gate caught a STATUS: no_relevant_context.
           if (trace !== null) {
             trace.push(
-              stageRecord('synthesis', 'ran', synthStart, {
+              stageRecord('refusal-gate', 'short_circuited', synthStart, {
                 decision: 'refusal',
                 reason: parsed.refusalReason ?? 'no_relevant_context',
               }),
@@ -799,12 +883,20 @@ async function runSynthesis(args: {
           return;
         }
 
+        // S15 — refusal gate passed (not a no_relevant_context refusal).
+        if (trace !== null) {
+          trace.push(
+            stageRecord('refusal-gate', 'ran', synthStart, { decision: 'pass' }),
+          );
+        }
+
         // Citation verification → grounded-or-nothing.
         const detail = verifyCitationsDetailed(parsed.citations, sources);
         const survivors = detail.filter((d) => d.status !== 'dropped');
         if (trace !== null) {
           trace.push(
             stageRecord('citation-verify', 'ran', synthStart, {
+              decision: survivors.length === 0 ? 'ungrounded' : 'pass',
               data: {
                 total: detail.length,
                 surviving: survivors.length,
@@ -849,14 +941,8 @@ async function runSynthesis(args: {
             reason: 'ungrounded',
             sourcesSearched: sources.map((s) => s.title),
           });
-          if (trace !== null) {
-            trace.push(
-              stageRecord('synthesis', 'ran', synthStart, {
-                decision: 'ungrounded',
-                reason: 'no_surviving_citations',
-              }),
-            );
-          }
+          // Ungrounded: the citation-verify miss (decision 'ungrounded') is the
+          // terminal stop; reveal (S17) is never reached.
           return;
         }
 
@@ -879,11 +965,12 @@ async function runSynthesis(args: {
           rawSynthesis: accumulated,
           citationDetails: detail,
         });
+        // S17 — reveal: the grounded answer was streamed + persisted.
         if (trace !== null) {
           trace.push(
-            stageRecord('synthesis', 'ran', synthStart, {
-              decision: 'answer',
-              data: { citations: richCitations.length },
+            stageRecord('reveal', 'ran', synthStart, {
+              decision: 'revealed',
+              data: { citations: richCitations.length, encrypted: true },
             }),
           );
         }

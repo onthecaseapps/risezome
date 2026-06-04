@@ -329,14 +329,21 @@ export interface PipelineSink {
  *  daemon's RetrievalTrace/relevanceSkip events and the eval's
  *  EvalQuestionView intermediates. */
 export type PipelineStage =
+  | 'empty-query'
   | 'heuristic-gate'
   | 'llm-judge'
+  | 'router'
   | 'embed'
   | 'hybrid-search'
   | 'crag'
+  | 'no-hits'
   | 'dedup-expand'
+  | 'emit'
+  | 'skill'
   | 'synthesis'
-  | 'citation-verify';
+  | 'refusal-gate'
+  | 'citation-verify'
+  | 'reveal';
 
 /** Whether the stage ran to completion, was skipped (a prior condition meant
  *  it didn't apply), or short-circuited the whole pipeline (a stop). */

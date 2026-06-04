@@ -362,6 +362,102 @@ describe('runPipeline — trace (KTD4/R5)', () => {
     // Nothing trace-shaped leaked onto the sink.
     expect(Object.prototype.hasOwnProperty.call(sink, 'traces')).toBe(false);
   });
+
+  // ── U1: the enriched (full) stage set ──
+  it('grounded trace carries the new discrete stages (empty-query, router, no-hits, emit, skill, refusal-gate, reveal)', async () => {
+    const body = 'STATUS: answer\nThe answer is [1: "forty two"].';
+    const { deps } = makeDeps({ synthesizer: fakeSynthesizer(body) });
+    const sink = new TracingSink();
+    await runPipeline(input(), deps, sink);
+
+    const byId = new Map(sink.traces[0]!.stages.map((s) => [s.stage, s]));
+    for (const id of ['empty-query', 'router', 'no-hits', 'emit', 'skill', 'refusal-gate', 'reveal'] as const) {
+      expect(byId.has(id)).toBe(true);
+    }
+    expect(byId.get('empty-query')!.decision).toBe('pass');
+    expect(byId.get('router')!.decision).toBe('not_fired'); // not tool-shaped
+    expect(byId.get('no-hits')!.decision).toBe('pass'); // hits present
+    expect(byId.get('emit')!.decision).toBe('emitted');
+    expect((byId.get('emit')!.data as { emitted: number }).emitted).toBe(1);
+    expect(byId.get('skill')!.decision).toBe('none'); // router not fired
+    expect(byId.get('refusal-gate')!.decision).toBe('pass');
+    expect(byId.get('reveal')!.decision).toBe('revealed');
+  });
+
+  it('miss → no-hits short-circuits (decision miss), downstream stages absent', async () => {
+    const search = vi.fn(async () => [] as HybridHit[]);
+    const { deps } = makeDeps({ hybridSearch: search as unknown as HybridSearchFn });
+    const sink = new TracingSink();
+    await runPipeline(input(), deps, sink);
+
+    const byId = new Map(sink.traces[0]!.stages.map((s) => [s.stage, s]));
+    const nohits = byId.get('no-hits')!;
+    expect(nohits.status).toBe('short_circuited');
+    expect(nohits.decision).toBe('miss');
+    expect((nohits.data as { recordedGap: boolean }).recordedGap).toBe(true);
+    // Past the stop: nothing emitted/synthesized.
+    expect(byId.has('emit')).toBe(false);
+    expect(byId.has('reveal')).toBe(false);
+    expect(byId.has('synthesis')).toBe(false);
+  });
+
+  it('ungrounded → refusal-gate passes, citation-verify decision ungrounded, no reveal', async () => {
+    const body = 'STATUS: answer\nThe answer is [1: "a fabricated quote nowhere in source"].';
+    const { deps } = makeDeps({ synthesizer: fakeSynthesizer(body) });
+    const sink = new TracingSink();
+    await runPipeline(input(), deps, sink);
+
+    const byId = new Map(sink.traces[0]!.stages.map((s) => [s.stage, s]));
+    expect(byId.get('refusal-gate')!.decision).toBe('pass');
+    expect(byId.get('citation-verify')!.decision).toBe('ungrounded');
+    expect((byId.get('citation-verify')!.data as { surviving: number }).surviving).toBe(0);
+    expect(byId.has('reveal')).toBe(false);
+  });
+
+  it('refusal → refusal-gate short-circuits (decision refusal), no reveal', async () => {
+    const body = 'STATUS: no_relevant_context\nNothing here.';
+    const { deps } = makeDeps({ synthesizer: fakeSynthesizer(body) });
+    const sink = new TracingSink();
+    await runPipeline(input(), deps, sink);
+
+    const byId = new Map(sink.traces[0]!.stages.map((s) => [s.stage, s]));
+    const refusal = byId.get('refusal-gate')!;
+    expect(refusal.status).toBe('short_circuited');
+    expect(refusal.decision).toBe('refusal');
+    expect(byId.has('reveal')).toBe(false);
+    // synthesis (generation) still ran before the refusal gate.
+    expect(byId.get('synthesis')!.decision).toBe('generated');
+  });
+
+  it('empty query → empty-query short-circuit, single trace, nothing downstream', async () => {
+    const { deps } = makeDeps();
+    const sink = new TracingSink();
+    const result = await runPipeline(input({ queryText: '   ' }), deps, sink);
+
+    expect(result).toEqual({ emitted: 0, skipped: 'empty_query' });
+    expect(sink.traces).toHaveLength(1);
+    const stages = sink.traces[0]!.stages;
+    expect(stages).toHaveLength(1);
+    expect(stages[0]!.stage).toBe('empty-query');
+    expect(stages[0]!.status).toBe('short_circuited');
+  });
+
+  it('zero-cost: new stages add no observable work when recordTrace is absent (outputs identical to baseline)', async () => {
+    const body = 'STATUS: answer\nThe answer is [1: "forty two"].';
+    // Trace ON vs OFF must produce identical sink outputs (cards, dones, misses).
+    const { deps: depsOn } = makeDeps({ synthesizer: fakeSynthesizer(body) });
+    const { deps: depsOff } = makeDeps({ synthesizer: fakeSynthesizer(body) });
+    const tracing = new TracingSink();
+    const plain = new RecordingSink();
+    await runPipeline(input(), depsOn, tracing);
+    await runPipeline(input(), depsOff, plain);
+
+    expect((plain as PipelineSink).recordTrace).toBeUndefined();
+    expect(plain.cards).toHaveLength(tracing.cards.length);
+    expect(plain.dones).toHaveLength(tracing.dones.length);
+    expect(plain.misses).toHaveLength(tracing.misses.length);
+    expect(plain.dones[0]!.citations).toHaveLength(tracing.dones[0]!.citations.length);
+  });
 });
 
 describe('runPipeline — topK honored', () => {
