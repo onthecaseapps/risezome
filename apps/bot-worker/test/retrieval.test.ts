@@ -26,7 +26,7 @@ const baseArgs = (runtime: RetrievalRuntime, utteranceText: string) => ({
 });
 
 function lastInput(): PipelineInput {
-  return h.runPipeline.mock.calls.at(-1)![0] as unknown as PipelineInput;
+  return h.runPipeline.mock.calls.at(-1)![0] as PipelineInput;
 }
 
 describe('maybeRetrieveAndEmit — two-lane triggering', () => {
@@ -81,5 +81,52 @@ describe('maybeRetrieveAndEmit — two-lane triggering', () => {
       expect(r.skipped).toBeUndefined();
     }
     expect(h.runPipeline).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('maybeRetrieveAndEmit — question-anchored query (U3)', () => {
+  beforeEach(() => h.runPipeline.mockClear());
+
+  it('AE6: a standalone question amid off-domain finals embeds as JUST the question', async () => {
+    const rt = newRetrievalRuntime();
+    rt.recentFinals = [
+      'i wanna know where they lived at the time of their behavior',
+      "the last thing i wanna talk about is ongoing versus historical data",
+      "we're running out of time so just one more minute",
+    ];
+    await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    // The off-domain finals must NOT leak into the embed query.
+    expect(lastInput().queryText).toBe('what ai models do we use');
+  });
+
+  it('AE6: a fragment follow-up question pulls in the prior final + summary topic', async () => {
+    const rt = newRetrievalRuntime();
+    rt.recentFinals = ['the second data enrichment option uses voyage'];
+    const args = {
+      ...baseArgs(rt, 'what about historically'),
+      lastSummary: {
+        summary: '',
+        current_topic: 'data enrichment options',
+        open_questions: [],
+        key_terms: [],
+      },
+    };
+    await maybeRetrieveAndEmit(args);
+    const q = lastInput().queryText;
+    expect(lastInput().lane).toBe('question');
+    expect(q).toContain('what about historically');
+    expect(q).toContain('second data enrichment option'); // prior final (referent)
+    expect(q).toContain('data enrichment options'); // summary topic
+  });
+
+  it('an ambient fire keeps the full rolling window', async () => {
+    const rt = newRetrievalRuntime();
+    rt.lastRetrievalAt = Date.now() - 11_000;
+    rt.recentFinals = ['the build is green', 'we ship on friday'];
+    await maybeRetrieveAndEmit(baseArgs(rt, 'and the staging deploy went fine'));
+    // "and the staging deploy went fine" is a follow-up-shaped statement, but it
+    // is NOT a question, so it takes the ambient lane and the full window.
+    expect(lastInput().lane).toBe('ambient');
+    expect(lastInput().queryText).toBe('the build is green we ship on friday and the staging deploy went fine');
   });
 });

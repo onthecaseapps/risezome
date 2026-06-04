@@ -638,6 +638,9 @@ const KEY_TERMS_BOOST_ENABLED = process.env.RISEZOME_KEY_TERMS_BOOST === 'true';
 
 function keyTermsBoost(input: PipelineInput): string {
   if (!KEY_TERMS_BOOST_ENABLED) return '';
+  // Question-anchored queries (KTD5) must not be re-diluted by the meeting's
+  // key terms; the boost is ambient-only.
+  if (input.lane === 'question') return '';
   const summary = input.lastSummary;
   if (summary === undefined || summary.key_terms.length === 0) return '';
   return ` ${summary.key_terms.join(' ')}`;

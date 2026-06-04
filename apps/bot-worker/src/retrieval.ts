@@ -76,6 +76,33 @@ const QUESTION_MAX_PER_MEETING =
   Number.parseInt(process.env.RISEZOME_QUESTION_MAX_PER_MEETING ?? '60', 10) || 60;
 const QUESTION_RATE_WINDOW_MS = 60_000;
 
+// Question-anchored query (KTD5). A standalone question embeds as itself so
+// surrounding off-domain talk can't dilute it. A fragment / follow-up needs a
+// referent, so it (and only it) gets a minimal context slice: the immediately-
+// preceding final + the rolling-summary topic.
+const FOLLOWUP_START = /^(and|or|but|so|what about|how about|and the|or the|what's that|then)\b/;
+const FOLLOWUP_MAX_WORDS = 3;
+
+function buildQuestionQuery(
+  question: string,
+  recentFinals: readonly string[],
+  lastSummary: MeetingSummary | undefined,
+): string {
+  const q = question.trim();
+  const words = q.split(/\s+/).filter((w) => w.length > 0).length;
+  const isFollowup = words <= FOLLOWUP_MAX_WORDS || FOLLOWUP_START.test(q.toLowerCase());
+  if (!isFollowup) return q; // standalone question — undiluted
+  const parts: string[] = [];
+  // recentFinals' last element IS the question (pushed on entry); the one before
+  // it is the conversational antecedent.
+  const priorFinal = recentFinals.length >= 2 ? recentFinals[recentFinals.length - 2] : undefined;
+  if (priorFinal !== undefined && priorFinal.trim().length > 0) parts.push(priorFinal.trim());
+  const topic = lastSummary?.current_topic?.trim();
+  if (topic !== undefined && topic.length > 0) parts.push(topic);
+  parts.push(q);
+  return parts.join(' ').trim();
+}
+
 export interface RetrievalRuntime {
   /** Concatenated text of recent final utterances (the rolling query window). */
   recentFinals: string[];
@@ -187,14 +214,21 @@ export async function maybeRetrieveAndEmit(args: {
     args.runtime.questionFireCount += 1;
   }
 
-  // ── Build the query text (prod transcription-source shape) ───────────
-  // The EMBED/lexical query is the rolling window of recent finals, optionally
-  // boosted with the rolling summary's key_terms (env-gated). The relevance
-  // HEURISTIC + judge, by contrast, see only the single latest utterance — the
-  // core takes both verbatim via PipelineInput (utteranceText vs queryText).
-  const queryText = args.runtime.recentFinals.join(' ').trim();
+  // ── Build the query text (lane-aware; KTD5) ──────────────────────────
+  // QUESTION lane: anchor on the question utterance (+ minimal context for
+  // fragments). AMBIENT lane: the rolling window of recent finals, optionally
+  // boosted with the summary's key_terms (env-gated). The relevance HEURISTIC +
+  // judge, by contrast, see only the single latest utterance — the core takes
+  // both verbatim via PipelineInput (utteranceText vs queryText).
+  const queryText =
+    lane === 'question'
+      ? buildQuestionQuery(args.utteranceText, args.runtime.recentFinals, args.lastSummary)
+      : args.runtime.recentFinals.join(' ').trim();
   if (queryText.length === 0) return { emitted: 0, skipped: 'empty_query' };
+  // key_terms boost is ambient-only — appending the meeting's key terms to a
+  // question would re-introduce the off-domain dilution KTD5 removes.
   const keyTermsBoost =
+    lane === 'ambient' &&
     KEY_TERMS_BOOST_ENABLED &&
     args.lastSummary !== undefined &&
     args.lastSummary.key_terms.length > 0
