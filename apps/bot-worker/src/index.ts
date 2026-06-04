@@ -31,6 +31,13 @@ import { buildSkillRegistry } from './skills/index.js';
 import { adaptRecallMessage } from './recall-adapter.js';
 import { verifyBotWsJwt, type BotWsJwtPayload } from './jwt.js';
 import { handleLocalDebugWs } from './debug/local-debug-ws.js';
+import {
+  startLocalCapture,
+  stopLocalCapture,
+  activeLocalCapture,
+  LocalCaptureBusyError,
+  type LocalCaptureDeps,
+} from './debug/local-capture.js';
 import { registerEvalRoutes } from './debug/eval-routes.js';
 import {
   createServiceClient,
@@ -158,6 +165,72 @@ async function main(): Promise<void> {
     if (runtime.summarizer !== null) runtime.summarizer.dispose();
     runtimes.delete(meetingId);
     return reply.send({ ok: true, removed: true });
+  });
+
+  // ── Local-audio meeting capture (dev only) ──────────────────────────────
+  // POST /local-capture/start|stop + GET /status — gated on LOCAL_DEBUG_ENABLED
+  // (so production never exposes it) AND the shared BOT_WORKER_SECRET. The dev
+  // console drives a real meeting from the local mic sidecar through the SAME
+  // pipeline a Recall meeting uses; one capture at a time (one mic, KTD5).
+  const captureLogger = {
+    info: (obj: object, msg?: string) => console.log('[bot-worker]', msg ?? '', JSON.stringify(obj)),
+    warn: (obj: object, msg?: string) => console.warn('[bot-worker]', msg ?? '', JSON.stringify(obj)),
+    error: (obj: object, msg?: string) => console.error('[bot-worker]', msg ?? '', JSON.stringify(obj)),
+  };
+  const localCaptureDeps = (deepgramKey: string): LocalCaptureDeps => ({
+    db,
+    embedder,
+    synthesizer,
+    relevanceClassifier,
+    classifier,
+    skillRegistry,
+    summarizer,
+    deepgramKey,
+    logger: captureLogger,
+  });
+  const captureGuardFail = (authHeader: string | undefined): { code: number; body: object } | null => {
+    if (process.env.LOCAL_DEBUG_ENABLED !== 'true') return { code: 404, body: { ok: false, error: 'not found' } };
+    if (!bearerMatches(authHeader, secret)) return { code: 401, body: { ok: false, error: 'unauthorized' } };
+    return null;
+  };
+
+  fastify.post<{ Body: { meetingId?: string; orgId?: string } }>('/local-capture/start', async (req, reply) => {
+    const fail = captureGuardFail(req.headers.authorization);
+    if (fail !== null) return reply.code(fail.code).send(fail.body);
+    const { meetingId, orgId } = req.body ?? {};
+    if (typeof meetingId !== 'string' || typeof orgId !== 'string') {
+      return reply.code(400).send({ ok: false, error: 'meetingId + orgId required' });
+    }
+    const deepgramKey = process.env.DEEPGRAM_API_KEY;
+    if (deepgramKey === undefined || deepgramKey.length === 0) {
+      return reply.code(400).send({ ok: false, error: 'DEEPGRAM_API_KEY unset' });
+    }
+    try {
+      await startLocalCapture(meetingId, orgId, localCaptureDeps(deepgramKey));
+      return reply.send({ ok: true, meetingId });
+    } catch (err) {
+      if (err instanceof LocalCaptureBusyError) {
+        return reply.code(409).send({ ok: false, error: 'busy', activeMeetingId: err.activeMeetingId });
+      }
+      return reply.code(500).send({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  fastify.post<{ Body: { meetingId?: string } }>('/local-capture/stop', async (req, reply) => {
+    const fail = captureGuardFail(req.headers.authorization);
+    if (fail !== null) return reply.code(fail.code).send(fail.body);
+    const meetingId = req.body?.meetingId;
+    if (typeof meetingId !== 'string') {
+      return reply.code(400).send({ ok: false, error: 'meetingId required' });
+    }
+    const stopped = await stopLocalCapture(meetingId, captureLogger);
+    return reply.send({ ok: true, stopped });
+  });
+
+  fastify.get('/local-capture/status', async (req, reply) => {
+    const fail = captureGuardFail(req.headers.authorization);
+    if (fail !== null) return reply.code(fail.code).send(fail.body);
+    return reply.send({ ok: true, activeMeetingId: activeLocalCapture() });
   });
 
   // @fastify/websocket v11 requires the WS route to be registered inside

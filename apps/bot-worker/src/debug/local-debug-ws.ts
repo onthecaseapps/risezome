@@ -529,7 +529,7 @@ function send(socket: WebSocket, payload: Record<string, unknown>): void {
   socket.send(JSON.stringify(payload));
 }
 
-function defaultSidecarPath(): string {
+export function defaultSidecarPath(): string {
   // RISEZOME_SIDECAR_PATH env var wins when set.
   const fromEnv = process.env.RISEZOME_SIDECAR_PATH;
   if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
@@ -561,7 +561,7 @@ function defaultSidecarPath(): string {
   return resolve(process.cwd(), rel);
 }
 
-async function computeFileSha256(path: string): Promise<string> {
+export async function computeFileSha256(path: string): Promise<string> {
   const { createReadStream } = await import('node:fs');
   const { createHash } = await import('node:crypto');
   return new Promise((resolveSha, reject) => {
