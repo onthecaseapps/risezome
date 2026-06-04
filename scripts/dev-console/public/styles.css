@@ -15,6 +15,30 @@
   box-sizing: border-box;
 }
 
+/* Dark scrollbars so the log panes / links list don't show the light system
+   default. Standard props (Firefox, Chromium 121+) + ::-webkit fallback. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 body {
   margin: 0;
   font:
@@ -132,14 +156,14 @@ button:disabled {
   margin: 0;
 }
 
-/* Links panel — first cell of the process grid; clickable URLs for live tools.
-   2-column grid so the links don't take much vertical space. */
+/* Links panel — top row beside the sidecar; clickable URLs for live tools.
+   4-column grid: the ~8 live links land as 4 columns × 2 rows. */
 .links {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(4, 1fr);
   grid-auto-rows: min-content;
   gap: 6px;
   padding: 10px;
@@ -154,6 +178,7 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 4px;
   text-decoration: none;
+  min-width: 0;
 }
 .link:hover {
   border-color: var(--accent);
@@ -161,25 +186,63 @@ button:disabled {
 .link-label {
   color: #fff;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .link-url {
   color: var(--accent);
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Pinned orchestration log — shows what step the console is on + tunnel setup. */
-.console-panel {
+/* Top row: the orchestration Console (3/4) beside the compact Sidecar card
+   (1/4). The sidecar card is status-only — its build output streams into the
+   Console panel, so it needs little room. */
+.top-row {
+  display: flex;
+  gap: 12px;
   margin: 16px 16px 0;
+  align-items: stretch;
 }
+.top-row .links-panel {
+  flex: 3 1 0;
+  min-width: 0;
+}
+.sidecar-panel {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.sidecar-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+.sidecar-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sidecar-path {
+  font-size: 11px;
+  word-break: break-all;
+}
+.sidecar-body button {
+  align-self: flex-start;
+}
+
+/* Console: orchestration steps + tunnel setup. Now a normal grid cell alongside
+   the process log panes, so it shares the standard .logs height (no override);
+   its name keeps the accent tint to set it apart. */
 .console-panel .proc-name {
   color: var(--accent);
 }
 .console-sub {
   margin-left: auto;
   font-size: 11px;
-}
-.console-panel .logs {
-  height: 160px;
 }
 
 .procs {
@@ -252,6 +315,19 @@ button:disabled {
   border-color: var(--muted);
 }
 .badge.exited {
+  color: var(--red);
+  border-color: var(--red);
+}
+/* Sidecar status: present (built) green, building yellow, missing red. */
+.badge.present {
+  color: var(--green);
+  border-color: var(--green);
+}
+.badge.building {
+  color: var(--yellow);
+  border-color: var(--yellow);
+}
+.badge.missing {
   color: var(--red);
   border-color: var(--red);
 }

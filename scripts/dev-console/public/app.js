@@ -15,6 +15,10 @@ const activityBar = document.getElementById('activity');
 const activityText = document.getElementById('activity-text');
 const linksEl = document.getElementById('links');
 const resetToggle = document.getElementById('reset-on-start');
+const sidecarBadge = document.getElementById('sidecar-badge');
+const sidecarOs = document.getElementById('sidecar-os');
+const sidecarPath = document.getElementById('sidecar-path');
+const sidecarBuild = document.getElementById('sidecar-build');
 
 const cards = new Map(); // name -> { root, badge, pid, logs, atBottom }
 
@@ -166,11 +170,31 @@ function paintLinks(links) {
   );
 }
 
+// Compact sidecar card: badge + OS + path, and a Build button that's only
+// actionable when the binary is missing (present ⇒ already built; building ⇒
+// in progress). Build output streams into the Console panel.
+function paintSidecar(s) {
+  if (!s) return;
+  sidecarBadge.className = `badge ${s.state}`;
+  sidecarBadge.textContent = s.state;
+  sidecarOs.textContent = s.os === 'macos' ? 'macOS' : 'Linux';
+  sidecarPath.textContent = s.path ?? '';
+  sidecarBuild.disabled = s.state !== 'missing';
+  sidecarBuild.textContent = s.state === 'building' ? 'Building…' : 'Build';
+  sidecarBuild.title =
+    s.state === 'present'
+      ? `Built · ${s.path ?? ''}`
+      : s.state === 'building'
+        ? 'Building…'
+        : 'Build the audio sidecar for this OS';
+}
+
 let resetTouched = false; // don't fight the user mid-edit with server snapshots
 
 function applyState(state) {
   paintActivity(state.activity);
   paintLinks(state.links);
+  paintSidecar(state.sidecar);
   if (!resetTouched && typeof state.resetOnStart === 'boolean') {
     resetToggle.checked = state.resetOnStart;
   }
@@ -222,6 +246,13 @@ configForm.addEventListener('submit', (ev) => {
 resetToggle.addEventListener('change', () => {
   resetTouched = true;
   void api('/api/reset-on-start', 'POST', { enabled: resetToggle.checked });
+});
+
+sidecarBuild.addEventListener('click', () => {
+  // Disable immediately; the next state snapshot (building/present) re-renders it.
+  sidecarBuild.disabled = true;
+  sidecarBuild.textContent = 'Building…';
+  void api('/api/sidecar/ensure', 'POST');
 });
 
 document.getElementById('clear-logs').addEventListener('click', () => {

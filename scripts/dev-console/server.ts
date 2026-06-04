@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ProcessManager, type ProcDef, type ProcStatus } from './process-manager';
 import { SupabaseControl, type SupabaseState } from './supabase-control';
+import { SidecarControl } from './sidecar-control';
 import { appRegistry } from './registry';
 import { renderLine } from './ansi';
 
@@ -40,6 +41,7 @@ export interface ConsoleHandle {
   readonly server: Server;
   readonly manager: ProcessManager;
   readonly supabase: SupabaseControl;
+  readonly sidecar: SidecarControl;
   listen(port: number, host?: string): Promise<number>;
   close(): Promise<void>;
 }
@@ -60,6 +62,13 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     emit: (line) => manager.emit('line:supabase', line),
     portalEnvPath: join(opts.repoRoot, 'apps', 'portal', '.env.local'),
     ...(opts.supabaseCommand !== undefined ? { command: opts.supabaseCommand } : {}),
+  });
+  // Audio-capture sidecar: built once per OS, then exported into this process's
+  // env so spawned children (bot-worker) inherit RISEZOME_SIDECAR_PATH/SHA.
+  // Build output streams into the Console panel (same place as tunnel setup).
+  const sidecar = new SidecarControl({
+    repoRoot: opts.repoRoot,
+    emit: (line) => logConsole(line),
   });
   let lastMode: 'local' | 'hosted' = opts.mode;
   // Human-readable description of the long-running action the console is
@@ -113,6 +122,21 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
         activity,
         resetOnStart,
         links: links(items),
+        sidecar: sidecar.status(),
+      });
+    }
+
+    if (method === 'POST' && path === '/api/sidecar/ensure') {
+      setStep(`Building ${sidecar.os} sidecar…`);
+      let code: number;
+      try {
+        code = await sidecar.ensure();
+      } finally {
+        setStep(null);
+      }
+      return sendJson(res, code === 0 ? 200 : 500, {
+        ok: code === 0,
+        sidecar: sidecar.status(),
       });
     }
 
@@ -174,6 +198,10 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
           }
           setStep('Setting up your cloudflared tunnel…');
           await ensureTunnel();
+          // Build + wire the audio sidecar before bot-worker spawns so it
+          // inherits RISEZOME_SIDECAR_PATH/SHA. Idempotent when already built.
+          setStep(`Checking ${sidecar.os} audio sidecar…`);
+          await sidecar.ensure();
           setStep('Launching portal · inngest · bot-worker · tunnel…');
           manager.startAll();
         } else {
@@ -322,6 +350,7 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
       activity,
       resetOnStart,
       links: links(initial),
+      sidecar: sidecar.status(),
     });
     for (const name of streamNames()) {
       for (const line of tail(name)) send({ type: 'log', name, ...renderLine(line) });
@@ -339,7 +368,15 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     const pushState = async (): Promise<void> => {
       if (closed) return;
       const items = await states();
-      send({ type: 'state', items, mode: lastMode, activity, resetOnStart, links: links(items) });
+      send({
+        type: 'state',
+        items,
+        mode: lastMode,
+        activity,
+        resetOnStart,
+        links: links(items),
+        sidecar: sidecar.status(),
+      });
     };
     const stateTimer = setInterval(() => void pushState(), 1200);
     const heartbeat = setInterval(() => res.write(': ping\n\n'), 15_000);
@@ -463,6 +500,7 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     server,
     manager,
     supabase,
+    sidecar,
     listen: (port, host = '127.0.0.1') =>
       new Promise<number>((resolve) => {
         server.listen(port, host, () => {
