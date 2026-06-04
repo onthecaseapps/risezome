@@ -61,6 +61,13 @@ interface QuestionView {
   ragas: Ragas | null;
   latencyMs?: number;
   gateSuppressed?: boolean;
+  // Optional for back-compat with older bot-worker responses.
+  triggeringVerdict?: {
+    lane: 'question' | 'ambient';
+    isQuestion: boolean;
+    wouldFire: boolean;
+    reason: string;
+  };
 }
 
 type RunState = 'idle' | 'running' | QuestionView | { error: string };
@@ -260,7 +267,7 @@ function Badge({ tone, children }: { tone: 'pass' | 'fail' | 'warn' | 'muted'; c
   return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${cls}`}>{children}</span>;
 }
 
-function QuestionCard({
+export function QuestionCard({
   question,
   state,
   onRun,
@@ -276,6 +283,11 @@ function QuestionCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             {view !== null && <Badge tone={view.result.pass ? 'pass' : 'fail'}>{view.result.pass ? 'pass' : 'fail'}</Badge>}
+            {view?.triggeringVerdict !== undefined && (
+              <Badge tone={view.triggeringVerdict.wouldFire ? 'warn' : 'muted'}>
+                {view.triggeringVerdict.wouldFire ? 'Q-lane · fires' : 'ambient · no fire'}
+              </Badge>
+            )}
             {view?.suppressed === true && <Badge tone="warn">suppressed</Badge>}
             {view?.isRefusal === true && !view.suppressed && <Badge tone="muted">refusal</Badge>}
             <span className="font-medium">{question.q}</span>
@@ -310,6 +322,20 @@ function QuestionCard({
 function ViewBody({ view }: { view: QuestionView }): ReactElement {
   return (
     <div className="mt-3 space-y-3 border-t border-border pt-3 text-sm">
+      {/* Triggering verdict — what the live two-lane policy would do with this
+          utterance (same classifier as live). */}
+      {view.triggeringVerdict !== undefined && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-muted">Triggering</div>
+          <p className="mt-1 text-xs">
+            {view.triggeringVerdict.lane === 'question'
+              ? 'QUESTION lane — fires immediately (synthesizer is the relevance backstop)'
+              : 'Ambient lane — budgeted; would not fire as a question'}
+            <span className="text-muted"> · {view.triggeringVerdict.reason}</span>
+          </p>
+        </div>
+      )}
+
       {/* Answer */}
       <div>
         <div className="text-[10px] uppercase tracking-wider text-muted">Synthesis</div>
