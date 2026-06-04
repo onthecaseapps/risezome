@@ -112,6 +112,8 @@ const SCAN_DIRS = [
 const SERVICE_ROLE_MODULES = new Set([
   join(REPO_ROOT, 'apps', 'bot-worker', 'src', 'db.ts'),
   join(REPO_ROOT, 'apps', 'bot-worker', 'src', 'retrieval.ts'),
+  join(REPO_ROOT, 'apps', 'bot-worker', 'src', 'pipeline', 'sink-supabase.ts'),
+  join(REPO_ROOT, 'apps', 'bot-worker', 'src', 'pipeline', 'core.ts'),
 ]);
 
 // Per-(file, table) exemptions for service-role reads that are legitimately
