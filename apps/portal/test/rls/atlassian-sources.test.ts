@@ -1,3 +1,6 @@
+// @vitest-environment node
+// Crypto round-trips use @risezome/crypto's AWS Encryption SDK, which must load
+// as a single real Node module instance (jsdom/Vite-SSR duplicates it).
 /**
  * Migration + RLS regression tests for the Atlassian source kinds and the
  * `atlassian_connections` table (plan AT-U1).
@@ -8,13 +11,15 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { decryptForOrgFromBytea, encryptForOrgToBytea } from '@risezome/crypto';
+
+process.env['RISEZOME_DEV_CRYPTO_KEY'] =
+  process.env['RISEZOME_DEV_CRYPTO_KEY'] ?? 'rls-atlassian-crypto-test-secret';
 
 const SUPABASE_URL = process.env['SUPABASE_URL'] ?? 'http://127.0.0.1:54321';
 const SUPABASE_ANON_KEY = process.env['SUPABASE_ANON_KEY'] ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
 const FORCE = process.env['RISEZOME_RUN_RLS_TESTS'] === '1';
-// Encryption key used by the pgcrypto helpers for this test's token round-trips.
-const TOKEN_KEY = 'rls-atlassian-test-key-' + 'k'.repeat(40);
 
 interface TestUser {
   readonly id: string;
@@ -56,17 +61,18 @@ if (!stackReachable && !FORCE) {
       userA = await createTestUser(admin, 'rls-atlassian-a@example.com');
       orgA = await createOrgWithMember(admin, 'Atlassian Org A', userA.id, 'manager');
 
-      // Tokens are stored encrypted (U2): encrypt via the pgcrypto helper before insert.
+      // Tokens are stored encrypted under the org's per-org KMS key (U9): encrypt
+      // app-side to bytea before insert.
       const [atEnc, rtEnc] = await Promise.all([
-        admin.rpc('encrypt_refresh_token', { plaintext: 'at_secret', key: TOKEN_KEY }),
-        admin.rpc('encrypt_refresh_token', { plaintext: 'rt_secret', key: TOKEN_KEY }),
+        encryptForOrgToBytea(orgA, 'at_secret'),
+        encryptForOrgToBytea(orgA, 'rt_secret'),
       ]);
       const { data: conn, error } = await admin
         .from('atlassian_connections')
         .insert({
           org_id: orgA,
-          access_token_enc: atEnc.data as unknown as string,
-          refresh_token_enc: rtEnc.data as unknown as string,
+          access_token_enc: atEnc,
+          refresh_token_enc: rtEnc,
           token_version: 0,
           expires_at: new Date(Date.now() + 3600_000).toISOString(),
           cloud_id: 'cloud_1',
@@ -147,23 +153,24 @@ if (!stackReachable && !FORCE) {
       expect(data ?? []).toEqual([]);
     });
 
-    it('stores tokens encrypted at rest — no plaintext column, decrypt round-trips (U2)', async () => {
+    it('stores tokens encrypted at rest — no plaintext column, app-side decrypt round-trips (U9)', async () => {
       // The plaintext columns are gone: selecting them is a schema error.
       const plaintextSel = await admin.from('atlassian_connections').select('refresh_token');
       expect(plaintextSel.error).not.toBeNull();
 
-      // The stored ciphertext decrypts back to the original via the pgcrypto helper.
+      // The stored ciphertext decrypts back to the original via the app read path
+      // (decryptForOrg over the bytea column).
       const { data: row } = await admin
         .from('atlassian_connections')
         .select('refresh_token_enc, token_version')
         .eq('id', connectionId)
         .single();
       expect(row?.token_version).toBe(0);
-      const dec = await admin.rpc('decrypt_refresh_token', {
-        ciphertext: (row as { refresh_token_enc: string }).refresh_token_enc,
-        key: TOKEN_KEY,
-      });
-      expect(dec.data).toBe('rt_secret');
+      const dec = await decryptForOrgFromBytea(
+        orgA,
+        (row as { refresh_token_enc: string }).refresh_token_enc,
+      );
+      expect(dec).toBe('rt_secret');
     });
   });
 }

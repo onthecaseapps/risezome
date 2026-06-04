@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { decryptToken } from '../../token-crypto.js';
+import { decryptForOrgFromBytea } from '@risezome/crypto';
 
 /**
  * Per-org Trello access, resolved at skill-call time from the meeting's orgId.
@@ -73,7 +73,9 @@ export function buildTrelloSourceResolver(deps: { db: SupabaseClient }): TrelloS
     }
     const tokenEnc: unknown = connData?.token_enc;
     if (typeof tokenEnc !== 'string' || tokenEnc.length === 0) return null;
-    const token = await decryptToken(deps.db, tokenEnc); // U3: token stored encrypted
+    // U10: token decrypted app-side under the org's per-org KMS key (the bytea
+    // column comes back as a `\x<hex>` string → decode → decrypt).
+    const token = await decryptForOrgFromBytea(orgId, tokenEnc);
     if (token.length === 0) return null;
 
     return { token, boards };

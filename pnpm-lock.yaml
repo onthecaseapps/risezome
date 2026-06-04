@@ -47,6 +47,9 @@ importers:
       '@fastify/websocket':
         specifier: ^11.0.1
         version: 11.2.0
+      '@risezome/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
       '@risezome/engine':
         specifier: workspace:*
         version: link:../../packages/engine
@@ -176,9 +179,15 @@ importers:
 
   apps/portal:
     dependencies:
+      '@aws-sdk/client-kms':
+        specifier: ^3.1061.0
+        version: 3.1061.0
       '@octokit/app':
         specifier: ^16.1.2
         version: 16.1.2
+      '@risezome/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
       '@risezome/engine':
         specifier: workspace:*
         version: link:../../packages/engine

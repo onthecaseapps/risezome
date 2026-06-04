@@ -1,3 +1,6 @@
+// @vitest-environment node
+// Crypto round-trips here use @risezome/crypto's AWS Encryption SDK, which must
+// load as a single real Node module instance (jsdom/Vite-SSR duplicates it).
 /**
  * Dedup + participant-association tests for one-bot-per-meeting (plan U3).
  *
@@ -14,12 +17,22 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import {
+  CRYPTO_VERSION,
+  decryptForOrgFromBytea,
+  encryptForOrgToBytea,
+} from '@risezome/crypto';
+import { transcriptWithText } from '../../app/_lib/token-crypto';
+
+// Per-org KMS encryption uses the local RawAES dev fallback so these tests need
+// no AWS. Set early so @risezome/crypto's provider selects the fallback path.
+process.env['RISEZOME_DEV_CRYPTO_KEY'] =
+  process.env['RISEZOME_DEV_CRYPTO_KEY'] ?? 'rls-meeting-crypto-test-secret';
 
 const SUPABASE_URL = process.env['SUPABASE_URL'] ?? 'http://127.0.0.1:54321';
 const SUPABASE_ANON_KEY = process.env['SUPABASE_ANON_KEY'] ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
 const FORCE = process.env['RISEZOME_RUN_RLS_TESTS'] === '1';
-const TOKEN_KEY = 'rls-recap-test-key-' + 'k'.repeat(40); // U9 recap encryption
 
 interface TestUser {
   readonly id: string;
@@ -74,11 +87,10 @@ if (!stackReachable && !FORCE) {
       await admin.auth.admin.deleteUser(outsider.id).catch(() => undefined);
     });
 
-    it('U9/S9: the meeting recap is stored encrypted — no plaintext column, decrypt round-trips', async () => {
-      const enc = await admin.rpc('encrypt_refresh_token', {
-        plaintext: 'Confidential recap: we are acquiring Acme for $40M.',
-        key: TOKEN_KEY,
-      });
+    it('U9/S9: the meeting recap is stored encrypted under the org key — no plaintext column, decrypt round-trips', async () => {
+      const plaintext = 'Confidential recap: we are acquiring Acme for $40M.';
+      // U9: encrypt app-side under the org's per-org KMS key, store as bytea.
+      const recapEnc = await encryptForOrgToBytea(orgId, plaintext);
       const m = await admin
         .from('meetings')
         .insert({
@@ -86,7 +98,8 @@ if (!stackReachable && !FORCE) {
           user_id: launcher.id,
           conference_url: 'https://zoom.us/j/recap-enc',
           status: 'completed',
-          recap_text_enc: enc.data as unknown as string,
+          recap_text_enc: recapEnc,
+          recap_key_version: CRYPTO_VERSION.KMS_ESDK,
           recap_status: 'done',
         })
         .select('meeting_id')
@@ -97,18 +110,26 @@ if (!stackReachable && !FORCE) {
       const plaintextSel = await admin.from('meetings').select('recap_text');
       expect(plaintextSel.error).not.toBeNull();
 
-      // Ciphertext decrypts back to the original.
+      // The app read path (decryptForOrg over the bytea column) recovers the text.
       const { data: row } = await admin
         .from('meetings')
         .select('recap_text_enc, recap_key_version')
         .eq('meeting_id', m.data!.meeting_id as string)
         .single();
-      expect(row?.recap_key_version).toBe(0);
-      const dec = await admin.rpc('decrypt_refresh_token', {
-        ciphertext: (row as { recap_text_enc: string }).recap_text_enc,
-        key: TOKEN_KEY,
-      });
-      expect(dec.data).toBe('Confidential recap: we are acquiring Acme for $40M.');
+      expect(row?.recap_key_version).toBe(CRYPTO_VERSION.KMS_ESDK);
+      const dec = await decryptForOrgFromBytea(
+        orgId,
+        (row as { recap_text_enc: string }).recap_text_enc,
+      );
+      expect(dec).toBe(plaintext);
+
+      // Cross-org: a different org's key cannot decrypt this ciphertext.
+      await expect(
+        decryptForOrgFromBytea(
+          '00000000-0000-0000-0000-0000000000ff',
+          (row as { recap_text_enc: string }).recap_text_enc,
+        ),
+      ).rejects.toThrow();
 
       if (m.data) await admin.from('meetings').delete().eq('meeting_id', m.data.meeting_id);
     });
@@ -168,10 +189,8 @@ if (!stackReachable && !FORCE) {
       expect(meeting.error).toBeNull();
       const meetingId = meeting.data!.meeting_id as string;
 
-      const enc = await admin.rpc('encrypt_refresh_token', {
-        plaintext: 'The repo uses Kafka for the event bus [1].',
-        key: TOKEN_KEY,
-      });
+      const plaintext = 'The repo uses Kafka for the event bus [1].';
+      const synthEnc = await encryptForOrgToBytea(orgId, plaintext);
       const s = await admin
         .from('syntheses')
         .insert({
@@ -179,7 +198,8 @@ if (!stackReachable && !FORCE) {
           meeting_id: meetingId,
           org_id: orgId,
           source_card_ids: [],
-          accumulated_text_enc: enc.data as unknown as string,
+          accumulated_text_enc: synthEnc,
+          synth_key_version: CRYPTO_VERSION.KMS_ESDK,
           status: 'done',
           citations: [],
           trace_id: 't',
@@ -197,17 +217,17 @@ if (!stackReachable && !FORCE) {
         .select('accumulated_text_enc, synth_key_version')
         .eq('synthesis_id', s.data!.synthesis_id as string)
         .single();
-      expect(row?.synth_key_version).toBe(0);
-      const dec = await admin.rpc('decrypt_refresh_token', {
-        ciphertext: (row as { accumulated_text_enc: string }).accumulated_text_enc,
-        key: TOKEN_KEY,
-      });
-      expect(dec.data).toBe('The repo uses Kafka for the event bus [1].');
+      expect(row?.synth_key_version).toBe(CRYPTO_VERSION.KMS_ESDK);
+      const dec = await decryptForOrgFromBytea(
+        orgId,
+        (row as { accumulated_text_enc: string }).accumulated_text_enc,
+      );
+      expect(dec).toBe(plaintext);
 
       await admin.from('meetings').delete().eq('meeting_id', meetingId);
     });
 
-    it('F2: transcript text is encrypted in meeting_events; transcript_with_text decrypts it', async () => {
+    it('F2: transcript text is encrypted in meeting_events; app-side batch decrypt recovers it', async () => {
       const meeting = await admin
         .from('meetings')
         .insert({
@@ -221,17 +241,16 @@ if (!stackReachable && !FORCE) {
       expect(meeting.error).toBeNull();
       const meetingId = meeting.data!.meeting_id as string;
 
-      const enc = await admin.rpc('encrypt_refresh_token', {
-        plaintext: 'How does our auth token rotation actually work?',
-        key: TOKEN_KEY,
-      });
+      const plaintext = 'How does our auth token rotation actually work?';
+      const transcriptEnc = await encryptForOrgToBytea(orgId, plaintext);
       // payload keeps speaker/utteranceId (queryable), NOT the text.
       const ev = await admin.from('meeting_events').insert({
         meeting_id: meetingId,
         org_id: orgId,
         type: 'transcript.data',
         payload: { utteranceId: 'u1', speaker: 'Nathan', startMs: 0, endMs: 1000 },
-        transcript_text_enc: enc.data as unknown as string,
+        transcript_text_enc: transcriptEnc,
+        transcript_key_version: CRYPTO_VERSION.KMS_ESDK,
       });
       expect(ev.error).toBeNull();
 
@@ -245,16 +264,11 @@ if (!stackReachable && !FORCE) {
       expect(payload?.['text']).toBeUndefined();
       expect(payload?.['speaker']).toBe('Nathan'); // speaker stays queryable
 
-      // The batch reader returns the decrypted text.
-      const { data: decoded, error: rpcErr } = await admin.rpc('transcript_with_text', {
-        p_meeting_id: meetingId,
-        p_org_id: orgId,
-        p_key: TOKEN_KEY,
-      });
-      expect(rpcErr).toBeNull();
-      const rows = (decoded ?? []) as { payload: Record<string, unknown>; text: string }[];
-      expect(rows[0]?.text).toBe('How does our auth token rotation actually work?');
-      expect(rows[0]?.payload['speaker']).toBe('Nathan');
+      // The new app-side batch reader (replaces the transcript_with_text RPC)
+      // decrypts each row under the org's key and returns the same shape.
+      const rows = await transcriptWithText(admin, meetingId, orgId);
+      expect(rows[0]?.text).toBe(plaintext);
+      expect(rows[0]?.payload?.['speaker']).toBe('Nathan');
 
       await admin.from('meetings').delete().eq('meeting_id', meetingId);
     });

@@ -57,6 +57,17 @@ export async function createOrg(formData: FormData): Promise<void> {
     redirect('/onboarding?error=create_failed');
   }
 
+  // Provision the org's per-org KMS encryption key (security plan 003, U8).
+  // Best-effort + idempotent: a failed kickoff must NOT block org creation —
+  // provisioning is replayable (deterministic alias) and U11's lazy ensure-create
+  // also covers any org that slipped through. Mirrors the calendar-sync soft-fail.
+  try {
+    const { inngest } = await import('../../../src/inngest/client');
+    await inngest.send({ name: 'risezome/org.created', data: { orgId } });
+  } catch (err) {
+    console.error('[onboarding.createOrg] org-key provisioning kickoff failed:', err);
+  }
+
   const cookieStore = await cookies();
   cookieStore.set(CURRENT_ORG_COOKIE, orgId, {
     path: '/',

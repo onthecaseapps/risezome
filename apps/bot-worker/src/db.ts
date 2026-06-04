@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Utterance } from '@risezome/engine/transcribe';
-import { encryptToken } from './token-crypto.js';
+import { CRYPTO_VERSION, encryptForOrgToBytea } from '@risezome/crypto';
 
 /**
  * Service-role Supabase client. The bot-worker writes meeting_events
@@ -80,11 +80,18 @@ export async function persistAndBroadcast(
   // broadcast below still carries the full plaintext payload to live participants.
   let storedPayload = args.payload;
   let transcriptTextEnc: string | null = null;
+  let transcriptKeyVersion: number | null = null;
   const textVal = args.payload.text;
   if (args.type === 'transcript.data' && typeof textVal === 'string') {
     const { text: _text, ...rest } = args.payload;
     storedPayload = rest;
-    transcriptTextEnc = await encryptToken(client, textVal);
+    // U9: encrypt under the org's per-org KMS key (app-side ESDK). The Buffer is
+    // serialized to the bytea hex-text literal supabase-js needs (a raw Buffer
+    // would be JSON-mangled into the column). transcript_key_version=2 marks the
+    // KMS-ESDK format (1 = legacy pgcrypto) so the U11 migration can find
+    // un-migrated rows.
+    transcriptTextEnc = await encryptForOrgToBytea(args.orgId, textVal);
+    transcriptKeyVersion = CRYPTO_VERSION.KMS_ESDK;
   }
   const { data, error } = await client
     .from('meeting_events')
@@ -94,6 +101,7 @@ export async function persistAndBroadcast(
       type: args.type,
       payload: storedPayload,
       transcript_text_enc: transcriptTextEnc,
+      transcript_key_version: transcriptKeyVersion,
     })
     .select('event_id')
     .single();

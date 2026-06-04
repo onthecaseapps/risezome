@@ -6,7 +6,7 @@ import {
   requireAtlassianClientId,
   requireAtlassianClientSecret,
 } from '../../../_lib/atlassian';
-import { encryptToken } from '../../../_lib/token-crypto';
+import { encryptForOrgToBytea } from '@risezome/crypto';
 
 /**
  * Completes the Atlassian OAuth flow. Atlassian redirects here with
@@ -75,10 +75,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(new URL('/sources?error=atlassian_no_sites', url.origin));
   }
 
-  // Encrypt the token pair at rest (U2 / S2) before storing.
+  // Encrypt the token pair at rest under the org's per-org KMS key (U9), stored
+  // as bytea hex-text literals. token_version stays the concurrency counter (0 on
+  // a fresh connection); it is NOT the crypto-format sentinel for this table.
   const [accessTokenEnc, refreshTokenEnc] = await Promise.all([
-    encryptToken(service, tokens.accessToken),
-    encryptToken(service, tokens.refreshToken),
+    encryptForOrgToBytea(orgId, tokens.accessToken),
+    encryptForOrgToBytea(orgId, tokens.refreshToken),
   ]);
   const { error: upsertErr } = await service.from('atlassian_connections').upsert(
     {

@@ -11,6 +11,7 @@ import { purgeRemovedSourcesCron } from '../../../src/inngest/functions/purge-re
 import { generateMeetingRecapFn } from '../../../src/inngest/functions/generate-meeting-recap';
 import { assembleKnowledgeGapsFn } from '../../../src/inngest/functions/assemble-knowledge-gaps';
 import { backfillKnowledgeGapsFn } from '../../../src/inngest/functions/backfill-knowledge-gaps';
+import { provisionOrgKeyFn } from '../../../src/inngest/functions/provision-org-key';
 
 /**
  * Inngest function registry, exposed at /api/inngest.
@@ -38,5 +39,6 @@ export const { GET, POST, PUT } = serve({
     generateMeetingRecapFn,
     assembleKnowledgeGapsFn,
     backfillKnowledgeGapsFn,
+    provisionOrgKeyFn,
   ],
 });

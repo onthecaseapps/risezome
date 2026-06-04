@@ -1,3 +1,6 @@
+// @vitest-environment node
+// Crypto round-trips use @risezome/crypto's AWS Encryption SDK, which must load
+// as a single real Node module instance (jsdom/Vite-SSR duplicates it).
 /**
  * Migration + RLS regression tests for the generalized `sources` model and the
  * `trello_connections` table (plan U1).
@@ -17,13 +20,15 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { CRYPTO_VERSION, decryptForOrgFromBytea, encryptForOrgToBytea } from '@risezome/crypto';
+
+process.env['RISEZOME_DEV_CRYPTO_KEY'] =
+  process.env['RISEZOME_DEV_CRYPTO_KEY'] ?? 'rls-trello-crypto-test-secret';
 
 const SUPABASE_URL = process.env['SUPABASE_URL'] ?? 'http://127.0.0.1:54321';
 const SUPABASE_ANON_KEY = process.env['SUPABASE_ANON_KEY'] ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
 const FORCE = process.env['RISEZOME_RUN_RLS_TESTS'] === '1';
-// Encryption key for the pgcrypto token round-trip (U3).
-const TOKEN_KEY = 'rls-trello-test-key-' + 'k'.repeat(40);
 
 interface TestUser {
   readonly id: string;
@@ -65,16 +70,15 @@ if (!stackReachable && !FORCE) {
       userA = await createTestUser(admin, 'rls-trello-a@example.com');
       orgA = await createOrgWithMember(admin, 'Trello Org A', userA.id, 'manager');
 
-      // Token is stored encrypted (U3): encrypt via the pgcrypto helper first.
-      const { data: tokEnc } = await admin.rpc('encrypt_refresh_token', {
-        plaintext: 'tok_secret_abc',
-        key: TOKEN_KEY,
-      });
+      // Token is stored encrypted under the org's per-org KMS key (U9): encrypt
+      // app-side to bytea first. token_version=2 marks the KMS-ESDK format.
+      const tokEnc = await encryptForOrgToBytea(orgA, 'tok_secret_abc');
       const { data: conn, error: connErr } = await admin
         .from('trello_connections')
         .insert({
           org_id: orgA,
-          token_enc: tokEnc as unknown as string,
+          token_enc: tokEnc,
+          token_version: CRYPTO_VERSION.KMS_ESDK,
           member_id: 'm1',
           username: 'acme',
         })
@@ -138,20 +142,21 @@ if (!stackReachable && !FORCE) {
       expect(data ?? []).toEqual([]);
     });
 
-    it('stores the token encrypted at rest — no plaintext column, decrypt round-trips (U3)', async () => {
+    it('stores the token encrypted at rest — no plaintext column, app-side decrypt round-trips (U9)', async () => {
       const plaintextSel = await admin.from('trello_connections').select('token');
       expect(plaintextSel.error).not.toBeNull(); // plaintext column is gone
 
       const { data: row } = await admin
         .from('trello_connections')
-        .select('token_enc')
+        .select('token_enc, token_version')
         .eq('id', connectionId)
         .single();
-      const dec = await admin.rpc('decrypt_refresh_token', {
-        ciphertext: (row as { token_enc: string }).token_enc,
-        key: TOKEN_KEY,
-      });
-      expect(dec.data).toBe('tok_secret_abc');
+      expect(row?.token_version).toBe(CRYPTO_VERSION.KMS_ESDK);
+      const dec = await decryptForOrgFromBytea(
+        orgA,
+        (row as { token_enc: string }).token_enc,
+      );
+      expect(dec).toBe('tok_secret_abc');
     });
   });
 }

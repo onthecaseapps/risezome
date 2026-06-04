@@ -2,7 +2,8 @@ import type { ReactElement } from 'react';
 import { notFound, redirect } from 'next/navigation';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServerClient } from '../../../../_lib/supabase-server';
-import { decryptToken, transcriptWithText } from '../../../../_lib/token-crypto';
+import { decryptForOrgFromBytea } from '@risezome/crypto';
+import { transcriptWithText } from '../../../../_lib/token-crypto';
 import { LiveMeetingClient } from './_client';
 import type { CardEvent, CardTrigger, TranscriptUtterance } from '@risezome/hud-ui';
 import { mapSynthesisRow, type InitialSynthesis } from '../_synthesis-seed';
@@ -125,7 +126,7 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
     for (const s of liveSynthRows) {
       const enc = s['accumulated_text_enc'] as string | null;
       s['accumulated_text'] =
-        enc !== null && enc !== undefined ? await decryptToken(supabase, enc) : '';
+        enc !== null && enc !== undefined ? await decryptForOrgFromBytea(orgId, enc) : '';
     }
     initialSyntheses = liveSynthRows.map((s) => mapSynthesisRow(s));
 

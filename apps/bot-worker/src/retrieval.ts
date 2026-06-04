@@ -11,7 +11,7 @@ import {
   type WinningChunk,
 } from './parent-doc';
 import { optionalQueryExpander } from './query-expand';
-import { encryptToken } from './token-crypto.js';
+import { CRYPTO_VERSION, encryptForOrgToBytea } from '@risezome/crypto';
 import { augmentQuery } from '@risezome/engine/query-expand';
 import { shouldExpandOnMiss } from '@risezome/engine/query-route';
 import { shouldRecordMiss, type MissRecord } from '@risezome/engine/gaps';
@@ -1079,7 +1079,11 @@ async function runSynthesisAndBroadcast(args: {
           .from('syntheses')
           .update({
             status: 'done',
-            accumulated_text_enc: await encryptToken(args.db, parsed.text), // F1: encrypt at rest
+            // U9: encrypt under the org's per-org KMS key (app-side ESDK),
+            // stored as a bytea hex-text literal. synth_key_version=2 marks the
+            // KMS-ESDK format (1 = legacy pgcrypto) for the U11 migration.
+            accumulated_text_enc: await encryptForOrgToBytea(args.orgId, parsed.text),
+            synth_key_version: CRYPTO_VERSION.KMS_ESDK,
             stop_reason: chunk.stopReason,
             citations: richCitations,
             input_tokens: chunk.usage.inputTokens,

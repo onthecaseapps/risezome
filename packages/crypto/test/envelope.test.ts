@@ -9,9 +9,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   __setKeyringProviderForTests,
   aliasForOrg,
+  byteaToHex,
+  CRYPTO_VERSION,
   decryptForOrg,
+  decryptForOrgFromBytea,
   encryptForOrg,
+  encryptForOrgToBytea,
   EnvelopeCryptoError,
+  hexToBuffer,
 } from '../src/envelope.js';
 
 // Deterministic per-org 32-byte raw wrapping key. Different orgId -> different
@@ -153,5 +158,38 @@ describe('envelope crypto', () => {
     expect(aliasForOrg('abc')).toBe('alias/acme-org-abc');
     if (prev === undefined) delete process.env.KMS_ALIAS_PREFIX;
     else process.env.KMS_ALIAS_PREFIX = prev;
+  });
+});
+
+describe('bytea (de)serialization helpers', () => {
+  it('byteaToHex/hexToBuffer round-trip arbitrary bytes incl. NUL', () => {
+    const buf = Buffer.from([0x00, 0x01, 0xff, 0x10, 0x41]);
+    const hex = byteaToHex(buf);
+    expect(hex).toBe('\\x0001ff1041');
+    expect(hexToBuffer(hex).equals(buf)).toBe(true);
+    // tolerate a value without the leading \x (defensive)
+    expect(hexToBuffer('0001ff1041').equals(buf)).toBe(true);
+  });
+
+  it('hexToBuffer rejects non-strings and malformed hex with a typed error', () => {
+    expect(() => hexToBuffer(123)).toThrow(EnvelopeCryptoError);
+    expect(() => hexToBuffer(null)).toThrow(EnvelopeCryptoError);
+    expect(() => hexToBuffer('\\xzz')).toThrow(EnvelopeCryptoError);
+    expect(() => hexToBuffer('\\x012')).toThrow(EnvelopeCryptoError); // odd length
+  });
+
+  it('encryptForOrgToBytea -> decryptForOrgFromBytea round-trips through a bytea literal', async () => {
+    __setKeyringProviderForTests(rawKeyringFor);
+    const orgId = 'org-bytea';
+    const secret = 'a-secret-with-emoji-🔐';
+    const hex = await encryptForOrgToBytea(orgId, secret);
+    expect(typeof hex).toBe('string');
+    expect(hex.startsWith('\\x')).toBe(true);
+    expect(await decryptForOrgFromBytea(orgId, hex)).toBe(secret);
+  });
+
+  it('exposes the crypto-version sentinel (1=legacy pgcrypto, 2=KMS-ESDK)', () => {
+    expect(CRYPTO_VERSION.LEGACY_PGCRYPTO).toBe(1);
+    expect(CRYPTO_VERSION.KMS_ESDK).toBe(2);
   });
 });

@@ -4,7 +4,7 @@ import {
   requireAtlassianClientId,
   requireAtlassianClientSecret,
 } from './atlassian';
-import { decryptToken, encryptToken } from './token-crypto';
+import { decryptForOrgFromBytea, encryptForOrgToBytea } from '@risezome/crypto';
 
 /**
  * Atlassian access-token manager. Returns a valid access token for an org's
@@ -70,9 +70,11 @@ async function readConnection(
   if (row === null) return null;
   // A pre-encryption row (or a wiped one) has no ciphertext → treat as "reconnect".
   if (row.access_token_enc === null || row.refresh_token_enc === null) return null;
+  // U10: tokens decrypted app-side under the org's per-org KMS key. The bytea
+  // columns come back as `\x<hex>` strings → decode → decrypt.
   const [accessToken, refreshToken] = await Promise.all([
-    decryptToken(service, row.access_token_enc),
-    decryptToken(service, row.refresh_token_enc),
+    decryptForOrgFromBytea(orgId, row.access_token_enc),
+    decryptForOrgFromBytea(orgId, row.refresh_token_enc),
   ]);
   return {
     id: row.id,
@@ -132,10 +134,16 @@ async function doRefresh(
   // Guarded update: only persist if token_version still matches what we read
   // (U2 — ciphertext is non-deterministic so we can't compare token bytes). If
   // another worker already rotated it, our update affects 0 rows and we adopt
-  // their fresher tokens instead. Encrypt the new pair before writing.
+  // their fresher tokens instead. Encrypt the new pair under the org's per-org
+  // KMS key (U9) before writing, serialized to the bytea hex-text literal.
+  //
+  // NOTE: atlassian_connections.token_version is the OPTIMISTIC-CONCURRENCY guard
+  // (a monotonic counter), not the crypto-format sentinel — it must keep
+  // incrementing per rotation. The U11 migration therefore identifies un-migrated
+  // atlassian rows by ESDK-decrypt probing rather than by token_version.
   const [accessEnc, refreshEnc] = await Promise.all([
-    encryptToken(service, set.accessToken),
-    encryptToken(service, set.refreshToken),
+    encryptForOrgToBytea(orgId, set.accessToken),
+    encryptForOrgToBytea(orgId, set.refreshToken),
   ]);
   const { data } = await service
     .from('atlassian_connections')

@@ -103,6 +103,17 @@ export interface KnowledgeGapsBackfillRequestedEvent {
 }
 
 /**
+ * A new org was created. Triggers per-org KMS key provisioning (security plan
+ * 003, U8) so the org's encrypted columns can be written under its own CMK.
+ */
+export interface OrgCreatedEvent {
+  name: 'risezome/org.created';
+  data: {
+    orgId: string;
+  };
+}
+
+/**
  * The Inngest client is a singleton per process. Production uses the
  * INNGEST_EVENT_KEY/INNGEST_SIGNING_KEY env vars set by the Vercel-Inngest
  * integration. Local dev uses the Inngest dev CLI which discovers functions

@@ -12,7 +12,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.1061.0",
     "@octokit/app": "^16.1.2",
+    "@risezome/crypto": "workspace:*",
     "@risezome/engine": "workspace:*",
     "@risezome/hud-ui": "workspace:*",
     "@supabase/ssr": "^0.10.3",

@@ -1,3 +1,4 @@
+import { decryptForOrgFromBytea } from '@risezome/crypto';
 import { createServiceRoleClient } from './supabase-server';
 
 /**
@@ -6,7 +7,8 @@ import { createServiceRoleClient } from './supabase-server';
  * Storage (from U2):
  *   user_google_tokens
  *     - access_token (plaintext, ~1h lifetime)
- *     - refresh_token_enc (pgcrypto-encrypted with USER_TOKEN_ENCRYPTION_KEY)
+ *     - refresh_token_enc (per-org KMS envelope; @risezome/crypto)
+ *     - key_org_id (the org-of-record whose CMK encrypted the refresh token)
  *     - expires_at
  *
  * Refresh strategy:
@@ -55,7 +57,7 @@ export async function getGoogleAccessToken(userId: string): Promise<string> {
 
   const { data: row, error } = await service
     .from('user_google_tokens')
-    .select('access_token, refresh_token_enc, expires_at')
+    .select('access_token, refresh_token_enc, expires_at, key_org_id')
     .eq('user_id', userId)
     .maybeSingle();
 
@@ -75,16 +77,22 @@ export async function getGoogleAccessToken(userId: string): Promise<string> {
     return row.access_token as string;
   }
 
-  // Decrypt the refresh token. We call the pgcrypto helper from U2
-  // via .rpc() so the symmetric key never has to be applied in JS.
-  const encryptionKey = requireEnv('USER_TOKEN_ENCRYPTION_KEY');
-  const { data: refreshToken, error: decErr } = await service.rpc('decrypt_refresh_token', {
-    ciphertext: row.refresh_token_enc as unknown as string,
-    key: encryptionKey,
-  });
-  if (decErr !== null || refreshToken === null || refreshToken === undefined) {
+  // Decrypt the refresh token app-side under the org's per-org KMS key (U10;
+  // KTD4). key_org_id records the org-of-record the token was encrypted under
+  // (set at the OAuth callback); decrypt resolves the right CMK from it. A row
+  // with no key_org_id predates the per-org scheme and must re-auth.
+  const keyOrgId = row.key_org_id as string | null;
+  if (keyOrgId === null) {
+    throw new GoogleTokenMissingError(
+      'Google token has no key_org_id (pre-KMS); user must re-authenticate',
+    );
+  }
+  let refreshToken: string;
+  try {
+    refreshToken = await decryptForOrgFromBytea(keyOrgId, row.refresh_token_enc);
+  } catch (decErr) {
     throw new GoogleTokenRefreshError(
-      `decrypt_refresh_token failed: ${decErr?.message ?? 'returned null'}`,
+      `decryptForOrg (google refresh) failed: ${decErr instanceof Error ? decErr.message : String(decErr)}`,
       undefined,
     );
   }

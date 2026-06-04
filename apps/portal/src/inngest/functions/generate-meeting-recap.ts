@@ -1,6 +1,7 @@
 import { inngest } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
-import { encryptToken, transcriptWithText } from '../../../app/_lib/token-crypto';
+import { CRYPTO_VERSION, encryptForOrgToBytea } from '@risezome/crypto';
+import { transcriptWithText } from '../../../app/_lib/token-crypto';
 import { buildTranscriptText, recapMeeting, type TranscriptLine } from '../lib/meeting-recap';
 
 /**
@@ -84,11 +85,13 @@ export const generateMeetingRecapFn = inngest.createFunction(
         await service
           .from('meetings')
           .update({
-            // U9: recap encrypted at rest.
-            recap_text_enc: await encryptToken(
-              service,
+            // U9: recap encrypted under the org's per-org KMS key, stored as a
+            // bytea hex-text literal. recap_key_version=2 marks the KMS-ESDK format.
+            recap_text_enc: await encryptForOrgToBytea(
+              orgId,
               'No transcript was captured for this meeting.',
             ),
+            recap_key_version: CRYPTO_VERSION.KMS_ESDK,
             recap_status: 'done',
             recap_generated_at: new Date().toISOString(),
           })
@@ -109,7 +112,9 @@ export const generateMeetingRecapFn = inngest.createFunction(
       await service
         .from('meetings')
         .update({
-          recap_text_enc: await encryptToken(service, recap), // U9: encrypt at rest
+          // U9: encrypt under the org's per-org KMS key, stored as bytea hex-text.
+          recap_text_enc: await encryptForOrgToBytea(orgId, recap),
+          recap_key_version: CRYPTO_VERSION.KMS_ESDK,
           recap_status: 'done',
           recap_generated_at: new Date().toISOString(),
         })

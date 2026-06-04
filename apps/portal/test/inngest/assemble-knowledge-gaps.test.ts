@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment node
+// Runs in node (not jsdom): backfillMissesForMeeting decrypts transcript text
+// via @risezome/crypto, whose AWS Encryption SDK must load as a single real Node
+// module instance (jsdom/Vite-SSR duplicates it → "Unsupported dataKey type").
+import { beforeAll, describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { encryptForOrgToBytea } from '@risezome/crypto';
 import { type VoyageEmbedder } from '@risezome/engine/embed';
 import {
   assembleKnowledgeGaps,
@@ -11,6 +16,13 @@ import {
   makeSectionNamer,
   type MissRow,
 } from '../../src/inngest/lib/knowledge-gaps';
+
+beforeAll(() => {
+  // backfillMissesForMeeting now reads transcript text via the per-org KMS
+  // app-side reader (transcriptWithText, U10); the dev RawAES fallback lets the
+  // decrypt path run with no AWS.
+  process.env['RISEZOME_DEV_CRYPTO_KEY'] = 'assemble-gaps-test-secret';
+});
 
 function vecAt(theta: number): number[] {
   return [Math.cos(theta), Math.sin(theta), 0, 0];
@@ -275,9 +287,30 @@ describe('assembleKnowledgeGaps — orchestration', () => {
 
 // ── Backfill from past syntheses ─────────────────────────────────────────────
 
+const BACKFILL_ORG = 'o1';
+
+/**
+ * A meeting_events transcript row as the new app-side reader (transcriptWithText,
+ * U10) sees it: the verbatim text lives ENCRYPTED in transcript_text_enc (a bytea
+ * `\x<hex>` literal), not in payload. Seed via encryptForOrgToBytea so the reader
+ * decrypts it back under the per-org KMS dev fallback.
+ */
+async function transcriptEvent(
+  org: string,
+  utteranceId: string,
+  text: string | null,
+): Promise<{ event_id: number; payload: Record<string, unknown>; created_at: string; transcript_text_enc: string | null }> {
+  return {
+    event_id: Math.floor(Math.random() * 1e9),
+    payload: { utteranceId },
+    created_at: new Date().toISOString(),
+    transcript_text_enc: text === null ? null : await encryptForOrgToBytea(org, text),
+  };
+}
+
 function makeBackfillMock(cfg: {
   syntheses: { trigger_utterance_id: string | null; retracted_reason: string }[];
-  events: { payload: Record<string, unknown> | null }[];
+  events: { event_id: number; payload: Record<string, unknown>; created_at: string; transcript_text_enc: string | null }[];
   existingMisses?: { utterance_id: string | null }[];
 }) {
   const inserted: unknown[] = [];
@@ -298,6 +331,7 @@ function makeBackfillMock(cfg: {
     b.eq = () => b;
     b.is = () => b;
     b.in = () => b;
+    b.order = () => b;
     b.then = (resolve: (v: unknown) => unknown) =>
       op === 'select'
         ? resolve({ data: dataByTable[table] ?? [], error: null })
@@ -316,11 +350,11 @@ describe('backfillMissesForMeeting', () => {
         { trigger_utterance_id: 'u2', retracted_reason: 'ungrounded' },
       ],
       events: [
-        { payload: { utteranceId: 'u1', text: 'what is our refund window?' } },
-        { payload: { utteranceId: 'u2', text: 'do we support SSO?' } },
+        await transcriptEvent(BACKFILL_ORG, 'u1', 'what is our refund window?'),
+        await transcriptEvent(BACKFILL_ORG, 'u2', 'do we support SSO?'),
       ],
     });
-    const n = await backfillMissesForMeeting(client, 'm1', 'o1');
+    const n = await backfillMissesForMeeting(client, 'm1', BACKFILL_ORG);
     expect(n).toBe(2);
     expect(inserted).toHaveLength(2);
     expect(inserted.map((r) => (r as { reason: string }).reason).sort()).toEqual(['refusal', 'ungrounded']);
@@ -330,10 +364,10 @@ describe('backfillMissesForMeeting', () => {
   it('skips utterances that already have a miss row (idempotent re-run)', async () => {
     const { client, inserted } = makeBackfillMock({
       syntheses: [{ trigger_utterance_id: 'u1', retracted_reason: 'refusal' }],
-      events: [{ payload: { utteranceId: 'u1', text: 'q' } }],
+      events: [await transcriptEvent(BACKFILL_ORG, 'u1', 'q')],
       existingMisses: [{ utterance_id: 'u1' }],
     });
-    expect(await backfillMissesForMeeting(client, 'm1', 'o1')).toBe(0);
+    expect(await backfillMissesForMeeting(client, 'm1', BACKFILL_ORG)).toBe(0);
     expect(inserted).toHaveLength(0);
   });
 
@@ -342,13 +376,13 @@ describe('backfillMissesForMeeting', () => {
       syntheses: [{ trigger_utterance_id: 'u-missing', retracted_reason: 'refusal' }],
       events: [],
     });
-    expect(await backfillMissesForMeeting(client, 'm1', 'o1')).toBe(0);
+    expect(await backfillMissesForMeeting(client, 'm1', BACKFILL_ORG)).toBe(0);
     expect(inserted).toHaveLength(0);
   });
 
   it('returns 0 when there are no retracted syntheses', async () => {
     const { client } = makeBackfillMock({ syntheses: [], events: [] });
-    expect(await backfillMissesForMeeting(client, 'm1', 'o1')).toBe(0);
+    expect(await backfillMissesForMeeting(client, 'm1', BACKFILL_ORG)).toBe(0);
   });
 });
 

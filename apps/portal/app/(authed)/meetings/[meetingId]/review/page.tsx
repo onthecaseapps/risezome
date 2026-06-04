@@ -2,7 +2,8 @@ import type { ReactElement } from 'react';
 import { notFound } from 'next/navigation';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServerClient } from '../../../../_lib/supabase-server';
-import { decryptToken, transcriptWithText } from '../../../../_lib/token-crypto';
+import { decryptForOrgFromBytea } from '@risezome/crypto';
+import { transcriptWithText } from '../../../../_lib/token-crypto';
 import type { CardEvent, CardTrigger, TranscriptUtterance } from '@risezome/hud-ui';
 import {
   mapSynthesisRow,
@@ -43,7 +44,7 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   // U9: the recap is encrypted at rest — decrypt server-side (the key stays in
   // env; the browser never sees it).
   const recapEnc = meeting.recap_text_enc as string | null;
-  const recapText = recapEnc !== null ? await decryptToken(supabase, recapEnc) : null;
+  const recapText = recapEnc !== null ? await decryptForOrgFromBytea(orgId, recapEnc) : null;
 
   let title = 'Meeting';
   if (meeting.calendar_event_id !== null) {
@@ -96,7 +97,7 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   // (sync) mappers expect, server-side. Done syntheses always have ciphertext.
   for (const s of rows) {
     const enc = s['accumulated_text_enc'] as string | null;
-    s['accumulated_text'] = enc !== null ? await decryptToken(supabase, enc) : '';
+    s['accumulated_text'] = enc !== null ? await decryptForOrgFromBytea(orgId, enc) : '';
   }
   const initialSyntheses: InitialSynthesis[] = rows.map((s) => mapSynthesisRow(s));
 

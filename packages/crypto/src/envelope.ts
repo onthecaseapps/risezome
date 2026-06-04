@@ -45,6 +45,23 @@ const { encrypt, decrypt } = buildClient(
 
 const ENC_CONTEXT_ORG_KEY = 'org_id';
 
+/**
+ * Per-row `*_version` sentinels marking which crypto format a `*_enc` column
+ * holds. Defined once here and shared by every encrypt site (U9 stamps it) and
+ * the re-encryption migration (U11 selects rows still on LEGACY_PGCRYPTO):
+ *
+ *   LEGACY_PGCRYPTO (1) — pgcrypto OpenPGP packet under the global
+ *     USER_TOKEN_ENCRYPTION_KEY (pre-KMS). NOTE: the original F1/F2 migrations
+ *     defaulted these version columns to 0; both 0 and 1 mean "legacy pgcrypto"
+ *     and U11 migrates anything `< KMS_ESDK`.
+ *   KMS_ESDK (2)        — AWS Encryption SDK message bytes, wrapped by the
+ *     per-org KMS CMK (or the dev RawAES fallback). What every new write stamps.
+ */
+export const CRYPTO_VERSION = {
+  LEGACY_PGCRYPTO: 1,
+  KMS_ESDK: 2,
+} as const;
+
 /** Typed error so callers can distinguish crypto failures (e.g. KMS down,
  *  enc-context mismatch) from ordinary errors and decide on degradation.
  *  KMS errors are wrapped (cause preserved), never swallowed. */
@@ -231,4 +248,69 @@ export async function decryptForOrg(
     );
   }
   return plaintext.toString('utf8');
+}
+
+// --- bytea (de)serialization for supabase-js / PostgREST -----------------------
+//
+// CRITICAL: supabase-js does NOT accept a Node Buffer for a bytea column. Passing
+// a Buffer directly JSON-serializes it to `{"type":"Buffer","data":[...]}` and
+// stores the UTF-8 bytes of THAT string — silently corrupting the ciphertext.
+// PostgREST instead expects/returns the Postgres bytea hex text format `\x<hex>`.
+//
+// So on WRITE we hand PostgREST the hex-text form via `byteaToHex`, and on READ
+// (PostgREST returns bytea as a `\x<hex>` string) we recover the Buffer via
+// `hexToBuffer`. These two are the only correct bridge between the ESDK message
+// bytes and a bytea column; every encrypt/decrypt call site uses them.
+
+/**
+ * Encode ESDK message bytes (Buffer) into the Postgres bytea hex-text literal
+ * (`\x<hex>`) that supabase-js / PostgREST stores verbatim into a bytea column.
+ * Pass the result as the column value on insert/update/upsert.
+ */
+export function byteaToHex(bytes: Buffer | Uint8Array): string {
+  return '\\x' + Buffer.from(bytes).toString('hex');
+}
+
+/**
+ * Decode a bytea value read back from supabase-js (PostgREST returns it as a
+ * `\x<hex>` string) into a Buffer suitable for `decryptForOrg`. Tolerates an
+ * optional leading `\x`. Throws `EnvelopeCryptoError` on a non-string / malformed
+ * value so a corrupted column surfaces as a typed crypto error, not a silent
+ * garbage decrypt.
+ */
+export function hexToBuffer(value: unknown): Buffer {
+  if (typeof value !== 'string') {
+    throw new EnvelopeCryptoError(
+      `expected bytea hex string from PostgREST, got ${typeof value}`,
+    );
+  }
+  const hex = value.startsWith('\\x') ? value.slice(2) : value;
+  if (hex.length % 2 !== 0 || /[^0-9a-fA-F]/.test(hex)) {
+    throw new EnvelopeCryptoError('malformed bytea hex string');
+  }
+  return Buffer.from(hex, 'hex');
+}
+
+/**
+ * Convenience: encrypt a string for an org and return the bytea hex-text literal
+ * ready to write to a `bytea` column via supabase-js. Equivalent to
+ * `byteaToHex(await encryptForOrg(orgId, plaintext))`.
+ */
+export async function encryptForOrgToBytea(
+  orgId: string,
+  plaintext: string,
+): Promise<string> {
+  return byteaToHex(await encryptForOrg(orgId, plaintext));
+}
+
+/**
+ * Convenience: decrypt a bytea value read from supabase-js (a `\x<hex>` string)
+ * back to the original string. Equivalent to
+ * `decryptForOrg(orgId, hexToBuffer(value))`.
+ */
+export async function decryptForOrgFromBytea(
+  orgId: string,
+  value: unknown,
+): Promise<string> {
+  return decryptForOrg(orgId, hexToBuffer(value));
 }

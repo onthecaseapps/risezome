@@ -15,5 +15,16 @@ export default defineConfig({
     setupFiles: ['./test/setup.ts'],
     include: ['test/**/*.test.{ts,tsx}'],
     exclude: ['node_modules/**', '.next/**'],
+    server: {
+      deps: {
+        // The AWS Encryption SDK (@aws-crypto) and the shared crypto module that
+        // wraps it must be loaded by real Node as a SINGLE compiled instance —
+        // NOT transformed/inlined by Vite's SSR pipeline, which duplicates the
+        // @aws-crypto material-management package and breaks the data-key
+        // type-brand check ("Unsupported dataKey type"). Tests that exercise
+        // crypto declare `// @vitest-environment node` so they run outside jsdom.
+        external: [/@risezome\/crypto/, /@aws-crypto\//],
+      },
+    },
   },
 });

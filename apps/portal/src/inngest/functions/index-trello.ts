@@ -1,7 +1,7 @@
 import { chunkFile } from '@risezome/engine/chunker';
 import { inngest, type IndexMode } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
-import { decryptToken } from '../../../app/_lib/token-crypto';
+import { decryptForOrgFromBytea } from '@risezome/crypto';
 import { requireTrelloApiKey, TrelloAuthError } from '../../../app/_lib/trello';
 import {
   fetchBoardCards,
@@ -89,7 +89,8 @@ export const indexTrelloFn = inngest.createFunction(
       if (connErr !== null || conn === null || conn.token_enc === null) {
         throw new Error(`trello connection missing for source ${sourceId}`);
       }
-      return decryptToken(service, conn.token_enc as string);
+      // U10: token decrypted app-side under the org's per-org KMS key.
+      return decryptForOrgFromBytea(orgId, conn.token_enc);
     })();
 
     const trello: TrelloClientOptions = { token: trelloToken, apiKey: requireTrelloApiKey() };
