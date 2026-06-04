@@ -124,35 +124,85 @@ function devKeyringForOrg(orgId: string, devSecret: string): KeyringNode {
  * requires AWS_REGION + the standard AWS credential chain). Production must never
  * set RISEZOME_DEV_CRYPTO_KEY.
  */
-const defaultKeyringProvider: KeyringProvider = (orgId) => {
+/**
+ * Dev RawAES fallback selector shared by the encrypt + decrypt providers. The
+ * RawAES keyring round-trips its own output (it matches encrypted-data-keys by
+ * keyNamespace+keyName), so the SAME dev keyring is used for both directions.
+ * Returns null when not in dev mode (caller falls through to the KMS path).
+ */
+function devKeyringIfEnabled(orgId: string): KeyringNode | null {
   const devSecret = process.env.RISEZOME_DEV_CRYPTO_KEY;
-  if (devSecret !== undefined && devSecret.length > 0) {
-    // Fail closed: the dev RawAES fallback must NEVER run in production. If a
-    // prod deploy accidentally carries RISEZOME_DEV_CRYPTO_KEY we refuse to use
-    // it (silently encrypting prod data under a non-KMS, env-derived key would
-    // be a catastrophic custody downgrade) and surface a typed error instead.
-    if (process.env.NODE_ENV === 'production') {
-      throw new EnvelopeCryptoError(
-        'refusing dev crypto fallback in production: RISEZOME_DEV_CRYPTO_KEY is set with NODE_ENV=production',
-      );
-    }
-    return devKeyringForOrg(orgId, devSecret);
+  if (devSecret === undefined || devSecret.length === 0) return null;
+  // Fail closed: the dev RawAES fallback must NEVER run in production. If a prod
+  // deploy accidentally carries RISEZOME_DEV_CRYPTO_KEY we refuse to use it
+  // (silently encrypting prod data under a non-KMS, env-derived key would be a
+  // catastrophic custody downgrade) and surface a typed error instead.
+  if (process.env.NODE_ENV === 'production') {
+    throw new EnvelopeCryptoError(
+      'refusing dev crypto fallback in production: RISEZOME_DEV_CRYPTO_KEY is set with NODE_ENV=production',
+    );
   }
+  return devKeyringForOrg(orgId, devSecret);
+}
+
+const defaultKeyringProvider: KeyringProvider = (orgId) => {
+  const dev = devKeyringIfEnabled(orgId);
+  if (dev !== null) return dev;
+  // ENCRYPT keyring: the org's per-org CMK addressed by its deterministic alias.
+  // The ESDK resolves the alias when generating the data key and records the
+  // resolved key ARN in the message's encrypted-data-key.
   return new KmsKeyringNode({ generatorKeyId: aliasForOrg(orgId) });
 };
 
+/**
+ * DECRYPT keyring. CRITICAL: a KMS keyring configured with the org ALIAS can
+ * encrypt but CANNOT decrypt its own output — the ESDK matches encrypted-data-
+ * keys by their recorded key ARN on decrypt, and an alias string never equals an
+ * ARN, so the keyring decrypts nothing ("unencryptedDataKey has not been set").
+ * We therefore decrypt with a KMS DISCOVERY keyring, which matches the EDK by its
+ * ARN and unwraps it. What the caller may decrypt is bounded by the IAM policy
+ * (scoped to the risezome CMKs); the per-org encryptionContext check in
+ * `decryptForOrg` is the cross-org guard. The dev RawAES keyring is unaffected
+ * (it round-trips by keyNamespace+keyName), so dev uses the same keyring both
+ * directions.
+ */
+const defaultDecryptKeyringProvider: KeyringProvider = (orgId) => {
+  const dev = devKeyringIfEnabled(orgId);
+  if (dev !== null) return dev;
+  return new KmsKeyringNode({ discovery: true });
+};
+
 let keyringProvider: KeyringProvider = defaultKeyringProvider;
+let decryptKeyringProvider: KeyringProvider = defaultDecryptKeyringProvider;
 
 /**
  * Inject the keyring provider, swapping the wrapping-key source only (the rest
  * of the pipeline — ESDK message format, encryptionContext binding, caching CMM
  * — stays real). Tests pass a RawAesKeyringNode per org so the suite runs with
- * no AWS network. Pass `null` to restore the production KmsKeyringNode path.
- * Resetting/setting clears the per-org CMM memo so the new keyring takes effect.
+ * no AWS network. The SAME injected keyring drives both encrypt and decrypt (a
+ * RawAES keyring round-trips its own output). Pass `null` to restore the
+ * production KMS path. Resetting/setting clears the per-org CMM memo.
  */
 export function __setKeyringProviderForTests(fn: KeyringProvider | null): void {
   keyringProvider = fn ?? defaultKeyringProvider;
+  decryptKeyringProvider = fn ?? defaultDecryptKeyringProvider;
   cmmByOrg.clear();
+}
+
+/**
+ * Test-only: the KMS keyring "kind" the DEFAULT providers yield for an org, so a
+ * regression test can assert the decrypt path uses a DISCOVERY keyring (matches
+ * the encrypted-data-key by ARN) while encrypt uses the alias generator — the
+ * exact split that prevents the "alias keyring can't decrypt its own output"
+ * bug. Constructing a KmsKeyringNode does no network I/O.
+ */
+export function __defaultKeyringKindsForTest(orgId: string): {
+  readonly encryptIsDiscovery: boolean;
+  readonly decryptIsDiscovery: boolean;
+} {
+  const enc = defaultKeyringProvider(orgId) as { isDiscovery?: boolean };
+  const dec = defaultDecryptKeyringProvider(orgId) as { isDiscovery?: boolean };
+  return { encryptIsDiscovery: enc.isDiscovery === true, decryptIsDiscovery: dec.isDiscovery === true };
 }
 
 // --- Caching CMM, one per org (KTD7 / R10) ------------------------------------
@@ -266,7 +316,10 @@ export async function decryptForOrg(
   let plaintext: Buffer;
   let boundOrgId: string | undefined;
   try {
-    const result = await decrypt(getCmm(orgId), ciphertext);
+    // Decrypt with the DECRYPT keyring (KMS discovery, or the dev RawAES keyring)
+    // — NOT the alias-based encrypt keyring, which cannot match the EDK's ARN on
+    // decrypt. No caching CMM here: decryption isn't the GenerateDataKey hot path.
+    const result = await decrypt(decryptKeyringProvider(orgId), ciphertext);
     plaintext = result.plaintext;
     boundOrgId = result.messageHeader.encryptionContext[ENC_CONTEXT_ORG_KEY];
   } catch (err) {

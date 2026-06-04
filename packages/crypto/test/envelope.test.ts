@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   __setKeyringProviderForTests,
+  __defaultKeyringKindsForTest,
   aliasForOrg,
   byteaToHex,
   CRYPTO_VERSION,
@@ -216,5 +217,28 @@ describe('bytea (de)serialization helpers', () => {
   it('exposes the crypto-version sentinel (1=legacy pgcrypto, 2=KMS-ESDK)', () => {
     expect(CRYPTO_VERSION.LEGACY_PGCRYPTO).toBe(1);
     expect(CRYPTO_VERSION.KMS_ESDK).toBe(2);
+  });
+});
+
+describe('KMS keyring kinds (regression: an alias keyring cannot decrypt its own output)', () => {
+  it('decrypt uses a DISCOVERY keyring (ARN-match) while encrypt uses the alias generator', () => {
+    // KMS mode: no dev key. A KmsKeyringNode constructs with no network I/O.
+    const prevKey = process.env.RISEZOME_DEV_CRYPTO_KEY;
+    const prevRegion = process.env.AWS_REGION;
+    delete process.env.RISEZOME_DEV_CRYPTO_KEY;
+    process.env.AWS_REGION = 'us-east-1';
+    try {
+      const kinds = __defaultKeyringKindsForTest('org-regression');
+      // The bug: encrypt+decrypt both used the alias keyring, which records the
+      // resolved key ARN in the EDK and cannot match an alias on decrypt. The
+      // fix: decrypt with a discovery keyring that matches the ARN.
+      expect(kinds.decryptIsDiscovery).toBe(true);
+      expect(kinds.encryptIsDiscovery).toBe(false);
+    } finally {
+      if (prevKey === undefined) delete process.env.RISEZOME_DEV_CRYPTO_KEY;
+      else process.env.RISEZOME_DEV_CRYPTO_KEY = prevKey;
+      if (prevRegion === undefined) delete process.env.AWS_REGION;
+      else process.env.AWS_REGION = prevRegion;
+    }
   });
 });
