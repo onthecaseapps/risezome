@@ -2,51 +2,15 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { decryptForOrgFromBytea } from '@risezome/crypto';
 
 /**
- * LEGACY pgcrypto wrappers (`encryptToken`/`decryptToken`). Superseded by the
- * per-org KMS envelope module (@risezome/crypto, `encryptForOrgToBytea` /
- * `decryptForOrgFromBytea`); no application code calls these anymore — they are
- * scheduled for removal in security plan 003 U13 (along with the SQL helpers).
- * Kept until the U11 re-encryption migration is verified.
+ * Transcript read helper (U10). The legacy pgcrypto wrappers
+ * (`encryptToken`/`decryptToken`) and their `USER_TOKEN_ENCRYPTION_KEY` reader
+ * were removed in security plan 003 U13 after the per-org KMS cutover; the only
+ * remaining legacy-decrypt caller is the one-time U11 backfill
+ * (`migrate-encryption-to-kms.ts`), which keeps its own scoped reference.
  *
  * `transcriptWithText` below was rewired off the `transcript_with_text` RPC onto
- * app-side per-org KMS batch decrypt (U10); it is the only live export here.
+ * app-side per-org KMS batch decrypt (U10); it is the only export here.
  */
-
-function requireTokenKey(): string {
-  const key = process.env['USER_TOKEN_ENCRYPTION_KEY'];
-  if (key === undefined || key.length === 0) {
-    throw new Error('Missing required environment variable: USER_TOKEN_ENCRYPTION_KEY');
-  }
-  return key;
-}
-
-/**
- * Encrypt `plaintext` to a pgcrypto ciphertext. The returned value is the bytea
- * ciphertext in the string form PostgREST uses; write it straight back into a
- * `bytea` column.
- */
-export async function encryptToken(service: SupabaseClient, plaintext: string): Promise<string> {
-  const { data, error } = await service.rpc('encrypt_refresh_token', {
-    plaintext,
-    key: requireTokenKey(),
-  });
-  if (error !== null || data === null || data === undefined) {
-    throw new Error(`encrypt_refresh_token failed: ${error?.message ?? 'returned null'}`);
-  }
-  return data as unknown as string;
-}
-
-/** Decrypt a pgcrypto ciphertext (a `bytea` column read back as a string) to plaintext. */
-export async function decryptToken(service: SupabaseClient, ciphertext: string): Promise<string> {
-  const { data, error } = await service.rpc('decrypt_refresh_token', {
-    ciphertext,
-    key: requireTokenKey(),
-  });
-  if (error !== null || data === null || data === undefined) {
-    throw new Error(`decrypt_refresh_token failed: ${error?.message ?? 'returned null'}`);
-  }
-  return data as string;
-}
 
 /** One transcript event with its text decrypted server-side (F2). */
 export interface TranscriptRow {

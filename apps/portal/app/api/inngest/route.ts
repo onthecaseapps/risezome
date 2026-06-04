@@ -12,6 +12,8 @@ import { generateMeetingRecapFn } from '../../../src/inngest/functions/generate-
 import { assembleKnowledgeGapsFn } from '../../../src/inngest/functions/assemble-knowledge-gaps';
 import { backfillKnowledgeGapsFn } from '../../../src/inngest/functions/backfill-knowledge-gaps';
 import { provisionOrgKeyFn } from '../../../src/inngest/functions/provision-org-key';
+import { migrateEncryptionToKmsFn } from '../../../src/inngest/functions/migrate-encryption-to-kms';
+import { rotateOrgKeyFn } from '../../../src/inngest/functions/rotate-org-key';
 
 /**
  * Inngest function registry, exposed at /api/inngest.
@@ -40,5 +42,7 @@ export const { GET, POST, PUT } = serve({
     assembleKnowledgeGapsFn,
     backfillKnowledgeGapsFn,
     provisionOrgKeyFn,
+    migrateEncryptionToKmsFn,
+    rotateOrgKeyFn,
   ],
 });

@@ -16,7 +16,6 @@ describe('GET /api/auth/callback', () => {
     process.env['NEXT_PUBLIC_SUPABASE_URL'] = 'https://example.supabase.co';
     process.env['NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY'] = 'sb_publishable_test';
     process.env['SUPABASE_SECRET_KEY'] = 'sb_secret_test';
-    process.env['USER_TOKEN_ENCRYPTION_KEY'] = 'test-encryption-key';
   });
 
   afterEach(() => {
