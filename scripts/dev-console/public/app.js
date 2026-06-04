@@ -212,20 +212,42 @@ function paintLocalMeeting(lm) {
   }
 }
 
-// Populate the org picker once. The chosen org must match the org your browser
-// session is viewing, or the live page 404s (it's org-scoped).
-async function loadOrgs() {
+// Show a single disabled placeholder option (so an empty/erroring picker reads
+// as a state, not a mysteriously blank box).
+function setOrgPlaceholder(text) {
   if (!lmOrg) return;
-  const res = await api('/api/local-meeting/orgs');
-  if (!res || !res.ok || !Array.isArray(res.orgs)) return;
-  lmOrg.replaceChildren();
-  for (const o of res.orgs) {
-    const opt = document.createElement('option');
-    opt.value = o.id;
-    opt.textContent = (o.name && o.name.trim()) || o.id;
-    if (res.defaultOrgId && o.id === res.defaultOrgId) opt.selected = true;
-    lmOrg.appendChild(opt);
+  const opt = document.createElement('option');
+  opt.value = '';
+  opt.textContent = text;
+  opt.disabled = true;
+  opt.selected = true;
+  lmOrg.replaceChildren(opt);
+}
+
+// Populate the org picker. The chosen org must match the org your browser
+// session is viewing, or the live page 404s (it's org-scoped). The list comes
+// from whichever Supabase the portal is pointed at, so it MUST be refetched
+// after a mode switch — and the portal restarts on a switch, so retry while it
+// comes back up instead of silently leaving the picker empty.
+async function loadOrgs({ retries = 12, delayMs = 2000 } = {}) {
+  if (!lmOrg) return;
+  setOrgPlaceholder('loading orgs…');
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await api('/api/local-meeting/orgs');
+    if (res && res.ok && Array.isArray(res.orgs) && res.orgs.length > 0) {
+      lmOrg.replaceChildren();
+      for (const o of res.orgs) {
+        const opt = document.createElement('option');
+        opt.value = o.id;
+        opt.textContent = (o.name && o.name.trim()) || o.id;
+        if (res.defaultOrgId && o.id === res.defaultOrgId) opt.selected = true;
+        lmOrg.appendChild(opt);
+      }
+      return;
+    }
+    if (attempt < retries) await new Promise((r) => setTimeout(r, delayMs));
   }
+  setOrgPlaceholder('no orgs — is the portal up?');
 }
 loadOrgs();
 
@@ -304,6 +326,9 @@ configForm.addEventListener('submit', (ev) => {
   void api('/api/config', 'POST', { tag: tagInput.value.trim(), mode: modeSelect.value }).then(
     (r) => {
       configStatus.textContent = r.ok ? `applied (${r.mode})` : `error: ${r.error ?? 'failed'}`;
+      // The org list is per-Supabase; a mode switch restarts the portal, so
+      // refetch (loadOrgs retries while the portal comes back up).
+      if (r.ok) void loadOrgs();
     },
   );
 });
@@ -333,6 +358,9 @@ document.querySelectorAll('button[data-all]').forEach((btn) => {
     // Progress (steps + state) streams over /api/events while this resolves.
     void api(`/api/all/${btn.dataset.all}`, 'POST').finally(() => {
       btn.disabled = false;
+      // Start all brings the portal up; refetch orgs (loadOrgs retries while
+      // the portal finishes booting).
+      if (btn.dataset.all === 'start') void loadOrgs();
     });
   });
 });

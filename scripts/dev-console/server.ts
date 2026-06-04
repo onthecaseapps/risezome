@@ -600,6 +600,21 @@ function readEnvVar(envPath: string, key: string): string | undefined {
   }
   return undefined;
 }
+
+/**
+ * Detect the mode the active env is ACTUALLY in by inspecting what the last
+ * `use-env.sh` wrote, rather than defaulting blindly. Local mode points the
+ * portal at the local Supabase stack (127.0.0.1:54321); hosted points it at a
+ * `*.supabase.co` project. Without this, a restart resets the console's notion
+ * of mode to 'local' while `.env.local` still holds the last-applied (hosted)
+ * creds — so the dropdown + Supabase status desync until you click Apply.
+ */
+function detectMode(repoRoot: string): 'local' | 'hosted' | undefined {
+  const url = readEnvVar(join(repoRoot, 'apps', 'portal', '.env.local'), 'NEXT_PUBLIC_SUPABASE_URL');
+  if (url === undefined || url.length === 0) return undefined;
+  return /127\.0\.0\.1|localhost/.test(url) ? 'local' : 'hosted';
+}
+
 function runUseEnv(
   opts: ConsoleOptions,
   tag: string,
@@ -625,7 +640,9 @@ function isMain(): boolean {
 if (isMain()) {
   const repoRoot = join(HERE, '..', '..');
   const tag = readTag(repoRoot) || 'dev';
-  const mode = (process.env.DEV_CONSOLE_MODE as 'local' | 'hosted') || 'local';
+  // Precedence: explicit override > the mode .env.local is actually in > local.
+  const mode =
+    (process.env.DEV_CONSOLE_MODE as 'local' | 'hosted') || detectMode(repoRoot) || 'local';
   const port = Number.parseInt(process.env.DEV_CONSOLE_PORT ?? '4317', 10);
   const handle = createConsole({
     repoRoot,
