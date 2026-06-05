@@ -56,27 +56,12 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   });
 
   // U9: the recap is encrypted at rest — decrypt server-side (the key stays in
-  // env; the browser never sees it). DEGRADE on a crypto failure (KMS blip /
-  // deploy-window, or a legacy pre-backfill row that cannot decrypt under the
-  // org key): render the page with a null recap rather than a 500.
-  const recapEnc = meeting.recap_text_enc as string | null;
-  let recapText: string | null = null;
-  if (recapEnc !== null) {
-    try {
-      recapText = await decryptForOrgFromBytea(orgId, recapEnc);
-    } catch (err) {
-      if (err instanceof EnvelopeCryptoError) {
-        console.error(`[review] recap decrypt failed (meetingId=${meetingId}):`, err);
-        recapText = null;
-      } else {
-        throw err;
-      }
-    }
-  }
-
-  // Structured recap (new meetings). Prefer it; fall back to the markdown above
-  // for old meetings (recap_json_enc null). DEGRADE to null on a crypto failure
-  // or unparseable JSON rather than a 500 — the markdown / muted state renders.
+  // env; the browser never sees it). Decrypt the STRUCTURED recap first and only
+  // fall back to the markdown when it's absent: a regenerated meeting carries
+  // both columns, but the client renders the structured recap, so decrypting the
+  // legacy markdown too would be a wasted KMS Decrypt every load. DEGRADE to null
+  // on a crypto failure (KMS blip / deploy-window) or unparseable JSON rather
+  // than a 500 — the markdown / muted state renders.
   const recapJsonEnc = meeting.recap_json_enc as string | null;
   let structuredRecap: StructuredRecap | null = null;
   if (recapJsonEnc !== null) {
@@ -86,6 +71,23 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
       if (err instanceof EnvelopeCryptoError || err instanceof SyntaxError) {
         console.error(`[review] structured recap decrypt/parse failed (meetingId=${meetingId}):`, err);
         structuredRecap = null;
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  // Legacy markdown recap — only needed (and only decrypted) when there's no
+  // structured recap to render. Saves a KMS Decrypt for every regenerated meeting.
+  const recapEnc = meeting.recap_text_enc as string | null;
+  let recapText: string | null = null;
+  if (structuredRecap === null && recapEnc !== null) {
+    try {
+      recapText = await decryptForOrgFromBytea(orgId, recapEnc);
+    } catch (err) {
+      if (err instanceof EnvelopeCryptoError) {
+        console.error(`[review] recap decrypt failed (meetingId=${meetingId}):`, err);
+        recapText = null;
       } else {
         throw err;
       }
