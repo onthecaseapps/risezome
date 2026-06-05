@@ -60,3 +60,19 @@ export interface NotificationView {
   frequency: number;
   actorName: string | null;
 }
+
+/**
+ * METADATA-ONLY projection of a gap assigned to the current user, from the
+ * `list_assigned_questions()` RPC (U5). This is the surface for a NON-attendee
+ * assignee who can't open the gap drawer / verbatim — so it carries ONLY the
+ * question (canonical title), who asked it (latest occurrence's asker_name), the
+ * recurrence metrics, and status. NEVER the verbatim occurrences.
+ */
+export interface AssignedQuestionView {
+  gapId: string;
+  title: string;
+  askerName: string | null;
+  frequency: number;
+  lastAskedAtIso: string | null;
+  status: GapStatus;
+}

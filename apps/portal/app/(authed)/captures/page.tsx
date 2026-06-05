@@ -1,8 +1,10 @@
 import type { ReactElement } from 'react';
+import { cookies } from 'next/headers';
 import { decryptForOrgFromBytea, EnvelopeCryptoError } from '@risezome/crypto';
-import { requireAuthedUserWithOrg } from '../../_lib/auth';
+import { CURRENT_TEAM_COOKIE, listUserTeams, requireAuthedUserWithOrg } from '../../_lib/auth';
 import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
 import { isMasterKeyAccess } from '../../_lib/meeting-access';
+import { applyTeamLens } from './_team-lens';
 import { CapturesClient, type CaptureCard, type CapturePlatform } from './_client';
 
 /**
@@ -94,6 +96,45 @@ export default async function CapturesPage(): Promise<ReactElement> {
           isParticipant: participantOf.has(m.meeting_id),
         }),
     );
+  }
+
+  // U8 — team-switcher BROWSE LENS. The top-bar team switcher writes
+  // CURRENT_TEAM_COOKIE; absent (or a team the user is no longer on / archived)
+  // = the "All meetings" lens (current behavior, unchanged). When a team IS
+  // selected, NARROW the list to meetings that INVOLVE that team — meetings with
+  // ≥1 attendee (meeting_participants) who is a member (team_members) of the
+  // selected team — INTERSECTED with the meetings already in `meetings`. We
+  // resolve the "involved" set from the already-RLS-scoped accessible
+  // meeting_ids (one extra query keyed by those ids + the team_id), then apply
+  // the pure filter. The lens only NARROWS: it filters the genuinely-entitled
+  // rows, so it can never widen access (RLS still scopes meetings to attendees ∪
+  // super-admin, U2). Validate the cookie against the user's own teams so a
+  // stale/foreign team id falls back to no-lens (show all) rather than erroring.
+  const cookieStore = await cookies();
+  const teamCookie = cookieStore.get(CURRENT_TEAM_COOKIE)?.value;
+  if (teamCookie !== undefined && teamCookie !== 'all' && meetings.length > 0) {
+    const userTeams = await listUserTeams(orgId);
+    const teamId = userTeams.some((t) => t.id === teamCookie) ? teamCookie : null;
+    if (teamId !== null) {
+      const accessibleIds = meetings.map((m) => m.meeting_id);
+      // meeting_participants ⋈ team_members for the selected team, restricted to
+      // the accessible meetings. Both tables are member-readable under RLS.
+      const { data: memberRows } = await supabase
+        .from('team_members')
+        .select('user_id')
+        .eq('team_id', teamId);
+      const teamUserIds = (memberRows ?? []).map((r) => r.user_id as string);
+      const involved = new Set<string>();
+      if (teamUserIds.length > 0) {
+        const { data: partRows } = await supabase
+          .from('meeting_participants')
+          .select('meeting_id')
+          .in('meeting_id', accessibleIds)
+          .in('user_id', teamUserIds);
+        for (const p of partRows ?? []) involved.add(p.meeting_id as string);
+      }
+      meetings = applyTeamLens(meetings, involved);
+    }
   }
 
   // U9: the recap is encrypted at rest — decrypt server-side (the key stays in

@@ -2,7 +2,15 @@ import type { ReactElement } from 'react';
 import { requireAuthedUserWithOrg } from '../../_lib/auth';
 import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
 import { GapsClient } from './_client';
-import type { GapView, GapOccurrenceView, SectionView, OrgMember, NotificationView } from './_types';
+import type {
+  GapView,
+  GapOccurrenceView,
+  SectionView,
+  OrgMember,
+  NotificationView,
+  AssignedQuestionView,
+  GapStatus,
+} from './_types';
 
 /**
  * Knowledge gaps — questions Risezome couldn't answer in meetings, captured
@@ -226,6 +234,31 @@ export default async function GapsPage(): Promise<ReactElement> {
     })
     .filter((n): n is NotificationView => n.gapId !== null);
 
+  // U8 — "Assigned to you" (U5's deferred metadata-only surface). The
+  // list_assigned_questions() RPC (SECURITY DEFINER, scoped to the caller)
+  // returns ONLY the question, asker_name, recurrence metrics, and status — the
+  // surface for a NON-attendee assignee who can't open the gap itself. Read
+  // through the RLS-respecting authed client; never link these rows through to
+  // the gap drawer / verbatim. Degrades to [] on any RPC failure.
+  const { data: assignedRows } = await supabase.rpc('list_assigned_questions');
+  const assignedQuestions: AssignedQuestionView[] = Array.isArray(assignedRows)
+    ? (assignedRows as Array<{
+        gap_id: string;
+        title: string;
+        asker_name: string | null;
+        frequency: number;
+        last_asked_at: string | null;
+        status: string;
+      }>).map((r) => ({
+        gapId: r.gap_id,
+        title: r.title,
+        askerName: r.asker_name,
+        frequency: r.frequency ?? 0,
+        lastAskedAtIso: r.last_asked_at,
+        status: r.status as GapStatus,
+      }))
+    : [];
+
   return (
     <GapsClient
       gaps={gapViews}
@@ -234,6 +267,7 @@ export default async function GapsPage(): Promise<ReactElement> {
       isManager={isManager}
       currentUserId={user.id}
       notifications={notifications}
+      assignedQuestions={assignedQuestions}
     />
   );
 }

@@ -37,8 +37,6 @@ export interface ReviewClientProps {
   initialCards: CardEvent[];
   /** utteranceId → synthesisId for the transcript anchors. */
   anchorMap: Record<string, string>;
-  /** Privacy control rendered in the header (RSC-built: picker or badge). */
-  privacyControl?: ReactNode;
 }
 
 function seedState(
@@ -93,7 +91,6 @@ export function ReviewClient(props: ReviewClientProps): ReactElement {
               <StatusBadge status={props.status} /> · {formatRange(props.startedAtIso, props.endedAtIso)}
             </span>
           </div>
-          {props.privacyControl !== undefined ? props.privacyControl : null}
         </div>
       </header>
 

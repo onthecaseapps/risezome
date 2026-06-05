@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState, type ReactElement } from 'react';
-import type { GapView, NotificationView, OrgMember, SectionView } from './_types';
-import { ChevronDown, FlameGlyph, SectionDot, StatusPill, Avatar } from './_bits';
+import type { AssignedQuestionView, GapView, NotificationView, OrgMember, SectionView } from './_types';
+import { ChevronDown, FlameGlyph, SectionDot, StatusPill, Avatar, shortDate } from './_bits';
 import { GapsEmptyState } from './_empty-state';
 import { GapRow } from './_gap-row';
 import { GapDrawer } from './_gap-drawer';
@@ -22,6 +22,7 @@ export function GapsClient({
   isManager,
   currentUserId,
   notifications,
+  assignedQuestions = [],
 }: {
   gaps: GapView[];
   sections: SectionView[];
@@ -29,6 +30,7 @@ export function GapsClient({
   isManager: boolean;
   currentUserId: string;
   notifications: NotificationView[];
+  assignedQuestions?: AssignedQuestionView[];
 }): ReactElement {
   const [query, setQuery] = useState('');
   const [sectionFilter, setSectionFilter] = useState<string>('all');
@@ -151,6 +153,44 @@ export function GapsClient({
             {myGaps.length === 1 ? 'needs' : 'need'} an answer this week.
           </span>
         </div>
+      ) : null}
+
+      {/* Assigned to you — METADATA-ONLY (U8 / U5 deferred). Surfaces the
+          caller's assigned questions for a NON-attendee assignee who can't open
+          the gap itself, so it is a PLAIN read-only list: question, asker,
+          recurrence, status — and deliberately NO link through to the gap drawer
+          or verbatim. Empty → render nothing (no noisy empty state). */}
+      {assignedQuestions.length > 0 ? (
+        <section className="mb-6 overflow-hidden rounded-2xl border border-border">
+          <div className="flex items-center gap-2 bg-card/40 px-4 py-2.5">
+            <span className="text-sm font-semibold text-fg">Assigned to you</span>
+            <span className="flex-none rounded-full bg-border/60 px-2 py-0.5 text-[11px] font-medium text-muted">
+              {assignedQuestions.length}
+            </span>
+          </div>
+          <ul>
+            {assignedQuestions.map((q) => (
+              <li
+                key={q.gapId}
+                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-border px-4 py-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-fg">{q.title}</p>
+                  <p className="mt-0.5 text-xs text-muted">
+                    {q.askerName !== null ? `Asked by ${q.askerName}` : 'Asked in a meeting'}
+                    {' · '}
+                    <span className="inline-flex items-center gap-1">
+                      <FlameGlyph className="text-orange-400" />
+                      {q.frequency}× asked
+                    </span>
+                    {q.lastAskedAtIso !== null ? ` · last ${shortDate(q.lastAskedAtIso)}` : ''}
+                  </p>
+                </div>
+                <StatusPill status={q.status} />
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       {/* hero */}
