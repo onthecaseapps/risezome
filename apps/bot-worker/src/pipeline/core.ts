@@ -315,31 +315,47 @@ export async function runPipeline(
 
   // ── Stage: embed ──────────────────────────────────────────────────────
   const embedStart = Date.now();
-  const embedQueryText = queryText + keyTermsBoost(input);
   let queryEmbedding: Float32Array;
-  try {
-    const result = await deps.embedder.embed({ items: [{ text: embedQueryText, domain: 'text' }] });
-    const vec = result.vectors[0]?.vector;
-    if (vec === undefined) {
+  if (input.queryVector !== undefined) {
+    // Latency U1: the question lane already embedded the query text (for
+    // near-duplicate suppression) and threaded the vector here, so skip a
+    // redundant second embed. The question lane applies no key_terms boost, so
+    // this vector equals what we would have produced from `queryText`.
+    queryEmbedding = Float32Array.from(input.queryVector);
+    if (trace !== null) {
+      trace.push(
+        stageRecord('embed', 'ran', embedStart, {
+          decision: 'reused',
+          data: { dims: queryEmbedding.length, reused: true },
+        }),
+      );
+    }
+  } else {
+    const embedQueryText = queryText + keyTermsBoost(input);
+    try {
+      const result = await deps.embedder.embed({ items: [{ text: embedQueryText, domain: 'text' }] });
+      const vec = result.vectors[0]?.vector;
+      if (vec === undefined) {
+        if (trace !== null) {
+          trace.push(
+            stageRecord('embed', 'short_circuited', embedStart, { reason: 'no_vector' }),
+          );
+          emitTrace();
+        }
+        return { emitted: 0, skipped: 'embed_no_vector' };
+      }
+      queryEmbedding = vec;
+    } catch (err) {
+      deps.logger.warn({ err, meetingId: input.meetingId }, 'pipeline.embed.failed');
       if (trace !== null) {
-        trace.push(
-          stageRecord('embed', 'short_circuited', embedStart, { reason: 'no_vector' }),
-        );
+        trace.push(stageRecord('embed', 'short_circuited', embedStart, { reason: 'embed_failed' }));
         emitTrace();
       }
-      return { emitted: 0, skipped: 'embed_no_vector' };
+      return { emitted: 0, skipped: 'embed_failed' };
     }
-    queryEmbedding = vec;
-  } catch (err) {
-    deps.logger.warn({ err, meetingId: input.meetingId }, 'pipeline.embed.failed');
     if (trace !== null) {
-      trace.push(stageRecord('embed', 'short_circuited', embedStart, { reason: 'embed_failed' }));
-      emitTrace();
+      trace.push(stageRecord('embed', 'ran', embedStart, { data: { dims: queryEmbedding.length } }));
     }
-    return { emitted: 0, skipped: 'embed_failed' };
-  }
-  if (trace !== null) {
-    trace.push(stageRecord('embed', 'ran', embedStart, { data: { dims: queryEmbedding.length } }));
   }
 
   // ── Stage: hybrid search ──────────────────────────────────────────────

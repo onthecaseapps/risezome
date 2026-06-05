@@ -241,20 +241,36 @@ export async function maybeRetrieveAndEmit(args: {
     ? 'question'
     : 'ambient';
 
+  // ── Build the query text (lane-aware; KTD5) ──────────────────────────
+  // QUESTION lane: anchor on the question utterance (+ minimal context for
+  // fragments). AMBIENT lane: the rolling window of recent finals. Built BEFORE
+  // the dedup embed (latency U1) so the question lane can embed the query text
+  // ONCE and reuse that vector for both near-duplicate suppression and retrieval
+  // — the question lane applies no key_terms boost, so the vector equals what the
+  // core's embed step would have produced. The env-gated key_terms boost
+  // (ambient-only) is still applied by the core's keyTermsBoost(input) at embed
+  // time; the ambient lane therefore does NOT reuse a precomputed vector.
+  const queryText =
+    lane === 'question'
+      ? buildQuestionQuery(args.utteranceText, args.runtime.recentFinals, args.lastSummary)
+      : args.runtime.recentFinals.join(' ').trim();
+  if (queryText.length === 0) return { emitted: 0, skipped: 'empty_query' };
+
   // ── Near-duplicate question suppression (KTD4) ───────────────────────
-  // Embed the question and suppress if it's close to one already answered this
+  // Embed the QUERY TEXT and suppress if it's close to one already answered this
   // meeting. New/rephrased questions fire. Recorded only on a grounded answer
   // (below), so a refused question can still be genuinely re-asked. The embed is
   // the ONLY async step; it runs BEFORE the gate/commit below so the ceiling's
   // read-modify-write stays synchronous (atomic under the event loop) — two
   // concurrent question utterances can't both read an under-cap ceiling across
-  // an await and both bypass it.
+  // an await and both bypass it. The resulting vector is REUSED for retrieval
+  // (latency U1), eliminating a second embed round-trip per question.
   let questionVec: number[] | undefined;
   if (lane === 'question') {
     args.runtime.answeredQuestions = args.runtime.answeredQuestions.filter(
       (e) => now - e.at < QUESTION_DUP_WINDOW_MS,
     );
-    questionVec = await embedQuestion(args.embedder, args.utteranceText, args.logger);
+    questionVec = await embedQuestion(args.embedder, queryText, args.logger);
     if (questionVec !== undefined && isNearDuplicateQuestion(questionVec, args.runtime.answeredQuestions, now)) {
       return { emitted: 0, skipped: 'duplicate_question' };
     }
@@ -290,20 +306,6 @@ export async function maybeRetrieveAndEmit(args: {
     args.runtime.questionFireCount += 1;
   }
 
-  // ── Build the query text (lane-aware; KTD5) ──────────────────────────
-  // QUESTION lane: anchor on the question utterance (+ minimal context for
-  // fragments). AMBIENT lane: the rolling window of recent finals. The relevance
-  // HEURISTIC + judge, by contrast, see only the single latest utterance — the
-  // core takes both verbatim via PipelineInput (utteranceText vs queryText).
-  // The env-gated key_terms boost (ambient-only) is applied ONCE, by the core's
-  // keyTermsBoost(input) at embed time — not duplicated here (it skips the
-  // question lane), so the boost is never double-appended.
-  const queryText =
-    lane === 'question'
-      ? buildQuestionQuery(args.utteranceText, args.runtime.recentFinals, args.lastSummary)
-      : args.runtime.recentFinals.join(' ').trim();
-  if (queryText.length === 0) return { emitted: 0, skipped: 'empty_query' };
-
   // recentContext for the synthesizer: rolling-summary prose at head (longest-
   // range memory), then recent finals excluding the current utterance (which IS
   // the query). Mirrors the prior in-pipeline construction.
@@ -323,6 +325,8 @@ export async function maybeRetrieveAndEmit(args: {
     orgId: args.orgId,
     queryText,
     lane,
+    // Latency U1: reuse the dedup embed as the retrieval embed (question lane).
+    ...(questionVec !== undefined ? { queryVector: questionVec } : {}),
     ...(recentContext.length > 0 ? { recentContext } : {}),
     ...(args.lastSummary !== undefined ? { lastSummary: args.lastSummary } : {}),
   };

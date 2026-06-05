@@ -65,6 +65,16 @@ export interface PipelineInput {
    */
   readonly queryText: string;
   /**
+   * Optional pre-computed embedding of `queryText` (live-pipeline latency U1).
+   * The question lane embeds the query text once for near-duplicate suppression
+   * and passes that vector here so the core skips a redundant second embed. When
+   * present, the core uses it verbatim instead of re-embedding; when absent (the
+   * ambient lane, eval/legacy callers), the core embeds `queryText` itself. The
+   * question lane applies no key-terms boost, so this vector equals what the core
+   * would have produced.
+   */
+  readonly queryVector?: readonly number[];
+  /**
    * Oldest-first prior context for the synthesizer (pronoun/fragment
    * resolution). Head entry is typically the rolling-summary prose; the
    * remainder are recent finals excluding the current utterance. Already

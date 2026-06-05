@@ -187,6 +187,26 @@ function input(over: Partial<PipelineInput> = {}): PipelineInput {
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
+describe('runPipeline — query embedding (U1: single embed)', () => {
+  it('reuses a provided queryVector and does NOT re-embed', async () => {
+    const { deps, search, embedder } = makeDeps();
+    const sink = new RecordingSink();
+    const vec = Array.from({ length: 3 }, (_, i) => (i === 1 ? 1 : 0));
+    await runPipeline(input({ lane: 'question', queryVector: vec }), deps, sink);
+    // The question lane already embedded the query text; the core must not embed again.
+    expect(embedder.embed).not.toHaveBeenCalled();
+    // Retrieval still ran, using the reused vector.
+    expect(search).toHaveBeenCalled();
+  });
+
+  it('embeds the query text when no queryVector is provided (ambient/legacy)', async () => {
+    const { deps, embedder } = makeDeps();
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+    expect(embedder.embed).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('runPipeline — pre-retrieval gate (KTD3)', () => {
   it('clearly_filler → recordSkip(heuristic) and NO embed/search call', async () => {
     const { deps, search, embedder } = makeDeps();

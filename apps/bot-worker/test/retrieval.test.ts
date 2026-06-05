@@ -41,13 +41,18 @@ function fakeEmbedder() {
   };
 }
 
+// Minimal db mock: the only call retrieval.ts makes on `db` is the U4
+// effective-source resolver RPC (once per meeting); return an empty set (the
+// mocked runPipeline ignores it anyway).
+const fakeDb = () => ({ rpc: vi.fn(() => Promise.resolve({ data: [], error: null })) });
+
 const baseArgs = (runtime: RetrievalRuntime, utteranceText: string) => ({
   runtime,
   utteranceText,
   utteranceId: 'u1',
   meetingId: 'm1',
   orgId: 'o1',
-  db: {} as never,
+  db: fakeDb() as never,
   embedder: fakeEmbedder() as never,
   logger: { info: () => undefined, warn: () => undefined },
 });
@@ -167,6 +172,28 @@ describe('maybeRetrieveAndEmit — question-anchored query (U3)', () => {
     expect(q).toContain('what about historically');
     expect(q).toContain('second data enrichment option'); // prior final (referent)
     expect(q).toContain('data enrichment options'); // summary topic
+  });
+
+  it('U1: a question fire embeds ONCE and threads that vector as queryVector', async () => {
+    const rt = newRetrievalRuntime();
+    const emb = fakeEmbedder();
+    await maybeRetrieveAndEmit({ ...baseArgs(rt, 'what ai models do we use'), embedder: emb as never });
+    // The question lane embeds the query text once (for near-duplicate
+    // suppression) and threads the vector so the core reuses it (no 2nd embed).
+    expect(emb.embed).toHaveBeenCalledTimes(1);
+    const vec = lastInput().queryVector;
+    expect(vec).toBeDefined();
+    expect(vec).toHaveLength(16);
+  });
+
+  it('U1: an ambient fire threads NO queryVector (core embeds with the key-terms boost)', async () => {
+    const rt = newRetrievalRuntime();
+    rt.lastRetrievalAt = Date.now() - 11_000;
+    const emb = fakeEmbedder();
+    await maybeRetrieveAndEmit({ ...baseArgs(rt, 'so the build is green now'), embedder: emb as never });
+    // No dedup embed on the ambient lane → nothing to reuse; the core embeds.
+    expect(emb.embed).not.toHaveBeenCalled();
+    expect(lastInput().queryVector).toBeUndefined();
   });
 
   it('an ambient fire keeps the full rolling window', async () => {
