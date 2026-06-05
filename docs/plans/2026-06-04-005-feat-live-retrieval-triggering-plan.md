@@ -1,6 +1,6 @@
 ---
 date: 2026-06-04
-status: active
+status: completed
 type: feat
 origin: docs/brainstorms/2026-06-04-live-retrieval-triggering-requirements.md
 ---
