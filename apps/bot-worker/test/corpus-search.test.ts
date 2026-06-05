@@ -201,3 +201,56 @@ describe('hybridSearch — reranker integration', () => {
     expect(out.map((h) => h.chunk_id)).toEqual(['A', 'B']);
   });
 });
+
+describe('hybridSearch — U4 effective-source filter', () => {
+  // Capturing mock: records the args passed to each RPC so we can assert the
+  // p_source_ids the search legs were scoped by.
+  function capturingDb(captured: { vector?: unknown; fts?: unknown }): SupabaseClient {
+    return {
+      rpc: (name: string, args: unknown) => {
+        if (name === 'search_corpus_vector') captured.vector = args;
+        else captured.fts = args;
+        return Promise.resolve({ data: [], error: null });
+      },
+    } as unknown as SupabaseClient;
+  }
+
+  it('passes the source set as p_source_ids to BOTH search legs', async () => {
+    const captured: { vector?: unknown; fts?: unknown } = {};
+    await hybridSearch(capturingDb(captured), {
+      orgId: 'o',
+      queryVectorLiteral: '[0]',
+      queryText: 'q',
+      limit: 5,
+      sourceIds: ['s1', 's2'],
+    });
+    expect((captured.vector as { p_source_ids: string[] }).p_source_ids).toEqual(['s1', 's2']);
+    expect((captured.fts as { p_source_ids: string[] }).p_source_ids).toEqual(['s1', 's2']);
+  });
+
+  it('passes p_source_ids = null when no source set is given (whole-org corpus)', async () => {
+    const captured: { vector?: unknown; fts?: unknown } = {};
+    await hybridSearch(capturingDb(captured), {
+      orgId: 'o',
+      queryVectorLiteral: '[0]',
+      queryText: 'q',
+      limit: 5,
+    });
+    expect((captured.vector as { p_source_ids: unknown }).p_source_ids).toBeNull();
+    expect((captured.fts as { p_source_ids: unknown }).p_source_ids).toBeNull();
+  });
+
+  it('short-circuits to no hits on an EMPTY source set (no DB call)', async () => {
+    const captured: { vector?: unknown; fts?: unknown } = {};
+    const out = await hybridSearch(capturingDb(captured), {
+      orgId: 'o',
+      queryVectorLiteral: '[0]',
+      queryText: 'q',
+      limit: 5,
+      sourceIds: [],
+    });
+    expect(out).toEqual([]);
+    expect(captured.vector).toBeUndefined(); // never queried the DB
+    expect(captured.fts).toBeUndefined();
+  });
+});

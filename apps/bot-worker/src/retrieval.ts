@@ -158,6 +158,15 @@ export interface RetrievalRuntime {
    * already has a live (non-retracted, non-pinned) card retracts the prior one.
    */
   liveCardByDocId: Map<string, string>;
+  /**
+   * The meeting's effective source set (teams restructure U4): the union of its
+   * attendees' teams' sources, resolved ONCE per meeting and cached. Always a
+   * defined array after resolution (possibly empty ⇒ the meeting retrieves
+   * nothing from the corpus). `effectiveSourceIdsResolved` guards the lazy
+   * one-time resolve (an empty array is a valid resolved value).
+   */
+  effectiveSourceIds: readonly string[];
+  effectiveSourceIdsResolved: boolean;
 }
 
 export function newRetrievalRuntime(): RetrievalRuntime {
@@ -169,6 +178,8 @@ export function newRetrievalRuntime(): RetrievalRuntime {
     questionFireCount: 0,
     answeredQuestions: [],
     liveCardByDocId: new Map<string, string>(),
+    effectiveSourceIds: [],
+    effectiveSourceIdsResolved: false,
   };
 }
 
@@ -316,6 +327,27 @@ export async function maybeRetrieveAndEmit(args: {
     ...(args.lastSummary !== undefined ? { lastSummary: args.lastSummary } : {}),
   };
 
+  // ── Effective source set (teams restructure U4) ──────────────────────
+  // Resolve the meeting's retrieval scope ONCE (union of attendees' teams'
+  // sources) and cache it on the runtime. Fail CLOSED: a resolution error
+  // leaves the set empty (retrieve nothing) rather than over-surfacing the
+  // whole-org corpus.
+  if (!args.runtime.effectiveSourceIdsResolved) {
+    const { data, error } = await args.db.rpc('meeting_effective_source_ids', {
+      p_meeting_id: args.meetingId,
+    });
+    if (error !== null) {
+      args.logger.warn({ err: error }, 'retrieval.effective-sources.failed');
+      args.runtime.effectiveSourceIds = [];
+    } else {
+      args.runtime.effectiveSourceIds = (Array.isArray(data) ? data : []).map((r) =>
+        typeof r === 'string' ? r : (Object.values(r as object)[0] as string),
+      );
+    }
+    args.runtime.effectiveSourceIdsResolved = true;
+  }
+  const effectiveSourceIds = args.runtime.effectiveSourceIds;
+
   // ── PipelineDeps (the injected capabilities) ─────────────────────────
   const deps: PipelineDeps = {
     db: args.db,
@@ -326,7 +358,9 @@ export async function maybeRetrieveAndEmit(args: {
       : {}),
     ...(args.classifier !== undefined ? { routerClassifier: args.classifier } : {}),
     ...(args.skillRegistry !== undefined ? { skillRegistry: args.skillRegistry } : {}),
-    hybridSearch: (params) => hybridSearch(args.db, params),
+    // U4: inject the meeting's effective source set so every corpus search is
+    // hard-filtered to the attendees' teams' sources.
+    hybridSearch: (params) => hybridSearch(args.db, { ...params, sourceIds: effectiveSourceIds }),
     isLowConfidenceHits,
     optionalReranker,
     optionalQueryExpander,

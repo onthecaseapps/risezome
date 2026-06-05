@@ -145,6 +145,11 @@ export interface HybridSearchParams {
   readonly queryText: string;
   readonly limit: number;
   readonly candidateLimit?: number;
+  /** The meeting's effective source set (teams restructure U4): the union of its
+   *  attendees' teams' sources. Restricts both the vector and FTS legs to these
+   *  sources. `undefined` ⇒ no source filter (whole-org corpus, e.g. the debug
+   *  page). An EMPTY array ⇒ no in-scope sources ⇒ no corpus hits. */
+  readonly sourceIds?: readonly string[];
   /** Optional cross-encoder reranker (U4). When set, the fused candidate
    *  pool is reranked by query-document relevance and truncated to `limit`;
    *  on any rerank error the RRF order is kept (graceful degrade). */
@@ -167,16 +172,26 @@ export async function hybridSearch(
 ): Promise<HybridHit[]> {
   const candidateLimit = params.candidateLimit ?? DEFAULT_CANDIDATE_LIMIT;
 
+  // U4: an empty (but defined) source set means the meeting's attendees' teams
+  // select nothing — short-circuit to no hits without touching the DB.
+  if (params.sourceIds !== undefined && params.sourceIds.length === 0) {
+    return [];
+  }
+  // `null` p_source_ids ⇒ the RPC skips the source filter (whole-org corpus).
+  const pSourceIds = params.sourceIds === undefined ? null : [...params.sourceIds];
+
   const [vecRaw, ftsRaw] = await Promise.all([
     db.rpc('search_corpus_vector', {
       p_org_id: params.orgId,
       p_query_vector: params.queryVectorLiteral,
       p_limit: candidateLimit,
+      p_source_ids: pSourceIds,
     }),
     db.rpc('search_corpus_fts', {
       p_org_id: params.orgId,
       p_query: params.queryText,
       p_limit: candidateLimit,
+      p_source_ids: pSourceIds,
     }),
   ]);
   const vecRes = vecRaw as unknown as {

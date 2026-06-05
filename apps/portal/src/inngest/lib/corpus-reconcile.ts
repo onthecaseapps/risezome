@@ -269,6 +269,7 @@ export async function writeReconciledDoc(db: SupabaseClient, w: ReconciledDocWri
   const chunkRows = w.chunks.map((c) => ({
     chunk_id: c.chunkId,
     org_id: w.doc.orgId,
+    source_id: w.doc.sourceId, // U4: denormalized for the retrieval source filter
     doc_id: w.docId,
     domain: c.domain,
     text: c.text,
@@ -284,6 +285,7 @@ export async function writeReconciledDoc(db: SupabaseClient, w: ReconciledDocWri
   const embedRows = w.chunks.map((c, i) => ({
     chunk_id: c.chunkId,
     org_id: w.doc.orgId,
+    source_id: w.doc.sourceId, // U4: denormalized for the retrieval source filter
     embedding: w.embeddings[i]!,
   }));
   const { error: embErr } = await db

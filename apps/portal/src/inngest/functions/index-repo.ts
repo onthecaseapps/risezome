@@ -406,6 +406,7 @@ async function indexBatch(args: {
     const chunkRows: Array<{
       chunk_id: string;
       org_id: string;
+      source_id: string;
       doc_id: string;
       domain: string;
       text: string;
@@ -415,6 +416,7 @@ async function indexBatch(args: {
     }> = chunkInputs.map((c, i) => ({
       chunk_id: `${docId}::${i}`,
       org_id: orgId,
+      source_id: sourceId, // U4: denormalized for the retrieval source filter
       doc_id: docId,
       domain: c.domain,
       text: c.text,
@@ -426,6 +428,7 @@ async function indexBatch(args: {
       chunkRows.push({
         chunk_id: `${docId}::summary`,
         org_id: orgId,
+        source_id: sourceId,
         doc_id: docId,
         domain: 'text',
         text: summary,
@@ -444,6 +447,7 @@ async function indexBatch(args: {
     const embedRows = chunkRows.map((row, i) => ({
       chunk_id: row.chunk_id,
       org_id: orgId,
+      source_id: row.source_id, // U4: denormalized for the retrieval source filter
       embedding: arrayToVectorLiteral(embeddings.vectors[i]!.vector),
     }));
     const { error: embErr } = await service
