@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { TranscriptUtterance } from '@risezome/hud-ui';
@@ -30,6 +30,7 @@ const SYNTHESIS: InitialSynthesis = {
 
 function renderReview(over: Partial<ReviewClientProps> = {}) {
   const props: ReviewClientProps = {
+    meetingId: 'm-1',
     title: 'Standup',
     status: 'completed',
     startedAtIso: null,
@@ -87,6 +88,7 @@ describe('ReviewClient (U8)', () => {
 
 function defaultProps(): ReviewClientProps {
   return {
+    meetingId: 'm-1',
     title: 'Standup',
     status: 'completed',
     startedAtIso: null,
@@ -174,6 +176,27 @@ describe('ReviewClient structured recap (U4)', () => {
       <ReviewClient {...{ ...defaultProps(), structuredRecap: STRUCTURED, recapStatus: 'failed' }} />,
     );
     expect(screen.getByText(/could not be generated/i)).toBeInTheDocument();
+  });
+});
+
+describe('ReviewClient Regenerate control (U6)', () => {
+  it('calls the regenerate action with the meetingId on click', async () => {
+    const user = userEvent.setup();
+    const onRegenerate = vi.fn(async () => ({ ok: true as const }));
+    renderReview({ meetingId: 'm-42', structuredRecap: STRUCTURED, onRegenerate });
+    await user.click(screen.getByRole('button', { name: /regenerate/i }));
+    expect(onRegenerate).toHaveBeenCalledWith('m-42');
+  });
+
+  it('disables the control while the recap is generating', () => {
+    const onRegenerate = vi.fn(async () => ({ ok: true as const }));
+    renderReview({ structuredRecap: STRUCTURED, recapStatus: 'generating', onRegenerate });
+    expect(screen.getByRole('button', { name: /regenerating/i })).toBeDisabled();
+  });
+
+  it('omits the control when no action is provided', () => {
+    renderReview({ structuredRecap: STRUCTURED });
+    expect(screen.queryByRole('button', { name: /regenerate/i })).not.toBeInTheDocument();
   });
 });
 
