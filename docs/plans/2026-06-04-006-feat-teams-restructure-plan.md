@@ -1,7 +1,7 @@
 ---
 title: "feat: Teams restructure — attendees-only access, team-scoped sources, top-bar shell"
 type: feat
-status: active
+status: completed
 date: 2026-06-04
 origin:
   - docs/brainstorms/2026-06-04-teams-and-sharing-requirements.md
