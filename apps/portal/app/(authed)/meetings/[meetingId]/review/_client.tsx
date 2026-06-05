@@ -14,6 +14,7 @@ import {
   type TranscriptUtterance,
 } from '@risezome/hud-ui';
 import type { InitialSynthesis } from '../_synthesis-seed';
+import type { RecapParticipant, StructuredRecap } from '../../../../../src/inngest/lib/meeting-recap';
 
 /**
  * Post-meeting review (U8). Mirrors the live view's styling: a generated
@@ -31,6 +32,8 @@ export interface ReviewClientProps {
   startedAtIso: string | null;
   endedAtIso: string | null;
   recapText: string | null;
+  /** Structured recap (new meetings). Null for old meetings / decrypt degrade → markdown fallback. */
+  structuredRecap?: StructuredRecap | null;
   recapStatus: RecapStatus;
   initialTranscript: TranscriptUtterance[];
   initialSyntheses: InitialSynthesis[];
@@ -99,12 +102,11 @@ export function ReviewClient(props: ReviewClientProps): ReactElement {
           rule. AppStateProvider is transparent (context only), so the recap
           section and the split grid are direct flex children of the column. */}
       <AppStateProvider initial={seeded}>
-        <section className="border-b border-border px-6 py-6 sm:px-8">
-          <h2 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted">
-            Meeting recap
-          </h2>
-          <RecapBody text={props.recapText} status={props.recapStatus} />
-        </section>
+        <RecapSection
+          structuredRecap={props.structuredRecap ?? null}
+          recapText={props.recapText}
+          recapStatus={props.recapStatus}
+        />
         <ReviewSplit anchorMap={props.anchorMap} transcript={props.initialTranscript} />
       </AppStateProvider>
     </div>
@@ -226,6 +228,194 @@ function ActiveSynthesis({ synthesisId }: { synthesisId: string }): ReactElement
   const record = state.syntheses.get(synthesisId);
   if (record === undefined) return null;
   return <SynthesisStreamItem syn={record} />;
+}
+
+/**
+ * The meeting-recap section. Prefers the structured recap (new meetings); falls
+ * back to the legacy markdown for old meetings; degrades to a muted state for
+ * generating / failed / absent. A live generating/failed status wins over a
+ * stale structured recap so a Regenerate-in-flight reads honestly.
+ */
+function RecapSection({
+  structuredRecap,
+  recapText,
+  recapStatus,
+}: {
+  structuredRecap: StructuredRecap | null;
+  recapText: string | null;
+  recapStatus: RecapStatus;
+}): ReactElement {
+  if (recapStatus === 'done' && structuredRecap !== null) {
+    return (
+      <section className="border-b border-border px-6 py-6 sm:px-8">
+        <StructuredRecapView recap={structuredRecap} />
+      </section>
+    );
+  }
+  return (
+    <section className="border-b border-border px-6 py-6 sm:px-8">
+      <h2 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted">Meeting recap</h2>
+      <RecapBody text={recapText} status={recapStatus} />
+    </section>
+  );
+}
+
+/** `mm:ss` clock for display; null when no timestamp (minutes may exceed 59). */
+function mmss(ms: number | null): string | null {
+  if (ms === null) return null;
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+const SECTION_LABEL = 'mb-2 text-xs font-medium uppercase tracking-wider text-muted';
+const BADGE = 'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider';
+
+/** The structured recap layout: stat cards, overview, topics, decisions, action items, participants rail. */
+function StructuredRecapView({ recap }: { recap: StructuredRecap }): ReactElement {
+  return (
+    <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_260px]">
+      <div className="min-w-0 space-y-6">
+        <StatCards recap={recap} />
+
+        <div>
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <span className={`${BADGE} bg-accent-soft text-accent`}>Recap</span>
+            <span className="text-xs text-muted">
+              grounded in transcript
+              {recap.speakerCount > 0 ? ` · ${String(recap.speakerCount)} speakers` : ''}
+            </span>
+          </div>
+          <p className="text-sm leading-relaxed text-fg">{recap.overview}</p>
+        </div>
+
+        {recap.topics.length > 0 ? (
+          <div>
+            <h3 className={SECTION_LABEL}>Key topics</h3>
+            <ol className="space-y-2">
+              {recap.topics.map((t, i) => {
+                const ts = mmss(t.timestampMs);
+                return (
+                  <li key={i} className="flex items-baseline gap-3 text-sm">
+                    <span className="tabular-nums text-muted">{i + 1}.</span>
+                    <span className="min-w-0 flex-1 text-fg">{t.text}</span>
+                    {ts !== null ? (
+                      <span className={`${BADGE} bg-bg/60 tabular-nums text-muted`}>{ts}</span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        ) : null}
+
+        {recap.decisions.length > 0 ? (
+          <div>
+            <h3 className={SECTION_LABEL}>Decisions</h3>
+            <div className="space-y-2">
+              {recap.decisions.map((d, i) => (
+                <div key={i} className="rounded-lg border border-border bg-card p-3">
+                  {d.category.length > 0 ? (
+                    <span className={`${BADGE} bg-accent-soft text-accent`}>{d.category}</span>
+                  ) : null}
+                  <p className={`text-sm text-fg${d.category.length > 0 ? ' mt-1.5' : ''}`}>{d.text}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {recap.action_items.length > 0 ? (
+          <div>
+            <h3 className={SECTION_LABEL}>Action items</h3>
+            <ul className="space-y-2">
+              {recap.action_items.map((a, i) => {
+                const ts = mmss(a.timestampMs);
+                return (
+                  <li key={i} className="flex items-start gap-3 text-sm">
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+                    <span className="min-w-0 flex-1 text-fg">{a.text}</span>
+                    {a.assignee !== null ? (
+                      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted">
+                        <Avatar name={a.assignee} />
+                        {a.assignee}
+                      </span>
+                    ) : null}
+                    {ts !== null ? (
+                      <span className={`${BADGE} shrink-0 bg-bg/60 tabular-nums text-muted`}>{ts}</span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+
+      <RecapRail participants={recap.participants} />
+    </div>
+  );
+}
+
+function StatCards({ recap }: { recap: StructuredRecap }): ReactElement {
+  const stats: { label: string; value: number; testid: string }[] = [
+    { label: 'Key topics', value: recap.topics.length, testid: 'stat-topics' },
+    { label: 'Decisions', value: recap.decisions.length, testid: 'stat-decisions' },
+    { label: 'Action items', value: recap.action_items.length, testid: 'stat-actions' },
+    { label: 'Attendees', value: recap.participants.length, testid: 'stat-attendees' },
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {stats.map((s) => (
+        <div key={s.testid} className="rounded-lg border border-border bg-card px-4 py-3">
+          <div data-testid={s.testid} className="text-2xl font-semibold tabular-nums text-fg">
+            {s.value}
+          </div>
+          <div className="mt-0.5 text-xs uppercase tracking-wider text-muted">{s.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Right rail: participants (collapsed when none — local-audio) + the generated-by footer. */
+function RecapRail({ participants }: { participants: readonly RecapParticipant[] }): ReactElement {
+  return (
+    <aside className="space-y-5 lg:border-l lg:border-border lg:pl-6">
+      {participants.length > 0 ? (
+        <div>
+          <h3 className={SECTION_LABEL}>Participants</h3>
+          <ul className="space-y-1.5" data-testid="participant-list">
+            {participants.map((p) => (
+              <li key={p.name} className="flex items-center gap-2 text-sm text-fg">
+                <Avatar name={p.name} />
+                {p.name}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <p className="text-xs leading-relaxed text-muted">
+        Recap generated by Risezome from the meeting transcript.
+      </p>
+    </aside>
+  );
+}
+
+/** A small circular initials avatar. */
+function Avatar({ name }: { name: string }): ReactElement {
+  const initials = name
+    .split(/\s+/)
+    .filter((s) => s.length > 0)
+    .slice(0, 2)
+    .map((s) => s[0]?.toUpperCase() ?? '')
+    .join('');
+  return (
+    <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[10px] font-medium text-accent">
+      {initials}
+    </span>
+  );
 }
 
 function RecapBody({ text, status }: { text: string | null; status: RecapStatus }): ReactElement {

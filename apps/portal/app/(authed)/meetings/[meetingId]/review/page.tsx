@@ -13,6 +13,7 @@ import {
   type UtteranceTime,
 } from '../_synthesis-seed';
 import { ReviewClient, type RecapStatus } from './_client';
+import type { StructuredRecap } from '../../../../../src/inngest/lib/meeting-recap';
 
 /**
  * Post-meeting review page (U8). Mirrors the live view: a generated
@@ -34,7 +35,7 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   const { data: meeting } = await supabase
     .from('meetings')
     .select(
-      'meeting_id, org_id, user_id, status, started_at, ended_at, calendar_event_id, recap_text_enc, recap_status',
+      'meeting_id, org_id, user_id, status, started_at, ended_at, calendar_event_id, recap_text_enc, recap_json_enc, recap_status',
     )
     .eq('meeting_id', meetingId)
     .eq('org_id', orgId)
@@ -66,6 +67,24 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
       if (err instanceof EnvelopeCryptoError) {
         console.error(`[review] recap decrypt failed (meetingId=${meetingId}):`, err);
         recapText = null;
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  // Structured recap (new meetings). Prefer it; fall back to the markdown above
+  // for old meetings (recap_json_enc null). DEGRADE to null on a crypto failure
+  // or unparseable JSON rather than a 500 — the markdown / muted state renders.
+  const recapJsonEnc = meeting.recap_json_enc as string | null;
+  let structuredRecap: StructuredRecap | null = null;
+  if (recapJsonEnc !== null) {
+    try {
+      structuredRecap = JSON.parse(await decryptForOrgFromBytea(orgId, recapJsonEnc)) as StructuredRecap;
+    } catch (err) {
+      if (err instanceof EnvelopeCryptoError || err instanceof SyntaxError) {
+        console.error(`[review] structured recap decrypt/parse failed (meetingId=${meetingId}):`, err);
+        structuredRecap = null;
       } else {
         throw err;
       }
@@ -202,6 +221,7 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
       startedAtIso={meeting.started_at as string | null}
       endedAtIso={meeting.ended_at as string | null}
       recapText={recapText}
+      structuredRecap={structuredRecap}
       recapStatus={(meeting.recap_status as RecapStatus) ?? null}
       initialTranscript={initialTranscript}
       initialSyntheses={initialSyntheses}

@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { TranscriptUtterance } from '@risezome/hud-ui';
 import { ReviewClient, type ReviewClientProps } from '../app/(authed)/meetings/[meetingId]/review/_client';
+import type { StructuredRecap } from '../src/inngest/lib/meeting-recap';
 import {
   normalizeCitations,
   resolveSynthesisAnchors,
@@ -98,6 +99,83 @@ function defaultProps(): ReviewClientProps {
     anchorMap: { q1: 's1' },
   };
 }
+
+const STRUCTURED: StructuredRecap = {
+  overview: 'We chose the AI stack and the recap schema.',
+  topics: [
+    { text: 'AI models', timestampMs: 72_000 },
+    { text: 'Embeddings provider', timestampMs: 220_000 },
+  ],
+  decisions: [{ category: 'Schema', text: 'Store recaps as structured JSON.' }],
+  action_items: [{ text: 'Wire the regenerate button', assignee: 'Jason', timestampMs: 300_000 }],
+  participants: [{ name: 'Alice' }, { name: 'Bob' }],
+  speakerCount: 2,
+};
+
+describe('ReviewClient structured recap (U4)', () => {
+  it('renders stat counts, topics with timestamps, categorized decisions, action items, and participants', () => {
+    renderReview({ structuredRecap: STRUCTURED });
+
+    expect(screen.getByText('We chose the AI stack and the recap schema.')).toBeInTheDocument();
+    // Stat cards.
+    expect(screen.getByTestId('stat-topics')).toHaveTextContent('2');
+    expect(screen.getByTestId('stat-decisions')).toHaveTextContent('1');
+    expect(screen.getByTestId('stat-actions')).toHaveTextContent('1');
+    expect(screen.getByTestId('stat-attendees')).toHaveTextContent('2');
+    // Topics + timestamp chips.
+    expect(screen.getByText('AI models')).toBeInTheDocument();
+    expect(screen.getByText('01:12')).toBeInTheDocument();
+    expect(screen.getByText('03:40')).toBeInTheDocument();
+    // Decision category + text.
+    expect(screen.getByText('Schema')).toBeInTheDocument();
+    expect(screen.getByText('Store recaps as structured JSON.')).toBeInTheDocument();
+    // Action item + assignee + timestamp.
+    expect(screen.getByText('Wire the regenerate button')).toBeInTheDocument();
+    expect(screen.getByText('Jason')).toBeInTheDocument();
+    expect(screen.getByText('05:00')).toBeInTheDocument();
+    // Participants rail (scoped — speaker names also appear in the transcript panel).
+    expect(screen.getByText('Participants')).toBeInTheDocument();
+    const rail = within(screen.getByTestId('participant-list'));
+    expect(rail.getByText('Alice')).toBeInTheDocument();
+    expect(rail.getByText('Bob')).toBeInTheDocument();
+  });
+
+  it('collapses the participants rail and shows 0 attendees for local-audio (empty participants)', () => {
+    renderReview({
+      structuredRecap: { ...STRUCTURED, participants: [], speakerCount: 0 },
+    });
+    expect(screen.getByTestId('stat-attendees')).toHaveTextContent('0');
+    expect(screen.queryByText('Participants')).not.toBeInTheDocument();
+    // The rest of the recap still renders.
+    expect(screen.getByText('AI models')).toBeInTheDocument();
+  });
+
+  it('falls back to the markdown recap when no structured recap is present (old meetings)', () => {
+    renderReview({
+      structuredRecap: null,
+      recapText: '## Overview\nWe talked about AI.\n\n## Action items\n- Ship the recap',
+      recapStatus: 'done',
+    });
+    expect(screen.getByText('Overview')).toBeInTheDocument();
+    expect(screen.getByText('We talked about AI.')).toBeInTheDocument();
+    // No structured stat cards in the fallback path.
+    expect(screen.queryByTestId('stat-topics')).not.toBeInTheDocument();
+  });
+
+  it('degrades to the empty state when both structured and markdown recaps are absent', () => {
+    renderReview({ structuredRecap: null, recapText: null, recapStatus: 'done' });
+    expect(screen.getByText(/no recap available/i)).toBeInTheDocument();
+  });
+
+  it('prefers the generating/failed status over a stale structured recap', () => {
+    const { rerender } = renderReview({ structuredRecap: STRUCTURED, recapStatus: 'generating' });
+    expect(screen.getByText(/generating the meeting recap/i)).toBeInTheDocument();
+    rerender(
+      <ReviewClient {...{ ...defaultProps(), structuredRecap: STRUCTURED, recapStatus: 'failed' }} />,
+    );
+    expect(screen.getByText(/could not be generated/i)).toBeInTheDocument();
+  });
+});
 
 describe('normalizeCitations (R8 — old rows render correctly)', () => {
   it('converts a legacy numeric-rank citations array to the object shape', () => {
