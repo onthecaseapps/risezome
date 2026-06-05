@@ -1,3 +1,7 @@
+// @vitest-environment node
+// Pure DB/RLS test — runs in real Node, not jsdom. jsdom's BroadcastChannel shim
+// throws ERR_INVALID_ARG_TYPE on the supabase-js realtime client, crashing the
+// worker (see roles.test.ts / rls-test-harness notes).
 /**
  * Manager-only config-write RLS tests (plan U4, R3): workspace_bot_settings
  * INSERT/UPDATE are gated on is_org_manager(). Same harness as orgs.test.ts;
