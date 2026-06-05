@@ -82,3 +82,45 @@ Existing meetings backfill to `only_teammates` (library-by-default); each org's
 creator is seeded as the initial Super Admin. Pre-launch low volume made this
 low-risk. See `SECURITY.md` (Roles & meeting privacy) and
 `docs/security/service-role-inventory.md` (§B2).
+
+---
+
+## Update (2026-06-05, teams restructure)
+
+The body above is **historical**. The per-meeting privacy ladder it describes was
+**retired** by the teams restructure (plan `2026-06-04-006`, migrations
+`20260609010000`…`20260609070000`) — a second production migration over the
+plan-004 schema. The model is now simpler:
+
+- **Access is attendees-only.** `can_access_meeting` was rewritten (still the
+  single predicate over all five capture tables — the sibling-leak guarantee is
+  unchanged) to
+  `is_super_admin(org) OR owner OR is_meeting_participant(meeting)`
+  (`20260609030000_attendees_only_access.sql`). The 3-level privacy ladder is gone:
+  the `meetings.privacy_level` column, the `org_privacy_config` table, the floor
+  trigger, `meeting_privacy_rank()`, and the `admin_override_meeting_privacy()` RPC
+  were all **dropped**. The owner branch is kept as belt-and-suspenders; the
+  super-admin master key (audited at the app layer) is unchanged.
+- **Gaps moved to attendees ∪ master key.** `can_view_gap` dropped the
+  `assignee_id` branch and tightened the blanket admin branch from manager to
+  `is_super_admin` (`20260609070000_gap_assignment_metadata.sql`), so a plain Admin
+  no longer sees gaps they didn't attend. The "`knowledge_gaps` stays on
+  `can_view_gap`" note above still holds — only the predicate's contents narrowed.
+- **Assignment is metadata-only.** Assigning a gap's open question no longer grants
+  verbatim: the assignee reads only `{title, asker_name, frequency, last_asked_at,
+  status}` via the new `list_assigned_questions()` SECURITY DEFINER fn, never
+  `gap_occurrences`. Org-wide assignment is gated/audited in
+  `gaps/gap-actions.ts assignGapAction` (`gap_assignment` audit + notification).
+- **Audit vocabulary.** `privacy_change` / `admin_override` are **kept in the CHECK
+  for historical rows** but no longer written; `team_change`,
+  `team_membership_change`, and `gap_assignment` were added
+  (`20260609020000_audit_actions_teams.sql`). The "org default/floor change is not
+  audited" exception above is therefore moot — that write path no longer exists.
+- **Unchanged:** roles (`member`/`manager`/`super_admin`), `is_org_admin` /
+  `is_super_admin`, the audited super-admin master key, `meeting_participants`, and
+  `org_id` as the per-org KMS/tenancy boundary.
+
+A new **teams layer** (`teams` / `team_members` / `team_sources`, member-read +
+service-role-write) and **team-scoped sources** (retrieval filtered to a meeting's
+effective source set via `meeting_effective_source_ids`) were added alongside; see
+`SECURITY.md` (Roles & access) and `docs/security/service-role-inventory.md` (§B3).

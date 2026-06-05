@@ -77,24 +77,51 @@ pattern — RLS reads, service-role writes, no broad client write policies:
 | Write | Path | Gate |
 | --- | --- | --- |
 | Role change (incl. Super Admin) | `members/member-actions.ts changeRoleAction` | `requireAdmin` + service-role + `org_id` scope; **granting OR removing `super_admin` additionally requires the caller to BE a super_admin** (else `forbidden`) — a manager cannot self-promote to the master-key tier; appends `role_change` audit |
-| Meeting privacy (owner) | `meetings/[id]/privacy-action.ts setMeetingPrivacy` | owner check; floor enforced by DB trigger; appends `privacy_change` audit |
-| Meeting privacy (admin override) | `admin_override_meeting_privacy()` RPC | **SECURITY DEFINER, self-checks `is_org_admin` inside the function**; floor-exempt via a transaction-local GUC; appends `admin_override` audit |
-| Org privacy default + floor | `settings/privacy-action.ts setOrgPrivacyConfig` | `requireAdmin` + service-role upsert of `org_privacy_config`; rejects a default more private than the floor (`default_below_floor`); **intentionally UN-audited in v1** (see note below) |
 | Master-key access | `_lib/meeting-access.ts` (app layer) | logs `master_key_access` when a Super Admin opens a meeting they aren't otherwise entitled to. The captures **library list** EXCLUDES master-key-only meetings for a super_admin (so it never decrypts/renders a restricted recap with no audit row); restricted meetings are reachable only via the review/live detail pages, which DO audit |
 
 `permission_audit_log` is **append-only and Super-Admin-read-only** (RLS SELECT
 gated by `is_super_admin`; no INSERT/UPDATE/DELETE policy for any client role).
-`org_privacy_config` is member-readable (for the picker), service-role-write only.
-**Audit note (v1):** `setOrgPrivacyConfig` (the org default/floor change) is
-deliberately NOT written to `permission_audit_log` — the audit `action` CHECK only
-admits `privacy_change` / `admin_override` / `role_change` / `master_key_access`,
-and the config row's `updated_by`/`updated_at` already records who last changed it.
-So the "every privileged write is audited" reading has this one documented
-exception; a dedicated `config_change` action can be added if a trail is needed.
-The `admin_override_meeting_privacy` RPC is the one privileged client-callable
-function in the system — it is `SECURITY DEFINER` precisely so it can set the
-floor-bypass GUC, and it re-derives the meeting's org and rejects the call unless
-the caller is an admin of that org.
+
+> **Removed by the teams restructure (plan `2026-06-04-006`, migrations
+> `20260609010000`…`20260609070000`).** The per-meeting **privacy ladder** that
+> this section previously documented is **gone** — access is now **attendees-only**
+> (`can_access_meeting = is_super_admin(org) OR owner OR is_meeting_participant`,
+> see `20260609030000_attendees_only_access.sql`). With it, these write paths were
+> **deleted**: the owner privacy write (`meetings/[id]/privacy-action.ts
+> setMeetingPrivacy`, `privacy_change` audit), the admin-override RPC
+> (`admin_override_meeting_privacy()`, `admin_override` audit), and the org
+> default/floor upsert (`settings/privacy-action.ts setOrgPrivacyConfig` over
+> `org_privacy_config`). The `org_privacy_config` table, the floor trigger,
+> `meeting_privacy_rank()`, and `meetings.privacy_level` were all dropped. The
+> `privacy_change` / `admin_override` audit actions are **kept in the CHECK for
+> historical rows** but are no longer written (`permission_audit_log` is
+> append-only, so old rows must stay valid — see
+> `20260609020000_audit_actions_teams.sql`). The new write paths replacing them are
+> in §B3 below; the previously-documented "`setOrgPrivacyConfig` un-audited in v1"
+> exception is therefore moot.
+
+### B3. Teams + team-scoped sources — service-role writes (teams restructure)
+
+The teams restructure (plan `2026-06-04-006`) adds a teams layer and team-scoped
+source selection. Tables `teams`, `team_members`, `team_sources` are
+**member-readable RLS, service-role-write, no client write policy** (KTD8), same
+discipline as §B/§B2. New audited write paths:
+
+| Write | Path | Gate |
+| --- | --- | --- |
+| Team create / rename / archive | `teams/team-actions.ts` | `requireAdmin` (manager OR super_admin) + service-role + `org_id` scope; appends `team_change` audit |
+| Team membership add / remove | `teams/team-actions.ts` | `requireAdmin` + service-role + `org_id` scope; appends `team_membership_change` audit |
+| Team source select / deselect | `teams/source-actions.ts` → `_lib/team-source-lifecycle.ts` | `requireAdmin`; does **not** write `team_sources` directly — delegates to the lifecycle entrypoints, which own the refcount-driven **index on first reference** (emit `*.index-requested`) / **de-index on last drop** (mark `sources.status='removed'` + `removed_at`; the existing **purge-removed-sources cron** hard-deletes docs/chunks/embeddings after a grace window). `org_id` resolved server-side from `requireAdmin()` |
+| Gap-question assignment | `gaps/gap-actions.ts assignGapAction` | caller must be entitled to the gap (`callerCanViewGap` — attendee ∪ super-admin); target validated to be an `org_members` user; service-role + `org_id` scope; appends `gap_assignment` audit + a `notifications` row. **Metadata-only:** sets `assignee_id` but deliberately does **not** seed `gap_viewers`, so a non-attendee assignee gains **no** verbatim (they read only question/asker/metrics via `list_assigned_questions()`) |
+
+The audit `action` CHECK gained `team_change`, `team_membership_change`, and
+`gap_assignment` (`20260609020000_audit_actions_teams.sql`). `meeting_participants`
+is the attendee baseline that `can_access_meeting` and
+`meeting_effective_source_ids` (the retrieval source-set resolver,
+`20260609060000_search_rpcs_source_filter.sql`) both key on. No new
+client-callable privileged RPC was added (the dropped `admin_override_meeting_privacy`
+was the only one); `is_team_member()`, `meeting_effective_source_ids()`, and
+`list_assigned_questions()` are SECURITY DEFINER **read** helpers, not writers.
 
 ### D. Reads — migration to the authenticated client (KTD5)
 
