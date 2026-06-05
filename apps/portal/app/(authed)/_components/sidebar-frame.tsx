@@ -42,7 +42,7 @@ export function SidebarFrame({ nav }: { nav: ReactNode }): ReactElement {
   return (
     <aside
       data-collapsed={collapsed ? 'true' : 'false'}
-      className={`group/sb flex h-full shrink-0 flex-col border-r border-border bg-card transition-[width] duration-150 ${collapsed ? 'w-[64px]' : 'w-[200px]'}`}
+      className={`group/sb flex h-full shrink-0 flex-col border-r border-border bg-card transition-[width] duration-150 ${collapsed ? 'w-[64px]' : 'w-[232px]'}`}
     >
       <nav className="flex-1 space-y-0.5 px-2 py-3">{nav}</nav>
       <div className="border-t border-border px-2 py-2">
