@@ -90,15 +90,35 @@ const NARRATIVE: StructuredRecapNarrative = {
 };
 
 describe('flattenTranscriptLines', () => {
-  it('keeps speaker + startMs and drops empty-text rows', () => {
+  it('keeps speaker, normalizes startMs to elapsed-from-first, and drops empty-text rows', () => {
     const lines = flattenTranscriptLines([
       row('Alice', 'hello', 1_000),
       row('Bob', '', 2_000),
       row(null, 'audio only', null),
     ]);
     expect(lines).toEqual([
-      { speaker: 'Alice', text: 'hello', startMs: 1_000 },
+      { speaker: 'Alice', text: 'hello', startMs: 0 },
       { speaker: null, text: 'audio only', startMs: null },
+    ]);
+  });
+
+  it('normalizes absolute (epoch) startMs to elapsed meeting time', () => {
+    // Real payload startMs are epoch-style ms; the recap must show 00:00, 01:12…
+    const lines = flattenTranscriptLines([
+      row('A', 'first', 1_780_623_780_000),
+      row('B', 'later', 1_780_623_852_000),
+    ]);
+    expect(lines).toEqual([
+      { speaker: 'A', text: 'first', startMs: 0 },
+      { speaker: 'B', text: 'later', startMs: 72_000 },
+    ]);
+  });
+
+  it('leaves a fully timestamp-less (local-audio) transcript untouched', () => {
+    const lines = flattenTranscriptLines([row(null, 'a', null), row(null, 'b', null)]);
+    expect(lines).toEqual([
+      { speaker: null, text: 'a', startMs: null },
+      { speaker: null, text: 'b', startMs: null },
     ]);
   });
 });

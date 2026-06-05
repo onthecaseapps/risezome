@@ -45,9 +45,16 @@ export interface GenerateMeetingRecapOptions {
   readonly nowIso?: () => string;
 }
 
-/** Flatten transcript rows into timestamped, speaker-attributed lines for the model. */
+/**
+ * Flatten transcript rows into timestamped, speaker-attributed lines for the
+ * model. `payload.startMs` is an ABSOLUTE (epoch-style) ms value, not relative
+ * to meeting start — rendering it raw as [mm:ss] produces nonsense like
+ * 29677064:14. Normalize each line to elapsed-from-first-utterance (subtract the
+ * earliest startMs) so the recap shows real meeting time. This is correct
+ * whether the source clock is absolute or already relative.
+ */
 export function flattenTranscriptLines(rows: readonly TranscriptRow[]): TranscriptLine[] {
-  return rows.flatMap((r) => {
+  const raw = rows.flatMap((r) => {
     const p = r.payload ?? {};
     const text = r.text;
     if (typeof text !== 'string' || text.length === 0) return [];
@@ -55,6 +62,15 @@ export function flattenTranscriptLines(rows: readonly TranscriptRow[]): Transcri
     const startMs = typeof p['startMs'] === 'number' ? (p['startMs'] as number) : null;
     return [{ speaker, text, startMs }];
   });
+  const baseline = raw.reduce<number | null>(
+    (min, l) => (l.startMs === null ? min : min === null || l.startMs < min ? l.startMs : min),
+    null,
+  );
+  if (baseline === null) return raw;
+  return raw.map((l) => ({
+    ...l,
+    startMs: l.startMs === null ? null : l.startMs - baseline,
+  }));
 }
 
 /**
