@@ -255,15 +255,20 @@ function RecapSection({
   recapStatus: RecapStatus;
   onRegenerate?: ((meetingId: string) => Promise<RegenerateRecapResult>) | undefined;
 }): ReactElement {
-  const regen =
+  const mkRegen = (block: boolean): ReactNode =>
     onRegenerate !== undefined ? (
-      <RegenerateButton meetingId={meetingId} recapStatus={recapStatus} onRegenerate={onRegenerate} />
+      <RegenerateButton
+        meetingId={meetingId}
+        recapStatus={recapStatus}
+        onRegenerate={onRegenerate}
+        block={block}
+      />
     ) : null;
 
   if (recapStatus === 'done' && structuredRecap !== null) {
     return (
       <section className="border-b border-border px-6 py-6 sm:px-8">
-        <StructuredRecapView recap={structuredRecap} regenerate={regen} />
+        <StructuredRecapView recap={structuredRecap} regenerate={mkRegen(true)} />
       </section>
     );
   }
@@ -271,7 +276,7 @@ function RecapSection({
     <section className="border-b border-border px-6 py-6 sm:px-8">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-xs font-medium uppercase tracking-wider text-muted">Meeting recap</h2>
-        {regen}
+        {mkRegen(false)}
       </div>
       <RecapBody text={recapText} status={recapStatus} />
     </section>
@@ -283,16 +288,18 @@ function RegenerateButton({
   meetingId,
   recapStatus,
   onRegenerate,
+  block = false,
 }: {
   meetingId: string;
   recapStatus: RecapStatus;
   onRegenerate: (meetingId: string) => Promise<RegenerateRecapResult>;
+  block?: boolean;
 }): ReactElement {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState(false);
   const busy = pending || recapStatus === 'generating';
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className={`flex flex-col gap-1${block ? '' : ' items-end'}`}>
       <button
         type="button"
         disabled={busy}
@@ -305,8 +312,9 @@ function RegenerateButton({
             if (!res.ok) setError(true);
           });
         }}
-        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:border-accent/40 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:text-muted"
+        className={`inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-muted transition-colors hover:border-accent/40 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:text-muted${block ? ' w-full justify-center' : ''}`}
       >
+        <Icon path={<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4" />} size={14} sw={2} />
         {busy ? 'Regenerating…' : 'Regenerate'}
       </button>
       {error ? <span className="text-[11px] text-rose-400">Could not regenerate.</span> : null}
@@ -323,10 +331,149 @@ function mmss(ms: number | null): string | null {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-const SECTION_LABEL = 'mb-2 text-xs font-medium uppercase tracking-wider text-muted';
-const BADGE = 'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider';
+/** Small stroked icon, mirroring the mockup's inline SVGs. */
+function Icon({ path, size = 16, sw = 1.8 }: { path: ReactNode; size?: number; sw?: number }): ReactElement {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={sw}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {path}
+    </svg>
+  );
+}
 
-/** The structured recap layout: stat cards, overview, topics, decisions, action items, participants rail. */
+// Decision-tag + avatar palette (the mockup's accent hexes — theme-independent on
+// purpose: these are categorical colors, not UI-chrome tokens). The teal is the
+// mockup's --hue-doc, used for the decision "check" mark.
+const TEAL = '#2fb6a3';
+const CATEGORY_COLORS: Record<string, string> = {
+  Commercial: '#5159e0',
+  Ventel: '#2fb6a3',
+  Schema: '#4d8df6',
+  Coverage: '#e6a23c',
+  Delivery: '#b072e0',
+  Linkage: '#e0795b',
+};
+const PALETTE = ['#5159e0', '#2fb6a3', '#4d8df6', '#e6a23c', '#b072e0', '#e0795b'];
+function hashed(key: string): string {
+  let h = 0;
+  for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return PALETTE[h % PALETTE.length] ?? PALETTE[0]!;
+}
+function categoryColor(cat: string): string {
+  return CATEGORY_COLORS[cat] ?? hashed(cat);
+}
+
+/** A jump-to-moment timestamp chip (clock + mm:ss). Display-only (no deep-link in v1). */
+function Moment({ label }: { label: string }): ReactElement {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[11.5px] font-semibold text-accent"
+      style={{ background: 'var(--accent-soft)' }}
+    >
+      <Icon
+        path={
+          <>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7.5V12l3 2" />
+          </>
+        }
+        size={11}
+        sw={2}
+      />
+      {label}
+    </span>
+  );
+}
+
+/** A colored circular initials avatar; color hashed from the name (mockup palette). */
+function Avatar({ name, size = 24 }: { name: string; size?: number }): ReactElement {
+  const initials = name
+    .split(/\s+/)
+    .filter((s) => s.length > 0)
+    .slice(0, 2)
+    .map((s) => s[0]?.toUpperCase() ?? '')
+    .join('');
+  return (
+    <span
+      className="inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white"
+      style={{ width: size, height: size, background: hashed(name), fontSize: size * 0.4 }}
+      aria-hidden
+    >
+      {initials}
+    </span>
+  );
+}
+
+/** A decision subject tag, colored per category. */
+function Tag({ label }: { label: string }): ReactElement {
+  const c = categoryColor(label);
+  return (
+    <span
+      className="rounded-full px-2 py-0.5 text-[10.5px] font-medium"
+      style={{ background: `color-mix(in srgb, ${c} 13%, transparent)`, color: c }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function SectionTitle({
+  children,
+  count,
+  id,
+}: {
+  children: ReactNode;
+  count?: number;
+  id?: string;
+}): ReactElement {
+  return (
+    <div id={id} className="mb-3.5 flex items-center gap-2.5">
+      <h2 className="text-base font-semibold tracking-tight text-fg">{children}</h2>
+      {count !== undefined ? (
+        <span
+          className="rounded-full px-2 py-px font-mono text-xs text-muted"
+          style={{ background: 'var(--provisional-bg)' }}
+        >
+          {count}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+const STAT_ICONS: Record<string, ReactNode> = {
+  'stat-topics': <path d="M4 6h16M4 12h16M4 18h10" />,
+  'stat-decisions': (
+    <>
+      <path d="M5 12.5l4.5 4.5L19 7" />
+      <path d="M3 20h18" />
+    </>
+  ),
+  'stat-actions': (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <path d="M8.5 12l2.5 2.5 4.5-5" />
+    </>
+  ),
+  'stat-attendees': (
+    <>
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+      <path d="M16 6a3 3 0 0 1 0 6M20.5 19a5.5 5.5 0 0 0-4-5.3" />
+    </>
+  ),
+};
+
+/** The structured recap layout: stat tiles, AI-summary lead, topics, decisions, action items, rail. */
 function StructuredRecapView({
   recap,
   regenerate,
@@ -334,82 +481,138 @@ function StructuredRecapView({
   recap: StructuredRecap;
   regenerate: ReactNode;
 }): ReactElement {
-  return (
-    <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_260px]">
-      <div className="min-w-0 space-y-6">
-        <StatCards recap={recap} />
+  const stats: { label: string; value: number; testid: string }[] = [
+    { label: 'Key topics', value: recap.topics.length, testid: 'stat-topics' },
+    { label: 'Decisions', value: recap.decisions.length, testid: 'stat-decisions' },
+    { label: 'Action items', value: recap.action_items.length, testid: 'stat-actions' },
+    { label: 'Attendees', value: recap.participants.length, testid: 'stat-attendees' },
+  ];
 
-        <div>
-          <div className="mb-1 flex flex-wrap items-center gap-2">
-            <span className={`${BADGE} bg-accent-soft text-accent`}>Recap</span>
-            <span className="text-xs text-muted">
-              grounded in transcript
-              {recap.speakerCount > 0 ? ` · ${String(recap.speakerCount)} speakers` : ''}
-            </span>
-          </div>
-          <p className="text-sm leading-relaxed text-fg">{recap.overview}</p>
+  return (
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_244px] lg:items-start">
+      <div className="min-w-0">
+        {/* at-a-glance stat tiles */}
+        <div className="mb-6 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          {stats.map((s) => (
+            <div
+              key={s.testid}
+              className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3"
+            >
+              <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
+                <Icon path={STAT_ICONS[s.testid]} size={17} />
+              </span>
+              <div className="leading-tight">
+                <div data-testid={s.testid} className="text-lg font-semibold tracking-tight tabular-nums text-fg">
+                  {s.value}
+                </div>
+                <div className="text-xs font-medium text-muted">{s.label}</div>
+              </div>
+            </div>
+          ))}
         </div>
 
+        {/* AI summary lead */}
+        <section id="sec-overview" className="mb-7">
+          <div className="rounded-2xl border border-border bg-card px-5 py-4">
+            <div className="mb-3 flex items-center gap-2">
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium text-accent"
+                style={{ background: 'var(--accent-soft)' }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9z" />
+                </svg>
+                Recap
+              </span>
+              <span className="text-xs font-semibold text-muted">AI summary</span>
+              <span className="ml-auto text-[11px] text-muted">
+                grounded in transcript
+                {recap.speakerCount > 0 ? ` · ${String(recap.speakerCount)} speakers` : ''}
+              </span>
+            </div>
+            <p className="text-[15px] leading-relaxed text-fg">{recap.overview}</p>
+          </div>
+        </section>
+
+        {/* key topics */}
         {recap.topics.length > 0 ? (
-          <div>
-            <h3 className={SECTION_LABEL}>Key topics</h3>
-            <ol className="space-y-2">
+          <section id="sec-topics" className="mb-7">
+            <SectionTitle count={recap.topics.length}>Key topics</SectionTitle>
+            <div className="flex flex-col">
               {recap.topics.map((t, i) => {
                 const ts = mmss(t.timestampMs);
                 return (
-                  <li key={i} className="flex items-baseline gap-3 text-sm">
-                    <span className="tabular-nums text-muted">{i + 1}.</span>
-                    <span className="min-w-0 flex-1 text-fg">{t.text}</span>
-                    {ts !== null ? (
-                      <span className={`${BADGE} bg-bg/60 tabular-nums text-muted`}>{ts}</span>
-                    ) : null}
-                  </li>
+                  <div
+                    key={i}
+                    className={`flex items-center gap-3 px-0.5 py-3${i < recap.topics.length - 1 ? ' border-b border-border' : ''}`}
+                  >
+                    <span className="w-4 shrink-0 font-mono text-[11.5px] text-muted">
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                    <span className="min-w-0 flex-1 text-sm leading-snug text-fg">{t.text}</span>
+                    {ts !== null ? <Moment label={ts} /> : null}
+                  </div>
                 );
               })}
-            </ol>
-          </div>
+            </div>
+          </section>
         ) : null}
 
+        {/* decisions */}
         {recap.decisions.length > 0 ? (
-          <div>
-            <h3 className={SECTION_LABEL}>Decisions</h3>
-            <div className="space-y-2">
+          <section id="sec-decisions" className="mb-7">
+            <SectionTitle count={recap.decisions.length}>Decisions</SectionTitle>
+            <div className="grid gap-2.5 sm:grid-cols-2">
               {recap.decisions.map((d, i) => (
-                <div key={i} className="rounded-lg border border-border bg-card p-3">
-                  {d.category.length > 0 ? (
-                    <span className={`${BADGE} bg-accent-soft text-accent`}>{d.category}</span>
-                  ) : null}
-                  <p className={`text-sm text-fg${d.category.length > 0 ? ' mt-1.5' : ''}`}>{d.text}</p>
+                <div
+                  key={i}
+                  className="flex flex-col gap-2.5 rounded-xl border border-border bg-card px-4 py-3.5"
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md"
+                      style={{ background: 'color-mix(in srgb, #2fb6a3 12%, transparent)', color: TEAL }}
+                    >
+                      <Icon path={<path d="M5 12.5l4.5 4.5L19 7" />} size={13} sw={2.6} />
+                    </span>
+                    {d.category.length > 0 ? <Tag label={d.category} /> : null}
+                  </div>
+                  <div className="text-sm leading-snug text-fg">{d.text}</div>
                 </div>
               ))}
             </div>
-          </div>
+          </section>
         ) : null}
 
+        {/* action items — display-only (no checkboxes / done-state) */}
         {recap.action_items.length > 0 ? (
-          <div>
-            <h3 className={SECTION_LABEL}>Action items</h3>
-            <ul className="space-y-2">
+          <section id="sec-actions">
+            <SectionTitle count={recap.action_items.length}>Action items</SectionTitle>
+            <div className="flex flex-col gap-2.5">
               {recap.action_items.map((a, i) => {
                 const ts = mmss(a.timestampMs);
                 return (
-                  <li key={i} className="flex items-start gap-3 text-sm">
-                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-                    <span className="min-w-0 flex-1 text-fg">{a.text}</span>
-                    {a.assignee !== null ? (
-                      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted">
-                        <Avatar name={a.assignee} />
-                        {a.assignee}
-                      </span>
+                  <div key={i} className="rounded-xl border border-border bg-card px-4 py-3.5">
+                    <div className="text-sm leading-snug text-fg">{a.text}</div>
+                    {a.assignee !== null || ts !== null ? (
+                      <div className="mt-2.5 flex items-center gap-2">
+                        {a.assignee !== null ? (
+                          <span
+                            className="inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2.5 text-xs font-medium text-muted"
+                            style={{ background: 'var(--provisional-bg)' }}
+                          >
+                            <Avatar name={a.assignee} size={18} />
+                            {a.assignee}
+                          </span>
+                        ) : null}
+                        {ts !== null ? <Moment label={ts} /> : null}
+                      </div>
                     ) : null}
-                    {ts !== null ? (
-                      <span className={`${BADGE} shrink-0 bg-bg/60 tabular-nums text-muted`}>{ts}</span>
-                    ) : null}
-                  </li>
+                  </div>
                 );
               })}
-            </ul>
-          </div>
+            </div>
+          </section>
         ) : null}
       </div>
 
@@ -418,28 +621,14 @@ function StructuredRecapView({
   );
 }
 
-function StatCards({ recap }: { recap: StructuredRecap }): ReactElement {
-  const stats: { label: string; value: number; testid: string }[] = [
-    { label: 'Key topics', value: recap.topics.length, testid: 'stat-topics' },
-    { label: 'Decisions', value: recap.decisions.length, testid: 'stat-decisions' },
-    { label: 'Action items', value: recap.action_items.length, testid: 'stat-actions' },
-    { label: 'Attendees', value: recap.participants.length, testid: 'stat-attendees' },
-  ];
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {stats.map((s) => (
-        <div key={s.testid} className="rounded-lg border border-border bg-card px-4 py-3">
-          <div data-testid={s.testid} className="text-2xl font-semibold tabular-nums text-fg">
-            {s.value}
-          </div>
-          <div className="mt-0.5 text-xs uppercase tracking-wider text-muted">{s.label}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
+const NAV_ITEMS: { label: string; id: string }[] = [
+  { label: 'Overview', id: 'sec-overview' },
+  { label: 'Key topics', id: 'sec-topics' },
+  { label: 'Decisions', id: 'sec-decisions' },
+  { label: 'Action items', id: 'sec-actions' },
+];
 
-/** Right rail: participants (collapsed when none — local-audio) + the generated-by footer + Regenerate. */
+/** Right rail: jump-nav + participants card (collapsed when none) + recap-meta/Regenerate. */
 function RecapRail({
   participants,
   regenerate,
@@ -448,13 +637,26 @@ function RecapRail({
   regenerate: ReactNode;
 }): ReactElement {
   return (
-    <aside className="space-y-5 lg:border-l lg:border-border lg:pl-6">
+    <aside className="flex flex-col gap-3.5 lg:sticky lg:top-6">
+      <nav className="rounded-xl border border-border bg-card p-2">
+        {NAV_ITEMS.map((n) => (
+          <a
+            key={n.id}
+            href={`#${n.id}`}
+            className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-medium text-muted transition-colors hover:bg-accent-soft hover:text-fg"
+          >
+            <span className="h-[5px] w-[5px] rounded-full bg-border" />
+            {n.label}
+          </a>
+        ))}
+      </nav>
+
       {participants.length > 0 ? (
-        <div>
-          <h3 className={SECTION_LABEL}>Participants</h3>
-          <ul className="space-y-1.5" data-testid="participant-list">
+        <div className="rounded-xl border border-border bg-card px-3.5 py-3">
+          <div className="mb-3 text-[10.5px] font-bold uppercase tracking-[0.1em] text-muted">Participants</div>
+          <ul className="flex flex-col gap-2.5" data-testid="participant-list">
             {participants.map((p) => (
-              <li key={p.name} className="flex items-center gap-2 text-sm text-fg">
+              <li key={p.name} className="flex items-center gap-2.5 text-xs font-medium text-fg">
                 <Avatar name={p.name} />
                 {p.name}
               </li>
@@ -462,28 +664,14 @@ function RecapRail({
           </ul>
         </div>
       ) : null}
-      <div className="space-y-2">
+
+      <div className="rounded-xl border border-border bg-card px-3.5 py-3">
         <p className="text-xs leading-relaxed text-muted">
           Recap generated by Risezome from the meeting transcript.
         </p>
-        {regenerate !== null ? <div className="flex justify-start">{regenerate}</div> : null}
+        {regenerate !== null ? <div className="mt-3">{regenerate}</div> : null}
       </div>
     </aside>
-  );
-}
-
-/** A small circular initials avatar. */
-function Avatar({ name }: { name: string }): ReactElement {
-  const initials = name
-    .split(/\s+/)
-    .filter((s) => s.length > 0)
-    .slice(0, 2)
-    .map((s) => s[0]?.toUpperCase() ?? '')
-    .join('');
-  return (
-    <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[10px] font-medium text-accent">
-      {initials}
-    </span>
   );
 }
 
