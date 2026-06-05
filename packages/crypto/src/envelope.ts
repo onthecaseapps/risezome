@@ -219,10 +219,18 @@ export function __defaultKeyringKindsForTest(orgId: string): {
 // give each CMM its own small local cache so eviction is per-org.
 //
 // Cache-bound rationale:
-//   maxAge (5 min)          — cap wall-clock lifetime of a cached data key, so
-//                             a disabled/rotated CMK (per-org revocation, KTD2)
-//                             takes effect promptly; short enough to bound blast
-//                             radius, long enough to amortize KMS across a burst.
+//   maxAge (encrypt 5 min / decrypt 15 min)
+//                           — cap wall-clock lifetime of a cached data key.
+//                             ENCRYPT stays 5 min so a disabled/rotated CMK
+//                             (per-org revocation, KTD2) takes effect promptly on
+//                             new writes. DECRYPT is 15 min: reads are far hotter
+//                             (a transcript re-decrypted on every review/poll),
+//                             and a longer window amortizes KMS across requests on
+//                             warm instances. The only cost is that a revoked
+//                             key's data stays decryptable from the in-memory
+//                             cache for up to 15 min — and any holder of that
+//                             cache already had read access, so the marginal
+//                             exposure is small.
 //   maxMessagesEncrypted    — cap reuse count of a single data key (1000) to
 //                             stay well within AES-GCM safe-use limits and bound
 //                             exposure if one data key leaks.
@@ -232,7 +240,8 @@ export function __defaultKeyringKindsForTest(orgId: string): {
 //                             uses one live entry, so 100 comfortably covers
 //                             concurrent algorithm-suite/context variants.
 
-const CMM_MAX_AGE_MS = 5 * 60 * 1000; // 300_000
+const CMM_MAX_AGE_MS = 5 * 60 * 1000; // 300_000 — encrypt: rotation takes effect on writes
+const CMM_DECRYPT_MAX_AGE_MS = 15 * 60 * 1000; // 900_000 — decrypt: amortize hot reads
 const CMM_MAX_MESSAGES_ENCRYPTED = 1000;
 const CMM_MAX_BYTES_ENCRYPTED = 100 * 1024 * 1024; // ~100 MiB
 const CMM_CACHE_CAPACITY = 100;
@@ -263,11 +272,11 @@ const CMM_MAX_ORGS = 512;
 const cmmByOrg = new Map<string, NodeCachingMaterialsManager>();
 const decryptCmmByOrg = new Map<string, NodeCachingMaterialsManager>();
 
-function buildCmm(keyring: KeyringNode): NodeCachingMaterialsManager {
+function buildCmm(keyring: KeyringNode, maxAge: number): NodeCachingMaterialsManager {
   return new NodeCachingMaterialsManager({
     backingMaterials: keyring,
     cache: getLocalCryptographicMaterialsCache(CMM_CACHE_CAPACITY),
-    maxAge: CMM_MAX_AGE_MS,
+    maxAge,
     maxMessagesEncrypted: CMM_MAX_MESSAGES_ENCRYPTED,
     maxBytesEncrypted: CMM_MAX_BYTES_ENCRYPTED,
   });
@@ -277,6 +286,7 @@ function memoCmm(
   memo: Map<string, NodeCachingMaterialsManager>,
   orgId: string,
   keyringFor: KeyringProvider,
+  maxAge: number,
 ): NodeCachingMaterialsManager {
   const existing = memo.get(orgId);
   if (existing !== undefined) {
@@ -285,7 +295,7 @@ function memoCmm(
     memo.set(orgId, existing);
     return existing;
   }
-  const cmm = buildCmm(keyringFor(orgId));
+  const cmm = buildCmm(keyringFor(orgId), maxAge);
   memo.set(orgId, cmm);
   // Evict the oldest entries until we are back within the cap. Safe: pure cache.
   while (memo.size > CMM_MAX_ORGS) {
@@ -297,11 +307,11 @@ function memoCmm(
 }
 
 function getCmm(orgId: string): NodeCachingMaterialsManager {
-  return memoCmm(cmmByOrg, orgId, keyringProvider);
+  return memoCmm(cmmByOrg, orgId, keyringProvider, CMM_MAX_AGE_MS);
 }
 
 function getDecryptCmm(orgId: string): NodeCachingMaterialsManager {
-  return memoCmm(decryptCmmByOrg, orgId, decryptKeyringProvider);
+  return memoCmm(decryptCmmByOrg, orgId, decryptKeyringProvider, CMM_DECRYPT_MAX_AGE_MS);
 }
 
 // --- Public API ----------------------------------------------------------------
