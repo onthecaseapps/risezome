@@ -52,7 +52,18 @@ export function SidebarNavLink({
 
   const inner = (
     <>
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center">{icon}</span>
+      <span className="relative flex h-5 w-5 shrink-0 items-center justify-center">
+        {icon}
+        {/* In the collapsed icon rail the inline label+dot are hidden, so the
+            indicator (e.g. the recording dot on Live meeting) re-surfaces as a
+            corner badge over the icon. Hidden when expanded — the inline dot
+            takes over there. */}
+        {dot !== undefined && (
+          <span className="absolute -right-1 -top-1 hidden group-data-[collapsed=true]/sb:block">
+            {dot}
+          </span>
+        )}
+      </span>
       <span className="flex-1 group-data-[collapsed=true]/sb:hidden">{label}</span>
       <span className="group-data-[collapsed=true]/sb:hidden">{dot}</span>
     </>

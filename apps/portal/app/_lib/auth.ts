@@ -7,6 +7,14 @@ import { isAdminRole } from './roles';
 export const CURRENT_ORG_COOKIE = 'risezome.current_org_id';
 
 /**
+ * Selected team for the browse "lens" (set by the top-bar team switcher).
+ * Scopes which team's source/meeting context Captures/Knowledge browse against.
+ * Absent (or 'all') means the "My meetings" view: attended meetings across any
+ * team. The lens filters what you browse; it never grants access (U2).
+ */
+export const CURRENT_TEAM_COOKIE = 'risezome.current_team_id';
+
+/**
  * Returns the current Supabase user, or redirects to /sign-in if there is no
  * session. Use in Server Components and Server Actions on `(authed)` routes
  * that don't require an org context (e.g., onboarding).
@@ -55,6 +63,44 @@ export async function listUserOrgs(): Promise<UserOrg[]> {
       role: row.role as OrgRole,
       canInviteBot: (row.can_invite_bot as boolean | null) ?? false,
     });
+  }
+  return out;
+}
+
+/** A team the current user belongs to, within a single org. */
+export interface UserTeam {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+/**
+ * Returns the current user's teams within `orgId`. Used by the top-bar team
+ * switcher to render the browse-lens dropdown. Reads `team_members` joined to
+ * `teams`, scoped to the org and excluding archived teams, via the RLS-respecting
+ * server client (so the user only ever sees teams they belong to). Returns [] on
+ * error or when the user is on no teams in this org. Mirrors {@link listUserOrgs}.
+ */
+export async function listUserTeams(orgId: string): Promise<UserTeam[]> {
+  const supabase = await createServerClient();
+  const { data, error } = await supabase
+    .from('team_members')
+    .select('team:teams(team_id, name, slug, org_id, archived_at)')
+    .order('created_at', { ascending: true });
+  if (error !== null || data === null) return [];
+  const out: UserTeam[] = [];
+  for (const row of data) {
+    // The join surfaces `team` as either an object or array depending on FK
+    // multiplicity in the inferred type; normalize to the single object case.
+    const teamField = row.team as unknown as
+      | { team_id: string; name: string; slug: string; org_id: string; archived_at: string | null }
+      | { team_id: string; name: string; slug: string; org_id: string; archived_at: string | null }[]
+      | null;
+    const team = Array.isArray(teamField) ? teamField[0] : teamField;
+    if (team === null || team === undefined) continue;
+    if (team.org_id !== orgId) continue;
+    if (team.archived_at !== null) continue;
+    out.push({ id: team.team_id, name: team.name, slug: team.slug });
   }
   return out;
 }

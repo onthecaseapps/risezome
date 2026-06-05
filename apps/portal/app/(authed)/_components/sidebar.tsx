@@ -1,32 +1,28 @@
 import type { ReactElement } from 'react';
-import { CURRENT_ORG_COOKIE, listUserOrgs, requireAuthedUser } from '../../_lib/auth';
+import { CURRENT_ORG_COOKIE, listUserOrgs } from '../../_lib/auth';
 import { createServerClient } from '../../_lib/supabase-server';
 import { cookies } from 'next/headers';
-import { OrgSwitcher } from './org-switcher';
 import { SidebarFrame } from './sidebar-frame';
 import { SidebarNavLink } from './sidebar-nav-link';
 import { CalendarIcon, CapturesIcon, DebugIcon, GapsIcon, LiveIcon, MembersIcon, SettingsIcon, SourcesIcon, WhatsNewIcon } from './nav-icons';
-import { UserCard } from './user-card';
 
 /**
- * Left sidebar shared across all `(authed)` routes. Top→bottom:
- *   1. Logo + Risezome wordmark
- *   2. Current-org chip with built-in switcher (none if user hasn't onboarded)
- *   3. Nav: Upcoming, Live meeting (dynamic), Captures, Sources, Settings
- *      — Live meeting always routes to /meetings/live (the list page).
- *        A pulsing red dot appears next to the label when one or more
- *        meetings are currently recording in the user's current org;
- *        the link is disabled only when there are zero active.
- *        Counting beats smart-linking to a single meeting because a
- *        team often has multiple concurrent meetings — picking one
- *        would be wrong half the time.
- *   4. UserCard at the bottom with avatar + email + sign-out
+ * Left nav icon rail shared across all `(authed)` routes. The brand, team
+ * switcher, notifications bell, and user menu now live in the top bar (U6); the
+ * rail holds only the nav links:
+ *   Upcoming, Live meeting (dynamic), Captures, Knowledge gaps,
+ *   Sources / Members / Settings (managers only), What's new, dev links.
  *
- * Server component: re-evaluates the active count on every render.
- * Cheap query: indexed (org_id, status) on meetings, COUNT-only.
+ * "Live meeting" always routes to /meetings/live (the list page). A pulsing red
+ * dot appears over its icon when one or more meetings are currently recording in
+ * the user's current org; the link is disabled only when there are zero active.
+ * Counting beats smart-linking to a single meeting because a team often has
+ * multiple concurrent meetings — picking one would be wrong half the time.
+ *
+ * Server component: re-evaluates the active count on every render. Cheap query:
+ * indexed (org_id, status) on meetings, COUNT-only.
  */
 export async function Sidebar(): Promise<ReactElement> {
-  const user = await requireAuthedUser();
   const orgs = await listUserOrgs();
   const cookieStore = await cookies();
   const cookieValue = cookieStore.get(CURRENT_ORG_COOKIE)?.value;
@@ -35,20 +31,13 @@ export async function Sidebar(): Promise<ReactElement> {
   // Nav hiding is UX only — the pages themselves enforce requireManager().
   const isManager = current?.role === 'manager';
 
-  const fullName = (user.user_metadata?.['full_name'] as string | undefined) ?? undefined;
-  const email = user.email ?? '';
-
   // Count recording meetings in the current org. RLS scopes to org
   // members so users only see their org's count. HEAD + count avoids
   // shipping rows we don't need; the list page does the full select.
-  // Mirrors the 6h freshness window in /meetings/live so the sidebar
-  // dot and the list contents never disagree — a stuck meeting whose
+  // Mirrors the 6h freshness window in /meetings/live so the rail dot
+  // and the list contents never disagree — a stuck meeting whose
   // started_at is older than 6h won't surface in either place.
   let activeMeetingCount = 0;
-  // Unread knowledge-gap notifications for the current user, scoped by RLS to
-  // their own recipient rows. Drives the pulsing dot on "Knowledge gaps" — the
-  // same COUNT-only pattern as the recording dot above (no rows shipped).
-  let unreadGapNotifications = 0;
   if (current !== null) {
     const supabase = await createServerClient();
     const freshnessCutoff = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
@@ -59,23 +48,10 @@ export async function Sidebar(): Promise<ReactElement> {
       .eq('status', 'recording')
       .gte('started_at', freshnessCutoff);
     activeMeetingCount = count ?? 0;
-
-    const { count: notifCount } = await supabase
-      .from('notifications')
-      .select('notification_id', { count: 'exact', head: true })
-      .eq('org_id', current.id)
-      .is('read_at', null);
-    unreadGapNotifications = notifCount ?? 0;
   }
 
   return (
     <SidebarFrame
-      switcher={
-        current !== null ? (
-          <OrgSwitcher currentOrgId={current.id} currentOrgName={current.name} orgs={orgs} />
-        ) : null
-      }
-      footer={<UserCard email={email} fullName={fullName} />}
       nav={
         <>
         <SidebarNavLink
@@ -112,16 +88,6 @@ export async function Sidebar(): Promise<ReactElement> {
           matchPrefix="/gaps"
           icon={<GapsIcon />}
           label="Knowledge gaps"
-          {...(unreadGapNotifications > 0
-            ? {
-                dot: (
-                  <span
-                    aria-label={`${unreadGapNotifications} unread`}
-                    className="inline-block h-2 w-2 animate-pulse rounded-full bg-accent"
-                  />
-                ),
-              }
-            : {})}
         />
         {isManager && (
           <>
