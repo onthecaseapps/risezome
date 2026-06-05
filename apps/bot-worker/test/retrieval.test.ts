@@ -102,8 +102,26 @@ describe('maybeRetrieveAndEmit — two-lane triggering', () => {
     // The 7th within the same minute is over the ceiling → throttled by the
     // cooldown it would otherwise bypass (lastRetrievalAt was just set).
     const over = await maybeRetrieveAndEmit(baseArgs(rt, 'what is the next metric'));
-    expect(over.skipped).toMatch(/ceiling|cooldown/);
+    expect(over.skipped).toBe('question_ceiling');
     expect(h.runPipeline).toHaveBeenCalledTimes(6);
+  });
+
+  it('AE5: the per-MEETING ceiling throttles (falls back to cooldown) independently of the per-minute window', async () => {
+    const rt = newRetrievalRuntime();
+    rt.questionFireCount = 60; // at the per-meeting cap; per-minute window empty
+    rt.lastRetrievalAt = Date.now() - 1_000; // within the cooldown it falls back to
+    const res = await maybeRetrieveAndEmit(baseArgs(rt, 'what is the answer to this'));
+    expect(res.skipped).toBe('question_ceiling');
+    expect(h.runPipeline).not.toHaveBeenCalled();
+  });
+
+  it('over the per-meeting ceiling, a question still fires once the fallback cooldown elapses (best-effort, not a hard drop)', async () => {
+    const rt = newRetrievalRuntime();
+    rt.questionFireCount = 60;
+    rt.lastRetrievalAt = Date.now() - 11_000; // cooldown elapsed
+    const res = await maybeRetrieveAndEmit(baseArgs(rt, 'what is the answer to this'));
+    expect(res.skipped).toBeUndefined();
+    expect(h.runPipeline).toHaveBeenCalledTimes(1);
   });
 
   it('a normal 2-3 question exchange is never throttled', async () => {
@@ -206,5 +224,26 @@ describe('maybeRetrieveAndEmit — near-duplicate question suppression (U5)', ()
     rt.answeredQuestions[0]!.at = Date.now() - 6 * 60_000;
     const res = await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
     expect(res.skipped).toBeUndefined();
+  });
+
+  it('an embed failure degrades to firing (dedup is best-effort, never blocks a question)', async () => {
+    const rt = newRetrievalRuntime();
+    // Record a prior answer so dedup WOULD suppress if the embed succeeded...
+    await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    fireGroundedAnswer();
+    // ...but the embed now fails → the question must still fire, not be dropped.
+    const args = baseArgs(rt, 'what ai models do we use');
+    args.embedder = { embed: vi.fn(() => Promise.reject(new Error('embed down'))) } as never;
+    const res = await maybeRetrieveAndEmit(args);
+    expect(res.skipped).toBeUndefined();
+    expect(h.runPipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it('forwards the grounded answer to the caller-supplied onGroundedAnswer', async () => {
+    const rt = newRetrievalRuntime();
+    const onGroundedAnswer = vi.fn();
+    await maybeRetrieveAndEmit({ ...baseArgs(rt, 'what ai models do we use'), onGroundedAnswer });
+    fireGroundedAnswer();
+    expect(onGroundedAnswer).toHaveBeenCalledWith('a grounded answer');
   });
 });
