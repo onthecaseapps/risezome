@@ -220,7 +220,7 @@ describe('runPipeline — pre-retrieval gate (KTD3)', () => {
     expect(sink.cards).toHaveLength(0);
   });
 
-  it('strict substantive judged skip≥threshold → recordSkip(llm-judge), no embed/search', async () => {
+  it('strict substantive judged skip≥threshold → speculative retrieval discarded (U2: no cards, no gap)', async () => {
     const classifier = skipClassifier(0.9);
     const { deps, search, embedder } = makeDeps({
       relevanceClassifier: classifier,
@@ -234,8 +234,38 @@ describe('runPipeline — pre-retrieval gate (KTD3)', () => {
     expect(sink.skips).toEqual([
       { stage: 'llm-judge', reason: 'not about our work', confidence: 0.9 },
     ]);
-    expect((embedder.embed as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
-    expect(search.mock.calls).toHaveLength(0);
+    // U2: the judge runs CONCURRENTLY with embed + search, so retrieval runs
+    // speculatively even on a filler verdict — the accepted tradeoff. The
+    // guarantee is the DISCARD: no cards emitted, no knowledge-gap miss recorded.
+    expect((embedder.embed as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(0);
+    expect(search.mock.calls).toHaveLength(1);
+    expect(sink.cards).toHaveLength(0);
+    expect(sink.misses).toHaveLength(0);
+  });
+
+  it('U2/AE2: embed+search run CONCURRENTLY with the judge (search fires before the judge resolves)', async () => {
+    // A judge whose verdict we control: it stays pending until we resolve it.
+    let resolveJudge: (r: RelevanceResult) => void = () => undefined;
+    const gate = new Promise<RelevanceResult>((res) => {
+      resolveJudge = res;
+    });
+    const classifier = { classify: vi.fn(() => gate) };
+    const { deps, search } = makeDeps({
+      relevanceClassifier: classifier as never,
+      relevanceStrict: true,
+      relevanceSkipThreshold: 0.7,
+    });
+    const sink = new RecordingSink();
+    const runP = runPipeline(input(), deps, sink);
+
+    // Flush microtasks: embed + search should fire while the judge is STILL pending
+    // (proves retrieval overlaps the judge rather than waiting for it).
+    await new Promise((r) => setTimeout(r, 0));
+    expect(search.mock.calls).toHaveLength(1); // ran without the judge having resolved
+
+    resolveJudge({ decision: 'surface' });
+    const result = await runP;
+    expect(result.emitted).toBe(1); // surface verdict → the speculative retrieval is used
   });
 
   it('skip below threshold → falls through to embed + search', async () => {

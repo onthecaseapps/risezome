@@ -458,10 +458,12 @@ describe('dev/prod parity — shared core, same surface/suppress decision', () =
     expect(judge?.status).toBe('short_circuited');
     expect(judge?.decision).toBe('skip');
 
-    // Prod-like: same skip, gated PRE-retrieval (no embed/search ran).
+    // Prod-like: same skip. U2: the judge runs CONCURRENTLY with embed+search,
+    // so retrieval runs speculatively even on a gated verdict — the guarantee is
+    // the DISCARD (no card emitted), not "retrieval never ran".
     expect(prodSink.cards).toHaveLength(0);
     expect(prodSink.skips[0]?.stage).toBe('llm-judge');
-    expect(dev.embed.mock.calls).toHaveLength(0);
-    expect(dev.search.mock.calls).toHaveLength(0);
+    expect(dev.embed.mock.calls.length).toBeGreaterThan(0);
+    expect(dev.search.mock.calls).toHaveLength(1);
   });
 });

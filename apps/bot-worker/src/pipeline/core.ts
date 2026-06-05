@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { parseSynthesisOutput, verifyCitationsDetailed } from '@risezome/engine/synthesize';
 import type { SynthesisSource, SynthesisUsage } from '@risezome/engine/synthesize';
 import { classifyRelevanceHeuristic } from '@risezome/engine/relevance';
+import type { RelevanceResult } from '@risezome/engine/relevance';
 import { shouldRecordMiss } from '@risezome/engine/gaps';
 import { augmentQuery } from '@risezome/engine/query-expand';
 import { shouldExpandOnMiss } from '@risezome/engine/query-route';
@@ -194,66 +195,33 @@ export async function runPipeline(
     !bypassGate &&
     (heuristic === 'ambiguous' || (strict && heuristic === 'clearly_substantive')) &&
     deps.relevanceClassifier !== undefined;
+  // Fire the relevance judge CONCURRENTLY with embed + search (latency U2). Its
+  // verdict is applied AFTER the search returns (below), so retrieval overlaps
+  // the judge instead of waiting for it — latency becomes max(judge, retrieval).
+  // On a filler verdict the speculative retrieval is discarded there (no cards,
+  // no gap). Fail-open (timeout/error → surface) is preserved.
+  const judgeStart = Date.now();
+  let judgePromise: Promise<RelevanceResult> | null = null;
   if (routeToJudge && deps.relevanceClassifier !== undefined) {
-    const judgeStart = Date.now();
     const context = relevanceContextFrom(input);
     const controller = new AbortController();
     const timeoutHandle = setTimeout(() => controller.abort(), RELEVANCE_TIMEOUT_MS);
-    let decision: Awaited<ReturnType<typeof deps.relevanceClassifier.classify>>;
-    try {
-      decision = await deps.relevanceClassifier.classify(input.utteranceText, {
+    judgePromise = deps.relevanceClassifier
+      .classify(input.utteranceText, {
         signal: controller.signal,
         ...(context !== undefined ? { context } : {}),
-      });
-    } catch (err) {
-      deps.logger.warn(
-        { err, meetingId: input.meetingId, utteranceId: input.utteranceId },
-        'pipeline.gate.llm.failed',
-      );
-      decision = { decision: 'surface' }; // fail-open on classifier error
-    } finally {
-      clearTimeout(timeoutHandle);
-    }
-    if (decision.decision === 'skip' && decision.confidence >= skipThreshold) {
-      deps.logger.info(
-        {
-          meetingId: input.meetingId,
-          utteranceId: input.utteranceId,
-          confidence: decision.confidence,
-          reason: decision.reason,
-        },
-        'pipeline.gate.llm.skipped',
-      );
-      sink.recordSkip({
-        stage: 'llm-judge',
-        reason: decision.reason,
-        confidence: decision.confidence,
-      });
-      if (trace !== null) {
-        trace.push(
-          stageRecord('llm-judge', 'short_circuited', judgeStart, {
-            decision: 'skip',
-            reason: decision.reason,
-            data: { confidence: decision.confidence },
-          }),
+      })
+      .catch((err): RelevanceResult => {
+        deps.logger.warn(
+          { err, meetingId: input.meetingId, utteranceId: input.utteranceId },
+          'pipeline.gate.llm.failed',
         );
-        emitTrace();
-      }
-      return { emitted: 0, skipped: 'relevance_skip' };
-    }
-    if (trace !== null) {
-      trace.push(
-        stageRecord('llm-judge', 'ran', judgeStart, {
-          decision: 'surface',
-          ...(decision.decision === 'skip'
-            ? { reason: `below_threshold(${String(decision.confidence)})` }
-            : {}),
-        }),
-      );
-    }
+        return { decision: 'surface' }; // fail-open on classifier error
+      })
+      .finally(() => clearTimeout(timeoutHandle));
   } else if (trace !== null) {
     trace.push(
-      stageRecord('llm-judge', 'skipped', Date.now(), {
+      stageRecord('llm-judge', 'skipped', judgeStart, {
         reason:
           deps.relevanceClassifier === undefined ? 'no_classifier' : 'not_routed',
       }),
@@ -376,6 +344,52 @@ export async function runPipeline(
   // isSummary below; here we just freeze the search latency. Zero-cost when
   // untraced: the array + the per-hit push are all inside `trace !== null`.
   const searchLatencyMs = trace !== null ? Date.now() - searchStart : 0;
+
+  // ── Resolve the relevance verdict (U2) ────────────────────────────────
+  // The judge overlapped embed + search; gate on it now, BEFORE the expensive
+  // CRAG / enrich / card-emit stages. Filler → discard the speculative
+  // retrieval: no cards, no gap (identical to the pre-U2 early skip — the
+  // no-hits/gap path below is never reached). Surface → continue.
+  if (judgePromise !== null) {
+    const decision = await judgePromise;
+    if (decision.decision === 'skip' && decision.confidence >= skipThreshold) {
+      deps.logger.info(
+        {
+          meetingId: input.meetingId,
+          utteranceId: input.utteranceId,
+          confidence: decision.confidence,
+          reason: decision.reason,
+        },
+        'pipeline.gate.llm.skipped',
+      );
+      sink.recordSkip({
+        stage: 'llm-judge',
+        reason: decision.reason,
+        confidence: decision.confidence,
+      });
+      if (trace !== null) {
+        trace.push(
+          stageRecord('llm-judge', 'short_circuited', judgeStart, {
+            decision: 'skip',
+            reason: decision.reason,
+            data: { confidence: decision.confidence },
+          }),
+        );
+        emitTrace();
+      }
+      return { emitted: 0, skipped: 'relevance_skip' };
+    }
+    if (trace !== null) {
+      trace.push(
+        stageRecord('llm-judge', 'ran', judgeStart, {
+          decision: 'surface',
+          ...(decision.decision === 'skip'
+            ? { reason: `below_threshold(${String(decision.confidence)})` }
+            : {}),
+        }),
+      );
+    }
+  }
 
   // ── Stage: CRAG expansion on miss/weak (bounded to one retry) ─────────
   const cragStart = Date.now();

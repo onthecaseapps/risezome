@@ -300,10 +300,14 @@ describe('evaluateQuestion via the shared core', () => {
   });
 
   it('yields gateSuppressed + isRefusal (pass-on-suppress) for an adjacent gated question', async () => {
-    const embed = vi.fn();
+    // U2: the judge runs concurrently with embed+search, so the speculative
+    // retrieval actually runs (and is then discarded on the skip verdict). Give
+    // embed a vector and a db so retrieval reaches the judge-resolve gate; the
+    // search results don't matter (the skip discards them).
+    const embed = vi.fn().mockResolvedValue({ vectors: [{ vector: new Float32Array([0.1, 0.2]) }] });
     const classify = vi.fn().mockResolvedValue({ decision: 'skip', confidence: 0.95, reason: 'not-about-our-work' });
     const deps = {
-      db: {} as never,
+      db: fakeDb({}),
       embedder: { embed },
       synthesizer: {} as never,
       orgId: 'org_1',
@@ -319,7 +323,9 @@ describe('evaluateQuestion via the shared core', () => {
     });
 
     expect(classify).toHaveBeenCalledTimes(1);
-    expect(embed).not.toHaveBeenCalled(); // judge skip short-circuited before embed
+    // U2: the judge runs concurrently with embed+search, so embed DOES run
+    // speculatively on a gated question; the verdict still suppresses the answer.
+    expect(embed).toHaveBeenCalled();
     expect(view.gateSuppressed).toBe(true);
     expect(view.isRefusal).toBe(true);
     expect(view.sources).toHaveLength(0);
