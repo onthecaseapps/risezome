@@ -35,6 +35,7 @@ function setup(
     mode: opts.mode ?? 'hosted',
     supabaseCommand: fakeSb,
     useEnvCmd: { command: 'bash', scriptArgPrefix: [fakeUseEnv] },
+    skipPreflight: true,
   });
   return handle.listen(0).then((port) => ({ base: `http://127.0.0.1:${String(port)}` }));
 }
@@ -43,6 +44,33 @@ afterEach(async () => {
   delete process.env.RISEZOME_TUNNEL_HOSTED_OK;
   await handle?.close();
   rmSync(root, { recursive: true, force: true });
+});
+
+describe('Start-all preflight', () => {
+  it('blocks with an actionable message when per-developer .env.dev secrets are missing', async () => {
+    const { mkdirSync } = await import('node:fs');
+    root = mkdtempSync(join(tmpdir(), 'console-pf-'));
+    // Mark the workspace packages as built so the preflight skips the build step
+    // and reaches the env check (the path under test).
+    for (const pkg of ['shared-types', 'crypto', 'engine']) {
+      mkdirSync(join(root, 'packages', pkg, 'dist'), { recursive: true });
+      writeFileSync(join(root, 'packages', pkg, 'dist', 'index.js'), 'exports.x=1;');
+    }
+    // No apps/*/.env.dev → cannot generate → must block.
+    handle = createConsole({
+      repoRoot: root,
+      logDir: root,
+      registry: [],
+      mode: 'hosted',
+      // preflight ON (skipPreflight omitted)
+    });
+    const { port } = { port: await handle.listen(0) };
+    const res = await fetch(`http://127.0.0.1:${String(port)}/api/all/start`, { method: 'POST' });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/\.env\.dev/);
+  });
 });
 
 interface Item {
@@ -303,6 +331,7 @@ esac
     ];
     handle = createConsole({
       repoRoot: root,
+      skipPreflight: true,
       logDir: root,
       registry: defs,
       mode: 'hosted',
@@ -339,6 +368,7 @@ esac
     ];
     handle = createConsole({
       repoRoot: root,
+      skipPreflight: true,
       logDir: root,
       registry: defs,
       mode: 'hosted',
@@ -372,6 +402,7 @@ esac
     ];
     handle = createConsole({
       repoRoot: root,
+      skipPreflight: true,
       logDir: root,
       registry: defs,
       mode: 'hosted',
