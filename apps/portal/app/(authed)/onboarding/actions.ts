@@ -53,8 +53,38 @@ export async function createOrg(formData: FormData): Promise<void> {
   if (memberErr !== null) {
     // Compensating delete to avoid an orphan org without a manager.
     await service.from('orgs').delete().eq('id', orgId);
-     
+
     console.error('[onboarding.createOrg] org_members insert failed:', memberErr);
+    redirect('/onboarding?error=create_failed');
+  }
+
+  // Seed the first team ("General") + add the creator (A-R14). The U1 default-team
+  // backfill only covers orgs that existed at migration time; NEW orgs created via
+  // onboarding need a team here so they're never team-less (the team switcher,
+  // browse lens, and source curation all assume ≥1 team). Mirrors the backfill's
+  // shape (name 'General', slug 'general'). The team is the unit sources attach to
+  // in U3, so it must exist before the admin reaches /sources.
+  const { data: teamRow, error: teamErr } = await service
+    .from('teams')
+    .insert({ org_id: orgId, name: 'General', slug: 'general' })
+    .select('team_id')
+    .single();
+  if (teamErr !== null || teamRow === null) {
+    // Compensating cleanup: org_members cascades on org delete, so dropping the
+    // org leaves no orphans.
+    await service.from('orgs').delete().eq('id', orgId);
+
+    console.error('[onboarding.createOrg] teams insert failed:', teamErr);
+    redirect('/onboarding?error=create_failed');
+  }
+
+  const { error: teamMemberErr } = await service
+    .from('team_members')
+    .insert({ team_id: teamRow.team_id as string, user_id: user.id });
+  if (teamMemberErr !== null) {
+    await service.from('orgs').delete().eq('id', orgId);
+
+    console.error('[onboarding.createOrg] team_members insert failed:', teamMemberErr);
     redirect('/onboarding?error=create_failed');
   }
 

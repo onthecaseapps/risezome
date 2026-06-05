@@ -95,6 +95,19 @@ export function MembersIcon(): ReactElement {
   );
 }
 
+/** Stacked people in a bordered group — for the manager-only Teams nav item.
+ *  Distinct from MembersIcon (a single pair) by the grouping frame. */
+export function TeamsIcon(): ReactElement {
+  return (
+    <svg {...baseProps}>
+      <circle cx="8" cy="9" r="2.4" />
+      <circle cx="16" cy="9" r="2.4" />
+      <path d="M3.5 18a4.5 4.5 0 0 1 9 0" />
+      <path d="M11.5 18a4.5 4.5 0 0 1 9 0" />
+    </svg>
+  );
+}
+
 /** Sidebar-collapse toggle: a panel with a left rail. */
 export function PanelToggleIcon(): ReactElement {
   return (

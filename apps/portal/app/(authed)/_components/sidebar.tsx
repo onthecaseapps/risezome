@@ -4,7 +4,7 @@ import { createServerClient } from '../../_lib/supabase-server';
 import { cookies } from 'next/headers';
 import { SidebarFrame } from './sidebar-frame';
 import { SidebarNavLink } from './sidebar-nav-link';
-import { CalendarIcon, CapturesIcon, DebugIcon, GapsIcon, LiveIcon, MembersIcon, SettingsIcon, SourcesIcon, WhatsNewIcon } from './nav-icons';
+import { CalendarIcon, CapturesIcon, DebugIcon, GapsIcon, LiveIcon, MembersIcon, SettingsIcon, SourcesIcon, TeamsIcon, WhatsNewIcon } from './nav-icons';
 
 /**
  * Left nav icon rail shared across all `(authed)` routes. The brand, team
@@ -29,7 +29,11 @@ export async function Sidebar(): Promise<ReactElement> {
   const current = orgs.find((o) => o.id === cookieValue) ?? orgs[0] ?? null;
   // Manager-only surfaces (Sources, Settings, Members) are hidden for members.
   // Nav hiding is UX only — the pages themselves enforce requireManager().
-  const isManager = current?.role === 'manager';
+  // Admin-power nav (Teams, Sources, Members, Settings) shows for the Admin tier:
+  // a stored `manager` OR a `super_admin` (who inherits all admin powers). Gating on
+  // 'manager' alone would hide these from a super_admin — e.g. the org owner/master
+  // key. Nav hiding is UX only; the pages enforce requireAdmin().
+  const isManager = current?.role === 'manager' || current?.role === 'super_admin';
 
   // Count recording meetings in the current org. RLS scopes to org
   // members so users only see their org's count. HEAD + count avoids
@@ -96,6 +100,12 @@ export async function Sidebar(): Promise<ReactElement> {
               matchPrefix="/sources"
               icon={<SourcesIcon />}
               label="Sources"
+            />
+            <SidebarNavLink
+              href="/teams"
+              matchPrefix="/teams"
+              icon={<TeamsIcon />}
+              label="Teams"
             />
             <SidebarNavLink
               href="/members"
