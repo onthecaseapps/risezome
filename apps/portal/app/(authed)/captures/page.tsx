@@ -5,6 +5,7 @@ import { CURRENT_TEAM_COOKIE, listUserTeams, requireAuthedUserWithOrg } from '..
 import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
 import { isMasterKeyAccess } from '../../_lib/meeting-access';
 import { applyTeamLens } from './_team-lens';
+import { structuredRecapOverview } from './_recap-preview';
 import { CapturesClient, type CaptureCard, type CapturePlatform } from './_client';
 
 /**
@@ -37,7 +38,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
   const { data: meetingRows } = await supabase
     .from('meetings')
     .select(
-      'meeting_id, user_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, conference_url, recap_text_enc, recap_status, created_at',
+      'meeting_id, user_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, conference_url, recap_text_enc, recap_json_enc, recap_status, created_at',
     )
     .eq('org_id', orgId)
     .in('status', ['completed', 'failed'])
@@ -56,6 +57,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
     title: string;
     conference_url: string | null;
     recap_text_enc: string | null;
+    recap_json_enc: string | null;
     recap_status: 'generating' | 'done' | 'failed' | null;
     created_at: string;
   }>;
@@ -138,15 +140,26 @@ export default async function CapturesPage(): Promise<ReactElement> {
   }
 
   // U9: the recap is encrypted at rest — decrypt server-side (the key stays in
-  // env; the browser never sees it). DEGRADE on a crypto failure (KMS blip, or
-  // a legacy row that can't decrypt under the org key) to a null recap rather
-  // than erroring the whole grid. Mirrors the meeting review page.
+  // env; the browser never sees it). Prefer the structured recap's `overview`
+  // (new meetings); fall back to the legacy markdown blob (old meetings).
+  // Resolving the overview here keeps the client's markdown firstLine() from
+  // running over a JSON string. DEGRADE on a crypto failure (KMS blip, or a
+  // legacy row that can't decrypt under the org key) to a null recap rather than
+  // erroring the whole grid. Mirrors the meeting review page.
   const recapByMeeting = new Map<string, string | null>();
   await Promise.all(
     meetings.map(async (m) => {
-      if (m.recap_text_enc === null) return;
       try {
-        recapByMeeting.set(m.meeting_id, await decryptForOrgFromBytea(orgId, m.recap_text_enc));
+        if (m.recap_json_enc !== null) {
+          const overview = structuredRecapOverview(await decryptForOrgFromBytea(orgId, m.recap_json_enc));
+          if (overview !== null) {
+            recapByMeeting.set(m.meeting_id, overview);
+            return;
+          }
+        }
+        if (m.recap_text_enc !== null) {
+          recapByMeeting.set(m.meeting_id, await decryptForOrgFromBytea(orgId, m.recap_text_enc));
+        }
       } catch (err) {
         if (err instanceof EnvelopeCryptoError) {
           console.error(`[captures] recap decrypt failed (meetingId=${m.meeting_id}):`, err);
