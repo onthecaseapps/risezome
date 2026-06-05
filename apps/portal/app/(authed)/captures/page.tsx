@@ -22,6 +22,13 @@ import { CapturesClient, type CaptureCard, type CapturePlatform } from './_clien
  * no speaker avatars, so the page degrades instead of erroring.
  */
 
+/**
+ * Cap on how many meetings' recaps we decrypt for the list preview per render.
+ * Each is a distinct KMS Decrypt (recaps don't share a data key), so this bounds
+ * the captures-list KMS cost; the rest decrypt lazily on the review page.
+ */
+const RECAP_PREVIEW_LIMIT = 30;
+
 function platformFromUrl(url: string | null): CapturePlatform {
   if (url === null) return 'other';
   const u = url.toLowerCase();
@@ -146,9 +153,16 @@ export default async function CapturesPage(): Promise<ReactElement> {
   // running over a JSON string. DEGRADE on a crypto failure (KMS blip, or a
   // legacy row that can't decrypt under the org key) to a null recap rather than
   // erroring the whole grid. Mirrors the meeting review page.
+  //
+  // KMS-cost bound: each meeting's recap is a SEPARATE encrypt (its own wrapped
+  // data key), so the per-org decrypt cache can't collapse them — decrypting the
+  // recap for every meeting would be one live KMS Decrypt per card, per list
+  // load. Cap previews to the most-recent RECAP_PREVIEW_LIMIT (the list is sorted
+  // newest-first); older cards show "Recap available — open to view" and decrypt
+  // on the review page instead.
   const recapByMeeting = new Map<string, string | null>();
   await Promise.all(
-    meetings.map(async (m) => {
+    meetings.slice(0, RECAP_PREVIEW_LIMIT).map(async (m) => {
       try {
         if (m.recap_json_enc !== null) {
           const overview = structuredRecapOverview(await decryptForOrgFromBytea(orgId, m.recap_json_enc));
@@ -245,6 +259,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
       createdAtIso: m.created_at,
       platform: platformFromUrl(m.conference_url),
       summary: recapByMeeting.get(m.meeting_id) ?? null,
+      recapAvailable: m.recap_text_enc !== null || m.recap_json_enc !== null,
       recapStatus: m.recap_status,
       answersCount: s.answers,
       sourcesCount: s.sources,
