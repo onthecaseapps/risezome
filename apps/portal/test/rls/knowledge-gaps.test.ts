@@ -144,13 +144,15 @@ if (!stackReachable && !FORCE) {
       expect(await canSelectGap(nonParticipant, gapId)).toBe(true);
     });
 
-    it('the assignee can SELECT but cannot directly PATCH the gap (no client UPDATE policy)', async () => {
+    it('an assignee does NOT gain gap visibility (metadata-only, U5) and cannot directly PATCH', async () => {
       const gapId = await seedGap({ assignee: nonParticipant.id });
-      expect(await canSelectGap(nonParticipant, gapId)).toBe(true);
+      // Teams restructure (KTD6): assignment no longer grants can_view_gap. A
+      // non-attendee assignee sees the question/asker/metrics ONLY via
+      // list_assigned_questions, never the gap row or its verbatim occurrences.
+      expect(await canSelectGap(nonParticipant, gapId)).toBe(false);
 
-      // The assignee resolves via the service-role server action, NOT a direct
-      // client write. A direct PATCH must be denied — otherwise an assignee
-      // could escalate a private gap org-wide by PATCHing shared_with_org.
+      // And a direct PATCH must be denied (no client UPDATE policy) — otherwise an
+      // assignee could escalate a private gap org-wide by PATCHing shared_with_org.
       await nonParticipant.client
         .from('knowledge_gaps')
         .update({ status: 'resolved', shared_with_org: true })
@@ -176,9 +178,12 @@ if (!stackReachable && !FORCE) {
       expect(still?.status).toBe('open');
     });
 
-    it('a manager can SELECT every gap in the org, even without a viewer row', async () => {
+    it('a non-attendee manager does NOT see an unshared gap (attendees-only, U5)', async () => {
+      // Teams restructure: gaps are attendees ∪ super-admin master key. A plain
+      // Admin (manager) who didn't attend a contributing meeting has no blanket
+      // gap access (the master-key positive is covered in gap-assignment.test.ts).
       const gapId = await seedGap(); // no viewers, not shared, unassigned
-      expect(await canSelectGap(manager, gapId)).toBe(true);
+      expect(await canSelectGap(manager, gapId)).toBe(false);
       expect(await canSelectGap(nonParticipant, gapId)).toBe(false);
     });
 

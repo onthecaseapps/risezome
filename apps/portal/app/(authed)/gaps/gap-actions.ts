@@ -21,20 +21,25 @@ interface GapPermCtx {
   orgId: string;
   userId: string;
   isManager: boolean;
+  role: 'member' | 'manager' | 'super_admin';
 }
 
 /** Load a gap (service role) and resolve the caller's permission against it. */
 async function loadGapForActor(
   gapId: string,
 ): Promise<
-  | { ok: true; ctx: GapPermCtx; gap: { status: string; assignee_id: string | null; org_id: string } }
+  | {
+      ok: true;
+      ctx: GapPermCtx;
+      gap: { status: string; assignee_id: string | null; org_id: string; shared_with_org: boolean };
+    }
   | { ok: false; error: string }
 > {
   const { orgId, user, role } = await requireAuthedUserWithOrg();
   const service = createServiceRoleClient();
   const { data, error } = await service
     .from('knowledge_gaps')
-    .select('status, assignee_id, org_id')
+    .select('status, assignee_id, org_id, shared_with_org')
     .eq('gap_id', gapId)
     .eq('org_id', orgId)
     .maybeSingle();
@@ -42,13 +47,34 @@ async function loadGapForActor(
   if (data === null) return { ok: false, error: 'not_found' };
   return {
     ok: true,
-    ctx: { orgId, userId: user.id, isManager: role === 'manager' },
+    ctx: { orgId, userId: user.id, isManager: role === 'manager', role },
     gap: {
       status: data.status as string,
       assignee_id: (data.assignee_id as string | null) ?? null,
       org_id: data.org_id as string,
+      shared_with_org: (data.shared_with_org as boolean | null) ?? false,
     },
   };
+}
+
+/** Can the caller SEE this gap (and therefore assign a question from it)? Mirrors
+ *  can_view_gap (U5): super-admin master key, org-wide share, or a participant-
+ *  seeded gap viewer. Resolved via the service role for the server action. */
+async function callerCanViewGap(
+  service: ReturnType<typeof createServiceRoleClient>,
+  ctx: GapPermCtx,
+  gap: { shared_with_org: boolean },
+  gapId: string,
+): Promise<boolean> {
+  if (ctx.role === 'super_admin') return true;
+  if (gap.shared_with_org) return true;
+  const { data } = await service
+    .from('gap_viewers')
+    .select('user_id')
+    .eq('gap_id', gapId)
+    .eq('user_id', ctx.userId)
+    .maybeSingle();
+  return data !== null;
 }
 
 export async function resolveGapAction(gapId: string): Promise<ActionResult> {
@@ -86,21 +112,29 @@ export async function dismissGapAction(gapId: string): Promise<ActionResult> {
 }
 
 /**
- * Assign a gap to a member. MANAGER ONLY. Sets assignee + assigned_by/at;
- * reopens a closed gap; grants the assignee visibility by inserting them into
- * gap_viewers (KTD1); notifies them (R12).
+ * Assign a gap's question to ANYONE in the org (teams restructure U5; R8/AE3).
+ *
+ * Gating: the caller must be able to SEE the gap (attendee / org-share / master
+ * key) — you can only assign a question you can see. The TARGET may be any org
+ * member. Assignment is METADATA-ONLY: it sets assignee_id but does NOT seed
+ * gap_viewers, so a non-attendee assignee gains NO verbatim — they see only the
+ * question, asker, and metrics via list_assigned_questions (KTD6). Reopens a
+ * closed gap, notifies the assignee, and writes a gap_assignment audit row (R10).
  */
 export async function assignGapAction(gapId: string, assigneeUserId: string): Promise<ActionResult> {
   const loaded = await loadGapForActor(gapId);
   if (!loaded.ok) return loaded;
   const { ctx, gap } = loaded;
-  if (!ctx.isManager) return { ok: false, error: 'forbidden' };
 
   const service = createServiceRoleClient();
 
-  // The assignee must be a member of this org — assignment grants gap_viewers
-  // visibility, so assigning an arbitrary (cross-org) user UUID would leak the
-  // gap to a non-member.
+  // The caller must be entitled to the gap to assign a question from it.
+  if (!(await callerCanViewGap(service, ctx, gap, gapId))) {
+    return { ok: false, error: 'forbidden' };
+  }
+
+  // The assignee must be a member of this org ("anyone in the org", R8) — not an
+  // arbitrary cross-org UUID.
   const { data: membership } = await service
     .from('org_members')
     .select('user_id')
@@ -131,11 +165,20 @@ export async function assignGapAction(gapId: string, assigneeUserId: string): Pr
     .eq('org_id', ctx.orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   if (updErr !== null) return { ok: false, error: updErr.message };
 
-  // KTD1: the assignee gains visibility even if they weren't a participant.
-  const { error: viewerErr } = await service
-    .from('gap_viewers')
-    .upsert({ gap_id: gapId, user_id: assigneeUserId, org_id: ctx.orgId }, { onConflict: 'gap_id,user_id', ignoreDuplicates: true });
-  if (viewerErr !== null) return { ok: false, error: viewerErr.message };
+  // NOTE (KTD6): we deliberately do NOT seed gap_viewers here. Assignment is
+  // metadata-only; the assignee reads the question/asker/metrics via
+  // list_assigned_questions and never gains gap_occurrences verbatim.
+
+  // R10: audit the assignment (append-only permission_audit_log).
+  const { error: auditErr } = await service.from('permission_audit_log').insert({
+    org_id: ctx.orgId,
+    actor_id: ctx.userId,
+    action: 'gap_assignment',
+    detail: { gap_id: gapId, assignee_id: assigneeUserId },
+  });
+  if (auditErr !== null) {
+    console.warn(`[gaps] assignment audit failed (gap=${gapId}): ${auditErr.message}`);
+  }
 
   // R12: in-app notification. Don't notify a self-assignment.
   if (assigneeUserId !== ctx.userId) {
