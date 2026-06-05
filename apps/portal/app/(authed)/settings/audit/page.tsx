@@ -2,7 +2,6 @@ import type { ReactElement } from 'react';
 import { requireSuperAdmin } from '../../../_lib/auth';
 import { createServerClient, createServiceRoleClient } from '../../../_lib/supabase-server';
 import { roleLabel } from '../../../_lib/roles';
-import { PRIVACY_LABEL, isPrivacyLevel } from '../../../_lib/privacy-levels';
 
 /**
  * Settings → Audit log (permissions overhaul U7). SUPER-ADMIN ONLY.
@@ -23,10 +22,27 @@ import { PRIVACY_LABEL, isPrivacyLevel } from '../../../_lib/privacy-levels';
  */
 
 const ACTION_LABEL: Record<string, string> = {
-  privacy_change: 'Privacy change',
-  admin_override: 'Admin override',
+  // Current (teams restructure) actions.
   role_change: 'Role change',
   master_key_access: 'Master-key access',
+  team_change: 'Team change',
+  team_membership_change: 'Team membership change',
+  gap_assignment: 'Gap assignment',
+  // Historical (pre-attendees-only) actions — retained so old rows still label.
+  privacy_change: 'Privacy change',
+  admin_override: 'Admin override',
+};
+
+/**
+ * Historical privacy-level labels. The privacy ladder is gone (attendees-only,
+ * U2), but pre-existing `privacy_change`/`admin_override` rows still carry these
+ * stored values, so we inline the labels here instead of importing the deleted
+ * privacy-levels module.
+ */
+const HISTORICAL_PRIVACY_LABEL: Record<string, string> = {
+  only_me: 'Only me',
+  only_participants: 'Only participants',
+  only_teammates: 'Only teammates (workspace)',
 };
 
 interface AuditRow {
@@ -173,12 +189,14 @@ function describeDetail(action: string, detail: Record<string, unknown> | null):
     return `${oldL} → ${newL}`;
   }
   if (action === 'master_key_access') {
-    return `Viewed (${privacyLabel(detail['privacy_level'])})`;
+    // Attendees-only (U2): the master-key audit detail now carries {reason}
+    // instead of a privacy level.
+    return 'Viewed (master key)';
   }
   return JSON.stringify(detail);
 }
 
 function privacyLabel(v: unknown): string {
   if (typeof v !== 'string') return '—';
-  return isPrivacyLevel(v) ? PRIVACY_LABEL[v] : v;
+  return HISTORICAL_PRIVACY_LABEL[v] ?? v;
 }

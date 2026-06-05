@@ -35,7 +35,7 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
   const { data: meeting } = await supabase
     .from('meetings')
     .select(
-      'meeting_id, org_id, user_id, privacy_level, status, recall_bot_id, error_code, error_message, started_at, ended_at, calendar_event_id',
+      'meeting_id, org_id, user_id, status, recall_bot_id, error_code, error_message, started_at, ended_at, calendar_event_id',
     )
     .eq('meeting_id', meetingId)
     .eq('org_id', orgId)
@@ -51,7 +51,6 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
     meeting: {
       org_id: meeting.org_id as string,
       user_id: meeting.user_id as string,
-      privacy_level: meeting.privacy_level as string,
     },
     meetingId,
   });

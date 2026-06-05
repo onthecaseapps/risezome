@@ -139,34 +139,8 @@ export const launchBotFn = inngest.createFunction(
         return { meetingId: existing.data.meeting_id as string, created: false };
       }
 
-      // Stamp the org's default privacy onto the new meeting (R8). Read the
-      // org_privacy_config row; if the org has none, fall back to the library-
-      // by-default value 'only_teammates' (same as the column/config defaults).
-      const cfg = await service
-        .from('org_privacy_config')
-        .select('default_privacy, privacy_floor')
-        .eq('org_id', eventRow.org_id)
-        .maybeSingle();
-      if (cfg.error !== null) {
-        throw new Error(`read-privacy-config failed: ${cfg.error.message}`);
-      }
-      const configuredDefault = (cfg.data?.default_privacy as string | undefined) ?? 'only_teammates';
-      const configuredFloor = (cfg.data?.privacy_floor as string | undefined) ?? 'only_me';
-      // Defense-in-depth: if the org default is somehow MORE private than the
-      // floor (rank(default) < rank(floor)), clamp the stamp UP to the floor so
-      // the floor trigger never rejects the insert. The config action + form now
-      // reject a below-floor default, so this is a belt-and-suspenders guard for
-      // legacy/raced config rows.
-      const PRIVACY_RANK: Record<string, number> = {
-        only_me: 0,
-        only_participants: 1,
-        only_teammates: 2,
-      };
-      const defaultPrivacy =
-        (PRIVACY_RANK[configuredDefault] ?? 2) < (PRIVACY_RANK[configuredFloor] ?? 0)
-          ? configuredFloor
-          : configuredDefault;
-
+      // Access is attendees-only (U2): the privacy ladder + org_privacy_config
+      // are gone, so the meeting insert no longer stamps a privacy level.
       const inserted = await service
         .from('meetings')
         .insert({
@@ -176,7 +150,6 @@ export const launchBotFn = inngest.createFunction(
           conference_url: conferenceUrl,
           title: eventRow.title,
           status: 'launching',
-          privacy_level: defaultPrivacy,
         })
         .select('meeting_id')
         .single();

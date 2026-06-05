@@ -2,7 +2,7 @@
 // Pure DB/RLS test — runs in real Node, not jsdom (the supabase-js realtime
 // client's MessageEvent crashes jsdom's BroadcastChannel shim).
 /**
- * permission_audit_log RLS + admin_override RPC tests (permissions overhaul U4/U5).
+ * permission_audit_log RLS tests (teams restructure U1/U2).
  *
  * Audit-log RLS (KTD6, Q4 — append-only, super-admin-readable):
  *   - a member CANNOT SELECT permission_audit_log (RLS deny)
@@ -11,13 +11,14 @@
  *   - no client can INSERT a row via the anon client (no write policy)
  *   - no client can UPDATE / DELETE an existing row (append-only / immutable)
  *
- * admin_override_meeting_privacy RPC (U4, R12):
- *   - an admin can set a meeting BELOW the floor via the RPC (floor-exempt)
- *   - a NON-admin calling the RPC is rejected by the function's internal
- *     is_org_admin self-check (deny)
+ * The privacy ladder is gone (attendees-only, U2): admin_override_meeting_privacy
+ * and org_privacy_config no longer exist, so those RPC tests are removed. The
+ * seeded `privacy_change` row is retained — the action value is still allowed by
+ * the CHECK as a HISTORICAL action, and audit rows never carried a privacy_level
+ * COLUMN (the level lived in the JSON `detail`).
  *
- * Same harness shape as meeting-privacy.test.ts: real local Supabase stack;
- * auto-skips when unreachable unless RISEZOME_RUN_RLS_TESTS=1.
+ * Same harness shape as roles.test.ts: real local Supabase stack; auto-skips
+ * when unreachable unless RISEZOME_RUN_RLS_TESTS=1.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -76,10 +77,8 @@ if (!stackReachable && !FORCE) {
       orgId = await createOrgWithMember(admin, 'Audit Org', superAdmin.id, 'super_admin');
       await addMember(admin, orgId, manager.id, 'manager', true);
       await addMember(admin, orgId, member.id, 'member', false);
-      await admin.from('org_privacy_config').insert({ org_id: orgId });
 
-      // A meeting owned by the member (so the admin override acts on someone
-      // else's meeting). Default privacy_level = only_teammates.
+      // A meeting owned by the member, used as the audit row's target_meeting_id.
       const { data: m, error: mErr } = await admin
         .from('meetings')
         .insert({ org_id: orgId, user_id: member.id, status: 'completed' })
@@ -111,7 +110,6 @@ if (!stackReachable && !FORCE) {
     afterAll(async () => {
       await admin.from('permission_audit_log').delete().eq('org_id', orgId);
       await admin.from('meetings').delete().eq('org_id', orgId);
-      await admin.from('org_privacy_config').delete().eq('org_id', orgId);
       await admin.auth.admin.deleteUser(manager.id).catch(() => undefined);
       await admin.auth.admin.deleteUser(member.id).catch(() => undefined);
       // super_admin org row deletion is blocked by the last-super_admin trigger
@@ -200,55 +198,6 @@ if (!stackReachable && !FORCE) {
         .eq('id', seededRowId)
         .maybeSingle();
       expect(data).not.toBeNull(); // still present
-    });
-
-    // ── admin_override_meeting_privacy RPC (U4, R12) ─────────────────────────
-
-    it('an admin can set a meeting BELOW the floor via the override RPC (floor-exempt)', async () => {
-      // Raise the floor to only_participants so only_me is below-floor.
-      await admin
-        .from('org_privacy_config')
-        .update({ privacy_floor: 'only_participants' })
-        .eq('org_id', orgId);
-
-      // super_admin (an admin) overrides the member's meeting to only_me.
-      const { error } = await superAdmin.client.rpc('admin_override_meeting_privacy', {
-        p_meeting_id: meetingId,
-        p_level: 'only_me',
-      });
-      expect(error).toBeNull();
-
-      const { data } = await admin
-        .from('meetings')
-        .select('privacy_level')
-        .eq('meeting_id', meetingId)
-        .single();
-      expect(data?.privacy_level).toBe('only_me');
-    });
-
-    it('a NON-admin calling the override RPC is rejected by the internal self-check (deny)', async () => {
-      // First restore the meeting to a known level via the admin override.
-      await superAdmin.client.rpc('admin_override_meeting_privacy', {
-        p_meeting_id: meetingId,
-        p_level: 'only_participants',
-      });
-
-      const { error } = await member.client.rpc('admin_override_meeting_privacy', {
-        p_meeting_id: meetingId,
-        p_level: 'only_me',
-      });
-      expect(error).not.toBeNull();
-      // The function raises errcode insufficient_privilege (SQLSTATE 42501) from
-      // its internal is_org_admin self-check.
-      expect(error?.code).toBe('42501');
-
-      // The member's attempted below-floor override did NOT take effect.
-      const { data } = await admin
-        .from('meetings')
-        .select('privacy_level')
-        .eq('meeting_id', meetingId)
-        .single();
-      expect(data?.privacy_level).toBe('only_participants');
     });
   });
 }

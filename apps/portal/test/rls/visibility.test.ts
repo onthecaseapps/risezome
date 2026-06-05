@@ -10,18 +10,13 @@
  * Covers R5, R6, R14, AE3, AE7. Same harness as orgs.test.ts; auto-skips
  * without a local Supabase stack unless RISEZOME_RUN_RLS_TESTS=1.
  *
- * ── ADAPTED FOR THE PRIVACY MODEL (permissions overhaul U2/U3) ───────────────
- * These tests originally relied on the global participant-scoping invariant
- * (is_meeting_participant). U3 replaced that with per-meeting privacy levels via
- * can_access_meeting, and the new DEFAULT is `only_teammates` (org-wide), which
- * would make every org member see every meeting and break the participant-deny
- * assertions below. The INTENT here — "a non-participant teammate cannot read a
- * meeting they didn't attend, on `meetings` OR any sibling capture table" — is
- * exactly the `only_participants` privacy level, so insertMeeting() now stamps
- * privacy_level='only_participants'. The org's privacy_floor is left at the
- * permissive default (only_me) so that level is allowed. Behaviour and intent
- * are preserved; only the explicit privacy level is now pinned (it used to be
- * the implicit global default).
+ * ── ATTENDEES-ONLY ACCESS (teams restructure U2) ────────────────────────────
+ * The per-meeting privacy ladder is gone: `can_access_meeting` is now
+ * attendees ∪ owner ∪ super_admin, with NO privacy_level column. That is exactly
+ * the participant-scoping invariant these tests assert — "a non-participant
+ * teammate cannot read a meeting they didn't attend, on `meetings` OR any
+ * sibling capture table" — so insertMeeting() no longer stamps any privacy level
+ * and there is no org_privacy_config to seed. Behaviour and intent are preserved.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -77,8 +72,6 @@ if (!stackReachable && !FORCE) {
 
       orgId = await createOrgWithMember(admin, 'Vis Org', manager.id, 'manager');
       await addMember(admin, orgId, member.id, 'member', false);
-      // Permissive floor (only_me) so insertMeeting can stamp only_participants.
-      await admin.from('org_privacy_config').insert({ org_id: orgId });
 
       meetingOfManager = await insertMeeting(admin, orgId, manager.id, 'https://meet/m1');
       await addParticipant(admin, meetingOfManager, manager.id);
@@ -98,7 +91,6 @@ if (!stackReachable && !FORCE) {
     });
 
     afterAll(async () => {
-      await admin.from('org_privacy_config').delete().eq('org_id', orgId);
       await admin.auth.admin.deleteUser(manager.id).catch(() => undefined);
       await admin.auth.admin.deleteUser(member.id).catch(() => undefined);
     });
@@ -257,9 +249,6 @@ async function insertMeeting(
       user_id: launcherId,
       conference_url: url,
       status: 'completed',
-      // Pin to only_participants so the participant-scoped deny assertions hold
-      // under the U3 privacy model (the new default only_teammates is org-wide).
-      privacy_level: 'only_participants',
     })
     .select('meeting_id')
     .single();

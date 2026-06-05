@@ -1,8 +1,6 @@
 'use client';
 
 import { useMemo, useState, type ReactElement } from 'react';
-import { PRIVACY_LABEL, type PrivacyLevel } from '../../_lib/privacy-levels';
-import { LockGlyph } from '../meetings/[meetingId]/review/_privacy-picker';
 
 export type CapturePlatform = 'zoom' | 'meet' | 'teams' | 'other';
 
@@ -15,7 +13,6 @@ export interface CaptureCard {
   endedAtIso: string | null;
   createdAtIso: string;
   platform: CapturePlatform;
-  privacyLevel: PrivacyLevel;
   summary: string | null;
   recapStatus: 'generating' | 'done' | 'failed' | null;
   answersCount: number;
@@ -205,7 +202,6 @@ function CaptureCardView({ capture: c }: { capture: CaptureCard }): ReactElement
           <span className="text-sm text-muted">{time}</span>
         </div>
         <div className="flex items-center gap-2">
-          <PrivacyBadge level={c.privacyLevel} />
           <span className={`text-sm font-medium ${PLATFORM_TEXT[c.platform]}`}>
             {PLATFORM_LABEL[c.platform]}
           </span>
@@ -289,31 +285,6 @@ function StatusBadge({ status }: { status: 'completed' | 'failed' }): ReactEleme
     <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-500">
       <WarnGlyph />
       Check
-    </span>
-  );
-}
-
-/**
- * Per-meeting visibility badge (permissions overhaul U6). The library now shows
- * org-visible meetings (RLS widened in U3), so each card surfaces who can see it.
- * Compact labels here (the full "(workspace)" qualifier lives on the picker);
- * the icon differentiates the three levels at a glance.
- */
-const PRIVACY_BADGE: Record<PrivacyLevel, { short: string; className: string }> = {
-  only_me: { short: 'Only me', className: 'bg-rose-500/15 text-rose-500' },
-  only_participants: { short: 'Participants', className: 'bg-amber-500/15 text-amber-500' },
-  only_teammates: { short: 'Workspace', className: 'bg-emerald-500/15 text-emerald-500' },
-};
-
-function PrivacyBadge({ level }: { level: PrivacyLevel }): ReactElement {
-  const cfg = PRIVACY_BADGE[level];
-  return (
-    <span
-      title={PRIVACY_LABEL[level]}
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${cfg.className}`}
-    >
-      <LockGlyph size={10} strokeWidth={2.2} />
-      {cfg.short}
     </span>
   );
 }
