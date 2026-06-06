@@ -182,6 +182,7 @@ export default async function SourcesPage(props: {
     const repos = githubSources.filter((s) => s.installation_id === inst.installation_id);
     const items: SourceItem[] = repos.map((s) => ({
       key: s.id,
+      sourceId: s.id,
       externalId: s.repo_full_name,
       label: s.repo_full_name,
       count: s.indexed_files,
@@ -316,6 +317,7 @@ function buildItems(
     seen.add(ext);
     items.push({
       key: s.id,
+      sourceId: s.id,
       externalId: ext,
       label: s.display_name ?? ext,
       count: s.indexed_files,

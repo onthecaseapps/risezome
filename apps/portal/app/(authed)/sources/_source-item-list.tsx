@@ -18,6 +18,13 @@ export type Provider = 'github' | 'trello' | 'jira' | 'confluence';
 export interface SourceItem {
   /** Stable client key: the source id when one exists, else the external id. */
   key: string;
+  /**
+   * The `sources` row id, when this item already has one. Present for every
+   * GitHub repo and for any indexed Trello/Jira/Confluence item; absent for
+   * available-but-unindexed items. Drives connection-level reindex (only items
+   * with a source can be reindexed).
+   */
+  sourceId?: string;
   /** GitHub: repo_full_name. Trello/Jira/Confluence: external id. */
   externalId: string;
   label: string;

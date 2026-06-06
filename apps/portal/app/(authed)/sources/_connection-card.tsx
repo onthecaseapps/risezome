@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition, type ReactElement } from 'react';
 import { setItemForTeamAction } from './team-source-toggle-action';
+import { reindexSourceAction } from './reindex-action';
 import { SourceItemList, type Provider, type SourceItem } from './_source-item-list';
 
 /**
@@ -42,6 +43,29 @@ export function ConnectionCard({
   const [menuOpen, setMenuOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(data.selectedExternalIds));
   const [bulkPending, startBulk] = useTransition();
+  const [reindexPending, startReindex] = useTransition();
+
+  // Source ids for this connection's items that actually have a source row;
+  // available-but-unindexed items have no source and can't be reindexed.
+  const reindexableSourceIds = useMemo(
+    () => data.items.map((it) => it.sourceId).filter((id): id is string => id !== undefined),
+    [data.items],
+  );
+
+  function reindexConnection(mode: 'delta' | 'full'): void {
+    setMenuOpen(false);
+    if (reindexableSourceIds.length === 0) return;
+    startReindex(async () => {
+      await Promise.all(
+        reindexableSourceIds.map((sourceId) => {
+          const fd = new FormData();
+          fd.set('sourceId', sourceId);
+          fd.set('mode', mode);
+          return reindexSourceAction(fd);
+        }),
+      );
+    });
+  }
 
   const allSelected = data.items.length > 0 && data.items.every((it) => selected.has(it.externalId));
   const someSelected = selected.size > 0;
@@ -126,6 +150,30 @@ export function ConnectionCard({
                 className="fixed inset-0 z-10 cursor-default"
               />
               <div role="menu" className="absolute right-0 top-full z-20 mt-1 w-52 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+                {reindexableSourceIds.length > 0 ? (
+                  <>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={reindexPending}
+                      onClick={() => reindexConnection('delta')}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-bg disabled:cursor-default disabled:opacity-50"
+                    >
+                      <RefreshIcon />
+                      Reindex (delta)
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={reindexPending}
+                      onClick={() => reindexConnection('full')}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-bg disabled:cursor-default disabled:opacity-50"
+                    >
+                      <RefreshIcon />
+                      Reindex (full)
+                    </button>
+                  </>
+                ) : null}
                 {data.manageUrl !== null ? (
                   <a
                     role="menuitem"
@@ -138,9 +186,9 @@ export function ConnectionCard({
                     <GearIcon />
                     Manage on {data.name}
                   </a>
-                ) : (
+                ) : reindexableSourceIds.length === 0 ? (
                   <span className="block px-3 py-2 text-sm text-muted">No actions available</span>
-                )}
+                ) : null}
               </div>
             </>
           ) : null}
@@ -233,6 +281,16 @@ function GearIcon(): ReactElement {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+function RefreshIcon(): ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M23 4v6h-6" />
+      <path d="M1 20v-6h6" />
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
     </svg>
   );
 }

@@ -8,13 +8,18 @@ vi.mock('../../app/(authed)/sources/team-source-toggle-action', () => ({
   setItemForTeamAction: (...a: unknown[]) => setItemForTeamAction(...a),
 }));
 
+const reindexSourceAction = vi.fn();
+vi.mock('../../app/(authed)/sources/reindex-action', () => ({
+  reindexSourceAction: (...a: unknown[]) => reindexSourceAction(...a),
+}));
+
 import { ConnectionCard, type ConnectionCardData } from '../../app/(authed)/sources/_connection-card';
 import type { SourceItem } from '../../app/(authed)/sources/_source-item-list';
 
 function ghItems(): SourceItem[] {
   return [
-    { key: 's1', externalId: 'acme/web', label: 'acme/web', count: 240, total: null, status: 'idle', installationId: 1 },
-    { key: 's2', externalId: 'acme/api', label: 'acme/api', count: 812, total: 1270, status: 'indexing', installationId: 1 },
+    { key: 's1', sourceId: 's1', externalId: 'acme/web', label: 'acme/web', count: 240, total: null, status: 'idle', installationId: 1 },
+    { key: 's2', sourceId: 's2', externalId: 'acme/api', label: 'acme/api', count: 812, total: 1270, status: 'indexing', installationId: 1 },
   ];
 }
 
@@ -36,6 +41,7 @@ function card(over: Partial<ConnectionCardData> = {}): ConnectionCardData {
 beforeEach(() => {
   vi.clearAllMocks();
   setItemForTeamAction.mockResolvedValue({ ok: true });
+  reindexSourceAction.mockResolvedValue({ ok: true });
 });
 
 describe('ConnectionCard (U2)', () => {
@@ -81,5 +87,38 @@ describe('ConnectionCard (U2)', () => {
       'href',
       'https://github.com/x',
     );
+  });
+
+  it('offers Reindex (delta/full) in the kebab and reindexes every source of the connection', async () => {
+    render(<ConnectionCard teamId="t1" data={card()} />);
+    await userEvent.click(screen.getByRole('button', { name: /connection actions/i }));
+    const menu = screen.getByRole('menu');
+
+    expect(within(menu).getByRole('menuitem', { name: /Reindex \(delta\)/i })).toBeInTheDocument();
+    const full = within(menu).getByRole('menuitem', { name: /Reindex \(full\)/i });
+    expect(full).toBeInTheDocument();
+
+    await userEvent.click(full);
+
+    // One reindexSourceAction call per source row (s1, s2), all with mode=full.
+    expect(reindexSourceAction).toHaveBeenCalledTimes(2);
+    const sentSourceIds = reindexSourceAction.mock.calls.map((c) => {
+      const fd = c[0] as FormData;
+      return { sourceId: fd.get('sourceId'), mode: fd.get('mode') };
+    });
+    expect(sentSourceIds).toEqual(
+      expect.arrayContaining([
+        { sourceId: 's1', mode: 'full' },
+        { sourceId: 's2', mode: 'full' },
+      ]),
+    );
+  });
+
+  it('omits Reindex when no item has a source row (available-but-unindexed only)', async () => {
+    const noSources = ghItems().map(({ sourceId: _drop, ...rest }) => rest);
+    render(<ConnectionCard teamId="t1" data={card({ items: noSources })} />);
+    await userEvent.click(screen.getByRole('button', { name: /connection actions/i }));
+    const menu = screen.getByRole('menu');
+    expect(within(menu).queryByRole('menuitem', { name: /Reindex/i })).not.toBeInTheDocument();
   });
 });
