@@ -1,0 +1,246 @@
+'use client';
+
+import { useMemo, useState, useTransition, type ReactElement } from 'react';
+import { setItemForTeamAction } from './team-source-toggle-action';
+import { SourceItemList, type Provider, type SourceItem } from './_source-item-list';
+
+/**
+ * A single connection card (U2): GitHub renders one per installation; Jira,
+ * Confluence and Trello render one each. The card shows the connection's icon,
+ * name + account/site badge, a connected/indexed status line, a master toggle
+ * (bulk add/remove all of this connection's items for the selected team), a
+ * kebab (manage on the provider), and an expand/collapse that reveals the
+ * per-item checklist (SourceItemList, U3).
+ */
+export interface ConnectionCardData {
+  provider: Provider;
+  /** Stable key (installation id for GitHub, kind for others). */
+  cardKey: string;
+  /** Display name: "GitHub", "Jira", "Confluence", "Trello". */
+  name: string;
+  /** Account / site badge: github account_login, atlassian site, trello workspace. */
+  badge: string | null;
+  icon: ReactElement;
+  /** True if the provider connection is suspended (GitHub) / degraded. */
+  suspended?: boolean;
+  /** External management URL (GitHub installation settings) or connect route. */
+  manageUrl: string | null;
+  items: SourceItem[];
+  /** External ids selected for the team (drives checked state + master toggle). */
+  selectedExternalIds: string[];
+  installationId?: number;
+}
+
+export function ConnectionCard({
+  teamId,
+  data,
+}: {
+  teamId: string;
+  data: ConnectionCardData;
+}): ReactElement {
+  const [expanded, setExpanded] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(data.selectedExternalIds));
+  const [bulkPending, startBulk] = useTransition();
+
+  const allSelected = data.items.length > 0 && data.items.every((it) => selected.has(it.externalId));
+  const someSelected = selected.size > 0;
+
+  function localSet(externalId: string, on: boolean): void {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(externalId);
+      else next.delete(externalId);
+      return next;
+    });
+  }
+
+  function masterToggle(): void {
+    const turnOn = !allSelected;
+    // Targets: items that need flipping to reach the desired state.
+    const targets = data.items.filter((it) => selected.has(it.externalId) !== turnOn);
+    // Optimistically reflect the new state.
+    setSelected(turnOn ? new Set(data.items.map((it) => it.externalId)) : new Set());
+    startBulk(async () => {
+      await Promise.all(
+        targets.map((it) =>
+          setItemForTeamAction({
+            teamId,
+            provider: data.provider,
+            externalId: it.externalId,
+            label: it.label,
+            installationId: it.installationId,
+            on: turnOn,
+          }),
+        ),
+      );
+    });
+  }
+
+  const statusLine = useMemo(() => buildStatusLine(data, selected.size), [data, selected.size]);
+
+  return (
+    <div className={`overflow-hidden rounded-xl border bg-card ${data.suspended === true ? 'border-amber-500/40' : 'border-border'}`}>
+      <div className="flex items-center gap-4 p-4">
+        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-bg">
+          {data.icon}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-semibold text-fg">{data.name}</span>
+            {data.badge !== null ? (
+              <span className="truncate rounded-full border border-border bg-bg px-2 py-0.5 text-[11px] font-medium text-muted">
+                {data.badge}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-0.5 text-xs text-muted">{statusLine}</div>
+        </div>
+
+        <div className="relative flex flex-shrink-0 items-center gap-2">
+          <MasterToggle
+            checked={allSelected}
+            partial={!allSelected && someSelected}
+            disabled={bulkPending || data.items.length === 0}
+            onChange={masterToggle}
+          />
+
+          <button
+            type="button"
+            aria-label="Connection actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
+            className="rounded-md p-1.5 text-muted hover:bg-bg"
+          >
+            <KebabIcon />
+          </button>
+          {menuOpen ? (
+            <>
+              <button
+                type="button"
+                aria-hidden
+                tabIndex={-1}
+                onClick={() => setMenuOpen(false)}
+                className="fixed inset-0 z-10 cursor-default"
+              />
+              <div role="menu" className="absolute right-0 top-full z-20 mt-1 w-52 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+                {data.manageUrl !== null ? (
+                  <a
+                    role="menuitem"
+                    href={data.manageUrl}
+                    target={data.manageUrl.startsWith('http') ? '_blank' : undefined}
+                    rel={data.manageUrl.startsWith('http') ? 'noopener noreferrer' : undefined}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-bg"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    <GearIcon />
+                    Manage on {data.name}
+                  </a>
+                ) : (
+                  <span className="block px-3 py-2 text-sm text-muted">No actions available</span>
+                )}
+              </div>
+            </>
+          ) : null}
+
+          <button
+            type="button"
+            aria-label={expanded ? 'Collapse' : 'Expand'}
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+            className="rounded-md p-1.5 text-muted hover:bg-bg"
+          >
+            <ChevronIcon up={expanded} />
+          </button>
+        </div>
+      </div>
+
+      {expanded ? (
+        <SourceItemList
+          provider={data.provider}
+          teamId={teamId}
+          items={data.items}
+          selectedKeys={selected}
+          onSelectionChange={localSet}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function buildStatusLine(data: ConnectionCardData, selectedCount: number): string {
+  if (data.suspended === true) return 'Suspended — indexing paused';
+  const indexing = data.items.filter((it) => it.status === 'indexing');
+  if (indexing.length > 0) {
+    const done = indexing.reduce((s, it) => s + (it.count ?? 0), 0);
+    const total = indexing.reduce((s, it) => s + (it.total ?? 0), 0);
+    return total > 0 ? `Connected · Indexing ${done.toLocaleString()}/${total.toLocaleString()}` : 'Connected · Indexing…';
+  }
+  const indexed = data.items
+    .filter((it) => it.status !== null && it.status !== 'removed')
+    .reduce((s, it) => s + (it.count ?? 0), 0);
+  const noun = data.provider === 'github' ? 'files' : data.provider === 'trello' ? 'cards' : data.provider === 'jira' ? 'issues' : 'pages';
+  if (indexed > 0) return `Connected · ${indexed.toLocaleString()} ${noun} indexed`;
+  return `Connected · ${selectedCount} selected`;
+}
+
+function MasterToggle({
+  checked,
+  partial,
+  disabled,
+  onChange,
+}: {
+  checked: boolean;
+  partial: boolean;
+  disabled: boolean;
+  onChange: () => void;
+}): ReactElement {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label="Select all items for this team"
+      disabled={disabled}
+      onClick={onChange}
+      className={`relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors ${
+        checked ? 'bg-accent' : partial ? 'bg-accent/40' : 'bg-border'
+      } ${disabled ? 'cursor-default opacity-50' : 'cursor-pointer'}`}
+    >
+      <span
+        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-[18px]' : partial ? 'translate-x-[9px]' : 'translate-x-0.5'
+        }`}
+      />
+    </button>
+  );
+}
+
+function KebabIcon(): ReactElement {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="12" cy="5" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="12" cy="19" r="1.5" />
+    </svg>
+  );
+}
+
+function GearIcon(): ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ up }: { up: boolean }): ReactElement {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: up ? 'rotate(180deg)' : undefined }}>
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
