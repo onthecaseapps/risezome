@@ -10,6 +10,12 @@ vi.mock('../app/(authed)/_components/switch-team-action', () => ({
   switchTeam: (formData: FormData) => switchTeam(formData),
 }));
 
+// The breadcrumb's page segment reads the active route via usePathname.
+let mockPathname = '/captures';
+vi.mock('next/navigation', () => ({
+  usePathname: () => mockPathname,
+}));
+
 import { TeamSwitcher } from '../app/(authed)/_components/team-switcher';
 import { UserAvatarMenu } from '../app/(authed)/_components/user-avatar-menu';
 
@@ -19,6 +25,7 @@ const TEAMS = [
 ];
 
 beforeEach(() => {
+  mockPathname = '/captures'; // reset the breadcrumb's page route per test
   // jsdom has no matchMedia; the theme-cycle effect reads it. Report "light".
   vi.stubGlobal(
     'matchMedia',
@@ -55,6 +62,23 @@ describe('TeamSwitcher (U6)', () => {
     expect(screen.getByText('#platform')).toBeInTheDocument();
     // A single team still has nothing to switch between.
     expect(screen.queryByRole('menuitemradio')).not.toBeInTheDocument();
+  });
+
+  it('renders the current page as a third segment: Org / team / page', () => {
+    mockPathname = '/teams';
+    render(<TeamSwitcher orgName="Acme" currentTeamId="t1" teams={TEAMS} />);
+    expect(screen.getByText('Acme')).toBeInTheDocument(); // org
+    expect(screen.getByText('#platform')).toBeInTheDocument(); // team (dropdown trigger)
+    expect(screen.getByText('Teams & members')).toBeInTheDocument(); // page
+  });
+
+  it('omits the page segment on an unmapped route', () => {
+    mockPathname = '/some/unmapped/route';
+    render(<TeamSwitcher orgName="Acme" currentTeamId={null} teams={[]} />);
+    expect(screen.getByText('Acme')).toBeInTheDocument();
+    expect(screen.getByText('All meetings')).toBeInTheDocument();
+    // Only org + team — no third segment for an unknown route.
+    expect(screen.queryByText('Captures')).not.toBeInTheDocument();
   });
 
   it('lists the user teams plus a "My meetings" entry when there are 2+', () => {

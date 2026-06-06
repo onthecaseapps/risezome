@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type ReactElement } from 'react';
+import { usePathname } from 'next/navigation';
 import { switchTeam } from './switch-team-action';
 
 export interface TeamOption {
@@ -10,15 +11,18 @@ export interface TeamOption {
 }
 
 /**
- * Top-bar breadcrumb + team-lens switcher: "OrgName / #team-slug" (or
- * "OrgName / All meetings" when no team is selected). Clicking opens a menu of
- * the user's teams plus a "My meetings" entry that clears the lens. Selecting an
- * entry calls the {@link switchTeam} server action (sets the team cookie) and
- * refreshes via the action's revalidate.
+ * Top-bar breadcrumb: "OrgName / {team} / {page}".
+ *   - OrgName  — static (the workspace brand).
+ *   - team     — the team-lens segment. With 2+ teams it's a clickable dropdown
+ *                (the user's teams + a "My meetings" entry that clears the lens);
+ *                with 0/1 teams it's static text. Selecting a team calls the
+ *                {@link switchTeam} server action (sets the team cookie) and
+ *                refreshes via the action's revalidate. Shows "All meetings" when
+ *                no team lens is selected.
+ *   - page     — the current page, derived from the pathname. Omitted on routes
+ *                with no mapped label (a safe fallback → just "Org / team").
  *
- * With 0 or 1 teams there is nothing to switch between, so we render the
- * breadcrumb as plain text with no interactive dropdown. Uses the same
- * native-`<details>` disclosure + styling the org switcher used.
+ * Clicking the TEAM segment (not the org) opens the switcher.
  */
 export function TeamSwitcher({
   orgName,
@@ -31,86 +35,124 @@ export function TeamSwitcher({
   teams: TeamOption[];
 }): ReactElement {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+  const pageLabel = pageLabelFromPath(pathname);
   const current = teams.find((t) => t.id === currentTeamId) ?? null;
-  const crumb = current !== null ? `#${current.slug}` : 'All meetings';
-
-  // Nothing to switch between: render the breadcrumb as static text.
-  if (teams.length <= 1) {
-    return (
-      <div className="flex min-w-0 items-center gap-1.5 text-sm">
-        <span className="truncate font-medium text-fg">{orgName}</span>
-        <span aria-hidden="true" className="text-muted">
-          /
-        </span>
-        <span className="truncate text-muted">{crumb}</span>
-      </div>
-    );
-  }
+  const teamCrumb = current !== null ? `#${current.slug}` : 'All meetings';
+  const hasSwitcher = teams.length > 1;
 
   return (
-    <details
-      open={open}
-      onToggle={(e) => setOpen(e.currentTarget.open)}
-      className="relative min-w-0"
-    >
-      <summary className="flex min-w-0 cursor-pointer list-none items-center gap-1.5 rounded-md px-2 py-1 text-sm transition-colors hover:bg-accent-soft/50">
-        <span className="truncate font-medium text-fg">{orgName}</span>
-        <span aria-hidden="true" className="text-muted">
-          /
-        </span>
-        <span className="truncate text-muted">{crumb}</span>
-        <ChevronDown />
-      </summary>
-      <div
-        role="menu"
-        className="absolute left-0 z-20 mt-1 min-w-[220px] overflow-hidden rounded-md border border-border bg-card shadow-lg"
-      >
-        <ul className="max-h-72 overflow-y-auto py-1">
-          <li>
-            <form action={switchTeam}>
-              <input type="hidden" name="teamId" value="all" />
-              <button
-                type="submit"
-                role="menuitemradio"
-                aria-checked={currentTeamId === null}
-                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent-soft/50"
-              >
-                <span className="truncate">My meetings</span>
-                {currentTeamId === null && (
-                  <span aria-hidden="true" className="text-xs text-accent">
-                    ✓
-                  </span>
-                )}
-              </button>
-            </form>
-          </li>
-          <li className="my-1 border-t border-border" aria-hidden="true" />
-          {teams.map((team) => (
-            <li key={team.id}>
-              <form action={switchTeam}>
-                <input type="hidden" name="teamId" value={team.id} />
-                <button
-                  type="submit"
-                  role="menuitemradio"
-                  aria-checked={team.id === currentTeamId}
-                  className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent-soft/50"
-                >
-                  <span className="truncate">
-                    <span className="text-muted">#</span>
-                    {team.slug}
-                  </span>
-                  {team.id === currentTeamId && (
-                    <span aria-hidden="true" className="text-xs text-accent">
-                      ✓
-                    </span>
-                  )}
-                </button>
-              </form>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </details>
+    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
+      <span className="truncate font-medium text-fg">{orgName}</span>
+      <Sep />
+
+      {hasSwitcher ? (
+        <details
+          open={open}
+          onToggle={(e) => setOpen(e.currentTarget.open)}
+          className="relative min-w-0"
+        >
+          <summary className="flex min-w-0 cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-sm text-muted transition-colors hover:bg-accent-soft/50 hover:text-fg">
+            <span className="truncate">{teamCrumb}</span>
+            <ChevronDown />
+          </summary>
+          <div
+            role="menu"
+            className="absolute left-0 z-20 mt-1 min-w-[220px] overflow-hidden rounded-md border border-border bg-card shadow-lg"
+          >
+            <ul className="max-h-72 overflow-y-auto py-1">
+              <li>
+                <form action={switchTeam}>
+                  <input type="hidden" name="teamId" value="all" />
+                  <button
+                    type="submit"
+                    role="menuitemradio"
+                    aria-checked={currentTeamId === null}
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent-soft/50"
+                  >
+                    <span className="truncate">My meetings</span>
+                    {currentTeamId === null && (
+                      <span aria-hidden="true" className="text-xs text-accent">
+                        ✓
+                      </span>
+                    )}
+                  </button>
+                </form>
+              </li>
+              <li className="my-1 border-t border-border" aria-hidden="true" />
+              {teams.map((team) => (
+                <li key={team.id}>
+                  <form action={switchTeam}>
+                    <input type="hidden" name="teamId" value={team.id} />
+                    <button
+                      type="submit"
+                      role="menuitemradio"
+                      aria-checked={team.id === currentTeamId}
+                      className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent-soft/50"
+                    >
+                      <span className="truncate">
+                        <span className="text-muted">#</span>
+                        {team.slug}
+                      </span>
+                      {team.id === currentTeamId && (
+                        <span aria-hidden="true" className="text-xs text-accent">
+                          ✓
+                        </span>
+                      )}
+                    </button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </details>
+      ) : (
+        <span className="truncate text-muted">{teamCrumb}</span>
+      )}
+
+      {pageLabel !== null && (
+        <>
+          <Sep />
+          <span aria-current="page" className="truncate text-fg">
+            {pageLabel}
+          </span>
+        </>
+      )}
+    </nav>
+  );
+}
+
+/**
+ * Map the active pathname to a page label for the breadcrumb's last segment.
+ * Ordered most-specific-first; returns null for unmapped routes (segment hidden).
+ */
+function pageLabelFromPath(pathname: string): string | null {
+  const routes: [prefix: string, label: string][] = [
+    ['/upcoming', 'Upcoming'],
+    ['/meetings/live', 'Live meeting'],
+    ['/meetings', 'Meeting'],
+    ['/captures', 'Captures'],
+    ['/gaps', 'Knowledge gaps'],
+    ['/sources', 'Sources'],
+    ['/teams', 'Teams & members'],
+    ['/members', 'Teams & members'],
+    ['/settings', 'Settings'],
+    ['/whats-new', "What's new"],
+    ['/debug/live-mic', 'Live-mic debug'],
+    ['/debug/ask', 'Retrieval probe'],
+    ['/debug/eval', 'Corpus eval'],
+  ];
+  for (const [prefix, label] of routes) {
+    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) return label;
+  }
+  return null;
+}
+
+function Sep(): ReactElement {
+  return (
+    <span aria-hidden="true" className="shrink-0 text-muted">
+      /
+    </span>
   );
 }
 
