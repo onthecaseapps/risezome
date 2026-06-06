@@ -13,9 +13,11 @@ export interface TeamOption {
 /**
  * Top-bar breadcrumb: "OrgName / {team} / {page}".
  *   - OrgName  — static (the workspace brand).
- *   - team     — the team-lens segment. With 2+ teams it's a clickable dropdown
- *                (the user's teams + a "My meetings" entry that clears the lens);
- *                with 0/1 teams it's static text. Selecting a team calls the
+ *   - team     — the team-lens segment. With ≥1 team it's a clickable dropdown
+ *                (the user's teams + a "My meetings" entry that clears the lens) —
+ *                even a single team is worth a switcher, since the lens toggles
+ *                between that team and "My meetings". Only a team-less user gets
+ *                static text. Selecting a team calls the
  *                {@link switchTeam} server action (sets the team cookie) and
  *                refreshes via the action's revalidate. Shows "All meetings" when
  *                no team lens is selected.
@@ -39,7 +41,9 @@ export function TeamSwitcher({
   const pageLabel = pageLabelFromPath(pathname);
   const current = teams.find((t) => t.id === currentTeamId) ?? null;
   const teamCrumb = current !== null ? `#${current.slug}` : 'All meetings';
-  const hasSwitcher = teams.length > 1;
+  // Show the switcher whenever there's at least one team: the lens toggles
+  // between "My meetings" and the team(s), so even one team is switchable.
+  const hasSwitcher = teams.length >= 1;
 
   return (
     <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">

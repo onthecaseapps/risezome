@@ -49,19 +49,19 @@ afterEach(() => {
 });
 
 describe('TeamSwitcher (U6)', () => {
-  it('renders a static breadcrumb with no dropdown for 0 or 1 teams', () => {
-    const { rerender } = render(
-      <TeamSwitcher orgName="Acme" currentTeamId={null} teams={[]} />,
-    );
+  it('renders a static breadcrumb with no dropdown when the user has NO teams', () => {
+    render(<TeamSwitcher orgName="Acme" currentTeamId={null} teams={[]} />);
     expect(screen.getByText('Acme')).toBeInTheDocument();
     expect(screen.getByText('All meetings')).toBeInTheDocument();
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
 
-    rerender(<TeamSwitcher orgName="Acme" currentTeamId="t1" teams={[TEAMS[0]!]} />);
-    expect(screen.getByText('Acme')).toBeInTheDocument();
-    expect(screen.getByText('#platform')).toBeInTheDocument();
-    // A single team still has nothing to switch between.
-    expect(screen.queryByRole('menuitemradio')).not.toBeInTheDocument();
+  it('shows the switcher dropdown even with a SINGLE team (My meetings + the team)', () => {
+    render(<TeamSwitcher orgName="Acme" currentTeamId="t1" teams={[TEAMS[0]!]} />);
+    expect(screen.getByText('#platform')).toBeInTheDocument(); // breadcrumb crumb
+    const menu = screen.getByRole('menu');
+    expect(within(menu).getByText('My meetings')).toBeInTheDocument();
+    expect(within(menu).getByText('platform')).toBeInTheDocument(); // the one team is still switchable
   });
 
   it('renders the current page as a third segment: Org / team / page', () => {
