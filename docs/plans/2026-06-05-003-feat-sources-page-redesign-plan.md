@@ -1,7 +1,7 @@
 ---
 title: "feat: Sources page redesign — per-team configuration with multi-connection cards"
 type: feat
-status: active
+status: completed
 date: 2026-06-05
 ---
 
