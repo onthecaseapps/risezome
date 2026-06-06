@@ -1,16 +1,29 @@
 import type { ReactElement } from 'react';
+import { TrelloMark, JiraMark, ConfluenceMark } from './_source-icons';
 
 /**
- * "Add a source" section (U5). Two affordances:
- *   - "Add another GitHub org" → the existing install initiation (/sources/install),
- *     which mints a per-org state token and 302s to GitHub. Re-installing on another
- *     org just creates another github_installations row (KTD4) — no new backend.
+ * "Add a source" section (U5). Lists the connect affordances for providers that
+ * are not already connected (a connected Trello/Atlassian shows as a card above,
+ * so it drops out of this list); GitHub and Slack always appear:
+ *   - "Add another GitHub org" → /sources/install (always — GitHub is one-to-many,
+ *     KTD4). Re-installing on another org just creates another github_installations
+ *     row, no new backend.
+ *   - "Connect Trello" → /sources/trello/connect (only when not yet connected).
+ *   - "Connect Jira" / "Connect Confluence" → /sources/atlassian/connect (only when
+ *     Atlassian is not yet connected; one OAuth grants both, hence two rows sharing
+ *     the same connect URL — mirrors the old Connectors grid).
  *   - "Connect Slack" → a disabled "coming soon" stub (KTD6); no Slack ingestion.
  *
  * Plus the footer note: GitHub supports multiple org connections; Jira, Trello and
  * Slack connect one workspace each.
  */
-export function AddSourceSection(): ReactElement {
+export function AddSourceSection({
+  trelloConnected,
+  atlassianConnected,
+}: {
+  trelloConnected: boolean;
+  atlassianConnected: boolean;
+}): ReactElement {
   return (
     <div className="mt-10">
       <div className="mb-3 text-xs font-medium uppercase tracking-wider text-muted">Add a source</div>
@@ -19,15 +32,32 @@ export function AddSourceSection(): ReactElement {
           icon={<GithubMark className="h-5 w-5 text-fg" />}
           name="GitHub"
           description="Connect another GitHub org to index its repositories."
-          action={
-            <a
-              href="/sources/install"
-              className="rounded-lg border border-border bg-bg px-3 py-1.5 text-sm font-medium text-fg transition-colors hover:border-accent/40"
-            >
-              + Add another org
-            </a>
-          }
+          action={<ConnectLink href="/sources/install" label="+ Add another org" />}
         />
+        {!trelloConnected && (
+          <AddRow
+            icon={<TrelloMark />}
+            name="Trello"
+            description="Connect a Trello workspace to index its boards and cards."
+            action={<ConnectLink href="/sources/trello/connect" label="+ Connect Trello" />}
+          />
+        )}
+        {!atlassianConnected && (
+          <>
+            <AddRow
+              icon={<JiraMark />}
+              name="Jira"
+              description="Connect an Atlassian site to index its Jira projects."
+              action={<ConnectLink href="/sources/atlassian/connect" label="+ Connect Jira" />}
+            />
+            <AddRow
+              icon={<ConfluenceMark />}
+              name="Confluence"
+              description="Connect an Atlassian site to index its Confluence spaces."
+              action={<ConnectLink href="/sources/atlassian/connect" label="+ Connect Confluence" />}
+            />
+          </>
+        )}
         <AddRow
           icon={<SlackMark />}
           name="Slack"
@@ -53,6 +83,17 @@ export function AddSourceSection(): ReactElement {
         </span>
       </p>
     </div>
+  );
+}
+
+function ConnectLink({ href, label }: { href: string; label: string }): ReactElement {
+  return (
+    <a
+      href={href}
+      className="rounded-lg border border-border bg-bg px-3 py-1.5 text-sm font-medium text-fg transition-colors hover:border-accent/40"
+    >
+      {label}
+    </a>
   );
 }
 

@@ -262,7 +262,10 @@ export default async function SourcesPage(props: {
       ) : cards.length === 0 ? (
         <>
           <EmptyConnectState />
-          <AddSourceSection />
+          <AddSourceSection
+            trelloConnected={trelloConnRow !== null}
+            atlassianConnected={atlassianConnRow !== null}
+          />
         </>
       ) : (
         <>
@@ -279,7 +282,10 @@ export default async function SourcesPage(props: {
               <ConnectionCard key={card.cardKey} teamId={selectedTeamId!} data={card} />
             ))}
           </div>
-          <AddSourceSection />
+          <AddSourceSection
+            trelloConnected={trelloConnRow !== null}
+            atlassianConnected={atlassianConnRow !== null}
+          />
         </>
       )}
     </div>
