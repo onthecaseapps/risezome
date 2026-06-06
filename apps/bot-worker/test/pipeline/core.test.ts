@@ -19,6 +19,7 @@ import type {
   SynthesisStartInfo,
   SynthesisDoneInfo,
   SynthesisRefusalInfo,
+  SynthesisRetractInfo,
   SkipInfo,
   HybridSearchFn,
 } from '../../src/pipeline/contract.js';
@@ -68,6 +69,37 @@ function fakeSynthesizer(body: string): Synthesizer {
   };
 }
 
+/** A synthesizer that yields `body` split into the given CHUNKS (in order, so
+ *  their concatenation === body) across multiple textDelta events — exercises
+ *  the streaming path (STATUS prefix forming, incremental + sentence-buffered
+ *  deltas). */
+function chunkedSynthesizer(chunks: readonly string[]): Synthesizer {
+  return {
+    async *synthesize(_input: SynthesisInput): AsyncIterable<SynthesisChunk> {
+      const usage = { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 };
+      yield { type: 'start', synthesisId: 's', model: 'fake', usage };
+      for (const c of chunks) {
+        yield { type: 'textDelta', synthesisId: 's', delta: c };
+      }
+      yield { type: 'done', synthesisId: 's', stopReason: 'end_turn', usage };
+    },
+  };
+}
+
+/** A synthesizer that yields some chunks then THROWS mid-stream (no done). */
+function throwingSynthesizer(chunks: readonly string[]): Synthesizer {
+  return {
+    async *synthesize(_input: SynthesisInput): AsyncIterable<SynthesisChunk> {
+      const usage = { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 };
+      yield { type: 'start', synthesisId: 's', model: 'fake', usage };
+      for (const c of chunks) {
+        yield { type: 'textDelta', synthesisId: 's', delta: c };
+      }
+      throw new Error('synthesizer blew up mid-stream');
+    },
+  };
+}
+
 function skipClassifier(confidence: number): RelevanceClassifier {
   return {
     classify: vi.fn(
@@ -96,6 +128,10 @@ class RecordingSink implements PipelineSink {
   readonly deltas: { synthesisId: string; delta: string }[] = [];
   readonly dones: SynthesisDoneInfo[] = [];
   readonly refusals: SynthesisRefusalInfo[] = [];
+  readonly retracts: SynthesisRetractInfo[] = [];
+  /** Ordered log of every synthesis lifecycle call, so a test can assert the
+   *  start→delta→done|retract SEQUENCE (e.g. deltas fired BEFORE done). */
+  readonly seq: ('start' | 'delta' | 'done' | 'refusal' | 'retract')[] = [];
   #seq = 0;
 
   emitCard(card: PipelineCard): Promise<EmittedCard | null> {
@@ -105,15 +141,23 @@ class RecordingSink implements PipelineSink {
   }
   synthesisStart(info: SynthesisStartInfo): void {
     this.starts.push(info);
+    this.seq.push('start');
   }
   synthesisDelta(synthesisId: string, delta: string): void {
     this.deltas.push({ synthesisId, delta });
+    this.seq.push('delta');
   }
   synthesisDone(info: SynthesisDoneInfo): void {
     this.dones.push(info);
+    this.seq.push('done');
   }
   synthesisRefusal(info: SynthesisRefusalInfo): void {
     this.refusals.push(info);
+    this.seq.push('refusal');
+  }
+  synthesisRetract(info: SynthesisRetractInfo): void {
+    this.retracts.push(info);
+    this.seq.push('retract');
   }
   recordMiss(miss: MissRecord): void {
     this.misses.push(miss);
@@ -360,7 +404,7 @@ describe('runPipeline — zero hits', () => {
   });
 });
 
-describe('runPipeline — synthesis grounded-or-nothing', () => {
+describe('runPipeline — synthesis grounded-or-nothing (U3 streaming)', () => {
   it('grounded answer → synthesisStart/Delta/Done, no miss', async () => {
     const body = 'STATUS: answer\nThe answer is [1: "forty two"].';
     const { deps } = makeDeps({ synthesizer: fakeSynthesizer(body) });
@@ -368,37 +412,121 @@ describe('runPipeline — synthesis grounded-or-nothing', () => {
     await runPipeline(input(), deps, sink);
 
     expect(sink.starts).toHaveLength(1);
-    expect(sink.deltas).toHaveLength(1);
+    expect(sink.deltas.length).toBeGreaterThanOrEqual(1);
     expect(sink.dones).toHaveLength(1);
     expect(sink.dones[0]!.citations).toHaveLength(1);
     expect(sink.dones[0]!.citations[0]!.cardId).toBe('card_1');
     expect(sink.refusals).toHaveLength(0);
+    expect(sink.retracts).toHaveLength(0);
     expect(sink.misses).toHaveLength(0);
   });
 
-  it('no_relevant_context → synthesisRefusal(refusal) + recordMiss(refusal)', async () => {
-    const body = 'STATUS: no_relevant_context\nNothing here.';
-    const { deps } = makeDeps({ synthesizer: fakeSynthesizer(body) });
+  it('GROUNDED answer STREAMS: start + ≥1 delta fire BEFORE done; final text === body', async () => {
+    // The source text is "The answer is forty two." — two verbatim-quotable
+    // spans across two sentences, delivered in multiple chunks so the STATUS
+    // prefix forms across deltas and prose streams incrementally.
+    const chunks = [
+      'STATUS: an', // prefix still forming — must NOT stream
+      'swer\nThe answer is forty [1: "forty two"]. ',
+      'It is the answer [1: "The answer is"].',
+    ];
+    const { deps } = makeDeps({ synthesizer: chunkedSynthesizer(chunks) });
     const sink = new RecordingSink();
     await runPipeline(input(), deps, sink);
 
+    // Streamed: start + at least one delta fired, and the FIRST done is the
+    // LAST event — deltas precede done.
+    expect(sink.starts).toHaveLength(1);
+    expect(sink.deltas.length).toBeGreaterThanOrEqual(1);
+    expect(sink.dones).toHaveLength(1);
+    expect(sink.retracts).toHaveLength(0);
+    expect(sink.refusals).toHaveLength(0);
+    // Sequence: a start, ≥1 delta, then done at the very end.
+    expect(sink.seq[0]).toBe('start');
+    expect(sink.seq[sink.seq.length - 1]).toBe('done');
+    expect(sink.seq.indexOf('delta')).toBeLessThan(sink.seq.lastIndexOf('done'));
+    // Multi-chunk stream produced incremental deltas (the first sentence flushed
+    // before the second arrived).
+    expect(sink.deltas.length).toBeGreaterThanOrEqual(2);
+    // The concatenation of all deltas equals the final body (page reconciles).
+    const streamed = sink.deltas.map((d) => d.delta).join('');
+    expect(streamed).toBe(sink.dones[0]!.text);
+    // No part of the STATUS prefix ever leaked into a delta.
+    expect(streamed.startsWith('STATUS')).toBe(false);
+  });
+
+  it('REFUSAL (STATUS_NO_CONTEXT) is NEVER streamed: no start, no delta', async () => {
+    // Deliver the refusal across chunks so a naive streamer would have leaked.
+    const chunks = ['STATUS: no_rele', 'vant_context\nNothing here at all.'];
+    const { deps } = makeDeps({ synthesizer: chunkedSynthesizer(chunks) });
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+
+    // Grounded-or-nothing for the common case: a refusal reveals NOTHING.
+    expect(sink.starts).toHaveLength(0);
+    expect(sink.deltas).toHaveLength(0);
     expect(sink.dones).toHaveLength(0);
+    expect(sink.retracts).toHaveLength(0);
     expect(sink.refusals).toHaveLength(1);
     expect(sink.refusals[0]!.reason).toBe('refusal');
     expect(sink.misses.map((m) => m.reason)).toEqual(['refusal']);
   });
 
-  it('ungrounded (0 surviving citations) → synthesisRefusal(ungrounded) + recordMiss(ungrounded)', async () => {
-    // An answer with a quote NOT present in the source → dropped → 0 survivors.
-    const body = 'STATUS: answer\nThe answer is [1: "a fabricated quote nowhere in source"].';
+  it('UNGROUNDED (STATUS_ANSWER, citations fail) STREAMS then RETRACTS + recordMiss(ungrounded)', async () => {
+    // A STATUS: answer whose quote is NOT in the source → streamed (prose was
+    // revealed), then dropped → 0 survivors → retract clears the streamed answer.
+    const body = 'STATUS: answer\nThe answer is a fabricated quote nowhere [1: "a fabricated quote nowhere in source"].';
     const { deps } = makeDeps({ synthesizer: fakeSynthesizer(body) });
     const sink = new RecordingSink();
     await runPipeline(input(), deps, sink);
 
+    // Prose WAS streamed (start + delta), then RETRACTED — not a plain refusal.
+    expect(sink.starts).toHaveLength(1);
+    expect(sink.deltas.length).toBeGreaterThanOrEqual(1);
     expect(sink.dones).toHaveLength(0);
-    expect(sink.refusals).toHaveLength(1);
-    expect(sink.refusals[0]!.reason).toBe('ungrounded');
+    expect(sink.refusals).toHaveLength(0);
+    expect(sink.retracts).toHaveLength(1);
+    expect(sink.retracts[0]!.reason).toBe('ungrounded');
     expect(sink.misses.map((m) => m.reason)).toEqual(['ungrounded']);
+    // Retract is the terminal event — nothing grounded persists after it.
+    expect(sink.seq[sink.seq.length - 1]).toBe('retract');
+  });
+
+  it('SENTENCE-BOUNDARY buffering: deltas break on sentence boundaries, not every token', async () => {
+    // Three sentences delivered token-by-token; the streamer must NOT emit a
+    // delta per token — it flushes only when a boundary (. ! ?) appears.
+    const prose = 'The answer is forty two. It is the answer. Truly the answer [1: "forty two"].';
+    const chunks = ['STATUS: answer\n', ...prose.split(' ').map((w) => `${w} `)];
+    const { deps } = makeDeps({ synthesizer: chunkedSynthesizer(chunks) });
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+
+    expect(sink.starts).toHaveLength(1);
+    expect(sink.dones).toHaveLength(1);
+    // Far fewer deltas than tokens (~16 words) — proof of sentence buffering,
+    // not per-token emission. At most one delta per sentence boundary (+ tail).
+    expect(sink.deltas.length).toBeLessThanOrEqual(4);
+    expect(sink.deltas.length).toBeGreaterThanOrEqual(1);
+    // Every NON-final delta ends at a sentence terminator (boundary-aligned).
+    for (let i = 0; i < sink.deltas.length - 1; i += 1) {
+      expect(/[.!?\n]\s?$/.test(sink.deltas[i]!.delta)).toBe(true);
+    }
+  });
+
+  it('SYNTHESIZER ERROR mid-stream → no partial answer left standing (retract + miss)', async () => {
+    // Stream a full sentence (so prose is revealed), then throw before done.
+    const chunks = ['STATUS: answer\n', 'The answer is forty two. '];
+    const { deps } = makeDeps({ synthesizer: throwingSynthesizer(chunks) });
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+
+    // Prose was streamed, the stream errored before the grounding gate ran, so
+    // the revealed answer is retracted — nothing ungrounded stands.
+    expect(sink.starts).toHaveLength(1);
+    expect(sink.deltas.length).toBeGreaterThanOrEqual(1);
+    expect(sink.dones).toHaveLength(0);
+    expect(sink.retracts).toHaveLength(1);
+    expect(sink.misses.map((m) => m.reason)).toEqual(['refusal']);
   });
 });
 

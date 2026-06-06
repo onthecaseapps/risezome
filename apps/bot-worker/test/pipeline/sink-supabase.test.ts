@@ -6,6 +6,7 @@ import type {
   PipelineCard,
   SynthesisDoneInfo,
   SynthesisRefusalInfo,
+  SynthesisRetractInfo,
 } from '../../src/pipeline/contract.js';
 
 /**
@@ -296,6 +297,54 @@ describe('synthesis — flash-fix (the sink only persists once the core grounds)
     expect(misses[0]?.reason).toBe('ungrounded');
     // onSynthesisRequested fired (demand signal) on the refusal terminal.
     expect(requested).toHaveLength(1);
+  });
+
+  it('synthesisRetract UPDATES the existing running row to retracted + broadcasts retraction', async () => {
+    const { db, writes } = recordingDb();
+    const misses: MissRecord[] = [];
+    const sink = createSupabaseSink({
+      db,
+      meetingId: MEETING,
+      orgId: ORG,
+      liveCardByDocId: new Map(),
+      logger: noopLogger,
+      onMiss: (m) => misses.push(m),
+    });
+
+    // The answer streamed first (running row inserted), then failed grounding.
+    sink.synthesisStart({ synthesisId: 'synth_s', sourceCardIds: ['card_1'], traceId: 'trace_s', utteranceId: 'utt_3' });
+    const retract: SynthesisRetractInfo = {
+      synthesisId: 'synth_s',
+      reason: 'ungrounded',
+      latencyMs: 55,
+      utteranceId: 'utt_3',
+      traceId: 'trace_s',
+    };
+    sink.synthesisRetract(retract);
+    sink.recordMiss({
+      verbatimQuestion: 'q?',
+      utteranceId: 'utt_3',
+      meetingId: MEETING,
+      orgId: ORG,
+      reason: 'ungrounded',
+    });
+    await vi.waitFor(() =>
+      expect(persistCalls.some((c) => c.type === 'synthesisRetracted')).toBe(true),
+    );
+
+    // The retract is an UPDATE to `retracted` (NOT an insert of a new row).
+    const update = writes.find((w) => w.table === 'syntheses' && w.op === 'update');
+    expect(update?.row?.status).toBe('retracted');
+    expect(update?.row?.retracted_reason).toBe('ungrounded');
+    expect(update?.eq.synthesis_id).toBe('synth_s');
+    expect(update?.eq.org_id).toBe(ORG); // org-scoped
+    // Exactly one syntheses INSERT happened — the running row from start; the
+    // retract did NOT insert a second row (contrast synthesisRefusal).
+    const inserts = writes.filter((w) => w.table === 'syntheses' && w.op === 'insert');
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]?.row?.status).toBe('running');
+    expect(misses).toHaveLength(1);
+    expect(misses[0]?.reason).toBe('ungrounded');
   });
 
   it('onSynthesisRequested fires exactly once per synthesis (on the first terminal)', async () => {

@@ -13,8 +13,11 @@
 //                        the core emits on grounded-or-nothing; flash-fix).
 //   synthesisDone      → update the row to `done` (encrypted body) + broadcast
 //                        `synthesisDone`, then close-the-loop onGroundedAnswer.
-//   synthesisRefusal   → insert the row as `retracted` (refusal/ungrounded) +
-//                        broadcast `synthesisRetracted`.
+//   synthesisRefusal   → insert the row as `retracted` (refusal/ungrounded that
+//                        never streamed) + broadcast `synthesisRetracted`.
+//   synthesisRetract   → UPDATE the existing `running` row to `retracted` (an
+//                        answer that DID stream then failed grounding) +
+//                        broadcast `synthesisRetracted` so the page clears it.
 //   recordMiss         → onMiss (knowledge-gap capture).
 //   recordSkip         → log only.
 //   recordTrace        → INTENTIONALLY ABSENT: prod = no trace, keep it fast
@@ -37,6 +40,7 @@ import type {
   SynthesisStartInfo,
   SynthesisDoneInfo,
   SynthesisRefusalInfo,
+  SynthesisRetractInfo,
   SkipInfo,
   PipelineLogger,
 } from './contract.js';
@@ -300,6 +304,47 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
           { synthesisId: info.synthesisId, meetingId, reason: info.reason, latencyMs: info.latencyMs },
           info.reason === 'refusal' ? 'synthesis.refusal' : 'synthesis.ungrounded',
         );
+      })();
+    },
+
+    synthesisRetract(info: SynthesisRetractInfo): void {
+      fireRequestedOnce(info.synthesisId);
+      // U3/KTD3: the answer ALREADY streamed (a `running` row exists from
+      // synthesisStart), so UPDATE it to `retracted` rather than inserting a
+      // new row, then broadcast the retraction so the live page clears the
+      // streamed prose. This is the rare "STATUS_ANSWER that failed citation
+      // verification" path; a STATUS_NO_CONTEXT refusal never streams and goes
+      // through synthesisRefusal instead.
+      void (async () => {
+        const updateResult = await db
+          .from('syntheses')
+          .update({
+            status: 'retracted',
+            retracted_at: new Date().toISOString(),
+            retracted_reason: info.reason,
+            latency_ms: info.latencyMs,
+          })
+          .eq('synthesis_id', info.synthesisId)
+          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+        if (updateResult.error !== null) {
+          logger.warn(
+            { err: updateResult.error, synthesisId: info.synthesisId },
+            'synthesis.retract.update.failed',
+          );
+          // Still broadcast the retraction so the live page collapses the panel.
+        }
+        await persistAndBroadcast(db, {
+          meetingId,
+          orgId,
+          type: 'synthesisRetracted',
+          payload: { retracted: { synthesisId: info.synthesisId, reason: 'source-retracted' } },
+        });
+        logger.info(
+          { synthesisId: info.synthesisId, meetingId, reason: info.reason, latencyMs: info.latencyMs },
+          'synthesis.retracted',
+        );
+        startedCardIds.delete(info.synthesisId);
+        startedTraceIds.delete(info.synthesisId);
       })();
     },
 

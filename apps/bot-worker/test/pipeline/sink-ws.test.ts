@@ -16,6 +16,7 @@ import type {
   SynthesisStartInfo,
   SynthesisDoneInfo,
   SynthesisRefusalInfo,
+  SynthesisRetractInfo,
   SkipInfo,
   HybridSearchFn,
 } from '../../src/pipeline/contract.js';
@@ -190,6 +191,23 @@ describe('synthesis events', () => {
     expect(String(ev?.accumulatedText)).toMatch(/ungrounded/i);
     expect(ev?.citations).toEqual([]);
   });
+
+  it('synthesisRetract maps to a synthesisRetract event on the handler id (clears the streamed answer)', () => {
+    const { socket, sent } = recordingSocket();
+    const sink = createWsSink({ socket, synthesisId: 'synth_handler', logger: noopLogger });
+    const retract: SynthesisRetractInfo = {
+      synthesisId: 'synth_core',
+      reason: 'ungrounded',
+      latencyMs: 30,
+      utteranceId: 'utt_1',
+      traceId: 'trace_1',
+    };
+    sink.synthesisRetract(retract);
+    const ev = sent.find((e) => e.type === 'synthesisRetract');
+    expect(ev).toBeDefined();
+    // Rewritten onto the handler's id so the page's abort/clear logic matches.
+    expect(ev?.synthesisId).toBe('synth_handler');
+  });
 });
 
 describe('recordSkillResult → `skillResult` event', () => {
@@ -317,6 +335,7 @@ class RecordingSink implements PipelineSink {
   synthesisDelta(_id: string, _delta: string): void {}
   synthesisDone(_info: SynthesisDoneInfo): void {}
   synthesisRefusal(_info: SynthesisRefusalInfo): void {}
+  synthesisRetract(_info: SynthesisRetractInfo): void {}
   recordMiss(_miss: MissRecord): void {}
   recordSkip(info: SkipInfo): void {
     this.skips.push(info);

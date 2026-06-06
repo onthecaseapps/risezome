@@ -263,6 +263,41 @@ export interface SynthesisDoneInfo {
   readonly citationDetails?: readonly CitationDetail[];
 }
 
+/**
+ * A synthesis that WAS streamed (synthesisStart + deltas already fired) but
+ * turned out ungrounded at the `done` gate — so the already-revealed answer
+ * must be CLEARED from the live page (U3 / KTD3).
+ *
+ * Contrast with `SynthesisRefusalInfo`: a refusal/ungrounded answer that NEVER
+ * streamed (the common grounded-or-nothing case) is `synthesisRefusal`, which
+ * INSERTS a fresh `retracted` row — there is no running row to clear. A
+ * `synthesisRetract` instead UPDATES the existing `running` row to `retracted`
+ * and broadcasts a retraction so the live page removes the streamed prose. It
+ * is only reached for the rare "STATUS_ANSWER whose citations fail verification"
+ * path; a STATUS_NO_CONTEXT refusal is never streamed, so it never retracts.
+ */
+export interface SynthesisRetractInfo {
+  readonly synthesisId: string;
+  /** Why the streamed answer was pulled. Today always 'ungrounded' (an answer
+   *  with zero surviving citations); kept as a field to mirror the refusal
+   *  reason shape and leave room for a defensive 'refusal' retract. */
+  readonly reason: 'ungrounded' | 'refusal';
+  readonly latencyMs: number;
+  readonly utteranceId: string;
+  /** Per-run trace id (mirrors SynthesisRefusalInfo). */
+  readonly traceId: string;
+  // ── Eval-only intermediates (ignored by the supabase + ws sinks) ──
+  /** Raw synthesizer output (with the STATUS line) — the suppressed body. */
+  readonly rawSynthesis?: string;
+  /** The parsed answer body (STATUS line stripped) that was streamed then
+   *  retracted. */
+  readonly answer?: string;
+  /** The model's refusal reason string, when present. */
+  readonly refusalReason?: string | null;
+  /** FULL per-citation verification detail (every status). */
+  readonly citationDetails?: readonly CitationDetail[];
+}
+
 /** A refused or suppressed (ungrounded) synthesis. */
 export interface SynthesisRefusalInfo {
   readonly synthesisId: string;
@@ -331,6 +366,11 @@ export interface PipelineSink {
   synthesisDelta(synthesisId: string, delta: string): void;
   synthesisDone(info: SynthesisDoneInfo): void;
   synthesisRefusal(info: SynthesisRefusalInfo): void;
+  /** Clear an answer that WAS streamed (synthesisStart + deltas fired) but
+   *  failed the grounding gate. Distinct from synthesisRefusal, which covers
+   *  the never-streamed case (KTD3): retract UPDATES the running row to
+   *  retracted + broadcasts a clear; refusal INSERTS a retracted row. */
+  synthesisRetract(info: SynthesisRetractInfo): void;
   recordMiss(miss: MissRecord): void;
   recordSkip(info: SkipInfo): void;
   /** OPTIONAL. Present ⇒ the core emits the raw executed-skill answer as a

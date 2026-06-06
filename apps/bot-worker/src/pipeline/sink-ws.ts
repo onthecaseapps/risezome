@@ -12,7 +12,10 @@
 //   synthesisDelta     → `synthesisDelta` event (the single full-body delta the
 //                        core emits on grounded-or-nothing; flash-fix).
 //   synthesisDone      → `synthesisDone` event (+ onComplete close-the-loop).
-//   synthesisRefusal   → `synthesisRefusal` event (reason → accumulatedText).
+//   synthesisRefusal   → `synthesisRefusal` event (reason → accumulatedText) —
+//                        the never-streamed refusal/ungrounded case (UI no-op).
+//   synthesisRetract   → `synthesisRetract` event — the streamed-then-ungrounded
+//                        case; the page clears the in-progress synthesis.
 //   recordMiss         → log only (the dev page has no knowledge-gap surface).
 //   recordSkip         → `retrieval-skip` event (reason carries the gate/miss
 //                        reason: `heuristic-filler` / `classifier-skip`).
@@ -37,6 +40,7 @@ import type {
   SynthesisStartInfo,
   SynthesisDoneInfo,
   SynthesisRefusalInfo,
+  SynthesisRetractInfo,
   SkipInfo,
   SkillResultInfo,
   PipelineTrace,
@@ -142,6 +146,15 @@ export function createWsSink(args: WsSinkArgs): PipelineSink {
             : 'Ungrounded: the answer had no citation matching a retrieved source, so it was suppressed.',
         citations: [],
       });
+    },
+
+    synthesisRetract(_info: SynthesisRetractInfo): void {
+      // The answer DID stream (synthesisStart + deltas reached the page), so —
+      // unlike synthesisRefusal — we must clear it. Emit a `synthesisRetract`
+      // event the debug page maps to the reducer's synthesisRetracted (drops
+      // the in-progress record). U3/KTD3 grounded-or-nothing: a streamed answer
+      // that failed the grounding gate is pulled, not left standing.
+      send(socket, { type: 'synthesisRetract', synthesisId });
     },
 
     recordMiss(miss: MissRecord): void {

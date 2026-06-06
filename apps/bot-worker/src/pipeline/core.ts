@@ -18,7 +18,7 @@
 // `if (sink.recordTrace)` (KTD4/R5).
 
 import { randomUUID } from 'node:crypto';
-import { parseSynthesisOutput, verifyCitationsDetailed } from '@risezome/engine/synthesize';
+import { parseSynthesisOutput, verifyCitationsDetailed, stripStatusPrefix } from '@risezome/engine/synthesize';
 import type { SynthesisSource, SynthesisUsage } from '@risezome/engine/synthesize';
 import { classifyRelevanceHeuristic } from '@risezome/engine/relevance';
 import type { RelevanceResult } from '@risezome/engine/relevance';
@@ -846,12 +846,43 @@ async function collectToolSource(
 }
 
 /**
- * Drive one synthesis end-to-end: consume the synthesizer, buffer the body
- * (flash-fix — nothing streamed mid-flight), then on done parse + verify
- * citations and apply grounded-or-nothing. Routes the outcome to the sink:
- *   refusal              → synthesisRefusal('refusal') + recordMiss('refusal')
- *   ungrounded (0 cites) → synthesisRefusal('ungrounded') + recordMiss('ungrounded')
- *   grounded             → synthesisStart → synthesisDelta(full) → synthesisDone
+ * Drive one synthesis end-to-end with EARLY-STREAMING + grounded-or-nothing
+ * (U3, KTD3/KTD4). The synthesizer output starts with a machine-readable STATUS
+ * prefix (`STATUS: answer` / `STATUS: no_relevant_context`), so the refuse-vs-
+ * answer decision is known BEFORE the prose. We exploit that to stream a
+ * `STATUS: answer` body to the live page as it generates, while NEVER streaming
+ * a refusal.
+ *
+ * Per textDelta we run `stripStatusPrefix(accumulated)`:
+ *   - complete === false                  → prefix still forming, keep buffering.
+ *   - complete, status 'no_relevant_context' → refusal: never stream; handled at
+ *                                           `done` on the existing refusal path.
+ *   - complete, status 'answer'           → stream: synthesisStart once, then
+ *                                           emit the NEW prose via synthesisDelta
+ *                                           at sentence/clause boundaries (KTD4 —
+ *                                           no raw per-token flicker).
+ *
+ * At `done` the EXISTING grounding gate is unchanged (parseSynthesisOutput →
+ * refusal check → verifyCitationsDetailed → rich citations). The outcome routes:
+ *   refusal              → (streamed? synthesisRetract : synthesisRefusal) +
+ *                          recordMiss('refusal')
+ *   grounded (>0 cites)  → streamed? synthesisDone (finalize) : legacy reveal
+ *                          (synthesisStart → synthesisDelta(text) → synthesisDone)
+ *   ungrounded (0 cites) → streamed? synthesisRetract (CLEAR the streamed answer)
+ *                          : synthesisRefusal — both + recordMiss('ungrounded')
+ *
+ * GROUNDED-OR-NOTHING (R1): a STATUS_NO_CONTEXT refusal never resolves to
+ * 'answer', so it never calls synthesisStart/Delta — it is never streamed. Only
+ * a STATUS_ANSWER that later fails citation verification is streamed-then-
+ * retracted. The retract clears the revealed prose; nothing ungrounded stands.
+ *
+ * CITATION MARKUP: the streamed `body` carries inline citation markers
+ * (`[N: "quote"]`); the final synthesisDone sends `parsed.text` (same source
+ * string, STATUS line stripped). The live page parses citation tokens out of the
+ * accumulated stream and reconciles to the verified citation set on done, so
+ * streaming the raw body then finalizing is intentional. (Follow-up: incremental
+ * citation-quote stripping during the stream is deferred — non-trivial and the
+ * render layer already hides the quote payload.)
  */
 async function runSynthesis(args: {
   input: PipelineInput;
@@ -870,6 +901,58 @@ async function runSynthesis(args: {
   let accumulated = '';
   let startUsage: SynthesisUsage | null = null;
 
+  // ── Streaming state (U3/KTD3) ────────────────────────────────────────────
+  // `streaming` flips true the first time the STATUS prefix resolves to
+  // 'answer' and we emit synthesisStart. `streamedLen` tracks how much of the
+  // post-prefix BODY we've already sent as deltas, so each delta carries only
+  // the NEW prose. A STATUS_NO_CONTEXT refusal never resolves to 'answer', so
+  // `streaming` stays false and nothing is ever revealed for it (grounded-or-
+  // nothing, R1).
+  let streaming = false;
+  let streamedLen = 0;
+
+  const startStreamingIfNeeded = (): void => {
+    if (streaming) return;
+    streaming = true;
+    sink.synthesisStart({
+      synthesisId,
+      sourceCardIds: surfacedCardIds,
+      traceId,
+      utteranceId: input.utteranceId,
+    });
+  };
+
+  /**
+   * Emit any NEW prose in `body` past `streamedLen`, buffered to sentence/
+   * clause boundaries (KTD4 — flush on `.`/`!`/`?`/newline, not raw tokens).
+   * `force` flushes the remaining tail unconditionally (used on `done` so the
+   * page's accumulatedText equals the full body before finalize). Returns
+   * nothing; advances `streamedLen`.
+   */
+  const flushSentences = (body: string, force: boolean): void => {
+    if (!streaming) return;
+    if (body.length <= streamedLen) return;
+    let flushTo = streamedLen;
+    if (force) {
+      flushTo = body.length;
+    } else {
+      // Longest boundary at or before the current end of `body`, after
+      // streamedLen. A boundary is a terminator (. ! ? newline) — we flush
+      // through the char after it so the punctuation rides with its sentence.
+      for (let i = body.length - 1; i >= streamedLen; i -= 1) {
+        const ch = body[i]!;
+        if (ch === '.' || ch === '!' || ch === '?' || ch === '\n') {
+          flushTo = i + 1;
+          break;
+        }
+      }
+    }
+    if (flushTo <= streamedLen) return; // no boundary yet — keep buffering
+    const delta = body.slice(streamedLen, flushTo);
+    streamedLen = flushTo;
+    sink.synthesisDelta(synthesisId, delta);
+  };
+
   const recentContext = input.recentContext;
 
   try {
@@ -883,31 +966,59 @@ async function runSynthesis(args: {
         startUsage = chunk.usage;
       } else if (chunk.type === 'textDelta') {
         accumulated += chunk.delta;
+        // Inspect the buffer for the STATUS prefix as it forms. Until it
+        // resolves we hold output; once it resolves to 'answer' we stream the
+        // post-prefix prose at sentence boundaries; a refusal never streams.
+        const gate = stripStatusPrefix(accumulated);
+        if (gate.complete && gate.status === 'answer') {
+          startStreamingIfNeeded();
+          flushSentences(gate.body, false);
+        }
+        // gate.status === 'no_relevant_context' or !complete → keep buffering.
       } else if (chunk.type === 'done') {
         const latencyMs = Date.now() - synthStart;
         const parsed = parseSynthesisOutput(accumulated, sources.length);
-        // S14 — the model produced output (buffered, not yet revealed).
+        // S14 — the model produced output.
         if (trace !== null) {
           trace.push(
             stageRecord('synthesis', 'ran', synthStart, {
               decision: 'generated',
-              data: { chars: accumulated.length, sources: sources.length },
+              data: { chars: accumulated.length, sources: sources.length, streamed: streaming },
             }),
           );
         }
 
         if (parsed.isRefusal) {
-          sink.synthesisRefusal({
-            synthesisId,
-            reason: 'refusal',
-            latencyMs,
-            utteranceId: input.utteranceId,
-            traceId,
-            rawSynthesis: accumulated,
-            answer: parsed.text,
-            refusalReason: parsed.refusalReason ?? null,
-            citationDetails: [],
-          });
+          // A STATUS_NO_CONTEXT refusal. The common case never streamed, so it
+          // takes the unchanged synthesisRefusal path. Defensively: if we DID
+          // stream (the STATUS prefix diverged then re-classified as a refusal
+          // — should not happen for a real STATUS_NO_CONTEXT), retract the
+          // revealed prose instead of leaving it standing.
+          if (streaming) {
+            sink.synthesisRetract({
+              synthesisId,
+              reason: 'refusal',
+              latencyMs,
+              utteranceId: input.utteranceId,
+              traceId,
+              rawSynthesis: accumulated,
+              answer: parsed.text,
+              refusalReason: parsed.refusalReason ?? null,
+              citationDetails: [],
+            });
+          } else {
+            sink.synthesisRefusal({
+              synthesisId,
+              reason: 'refusal',
+              latencyMs,
+              utteranceId: input.utteranceId,
+              traceId,
+              rawSynthesis: accumulated,
+              answer: parsed.text,
+              refusalReason: parsed.refusalReason ?? null,
+              citationDetails: [],
+            });
+          }
           sink.recordMiss({
             verbatimQuestion: input.queryText,
             utteranceId: input.utteranceId,
@@ -966,19 +1077,36 @@ async function runSynthesis(args: {
         });
 
         if (richCitations.length === 0) {
-          // Ungrounded: an answer that cited nothing groundable — suppress like
-          // a refusal.
-          sink.synthesisRefusal({
-            synthesisId,
-            reason: 'ungrounded',
-            latencyMs,
-            utteranceId: input.utteranceId,
-            traceId,
-            rawSynthesis: accumulated,
-            answer: parsed.text,
-            refusalReason: parsed.refusalReason ?? null,
-            citationDetails: detail,
-          });
+          // Ungrounded: an answer that cited nothing groundable. If it WAS
+          // streamed (STATUS_ANSWER whose citations failed verification — the
+          // one case prose was revealed but must not stand), RETRACT to clear
+          // the revealed prose. Otherwise (never streamed) suppress like a
+          // refusal. Either way recordMiss('ungrounded'). (R1.)
+          if (streaming) {
+            sink.synthesisRetract({
+              synthesisId,
+              reason: 'ungrounded',
+              latencyMs,
+              utteranceId: input.utteranceId,
+              traceId,
+              rawSynthesis: accumulated,
+              answer: parsed.text,
+              refusalReason: parsed.refusalReason ?? null,
+              citationDetails: detail,
+            });
+          } else {
+            sink.synthesisRefusal({
+              synthesisId,
+              reason: 'ungrounded',
+              latencyMs,
+              utteranceId: input.utteranceId,
+              traceId,
+              rawSynthesis: accumulated,
+              answer: parsed.text,
+              refusalReason: parsed.refusalReason ?? null,
+              citationDetails: detail,
+            });
+          }
           sink.recordMiss({
             verbatimQuestion: input.queryText,
             utteranceId: input.utteranceId,
@@ -992,15 +1120,17 @@ async function runSynthesis(args: {
           return;
         }
 
-        // Grounded: reveal the whole answer at once (start → one full delta →
-        // done) so a complete, cited synthesis appears with no flash.
-        sink.synthesisStart({
-          synthesisId,
-          sourceCardIds: surfacedCardIds,
-          traceId,
-          utteranceId: input.utteranceId,
-        });
-        sink.synthesisDelta(synthesisId, parsed.text);
+        // Grounded. If we streamed the prose, flush any unstreamed tail so the
+        // page's accumulated text equals the full body, then finalize with the
+        // verified citation set. If we never streamed (the STATUS prefix never
+        // resolved to 'answer' yet the answer grounded — a diverged/legacy
+        // output), fall back to the whole-answer reveal so nothing regresses.
+        if (streaming) {
+          flushSentences(parsed.text, true);
+        } else {
+          startStreamingIfNeeded();
+          sink.synthesisDelta(synthesisId, parsed.text);
+        }
         sink.synthesisDone({
           synthesisId,
           text: parsed.text,
@@ -1016,7 +1146,7 @@ async function runSynthesis(args: {
           trace.push(
             stageRecord('reveal', 'ran', synthStart, {
               decision: 'revealed',
-              data: { citations: richCitations.length, encrypted: true },
+              data: { citations: richCitations.length, encrypted: true, streamed: streaming },
             }),
           );
         }
@@ -1025,6 +1155,31 @@ async function runSynthesis(args: {
     }
   } catch (err) {
     deps.logger.warn({ err, synthesisId, meetingId: input.meetingId }, 'pipeline.synthesis.failed');
+    // A synthesizer error mid-stream must not leave a partial answer standing
+    // (R1/AE1). If we already revealed prose, retract it; the answer was never
+    // grounded (the `done` gate never ran). Record the miss as a refusal so the
+    // knowledge gap is captured.
+    if (streaming) {
+      sink.synthesisRetract({
+        synthesisId,
+        reason: 'refusal',
+        latencyMs: Date.now() - synthStart,
+        utteranceId: input.utteranceId,
+        traceId,
+        rawSynthesis: accumulated,
+        answer: '',
+        refusalReason: (err as Error).message,
+        citationDetails: [],
+      });
+      sink.recordMiss({
+        verbatimQuestion: input.queryText,
+        utteranceId: input.utteranceId,
+        meetingId: input.meetingId,
+        orgId: input.orgId,
+        reason: 'refusal',
+        sourcesSearched: sources.map((s) => s.title),
+      });
+    }
     if (trace !== null) {
       trace.push(
         stageRecord('synthesis', 'ran', synthStart, {

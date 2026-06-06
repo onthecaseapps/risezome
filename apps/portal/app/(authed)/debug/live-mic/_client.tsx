@@ -143,6 +143,11 @@ interface SynthesisAbortedEvent {
   reason: string;
 }
 
+interface SynthesisRetractEvent {
+  type: 'synthesisRetract';
+  synthesisId: string;
+}
+
 type DebugEvent =
   | UtteranceEvent
   | CardEvent
@@ -150,6 +155,7 @@ type DebugEvent =
   | SynthesisDeltaEvent
   | SynthesisDoneEvent
   | SynthesisAbortedEvent
+  | SynthesisRetractEvent
   | RetrievalSkipEvent
   | SkillResultEvent
   | SummaryEvent
@@ -266,6 +272,17 @@ function DebugInner({
         dispatch({
           type: 'synthesisRetracted',
           retracted: { synthesisId: a.synthesisId, reason: 'manual-dismiss' },
+        });
+        return;
+      }
+      case 'synthesisRetract': {
+        // U3: a streamed answer that failed the grounding gate. Clear the
+        // in-progress synthesis (grounded-or-nothing — nothing ungrounded
+        // stands on the live page).
+        const r = evt as SynthesisRetractEvent;
+        dispatch({
+          type: 'synthesisRetracted',
+          retracted: { synthesisId: r.synthesisId, reason: 'source-retracted' },
         });
         return;
       }

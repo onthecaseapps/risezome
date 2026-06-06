@@ -20,7 +20,10 @@
 //                      order — the same list the old eval built from `sourceHits`.
 //   synthesisDone    → grounded answer + rawSynthesis + FULL citation detail.
 //   synthesisRefusal → refusal ('refusal') OR suppressed/ungrounded
-//                      ('ungrounded'), with rawSynthesis + citation detail.
+//                      ('ungrounded') that never streamed, with rawSynthesis +
+//                      citation detail.
+//   synthesisRetract → a streamed-then-ungrounded answer pulled at the gate;
+//                      scored identically to synthesisRefusal (did not stand).
 //   recordMiss       → captured (drives the no-hits / refusal reason string).
 //   recordSkip       → the gate short-circuit signal: `gateSuppressed = true`
 //                      ONLY when this fired (heuristic-gate / llm-judge), exactly
@@ -41,6 +44,7 @@ import type {
   SynthesisStartInfo,
   SynthesisDoneInfo,
   SynthesisRefusalInfo,
+  SynthesisRetractInfo,
   SkipInfo,
   PipelineTrace,
 } from './contract.js';
@@ -143,6 +147,22 @@ export class EvalCollectorSink implements PipelineSink {
   synthesisRefusal(info: SynthesisRefusalInfo): void {
     this.synthesis = {
       kind: info.reason, // 'refusal' | 'ungrounded'
+      rawSynthesis: info.rawSynthesis ?? '',
+      answer: info.answer ?? '',
+      refusalReason: info.refusalReason ?? null,
+      citationDetails: info.citationDetails ?? [],
+    };
+  }
+
+  synthesisRetract(info: SynthesisRetractInfo): void {
+    // U3/KTD3: a streamed answer pulled at the grounding gate. For scoring this
+    // is identical to a never-streamed ungrounded/refusal — the answer did NOT
+    // stand, so `gateSuppressed`/`isRefusal` semantics must treat it as
+    // suppressed. Record it exactly like synthesisRefusal (same `kind`), so the
+    // eval's precision/over-refusal accounting is unchanged by the streaming
+    // restructure.
+    this.synthesis = {
+      kind: info.reason, // 'ungrounded' | 'refusal'
       rawSynthesis: info.rawSynthesis ?? '',
       answer: info.answer ?? '',
       refusalReason: info.refusalReason ?? null,
