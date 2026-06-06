@@ -14,6 +14,8 @@ export interface CaptureCard {
   createdAtIso: string;
   platform: CapturePlatform;
   summary: string | null;
+  /** Whether a recap exists at all (even if its preview wasn't decrypted for the list). */
+  recapAvailable: boolean;
   recapStatus: 'generating' | 'done' | 'failed' | null;
   answersCount: number;
   sourcesCount: number;
@@ -239,6 +241,9 @@ function summaryLine(c: CaptureCard): string {
   }
   if (c.summary !== null && c.summary.length > 0) return firstLine(c.summary);
   if (c.recapStatus === 'generating') return 'Generating the meeting recap…';
+  // A recap exists but its preview wasn't decrypted for the list (older meeting
+  // beyond the preview window, decrypted on open instead) — don't claim it's gone.
+  if (c.recapStatus === 'done' && c.recapAvailable) return 'Recap available — open to view.';
   return 'No recap was generated for this meeting.';
 }
 

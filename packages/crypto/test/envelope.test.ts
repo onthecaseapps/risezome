@@ -242,3 +242,26 @@ describe('KMS keyring kinds (regression: an alias keyring cannot decrypt its own
     }
   });
 });
+
+describe('decrypt caching CMM (KMS-cost lever)', () => {
+  it('serves a repeat decrypt of the same ciphertext from cache (no second backing-keyring call)', async () => {
+    const keyring = rawKeyringFor('orgCACHE');
+    const onDecrypt = vi.spyOn(keyring, 'onDecrypt');
+    // Same keyring for both directions; the decrypt CMM wraps it and caches the
+    // unwrapped data key, so the second decrypt of the same EDK is a cache hit.
+    __setKeyringProviderForTests(() => keyring);
+
+    const ct = await encryptForOrg('orgCACHE', 'hello');
+    expect(await decryptForOrg('orgCACHE', ct)).toBe('hello');
+    expect(await decryptForOrg('orgCACHE', ct)).toBe('hello');
+
+    expect(onDecrypt).toHaveBeenCalledTimes(1);
+  });
+
+  it('still enforces the per-org encryptionContext guard through the caching CMM', async () => {
+    __setKeyringProviderForTests(rawKeyringFor);
+    const ct = await encryptForOrg('orgA', 'secret');
+    // Wrong org -> different wrapping key AND enc-context mismatch -> typed error.
+    await expect(decryptForOrg('orgB', ct)).rejects.toBeInstanceOf(EnvelopeCryptoError);
+  });
+});

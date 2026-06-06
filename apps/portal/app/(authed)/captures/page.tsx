@@ -5,6 +5,7 @@ import { CURRENT_TEAM_COOKIE, listUserTeams, requireAuthedUserWithOrg } from '..
 import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
 import { isMasterKeyAccess } from '../../_lib/meeting-access';
 import { applyTeamLens } from './_team-lens';
+import { structuredRecapOverview } from './_recap-preview';
 import { CapturesClient, type CaptureCard, type CapturePlatform } from './_client';
 
 /**
@@ -20,6 +21,13 @@ import { CapturesClient, type CaptureCard, type CapturePlatform } from './_clien
  * (migration not applied), we fall back to JS-tallied answer/source counts and
  * no speaker avatars, so the page degrades instead of erroring.
  */
+
+/**
+ * Cap on how many meetings' recaps we decrypt for the list preview per render.
+ * Each is a distinct KMS Decrypt (recaps don't share a data key), so this bounds
+ * the captures-list KMS cost; the rest decrypt lazily on the review page.
+ */
+const RECAP_PREVIEW_LIMIT = 30;
 
 function platformFromUrl(url: string | null): CapturePlatform {
   if (url === null) return 'other';
@@ -37,7 +45,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
   const { data: meetingRows } = await supabase
     .from('meetings')
     .select(
-      'meeting_id, user_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, conference_url, recap_text_enc, recap_status, created_at',
+      'meeting_id, user_id, status, started_at, ended_at, error_code, error_message, calendar_event_id, title, conference_url, recap_text_enc, recap_json_enc, recap_status, created_at',
     )
     .eq('org_id', orgId)
     .in('status', ['completed', 'failed'])
@@ -56,6 +64,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
     title: string;
     conference_url: string | null;
     recap_text_enc: string | null;
+    recap_json_enc: string | null;
     recap_status: 'generating' | 'done' | 'failed' | null;
     created_at: string;
   }>;
@@ -138,15 +147,33 @@ export default async function CapturesPage(): Promise<ReactElement> {
   }
 
   // U9: the recap is encrypted at rest — decrypt server-side (the key stays in
-  // env; the browser never sees it). DEGRADE on a crypto failure (KMS blip, or
-  // a legacy row that can't decrypt under the org key) to a null recap rather
-  // than erroring the whole grid. Mirrors the meeting review page.
+  // env; the browser never sees it). Prefer the structured recap's `overview`
+  // (new meetings); fall back to the legacy markdown blob (old meetings).
+  // Resolving the overview here keeps the client's markdown firstLine() from
+  // running over a JSON string. DEGRADE on a crypto failure (KMS blip, or a
+  // legacy row that can't decrypt under the org key) to a null recap rather than
+  // erroring the whole grid. Mirrors the meeting review page.
+  //
+  // KMS-cost bound: each meeting's recap is a SEPARATE encrypt (its own wrapped
+  // data key), so the per-org decrypt cache can't collapse them — decrypting the
+  // recap for every meeting would be one live KMS Decrypt per card, per list
+  // load. Cap previews to the most-recent RECAP_PREVIEW_LIMIT (the list is sorted
+  // newest-first); older cards show "Recap available — open to view" and decrypt
+  // on the review page instead.
   const recapByMeeting = new Map<string, string | null>();
   await Promise.all(
-    meetings.map(async (m) => {
-      if (m.recap_text_enc === null) return;
+    meetings.slice(0, RECAP_PREVIEW_LIMIT).map(async (m) => {
       try {
-        recapByMeeting.set(m.meeting_id, await decryptForOrgFromBytea(orgId, m.recap_text_enc));
+        if (m.recap_json_enc !== null) {
+          const overview = structuredRecapOverview(await decryptForOrgFromBytea(orgId, m.recap_json_enc));
+          if (overview !== null) {
+            recapByMeeting.set(m.meeting_id, overview);
+            return;
+          }
+        }
+        if (m.recap_text_enc !== null) {
+          recapByMeeting.set(m.meeting_id, await decryptForOrgFromBytea(orgId, m.recap_text_enc));
+        }
       } catch (err) {
         if (err instanceof EnvelopeCryptoError) {
           console.error(`[captures] recap decrypt failed (meetingId=${m.meeting_id}):`, err);
@@ -232,6 +259,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
       createdAtIso: m.created_at,
       platform: platformFromUrl(m.conference_url),
       summary: recapByMeeting.get(m.meeting_id) ?? null,
+      recapAvailable: m.recap_text_enc !== null || m.recap_json_enc !== null,
       recapStatus: m.recap_status,
       answersCount: s.answers,
       sourcesCount: s.sources,

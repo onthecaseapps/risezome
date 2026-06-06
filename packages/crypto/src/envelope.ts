@@ -187,6 +187,7 @@ export function __setKeyringProviderForTests(fn: KeyringProvider | null): void {
   keyringProvider = fn ?? defaultKeyringProvider;
   decryptKeyringProvider = fn ?? defaultDecryptKeyringProvider;
   cmmByOrg.clear();
+  decryptCmmByOrg.clear();
 }
 
 /**
@@ -218,10 +219,18 @@ export function __defaultKeyringKindsForTest(orgId: string): {
 // give each CMM its own small local cache so eviction is per-org.
 //
 // Cache-bound rationale:
-//   maxAge (5 min)          — cap wall-clock lifetime of a cached data key, so
-//                             a disabled/rotated CMK (per-org revocation, KTD2)
-//                             takes effect promptly; short enough to bound blast
-//                             radius, long enough to amortize KMS across a burst.
+//   maxAge (encrypt 5 min / decrypt 15 min)
+//                           — cap wall-clock lifetime of a cached data key.
+//                             ENCRYPT stays 5 min so a disabled/rotated CMK
+//                             (per-org revocation, KTD2) takes effect promptly on
+//                             new writes. DECRYPT is 15 min: reads are far hotter
+//                             (a transcript re-decrypted on every review/poll),
+//                             and a longer window amortizes KMS across requests on
+//                             warm instances. The only cost is that a revoked
+//                             key's data stays decryptable from the in-memory
+//                             cache for up to 15 min — and any holder of that
+//                             cache already had read access, so the marginal
+//                             exposure is small.
 //   maxMessagesEncrypted    — cap reuse count of a single data key (1000) to
 //                             stay well within AES-GCM safe-use limits and bound
 //                             exposure if one data key leaks.
@@ -231,7 +240,8 @@ export function __defaultKeyringKindsForTest(orgId: string): {
 //                             uses one live entry, so 100 comfortably covers
 //                             concurrent algorithm-suite/context variants.
 
-const CMM_MAX_AGE_MS = 5 * 60 * 1000; // 300_000
+const CMM_MAX_AGE_MS = 5 * 60 * 1000; // 300_000 — encrypt: rotation takes effect on writes
+const CMM_DECRYPT_MAX_AGE_MS = 15 * 60 * 1000; // 900_000 — decrypt: amortize hot reads
 const CMM_MAX_MESSAGES_ENCRYPTED = 1000;
 const CMM_MAX_BYTES_ENCRYPTED = 100 * 1024 * 1024; // ~100 MiB
 const CMM_CACHE_CAPACITY = 100;
@@ -248,33 +258,60 @@ const CMM_MAX_ORGS = 512;
 // Tiny insertion-ordered LRU over a Map (JS Maps iterate in insertion order, so
 // the first key is the oldest). On access we delete+re-set to mark the entry
 // most-recently-used; on insert past the cap we evict the oldest. No new dep.
+//
+// TWO memos: one for the ENCRYPT keyring (alias generator), one for the DECRYPT
+// keyring (KMS discovery). They cannot share a CMM — an alias keyring can't
+// decrypt, and a discovery keyring can't be the encrypt generator. The decrypt
+// CMM matters for KMS cost: WITHOUT it every encrypted-column read is a live KMS
+// Decrypt. Transcript rows written inside one data-key window share the same
+// wrapped key (EDK), so the caching CMM's decrypt-materials cache collapses
+// "decrypt N co-encrypted rows" to ~1 KMS Decrypt + N-1 cache hits — the
+// transcript/recap read paths (review, live, captures) hammer this. The cache
+// entry id includes the encryptionContext, so org A's material never satisfies
+// org B's decrypt (the cross-org guard in decryptForOrg still also runs).
 const cmmByOrg = new Map<string, NodeCachingMaterialsManager>();
+const decryptCmmByOrg = new Map<string, NodeCachingMaterialsManager>();
 
-function getCmm(orgId: string): NodeCachingMaterialsManager {
-  const existing = cmmByOrg.get(orgId);
-  if (existing !== undefined) {
-    // Mark most-recently-used: delete then re-set moves it to the newest slot.
-    cmmByOrg.delete(orgId);
-    cmmByOrg.set(orgId, existing);
-    return existing;
-  }
-  const keyring = keyringProvider(orgId);
-  const cache = getLocalCryptographicMaterialsCache(CMM_CACHE_CAPACITY);
-  const cmm = new NodeCachingMaterialsManager({
+function buildCmm(keyring: KeyringNode, maxAge: number): NodeCachingMaterialsManager {
+  return new NodeCachingMaterialsManager({
     backingMaterials: keyring,
-    cache,
-    maxAge: CMM_MAX_AGE_MS,
+    cache: getLocalCryptographicMaterialsCache(CMM_CACHE_CAPACITY),
+    maxAge,
     maxMessagesEncrypted: CMM_MAX_MESSAGES_ENCRYPTED,
     maxBytesEncrypted: CMM_MAX_BYTES_ENCRYPTED,
   });
-  cmmByOrg.set(orgId, cmm);
+}
+
+function memoCmm(
+  memo: Map<string, NodeCachingMaterialsManager>,
+  orgId: string,
+  keyringFor: KeyringProvider,
+  maxAge: number,
+): NodeCachingMaterialsManager {
+  const existing = memo.get(orgId);
+  if (existing !== undefined) {
+    // Mark most-recently-used: delete then re-set moves it to the newest slot.
+    memo.delete(orgId);
+    memo.set(orgId, existing);
+    return existing;
+  }
+  const cmm = buildCmm(keyringFor(orgId), maxAge);
+  memo.set(orgId, cmm);
   // Evict the oldest entries until we are back within the cap. Safe: pure cache.
-  while (cmmByOrg.size > CMM_MAX_ORGS) {
-    const oldest = cmmByOrg.keys().next().value;
+  while (memo.size > CMM_MAX_ORGS) {
+    const oldest = memo.keys().next().value;
     if (oldest === undefined) break;
-    cmmByOrg.delete(oldest);
+    memo.delete(oldest);
   }
   return cmm;
+}
+
+function getCmm(orgId: string): NodeCachingMaterialsManager {
+  return memoCmm(cmmByOrg, orgId, keyringProvider, CMM_MAX_AGE_MS);
+}
+
+function getDecryptCmm(orgId: string): NodeCachingMaterialsManager {
+  return memoCmm(decryptCmmByOrg, orgId, decryptKeyringProvider, CMM_DECRYPT_MAX_AGE_MS);
 }
 
 // --- Public API ----------------------------------------------------------------
@@ -318,8 +355,11 @@ export async function decryptForOrg(
   try {
     // Decrypt with the DECRYPT keyring (KMS discovery, or the dev RawAES keyring)
     // — NOT the alias-based encrypt keyring, which cannot match the EDK's ARN on
-    // decrypt. No caching CMM here: decryption isn't the GenerateDataKey hot path.
-    const result = await decrypt(decryptKeyringProvider(orgId), ciphertext);
+    // decrypt. Wrapped in a per-org caching CMM so re-decrypting rows that share
+    // a wrapped data key (a transcript's utterances, re-read on every review/
+    // captures load) is served from the local materials cache instead of a fresh
+    // KMS Decrypt — the dominant KMS-cost lever (see getDecryptCmm).
+    const result = await decrypt(getDecryptCmm(orgId), ciphertext);
     plaintext = result.plaintext;
     boundOrgId = result.messageHeader.encryptionContext[ENC_CONTEXT_ORG_KEY];
   } catch (err) {

@@ -64,7 +64,7 @@ export function SidebarNavLink({
           </span>
         )}
       </span>
-      <span className="flex-1 group-data-[collapsed=true]/sb:hidden">{label}</span>
+      <span className="flex-1 truncate group-data-[collapsed=true]/sb:hidden">{label}</span>
       <span className="group-data-[collapsed=true]/sb:hidden">{dot}</span>
     </>
   );

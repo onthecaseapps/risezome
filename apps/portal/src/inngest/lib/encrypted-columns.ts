@@ -34,6 +34,12 @@ export const ENCRYPTED_COLUMNS: readonly EncryptedColumn[] = [
     versionColumn: 'recap_key_version',
   },
   {
+    table: 'meetings',
+    pk: 'meeting_id',
+    encColumn: 'recap_json_enc',
+    versionColumn: 'recap_json_key_version',
+  },
+  {
     table: 'syntheses',
     pk: 'synthesis_id',
     encColumn: 'accumulated_text_enc',

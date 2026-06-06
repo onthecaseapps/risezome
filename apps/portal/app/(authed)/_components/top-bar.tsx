@@ -9,7 +9,6 @@ import {
   requireAuthedUser,
 } from '../../_lib/auth';
 import { createServerClient } from '../../_lib/supabase-server';
-import { Logo } from '../../_components/logo';
 import { TeamSwitcher } from './team-switcher';
 import { UserAvatarMenu } from './user-avatar-menu';
 
@@ -64,17 +63,8 @@ export async function TopBar(): Promise<ReactElement> {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border bg-card px-4">
       <div className="flex min-w-0 items-center gap-3">
-        <Link href="/upcoming" className="flex shrink-0 items-center gap-2.5" aria-label="Risezome home">
-          <Logo size={26} className="shrink-0 text-accent" />
-          <span className="text-base font-semibold tracking-tight">Risezome</span>
-        </Link>
         {current !== null && (
-          <>
-            <span aria-hidden="true" className="text-border">
-              |
-            </span>
-            <TeamSwitcher orgName={current.name} currentTeamId={currentTeamId} teams={teams} />
-          </>
+          <TeamSwitcher orgName={current.name} currentTeamId={currentTeamId} teams={teams} />
         )}
       </div>
 
