@@ -5,7 +5,6 @@ import {
   TeamsMembersClient,
   type MemberVM,
   type PendingInviteVM,
-  type SourceVM,
   type TeamVM,
 } from './_components/teams-members-client';
 
@@ -79,20 +78,6 @@ export default async function TeamsMembersPage(): Promise<ReactElement> {
     sourceIds: sourcesByTeam.get(t.team_id as string) ?? [],
   }));
 
-  // ── Selectable sources (curation pool) ────────────────────────────────────
-  const { data: srcRows } = await supabase
-    .from('sources')
-    .select('id, kind, display_name, repo_full_name, external_id')
-    .eq('org_id', orgId)
-    .neq('status', 'removed')
-    .order('kind', { ascending: true });
-
-  const sources: SourceVM[] = (srcRows ?? []).map((s) => ({
-    id: s.id as string,
-    kind: (s.kind as string | null) ?? 'github',
-    label: sourceLabel(s),
-  }));
-
   // ── Org roster + auth display names / last-active ─────────────────────────
   const { data: memberRows } = await supabase
     .from('org_members')
@@ -144,21 +129,8 @@ export default async function TeamsMembersPage(): Promise<ReactElement> {
       orgName={orgName}
       members={members}
       teams={teams}
-      sources={sources}
       invites={invites}
       isSuperAdmin={callerRole === 'super_admin'}
     />
   );
-}
-
-/** Human label for a source row across kinds (github repo / trello board / jira /
- *  confluence). Falls back to the external id, then the row id. */
-function sourceLabel(s: Record<string, unknown>): string {
-  const repo = s['repo_full_name'];
-  if (typeof repo === 'string' && repo.length > 0) return repo;
-  const display = s['display_name'];
-  if (typeof display === 'string' && display.length > 0) return display;
-  const ext = s['external_id'];
-  if (typeof ext === 'string' && ext.length > 0) return ext;
-  return s['id'] as string;
 }

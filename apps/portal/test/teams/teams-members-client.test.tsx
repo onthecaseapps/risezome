@@ -33,17 +33,9 @@ vi.mock('../../app/(authed)/teams/team-actions', () => ({
   removeTeamMemberAction: (...a: unknown[]) => removeTeamMemberAction(...a),
 }));
 
-const addTeamSourceAction = vi.fn();
-const removeTeamSourceAction = vi.fn();
-vi.mock('../../app/(authed)/teams/source-actions', () => ({
-  addTeamSourceAction: (...a: unknown[]) => addTeamSourceAction(...a),
-  removeTeamSourceAction: (...a: unknown[]) => removeTeamSourceAction(...a),
-}));
-
 import {
   TeamsMembersClient,
   type MemberVM,
-  type SourceVM,
   type TeamVM,
 } from '../../app/(authed)/teams/_components/teams-members-client';
 
@@ -74,18 +66,12 @@ const TEAMS: TeamVM[] = [
   { teamId: 't1', name: 'Platform', slug: 'platform', memberIds: ['u1'], sourceIds: ['s1'] },
 ];
 
-const SOURCES: SourceVM[] = [
-  { id: 's1', kind: 'github', label: 'acme/api' },
-  { id: 's2', kind: 'trello', label: 'Roadmap' },
-];
-
 function renderClient(over?: { isSuperAdmin?: boolean }) {
   return render(
     <TeamsMembersClient
       orgName="Acme"
       members={MEMBERS}
       teams={TEAMS}
-      sources={SOURCES}
       invites={[]}
       isSuperAdmin={over?.isSuperAdmin ?? true}
     />,
@@ -165,6 +151,20 @@ describe('TeamsMembersClient — team detail', () => {
     const picker = screen.getByPlaceholderText('Search workspace members').closest('div')!.parentElement!;
     await userEvent.click(within(picker).getByText('bob@acme.com').closest('li')!.querySelector('button')!);
     await waitFor(() => expect(addTeamMemberAction).toHaveBeenCalledWith('t1', 'u2'));
+  });
+
+  it('renders a read-only Sources summary that links to /sources?team=<id> (U6)', async () => {
+    renderClient();
+    await openTeamDetail();
+    // Read-only: a count heading + a "Manage on Sources" link, and NO source
+    // toggle switches.
+    expect(screen.getByRole('heading', { name: /Sources · 1/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Manage on Sources/i })).toHaveAttribute(
+      'href',
+      '/sources?team=t1',
+    );
+    // No "<source> on team" switches remain in the team detail.
+    expect(screen.queryByRole('switch', { name: /on team/i })).toBeNull();
   });
 });
 

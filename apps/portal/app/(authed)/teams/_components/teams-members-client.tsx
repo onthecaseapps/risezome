@@ -65,21 +65,20 @@ type WorkspaceRole = 'member' | 'manager' | 'super_admin';
  * the All-members roster and a per-team detail view; an Invite modal mints links.
  * Backend logic is entirely reused — every mutation routes through the existing
  * server actions (changeRole/removeMember/createInvite/revokeInvite, createTeam,
- * add/removeTeamMember, add/removeTeamSource) and reconciles via their
- * revalidatePath('/teams').
+ * add/removeTeamMember) and reconciles via their revalidatePath('/teams').
+ * Source curation moved to the Sources page (KTD5); the team-detail Sources card
+ * is read-only, so this surface no longer needs the sources pool.
  */
 export function TeamsMembersClient({
   orgName,
   members,
   teams,
-  sources,
   invites,
   isSuperAdmin,
 }: {
   orgName: string;
   members: MemberVM[];
   teams: TeamVM[];
-  sources: SourceVM[];
   invites: PendingInviteVM[];
   isSuperAdmin: boolean;
 }): ReactElement {
@@ -126,7 +125,6 @@ export function TeamsMembersClient({
               key={selectedTeam.teamId}
               team={selectedTeam}
               members={members}
-              sources={sources}
               onBack={() => setSelectedTeamId(null)}
             />
           ) : (

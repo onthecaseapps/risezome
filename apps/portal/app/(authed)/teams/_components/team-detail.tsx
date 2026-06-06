@@ -9,29 +9,28 @@ import {
   removeTeamMemberAction,
   renameTeamAction,
 } from '../team-actions';
-import { SourcePicker } from './source-picker';
 import { avatarColor, avatarInitial, teamDotColor } from './visuals';
-import type { MemberVM, SourceVM, TeamVM } from './teams-members-client';
+import type { MemberVM, TeamVM } from './teams-members-client';
 
 /**
  * Team detail view (rail → team selected). Mirrors the design: a back-to-all
  * header with the team identity + counts + a Settings popover (rename/archive),
  * a Members card with an "Add member" picker and per-row remove, and a Sources
- * card (the existing SourcePicker, whose kind badge + toggle already match).
+ * card that is now READ-ONLY (count + a link to the Sources page, KTD5) — the
+ * Sources page is the single editor for `team_sources`.
  *
- * All mutations reuse the shipped team actions — rename/archive, add/remove
- * member, add/remove source — with the optimistic-then-revert idiom; the actions'
- * revalidatePath('/teams') reconciles server truth.
+ * Member mutations reuse the shipped team actions — rename/archive, add/remove
+ * member — with the optimistic-then-revert idiom; the actions'
+ * revalidatePath('/teams') reconciles server truth. Source curation moved to
+ * /sources?team=<teamId>.
  */
 export function TeamDetail({
   team,
   members,
-  sources,
   onBack,
 }: {
   team: TeamVM;
   members: MemberVM[];
-  sources: SourceVM[];
   onBack: () => void;
 }): ReactElement {
   // Local membership set, seeded from the server snapshot; toggled optimistically.
@@ -108,8 +107,53 @@ export function TeamDetail({
         onToggle={setMembership}
       />
 
-      <SourcePicker teamId={team.teamId} sources={sources} initialSourceIds={team.sourceIds} />
+      <SourcesSummaryCard teamId={team.teamId} sourceCount={team.sourceIds.length} />
     </div>
+  );
+}
+
+// ── Sources summary (read-only; KTD5) ──────────────────────────────────────────
+
+/**
+ * Read-only Sources summary. The Sources page (/sources?team=<id>) is now the
+ * single editor for `team_sources`, so the team-detail only shows the count and
+ * links there — no toggles here (avoids two editors drifting, R1/KTD5).
+ */
+function SourcesSummaryCard({
+  teamId,
+  sourceCount,
+}: {
+  teamId: string;
+  sourceCount: number;
+}): ReactElement {
+  return (
+    <section className="rounded-2xl border border-border bg-card/40 p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-fg">Sources · {sourceCount}</h3>
+          <p className="mt-1 text-sm text-muted">
+            {sourceCount === 0
+              ? 'This team searches no sources yet.'
+              : `Searching ${sourceCount} ${sourceCount === 1 ? 'source' : 'sources'}.`}
+          </p>
+        </div>
+        <a
+          href={`/sources?team=${encodeURIComponent(teamId)}`}
+          className="inline-flex flex-none items-center gap-1.5 rounded-lg border border-border bg-card px-3.5 py-2 text-sm font-medium text-fg transition-colors hover:border-accent/40"
+        >
+          Manage on Sources
+          <ArrowRight />
+        </a>
+      </div>
+    </section>
+  );
+}
+
+function ArrowRight(): ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
   );
 }
 
