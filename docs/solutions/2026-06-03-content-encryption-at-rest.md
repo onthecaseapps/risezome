@@ -28,9 +28,15 @@ F1 + F2.)
 
 - **Third-party OAuth tokens** — `user_google_tokens.refresh_token_enc`,
   `atlassian_connections.{access,refresh}_token_enc`, `trello_connections.token_enc`.
-- **`meetings.recap_text_enc`** (U9) — the whole-meeting AI recap. Single write
-  (one Claude call on `bot.call_ended`), single read (review page, decrypted
-  server-side).
+- **`meetings.recap_text_enc`** (U9) — the legacy whole-meeting AI recap
+  (markdown). Single write (one Claude call on `bot.call_ended`), single read
+  (review page, decrypted server-side). Retained for backward-compat; new
+  meetings write the structured column below instead.
+- **`meetings.recap_json_enc`** (`recap_json_key_version`) — the structured
+  whole-meeting recap JSON (overview, timestamped topics, decisions, action
+  items, derived participants). Written on completion / Regenerate; read by the
+  review page and the captures-list preview, decrypted server-side. Registered in
+  `ENCRYPTED_COLUMNS` for rotation + backfill.
 - **`syntheses.accumulated_text_enc`** (F1) — the AI's grounded answers (reveal
   the question + quoted code/doc snippets). Encrypted on the `done` update;
   decrypted server-side on the review/live pages.

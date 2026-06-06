@@ -253,6 +253,8 @@ const CMM_CACHE_CAPACITY = 100;
 // process lifetime (a slow unbounded leak on a long-lived bot-worker / Inngest
 // process serving many orgs). 512 comfortably covers any realistic working set
 // of concurrently-active orgs on a single process while bounding memory.
+// NOTE: applied to EACH memo independently (encrypt + decrypt), so the combined
+// peak is up to 2 x CMM_MAX_ORGS cached CMM objects in memory.
 const CMM_MAX_ORGS = 512;
 
 // Tiny insertion-ordered LRU over a Map (JS Maps iterate in insertion order, so
@@ -272,13 +274,25 @@ const CMM_MAX_ORGS = 512;
 const cmmByOrg = new Map<string, NodeCachingMaterialsManager>();
 const decryptCmmByOrg = new Map<string, NodeCachingMaterialsManager>();
 
-function buildCmm(keyring: KeyringNode, maxAge: number): NodeCachingMaterialsManager {
+function buildCmm(
+  keyring: KeyringNode,
+  maxAge: number,
+  withEncryptBounds: boolean,
+): NodeCachingMaterialsManager {
   return new NodeCachingMaterialsManager({
     backingMaterials: keyring,
     cache: getLocalCryptographicMaterialsCache(CMM_CACHE_CAPACITY),
     maxAge,
-    maxMessagesEncrypted: CMM_MAX_MESSAGES_ENCRYPTED,
-    maxBytesEncrypted: CMM_MAX_BYTES_ENCRYPTED,
+    // maxMessagesEncrypted / maxBytesEncrypted bound DATA-KEY REUSE on the encrypt
+    // path only (AES-GCM safe-use limits on a single data key). They are
+    // meaningless on the decrypt path, so the decrypt CMM omits them rather than
+    // embedding a false "decrypt is also bounded by these" mental model.
+    ...(withEncryptBounds
+      ? {
+          maxMessagesEncrypted: CMM_MAX_MESSAGES_ENCRYPTED,
+          maxBytesEncrypted: CMM_MAX_BYTES_ENCRYPTED,
+        }
+      : {}),
   });
 }
 
@@ -287,6 +301,7 @@ function memoCmm(
   orgId: string,
   keyringFor: KeyringProvider,
   maxAge: number,
+  withEncryptBounds: boolean,
 ): NodeCachingMaterialsManager {
   const existing = memo.get(orgId);
   if (existing !== undefined) {
@@ -295,7 +310,7 @@ function memoCmm(
     memo.set(orgId, existing);
     return existing;
   }
-  const cmm = buildCmm(keyringFor(orgId), maxAge);
+  const cmm = buildCmm(keyringFor(orgId), maxAge, withEncryptBounds);
   memo.set(orgId, cmm);
   // Evict the oldest entries until we are back within the cap. Safe: pure cache.
   while (memo.size > CMM_MAX_ORGS) {
@@ -307,11 +322,11 @@ function memoCmm(
 }
 
 function getCmm(orgId: string): NodeCachingMaterialsManager {
-  return memoCmm(cmmByOrg, orgId, keyringProvider, CMM_MAX_AGE_MS);
+  return memoCmm(cmmByOrg, orgId, keyringProvider, CMM_MAX_AGE_MS, true);
 }
 
 function getDecryptCmm(orgId: string): NodeCachingMaterialsManager {
-  return memoCmm(decryptCmmByOrg, orgId, decryptKeyringProvider, CMM_DECRYPT_MAX_AGE_MS);
+  return memoCmm(decryptCmmByOrg, orgId, decryptKeyringProvider, CMM_DECRYPT_MAX_AGE_MS, false);
 }
 
 // --- Public API ----------------------------------------------------------------

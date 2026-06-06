@@ -161,14 +161,24 @@ export default async function CapturesPage(): Promise<ReactElement> {
   // newest-first); older cards show "Recap available — open to view" and decrypt
   // on the review page instead.
   const recapByMeeting = new Map<string, string | null>();
+  const recapDecryptFailed = new Set<string>();
   await Promise.all(
     meetings.slice(0, RECAP_PREVIEW_LIMIT).map(async (m) => {
       try {
+        // Prefer the structured overview. When recap_json_enc is present and
+        // decrypts, use it (even if the overview is empty) and DO NOT also decrypt
+        // the legacy markdown — a second KMS Decrypt would defeat the preview cap.
+        // Only on a structured DECRYPT failure do we fall back to the markdown.
         if (m.recap_json_enc !== null) {
-          const overview = structuredRecapOverview(await decryptForOrgFromBytea(orgId, m.recap_json_enc));
-          if (overview !== null) {
-            recapByMeeting.set(m.meeting_id, overview);
+          try {
+            recapByMeeting.set(
+              m.meeting_id,
+              structuredRecapOverview(await decryptForOrgFromBytea(orgId, m.recap_json_enc)),
+            );
             return;
+          } catch (jsonErr) {
+            if (!(jsonErr instanceof EnvelopeCryptoError)) throw jsonErr;
+            // Structured decrypt failed — fall through to the legacy markdown blob.
           }
         }
         if (m.recap_text_enc !== null) {
@@ -178,6 +188,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
         if (err instanceof EnvelopeCryptoError) {
           console.error(`[captures] recap decrypt failed (meetingId=${m.meeting_id}):`, err);
           recapByMeeting.set(m.meeting_id, null);
+          recapDecryptFailed.add(m.meeting_id);
         } else {
           throw err;
         }
@@ -259,7 +270,12 @@ export default async function CapturesPage(): Promise<ReactElement> {
       createdAtIso: m.created_at,
       platform: platformFromUrl(m.conference_url),
       summary: recapByMeeting.get(m.meeting_id) ?? null,
-      recapAvailable: m.recap_text_enc !== null || m.recap_json_enc !== null,
+      // A recap exists AND its preview either decrypted or wasn't attempted (beyond
+      // the cap). A within-window decrypt FAILURE clears this so the card doesn't
+      // advertise "Recap available" for content that couldn't be read.
+      recapAvailable:
+        (m.recap_text_enc !== null || m.recap_json_enc !== null) &&
+        !recapDecryptFailed.has(m.meeting_id),
       recapStatus: m.recap_status,
       answersCount: s.answers,
       sourcesCount: s.sources,

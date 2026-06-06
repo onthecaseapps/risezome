@@ -137,11 +137,15 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
     // DEGRADE on a crypto failure (KMS blip / deploy-window): seed NO syntheses
     // rather than 500 — the live channel will stream new ones once KMS recovers.
     try {
-      for (const s of liveSynthRows) {
-        const enc = s['accumulated_text_enc'] as string | null;
-        s['accumulated_text'] =
-          enc !== null && enc !== undefined ? await decryptForOrgFromBytea(orgId, enc) : '';
-      }
+      // Decrypt concurrently — each synthesis has its own data key, so the decrypt
+      // cache can't collapse them; parallelizing avoids N sequential KMS round-trips.
+      await Promise.all(
+        liveSynthRows.map(async (s) => {
+          const enc = s['accumulated_text_enc'] as string | null;
+          s['accumulated_text'] =
+            enc !== null && enc !== undefined ? await decryptForOrgFromBytea(orgId, enc) : '';
+        }),
+      );
       initialSyntheses = liveSynthRows.map((s) => mapSynthesisRow(s));
     } catch (err) {
       if (err instanceof EnvelopeCryptoError) {
@@ -155,8 +159,15 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
     // Seed the prior transcript (finals only) so a reload mid-meeting restores
     // what was already said; the live channel + reconnect-replay keep it
     // current. Partials are transient and intentionally not seeded.
-    // F2: transcript text is encrypted at rest — fetch it decrypted (one round-trip).
-    const transcriptRows = await transcriptWithText(supabase, meetingId, orgId);
+    // F2: transcript text is encrypted at rest — fetch it decrypted. DEGRADE to an
+    // empty seed on a DB/crypto failure rather than 500-ing the live page (the
+    // live channel will stream utterances once it recovers).
+    let transcriptRows: Awaited<ReturnType<typeof transcriptWithText>> = [];
+    try {
+      transcriptRows = await transcriptWithText(supabase, meetingId, orgId);
+    } catch (err) {
+      console.error(`[live] transcript read/decrypt failed (meetingId=${meetingId}):`, err);
+    }
     initialTranscript = transcriptRows.flatMap((row): TranscriptUtterance[] => {
       const p = row.payload ?? {};
       const utteranceId = p['utteranceId'];

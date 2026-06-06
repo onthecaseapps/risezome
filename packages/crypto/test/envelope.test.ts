@@ -264,4 +264,22 @@ describe('decrypt caching CMM (KMS-cost lever)', () => {
     // Wrong org -> different wrapping key AND enc-context mismatch -> typed error.
     await expect(decryptForOrg('orgB', ct)).rejects.toBeInstanceOf(EnvelopeCryptoError);
   });
+
+  it('rejects a cross-org decrypt through the cache even with a SHARED wrapping key (enc-context guard, not key mismatch)', async () => {
+    // Same wrapping key for every org, so the ESDK CAN unwrap orgA's data key for
+    // an orgB request — the ONLY thing stopping the cross-org read is the bound
+    // encryptionContext{org_id} + the post-decrypt boundOrgId guard, exercised
+    // here THROUGH the per-org decrypt caching CMM (orgA's cache is warmed first).
+    const shared = new RawAesKeyringNode({
+      keyName: 'shared-wrapping-key',
+      keyNamespace: 'risezome-test',
+      unencryptedMasterKey: rawKeyForOrg('SHARED'),
+      wrappingSuite: RawAesWrappingSuiteIdentifier.AES256_GCM_IV12_TAG16_NO_PADDING,
+    });
+    __setKeyringProviderForTests(() => shared);
+
+    const ct = await encryptForOrg('orgA', 'cross-org secret');
+    expect(await decryptForOrg('orgA', ct)).toBe('cross-org secret'); // warm orgA's cache
+    await expect(decryptForOrg('orgB', ct)).rejects.toBeInstanceOf(EnvelopeCryptoError);
+  });
 });

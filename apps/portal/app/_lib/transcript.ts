@@ -50,15 +50,25 @@ export async function transcriptWithText(
     created_at: string;
     transcript_text_enc: string | null;
   }[];
-  return Promise.all(
-    rows.map(async (r) => ({
-      event_id: r.event_id,
-      payload: r.payload,
-      created_at: r.created_at,
-      text:
-        r.transcript_text_enc !== null
-          ? await decryptForOrgFromBytea(orgId, r.transcript_text_enc)
-          : null,
-    })),
-  );
+  // Decrypt the first ciphertext-bearing row sequentially to WARM the per-org
+  // decrypt-materials cache, then fan the rest out concurrently. A meeting's
+  // utterances written within one data-key window share a wrapped data key, so a
+  // cold Promise.all would race N concurrent KMS Decrypts for the same key (a
+  // thundering herd that defeats the cache on first read); warming first collapses
+  // them to ~1 KMS Decrypt + cache hits. Rows spanning multiple data-key windows
+  // still herd within each later window, but that count is small (~one per window).
+  const texts: (string | null)[] = new Array<string | null>(rows.length).fill(null);
+  const decryptInto = async (i: number): Promise<void> => {
+    const enc = rows[i]?.transcript_text_enc ?? null;
+    if (enc !== null) texts[i] = await decryptForOrgFromBytea(orgId, enc);
+  };
+  const firstEnc = rows.findIndex((r) => r.transcript_text_enc !== null);
+  if (firstEnc >= 0) await decryptInto(firstEnc);
+  await Promise.all(rows.map((_, i) => (i === firstEnc ? Promise.resolve() : decryptInto(i))));
+  return rows.map((r, i) => ({
+    event_id: r.event_id,
+    payload: r.payload,
+    created_at: r.created_at,
+    text: texts[i] ?? null,
+  }));
 }

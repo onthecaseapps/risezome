@@ -109,8 +109,15 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   // Full transcript (finals), ordered. Capture each utterance's event time so a
   // pre-U6 synthesis (no stored trigger) can be anchored to the question spoken
   // just before it fired.
-  // F2: transcript text is encrypted at rest — fetch it decrypted (one round-trip).
-  const transcriptRows = await transcriptWithText(supabase, meetingId, orgId);
+  // F2: transcript text is encrypted at rest — fetch it decrypted. DEGRADE to an
+  // empty transcript on a DB/crypto failure rather than 500-ing the whole page
+  // (the recap + syntheses still render).
+  let transcriptRows: Awaited<ReturnType<typeof transcriptWithText>> = [];
+  try {
+    transcriptRows = await transcriptWithText(supabase, meetingId, orgId);
+  } catch (err) {
+    console.error(`[review] transcript read/decrypt failed (meetingId=${meetingId}):`, err);
+  }
   const initialTranscript: TranscriptUtterance[] = [];
   const utteranceTimes: UtteranceTime[] = [];
   for (const row of transcriptRows) {
@@ -147,10 +154,15 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   // 500 (the recap + transcript still render).
   let initialSyntheses: InitialSynthesis[];
   try {
-    for (const s of rows) {
-      const enc = s['accumulated_text_enc'] as string | null;
-      s['accumulated_text'] = enc !== null ? await decryptForOrgFromBytea(orgId, enc) : '';
-    }
+    // Decrypt concurrently — each synthesis is a separate encrypt (own data key),
+    // so the decrypt cache can't collapse them; parallelizing avoids N sequential
+    // KMS round-trips on a cold cache.
+    await Promise.all(
+      rows.map(async (s) => {
+        const enc = s['accumulated_text_enc'] as string | null;
+        s['accumulated_text'] = enc !== null ? await decryptForOrgFromBytea(orgId, enc) : '';
+      }),
+    );
     initialSyntheses = rows.map((s) => mapSynthesisRow(s));
   } catch (err) {
     if (err instanceof EnvelopeCryptoError) {

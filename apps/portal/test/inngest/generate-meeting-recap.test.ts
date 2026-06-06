@@ -14,6 +14,7 @@ import {
   deriveParticipants,
   flattenTranscriptLines,
   generateMeetingRecap,
+  persistEncryptedRecap,
   type RecapDb,
   type GenerateMeetingRecapOptions,
 } from '../../src/inngest/functions/generate-meeting-recap';
@@ -138,6 +139,38 @@ describe('deriveParticipants', () => {
     const { participants, speakerCount } = deriveParticipants([row(null, 'x', 0), row(null, 'y', 1)]);
     expect(participants).toEqual([]);
     expect(speakerCount).toBe(0);
+  });
+});
+
+describe('persistEncryptedRecap', () => {
+  function svc(error: { message: string } | null): RecapDb {
+    return {
+      from: () => ({
+        update: () => ({ eq: () => ({ eq: () => Promise.resolve({ error }) }) }),
+      }),
+    } as unknown as RecapDb;
+  }
+
+  it('resolves when the write succeeds', async () => {
+    await expect(
+      persistEncryptedRecap(svc(null), {
+        meetingId: MEETING,
+        orgId: ORG,
+        recapJsonEncHex: '\\x00',
+        generatedAtIso: NOW,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('throws on a DB write error so the persist step retries (status not left stuck on generating)', async () => {
+    await expect(
+      persistEncryptedRecap(svc({ message: 'db down' }), {
+        meetingId: MEETING,
+        orgId: ORG,
+        recapJsonEncHex: '\\x00',
+        generatedAtIso: NOW,
+      }),
+    ).rejects.toThrow(/db down/);
   });
 });
 

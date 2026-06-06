@@ -37,7 +37,12 @@ export async function GET(
     .eq('meeting_id', meetingId)
     .eq('org_id', orgId) // defense-in-depth alongside participant-scoped RLS
     .gt('event_id', afterEventId)
-    .order('event_id', { ascending: true });
+    .order('event_id', { ascending: true })
+    // Bound the batch: incremental polls (after>0) return few new rows, but a
+    // first poll (after=0) would otherwise load + decrypt the whole event log in
+    // one request. The client advances `after` from maxEventId, so a capped batch
+    // is paged in across polls rather than dropped.
+    .limit(1000);
   if (error !== null) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }

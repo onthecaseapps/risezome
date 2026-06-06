@@ -235,7 +235,7 @@ function CaptureCardView({ capture: c }: { capture: CaptureCard }): ReactElement
   );
 }
 
-function summaryLine(c: CaptureCard): string {
+export function summaryLine(c: CaptureCard): string {
   if (c.status === 'failed') {
     return c.errorMessage ?? (c.errorCode !== null ? `Failed: ${c.errorCode}` : 'The bot could not record this meeting.');
   }

@@ -94,36 +94,26 @@ export function deriveParticipants(rows: readonly TranscriptRow[]): {
   return { participants: seen.map((name) => ({ name })), speakerCount: seen.length };
 }
 
-async function persistRecap(
-  service: RecapDb,
-  meetingId: string,
-  orgId: string,
-  recap: StructuredRecap,
-  generatedAtIso: string,
-): Promise<void> {
-  await service
-    .from('meetings')
-    .update({
-      // Encrypt under the org's per-org KMS key, stored as a bytea hex-text
-      // literal. recap_json_key_version=KMS_ESDK marks the format for rotation.
-      recap_json_enc: await encryptForOrgToBytea(orgId, JSON.stringify(recap)),
-      recap_json_key_version: CRYPTO_VERSION.KMS_ESDK,
-      recap_status: 'done',
-      recap_generated_at: generatedAtIso,
-    })
-    .eq('meeting_id', meetingId)
-    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+/** The encrypted recap produced by {@link buildEncryptedRecap} — only ciphertext crosses the step boundary. */
+export interface BuiltRecap {
+  /** `\x<hex>` bytea literal of the KMS-encrypted recap JSON. Safe to persist in Inngest step state. */
+  readonly recapJsonEncHex: string;
+  readonly generatedAtIso: string;
+  readonly recap: 'done' | 'empty';
 }
 
 /**
- * Pure orchestrator (testable without the Inngest harness). Loads the transcript,
- * marks the recap generating, derives participants, generates the structured
- * recap, and persists the encrypted JSON. Idempotent — safe to re-run on retry.
+ * Phase 1: load the transcript, mark the recap generating, derive participants,
+ * generate the structured recap, and ENCRYPT it — returning only the ciphertext.
+ * Idempotent. Split from persistence so the Inngest function can checkpoint the
+ * expensive model call: a persist-step retry must never re-bill the Claude call.
+ * Only the encrypted blob crosses the step boundary, so no plaintext transcript
+ * or recap is written to Inngest's step state.
  */
-export async function generateMeetingRecap(
+export async function buildEncryptedRecap(
   service: RecapDb,
   options: GenerateMeetingRecapOptions,
-): Promise<{ meetingId: string; recap: 'done' | 'empty' }> {
+): Promise<BuiltRecap> {
   const { meetingId, orgId, apiKey } = options;
   const generate = options.generate ?? recapMeetingStructured;
   const readTranscript: TranscriptReader =
@@ -160,10 +150,12 @@ export async function generateMeetingRecap(
     .eq('meeting_id', meetingId)
     .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
 
+  let recap: StructuredRecap;
+  let kind: 'done' | 'empty';
   // No transcript → terminal 'done' with a minimal structured placeholder so the
-  // new review page renders consistently; skip the model call.
+  // review page renders consistently; skip the model call.
   if (lines.length === 0) {
-    const placeholder: StructuredRecap = {
+    recap = {
       overview: 'No transcript was captured for this meeting.',
       topics: [],
       decisions: [],
@@ -171,20 +163,59 @@ export async function generateMeetingRecap(
       participants: [],
       speakerCount: 0,
     };
-    await persistRecap(service, meetingId, orgId, placeholder, nowIso());
-    return { meetingId, recap: 'empty' };
+    kind = 'empty';
+  } else {
+    const { participants, speakerCount } = deriveParticipants(rows);
+    const narrative = await generate({ transcriptText: buildTranscriptText(lines), title, apiKey });
+    recap = { ...narrative, participants, speakerCount };
+    kind = 'done';
   }
 
-  const { participants, speakerCount } = deriveParticipants(rows);
-  const narrative = await generate({
-    transcriptText: buildTranscriptText(lines),
-    title,
-    apiKey,
-  });
-  const recap: StructuredRecap = { ...narrative, participants, speakerCount };
+  // Encrypt under the org's per-org KMS key, stored as a bytea hex-text literal.
+  const recapJsonEncHex = await encryptForOrgToBytea(orgId, JSON.stringify(recap));
+  return { recapJsonEncHex, generatedAtIso: nowIso(), recap: kind };
+}
 
-  await persistRecap(service, meetingId, orgId, recap, nowIso());
-  return { meetingId, recap: 'done' };
+/**
+ * Phase 2: write the pre-encrypted recap. Checks the DB update error and throws
+ * so a failed write retries (and never leaves recap_status stuck on 'generating').
+ */
+export async function persistEncryptedRecap(
+  service: RecapDb,
+  args: { meetingId: string; orgId: string; recapJsonEncHex: string; generatedAtIso: string },
+): Promise<void> {
+  const { error } = await service
+    .from('meetings')
+    .update({
+      recap_json_enc: args.recapJsonEncHex,
+      recap_json_key_version: CRYPTO_VERSION.KMS_ESDK, // marks the format for rotation
+      recap_status: 'done',
+      recap_generated_at: args.generatedAtIso,
+    })
+    .eq('meeting_id', args.meetingId)
+    .eq('org_id', args.orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+  if (error !== null) {
+    throw new Error(`persistEncryptedRecap failed for meeting=${args.meetingId}: ${error.message}`);
+  }
+}
+
+/**
+ * Convenience orchestrator (build then persist) — used by tests and any
+ * non-Inngest caller. The Inngest function itself runs the two phases as
+ * separate steps for replay durability (see generateMeetingRecapFn).
+ */
+export async function generateMeetingRecap(
+  service: RecapDb,
+  options: GenerateMeetingRecapOptions,
+): Promise<{ meetingId: string; recap: 'done' | 'empty' }> {
+  const built = await buildEncryptedRecap(service, options);
+  await persistEncryptedRecap(service, {
+    meetingId: options.meetingId,
+    orgId: options.orgId,
+    recapJsonEncHex: built.recapJsonEncHex,
+    generatedAtIso: built.generatedAtIso,
+  });
+  return { meetingId: options.meetingId, recap: built.recap };
 }
 
 export const generateMeetingRecapFn = inngest.createFunction(
@@ -199,11 +230,27 @@ export const generateMeetingRecapFn = inngest.createFunction(
       const original = (event as unknown as { data: { event?: { data?: { meetingId?: string } } } })
         .data;
       const meetingId = original.event?.data?.meetingId;
-      if (typeof meetingId !== 'string') return;
+      if (typeof meetingId !== 'string') {
+        // Should never happen, but if the failure event shape ever drifts we must
+        // not silently leave the recap stuck on 'generating' with no trace.
+        console.error(
+          '[generate-meeting-recap.onFailure] could not parse meetingId; recap_status NOT flipped to failed',
+          event,
+        );
+        return;
+      }
       const service = createServiceRoleClient();
       // service-role-cross-org: onFailure only receives the failed event's meetingId
       // (no org payload); flips a terminal status on a meetingId we ourselves created.
-      await service.from('meetings').update({ recap_status: 'failed' }).eq('meeting_id', meetingId);
+      const { error } = await service
+        .from('meetings')
+        .update({ recap_status: 'failed' })
+        .eq('meeting_id', meetingId);
+      if (error !== null) {
+        console.error(
+          `[generate-meeting-recap.onFailure] failed to flip recap_status for ${meetingId}: ${error.message}`,
+        );
+      }
     },
     triggers: [{ event: 'risezome/meeting.recap-requested' }],
   },
@@ -214,10 +261,23 @@ export const generateMeetingRecapFn = inngest.createFunction(
       }
     ).data;
 
-    return step.run('generate-recap', async () => {
+    // Two steps so a persist-write retry never re-runs the (billed) Claude call.
+    // Only the encrypted recap blob crosses the step boundary — no plaintext.
+    const built = await step.run('generate-recap', async () => {
       const apiKey = process.env.ANTHROPIC_API_KEY;
       if (apiKey === undefined || apiKey.length === 0) throw new Error('ANTHROPIC_API_KEY unset');
-      return generateMeetingRecap(createServiceRoleClient(), { meetingId, orgId, apiKey });
+      return buildEncryptedRecap(createServiceRoleClient(), { meetingId, orgId, apiKey });
     });
+
+    await step.run('persist-recap', () =>
+      persistEncryptedRecap(createServiceRoleClient(), {
+        meetingId,
+        orgId,
+        recapJsonEncHex: built.recapJsonEncHex,
+        generatedAtIso: built.generatedAtIso,
+      }),
+    );
+
+    return { meetingId, recap: built.recap };
   },
 );

@@ -66,6 +66,13 @@ legal hold):
    org's data keys, so **every decrypt for that org throws** — its tokens,
    recaps, syntheses, and transcripts become cryptographically unreadable. No
    other org is affected (per-org CMK isolation, KTD2).
+
+   > **In-memory cache grace window.** Revocation is instant at the KMS layer
+   > (new processes and cache-cold reads fail immediately), but a warm process
+   > that *already* decrypted that org's data keeps the unwrapped data key in its
+   > in-memory decrypt cache for up to its **decrypt `maxAge` of 15 minutes**
+   > (writes stop within the encrypt `maxAge` of 5 minutes). To cut the window to
+   > zero, roll the serving processes after disabling the CMK.
 2. **Record it** by marking the org's key revoked (operational record + signal to
    ops tooling): trigger the same rotation function in revoke mode —
 
@@ -80,7 +87,8 @@ legal hold):
 
 **Re-enable** restores access: `aws kms enable-key ...` makes the org's data
 decryptable again (the caching CMM in `@risezome/crypto` clears stale data keys
-within its `maxAge` of 5 minutes, so a freshly enabled key takes effect promptly).
+within its `maxAge` — 5 minutes on the encrypt path, 15 minutes on decrypt — so a
+freshly enabled key takes effect promptly).
 
 ## Notes
 
