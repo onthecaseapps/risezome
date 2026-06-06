@@ -114,6 +114,33 @@ describe('TeamSwitcher (U6)', () => {
     const formData = switchTeam.mock.calls[0]![0] as FormData;
     expect(formData.get('teamId')).toBe('all');
   });
+
+  it('closes the open dropdown on an outside pointer-down', async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <TeamSwitcher orgName="Acme" currentTeamId="t1" teams={TEAMS} />,
+    );
+    const details = container.querySelector('details')!;
+    const summary = details.querySelector('summary')!;
+    await user.click(summary);
+    expect(details.open).toBe(true);
+
+    await user.click(document.body); // pointer-down outside the switcher
+    expect(details.open).toBe(false);
+  });
+
+  it('closes the open dropdown on Escape', async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <TeamSwitcher orgName="Acme" currentTeamId="t1" teams={TEAMS} />,
+    );
+    const details = container.querySelector('details')!;
+    await user.click(details.querySelector('summary')!);
+    expect(details.open).toBe(true);
+
+    await user.keyboard('{Escape}');
+    expect(details.open).toBe(false);
+  });
 });
 
 describe('UserAvatarMenu (U6)', () => {

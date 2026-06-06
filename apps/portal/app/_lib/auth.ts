@@ -77,17 +77,28 @@ export interface UserTeam {
 /**
  * Returns the current user's teams within `orgId`. Used by the top-bar team
  * switcher to render the browse-lens dropdown. Reads `team_members` joined to
- * `teams`, scoped to the org and excluding archived teams, via the RLS-respecting
- * server client (so the user only ever sees teams they belong to). Returns [] on
- * error or when the user is on no teams in this org. Mirrors {@link listUserOrgs}.
+ * `teams`, scoped to the org and excluding archived teams.
+ *
+ * Filters explicitly by `user_id`: the `team_members` SELECT policy is
+ * org-scoped (a member may read ANY team's roster in their org so member-pickers
+ * render), so RLS alone would surface every team in the org, not the caller's.
+ * We dedupe defensively too — though a user has at most one row per team, the
+ * org-scoped join can return co-member rows if the filter is ever loosened.
+ * Returns [] on error or when the user is on no teams in this org. Mirrors
+ * {@link listUserOrgs}.
  */
 export async function listUserTeams(orgId: string): Promise<UserTeam[]> {
   const supabase = await createServerClient();
+  const { data: auth } = await supabase.auth.getUser();
+  const userId = auth.user?.id;
+  if (userId === undefined) return [];
   const { data, error } = await supabase
     .from('team_members')
     .select('team:teams(team_id, name, slug, org_id, archived_at)')
+    .eq('user_id', userId)
     .order('created_at', { ascending: true });
   if (error !== null || data === null) return [];
+  const seen = new Set<string>();
   const out: UserTeam[] = [];
   for (const row of data) {
     // The join surfaces `team` as either an object or array depending on FK
@@ -100,6 +111,8 @@ export async function listUserTeams(orgId: string): Promise<UserTeam[]> {
     if (team === null || team === undefined) continue;
     if (team.org_id !== orgId) continue;
     if (team.archived_at !== null) continue;
+    if (seen.has(team.team_id)) continue;
+    seen.add(team.team_id);
     out.push({ id: team.team_id, name: team.name, slug: team.slug });
   }
   return out;

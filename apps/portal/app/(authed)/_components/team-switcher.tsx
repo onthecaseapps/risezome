@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { usePathname } from 'next/navigation';
 import { switchTeam } from './switch-team-action';
 
@@ -37,7 +37,29 @@ export function TeamSwitcher({
   teams: TeamOption[];
 }): ReactElement {
   const [open, setOpen] = useState(false);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
   const pathname = usePathname();
+
+  // Native <details> only toggles via its <summary>; it stays open on an
+  // outside click. Close it on a pointer-down outside the element or on Escape
+  // whenever it's open, matching normal dropdown behaviour.
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: PointerEvent): void {
+      if (detailsRef.current !== null && !detailsRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
   const pageLabel = pageLabelFromPath(pathname);
   const current = teams.find((t) => t.id === currentTeamId) ?? null;
   const teamCrumb = current !== null ? `#${current.slug}` : 'All meetings';
@@ -52,6 +74,7 @@ export function TeamSwitcher({
 
       {hasSwitcher ? (
         <details
+          ref={detailsRef}
           open={open}
           onToggle={(e) => setOpen(e.currentTarget.open)}
           className="relative min-w-0"
@@ -72,6 +95,7 @@ export function TeamSwitcher({
                     type="submit"
                     role="menuitemradio"
                     aria-checked={currentTeamId === null}
+                    onClick={() => setOpen(false)}
                     className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent-soft/50"
                   >
                     <span className="truncate">My meetings</span>
@@ -92,6 +116,7 @@ export function TeamSwitcher({
                       type="submit"
                       role="menuitemradio"
                       aria-checked={team.id === currentTeamId}
+                      onClick={() => setOpen(false)}
                       className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent-soft/50"
                     >
                       <span className="truncate">
