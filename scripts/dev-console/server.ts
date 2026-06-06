@@ -8,6 +8,7 @@ import { SupabaseControl, type SupabaseState } from './supabase-control';
 import { SidecarControl } from './sidecar-control';
 import { LocalMeetingControl } from './local-meeting-control';
 import { appRegistry } from './registry';
+import { needsBuild, envState, runBuild } from './preflight';
 import { renderLine } from './ansi';
 
 /**
@@ -36,6 +37,10 @@ export interface ConsoleOptions {
   readonly useEnvCmd?: { command: string; scriptArgPrefix?: string[] };
   /** Injectable ensure-tunnel command (defaults to `bash scripts/ensure-tunnel.sh`). */
   readonly ensureTunnelCmd?: { command: string; scriptArgPrefix?: string[] };
+  /** Injectable workspace-build command (defaults to `pnpm build`). */
+  readonly buildCmd?: { command: string; args?: string[] };
+  /** Skip the Start-all preflight (build + env self-heal). Tests set this. */
+  readonly skipPreflight?: boolean;
 }
 
 export interface ConsoleHandle {
@@ -239,6 +244,41 @@ export function createConsole(opts: ConsoleOptions): ConsoleHandle {
     if (method === 'POST' && allMatch !== null) {
       try {
         if (allMatch[1] === 'start') {
+          // ── Preflight: self-heal a fresh checkout's prerequisites ────────
+          if (opts.skipPreflight !== true) {
+            // 1. Build the workspace packages the apps import as dist/ (engine,
+            //    crypto, shared-types) when missing/stale — else they crash with
+            //    ERR_MODULE_NOT_FOUND. tsc -b is incremental, so this is a fast
+            //    no-op when everything is already current.
+            if (needsBuild(opts.repoRoot)) {
+              setStep('Building workspace packages (engine · crypto · shared-types)…');
+              const code = await runBuild(opts.repoRoot, logConsole, opts.buildCmd);
+              if (code !== 0) {
+                logConsole('[console] pnpm build failed (see output above) — not starting.');
+                setStep(null);
+                return sendJson(res, 500, { ok: false, error: 'pnpm build failed' });
+              }
+            }
+            // 2. Generate the active env files when missing. If the per-developer
+            //    .env.dev secrets don't exist we can't create them — surface the
+            //    exact commands instead of letting the apps die on a missing .env.
+            const env = envState(opts.repoRoot);
+            if (!env.activePresent) {
+              if (env.secretsPresent) {
+                const t = readTag(opts.repoRoot) || 'dev';
+                setStep(`Generating env files (tag ${t}, ${lastMode})…`);
+                await runUseEnv(opts, t, lastMode);
+              } else {
+                logConsole('[console] cannot start — per-developer secrets are missing. Run:');
+                logConsole('[console]   cp apps/portal/.env.example apps/portal/.env.dev');
+                logConsole('[console]   cp apps/bot-worker/.env.example apps/bot-worker/.env.dev');
+                logConsole('[console] fill them in, then Apply (or Start all) again.');
+                setStep(null);
+                return sendJson(res, 400, { ok: false, error: 'missing .env.dev — see Console' });
+              }
+            }
+          }
+
           if (lastMode === 'local') {
             setStep(
               'Starting Supabase — first run pulls Docker images, this can take a few minutes…',
