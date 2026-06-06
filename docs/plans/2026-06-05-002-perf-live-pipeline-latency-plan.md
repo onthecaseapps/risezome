@@ -1,7 +1,7 @@
 ---
 title: "perf: Live pipeline latency — stream synthesis, parallelize judge, single-embed"
 type: refactor
-status: active
+status: completed
 date: 2026-06-05
 origin:
   - docs/brainstorms/2026-06-05-live-pipeline-latency-requirements.md
