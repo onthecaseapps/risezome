@@ -11,6 +11,7 @@ import { AddSourceSection } from './_add-source';
 import { ConfigTeamSelector, type ConfigTeam } from './_config-team-selector';
 import { TrelloMark, JiraMark, ConfluenceMark } from './_source-icons';
 import type { SourceItem } from './_source-item-list';
+import { buildGithubItems, type GithubSourceRow } from './_github-items';
 
 /**
  * Sources — the per-team source editor (redesign). Pick a team to configure via
@@ -33,15 +34,6 @@ interface InstallationRow {
   account_login: string;
   account_type: string;
   suspended_at: string | null;
-}
-
-interface GithubSourceRow {
-  id: string;
-  repo_full_name: string;
-  installation_id: number | null;
-  status: string;
-  indexed_files: number;
-  total_files: number | null;
 }
 
 interface ConnectionSourceRow {
@@ -102,13 +94,18 @@ export default async function SourcesPage(props: {
     .order('account_login', { ascending: true });
   const installations = (installRows ?? []) as InstallationRow[];
 
+  // NOTE: removed (de-indexed) repos are intentionally INCLUDED. GitHub has no
+  // live repo listing here (unlike Trello/Atlassian, whose removed sources
+  // reappear via their live board/project list), so filtering removed rows out
+  // would make a de-indexed repo vanish from the page with no way to re-select
+  // it. buildGithubItems offers removed repos as available, re-selectable items;
+  // re-selecting revives the source via addSourceToTeam.
   const { data: githubSourceRows } = installations.length
     ? await supabase
         .from('sources')
         .select('id, repo_full_name, installation_id, status, indexed_files, total_files')
         .eq('org_id', orgId)
         .not('installation_id', 'is', null)
-        .neq('status', 'removed')
         .order('repo_full_name', { ascending: true })
     : { data: [] as GithubSourceRow[] };
   const githubSources = (githubSourceRows ?? []) as GithubSourceRow[];
@@ -180,19 +177,7 @@ export default async function SourcesPage(props: {
 
   for (const inst of installations) {
     const repos = githubSources.filter((s) => s.installation_id === inst.installation_id);
-    const items: SourceItem[] = repos.map((s) => ({
-      key: s.id,
-      sourceId: s.id,
-      externalId: s.repo_full_name,
-      label: s.repo_full_name,
-      count: s.indexed_files,
-      total: s.total_files,
-      status: s.status,
-      installationId: inst.installation_id,
-    }));
-    const selectedExternalIds = repos
-      .filter((s) => teamSourceIds.has(s.id))
-      .map((s) => s.repo_full_name);
+    const { items, selected } = buildGithubItems(repos, teamSourceIds, inst.installation_id);
     cards.push({
       provider: 'github',
       cardKey: `gh-${inst.installation_id}`,
@@ -202,7 +187,7 @@ export default async function SourcesPage(props: {
       suspended: inst.suspended_at !== null,
       manageUrl: buildManageUrl(inst.account_login, inst.account_type, inst.installation_id),
       items,
-      selectedExternalIds,
+      selectedExternalIds: selected,
       installationId: inst.installation_id,
     });
   }
