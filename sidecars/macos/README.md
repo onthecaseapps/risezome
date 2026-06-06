@@ -29,6 +29,11 @@ xcode-select --install   # provides swiftc, if not already present
 brew install blackhole-2ch
 ```
 
+You'll need to restart your Mac:
+```
+installer: The install requires restarting now.
+```
+
 Then route system audio into it so the sidecar can capture it. Easiest is a
 **Multi-Output Device** so you still hear audio while it's also sent to BlackHole:
 
