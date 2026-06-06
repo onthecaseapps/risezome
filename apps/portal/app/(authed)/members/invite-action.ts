@@ -27,8 +27,31 @@ export async function createInviteAction(
   const name =
     typeof nameRaw === 'string' && nameRaw.trim().length > 0 ? nameRaw.trim().slice(0, 80) : null;
 
+  // Optional target team: the new member is added to it on accept. Validated
+  // server-side (must be a live, non-archived team in THIS org) — never trust the
+  // client's id blindly, even though only an admin can reach this action. Blank /
+  // 'all' / unknown ⇒ null (no team assignment), same default as no picker.
+  const teamIdRaw = formData.get('team_id');
+  const requestedTeamId =
+    typeof teamIdRaw === 'string' && teamIdRaw.length > 0 && teamIdRaw !== 'all'
+      ? teamIdRaw
+      : null;
+
   const token = randomBytes(32).toString('hex');
   const service = createServiceRoleClient();
+
+  let teamId: string | null = null;
+  if (requestedTeamId !== null) {
+    const { data: team } = await service
+      .from('teams')
+      .select('team_id')
+      .eq('team_id', requestedTeamId)
+      .eq('org_id', orgId)
+      .is('archived_at', null)
+      .maybeSingle();
+    teamId = team !== null ? requestedTeamId : null;
+  }
+
   const { error } = await service.from('org_invites').insert({
     token,
     org_id: orgId,
@@ -36,6 +59,7 @@ export async function createInviteAction(
     can_invite_bot: canInviteBot,
     created_by: user.id,
     name,
+    team_id: teamId,
   });
   if (error !== null) {
     return { ok: false, error: error.message };
@@ -46,7 +70,7 @@ export async function createInviteAction(
   const proto = h.get('x-forwarded-proto') ?? 'https';
   const url = `${proto}://${host}/invite/${token}`;
 
-  revalidatePath('/members');
+  revalidatePath('/teams');
   return { ok: true, url };
 }
 
@@ -67,6 +91,6 @@ export async function revokeInviteAction(
   if (error !== null) {
     return { ok: false, error: error.message };
   }
-  revalidatePath('/members');
+  revalidatePath('/teams');
   return { ok: true };
 }

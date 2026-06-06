@@ -29,13 +29,21 @@ interface InviteRow {
   role: string;
   can_invite_bot: boolean;
   expires_at: string;
+  team_id?: string | null;
 }
 
-function makeService(opts: { invite: InviteRow | null; existingMember: boolean }) {
+function makeService(opts: {
+  invite: InviteRow | null;
+  existingMember: boolean;
+  /** When set, the teams lookup returns this live team; null ⇒ team gone/archived. */
+  liveTeam?: { team_id: string } | null;
+}) {
   const inserted: Array<Record<string, unknown>> = [];
+  const teamUpserts: Array<Record<string, unknown>> = [];
   const deletedTokens: string[] = [];
   const service = {
     inserted,
+    teamUpserts,
     deletedTokens,
     from(table: string) {
       if (table === 'org_invites') {
@@ -47,6 +55,28 @@ function makeService(opts: { invite: InviteRow | null; existingMember: boolean }
               return { error: null };
             },
           }),
+        };
+      }
+      if (table === 'teams') {
+        // The defensive re-check that the invite's team is still live.
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                is: () => ({
+                  maybeSingle: async () => ({ data: opts.liveTeam ?? null, error: null }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'team_members') {
+        return {
+          upsert: async (row: Record<string, unknown>) => {
+            teamUpserts.push(row);
+            return { error: null };
+          },
         };
       }
       // org_members
@@ -144,5 +174,44 @@ describe('acceptInviteAction', () => {
     const service = makeService({ invite: null, existingMember: false });
     createServiceRoleClient.mockReturnValue(service);
     await expect(acceptInviteAction(form('tok_1'))).rejects.toThrow('REDIRECT:/invite/tok_1?error=invalid');
+  });
+
+  it('assigns the new member to the invite team when it carries a live team_id', async () => {
+    const service = makeService({
+      invite: futureInvite({ role: 'member', team_id: 'team_1' }),
+      existingMember: false,
+      liveTeam: { team_id: 'team_1' },
+    });
+    createServiceRoleClient.mockReturnValue(service);
+
+    await expect(acceptInviteAction(form('tok_1'))).rejects.toThrow('REDIRECT:/upcoming');
+    expect(service.inserted).toHaveLength(1); // org membership
+    expect(service.teamUpserts).toEqual([{ team_id: 'team_1', user_id: 'user_1' }]);
+  });
+
+  it('skips team assignment when the invite team was archived/deleted (live re-check fails)', async () => {
+    const service = makeService({
+      invite: futureInvite({ role: 'member', team_id: 'team_1' }),
+      existingMember: false,
+      liveTeam: null, // gone or archived
+    });
+    createServiceRoleClient.mockReturnValue(service);
+
+    await expect(acceptInviteAction(form('tok_1'))).rejects.toThrow('REDIRECT:/upcoming');
+    expect(service.inserted).toHaveLength(1); // still joins the org
+    expect(service.teamUpserts).toHaveLength(0); // but no team membership
+  });
+
+  it('does not assign a team for an existing member (no-op join)', async () => {
+    const service = makeService({
+      invite: futureInvite({ role: 'member', team_id: 'team_1' }),
+      existingMember: true,
+      liveTeam: { team_id: 'team_1' },
+    });
+    createServiceRoleClient.mockReturnValue(service);
+
+    await expect(acceptInviteAction(form('tok_1'))).rejects.toThrow('REDIRECT:/upcoming');
+    expect(service.inserted).toHaveLength(0);
+    expect(service.teamUpserts).toHaveLength(0);
   });
 });

@@ -1,32 +1,40 @@
 import type { ReactElement } from 'react';
 import { requireAdmin } from '../../_lib/auth';
 import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
-import { TeamsClient, type OrgMember, type TeamRow, type TeamSourceRow } from './_components/teams-client';
+import {
+  TeamsMembersClient,
+  type MemberVM,
+  type PendingInviteVM,
+  type SourceVM,
+  type TeamVM,
+} from './_components/teams-members-client';
 
 /**
- * Teams management (teams restructure U7). Manager/super_admin only —
- * requireAdmin() redirects members away.
+ * Unified "Teams & members" surface (teams + members consolidation). Replaces the
+ * separate /members and /teams pages — /members now redirects here. Manager/
+ * super_admin only; requireAdmin() redirects members away.
  *
- * Read model (org-scoped):
- *   - teams: non-archived teams in the org, with member + selected-source counts.
- *   - team_members: every (team_id, user_id) join in the org, to drive the
- *     per-team member editor + counts.
- *   - team_sources: every (team_id, source_id) join, to mark which sources each
- *     team has selected.
- *   - sources: the org's selectable sources (status != 'removed'), the pool the
- *     per-team source picker toggles against.
- *   - org_members + auth display names: the roster the member picker adds from.
+ * One server read assembles every view model the client rail needs:
+ *   - members: org_members + auth display names / last-active (the All-members
+ *     roster). Same pattern + same service-role exception as the old members/page.
+ *   - teams + team_members + team_sources: drives the rail counts, the per-member
+ *     team pills, and each team's detail (member list + selected sources).
+ *   - sources: the org's selectable sources (status != 'removed') — the pool the
+ *     per-team source toggles act on (reused from the old teams/page).
+ *   - org_invites: pending invites (service-role exception: that table has RLS
+ *     enabled with no authenticated SELECT policy; the admin gate makes it safe).
  *
- * Reads use the RLS-scoped authed client where a policy exists (this page is
- * requireAdmin-gated so is_org_admin holds); auth display names need the admin
- * API, which only the service-role client can call (same exception as
- * members/page.tsx).
+ * RLS-scoped authed client where a policy exists (this page is requireAdmin-gated
+ * so is_org_admin holds); the two reads that MUST stay on service-role are the
+ * auth admin API (display names / last-active) and org_invites — same U5
+ * exceptions documented in the prior members/teams pages.
  */
-export default async function TeamsPage(): Promise<ReactElement> {
-  const { orgId, orgName, user } = await requireAdmin();
+export default async function TeamsMembersPage(): Promise<ReactElement> {
+  const { orgId, orgName, user, role: callerRole } = await requireAdmin();
   const supabase = await createServerClient();
   const service = createServiceRoleClient();
 
+  // ── Teams + their member/source joins ─────────────────────────────────────
   const { data: teamRows } = await supabase
     .from('teams')
     .select('team_id, name, slug, created_at')
@@ -36,7 +44,6 @@ export default async function TeamsPage(): Promise<ReactElement> {
 
   const teamIds = (teamRows ?? []).map((t) => t.team_id as string);
 
-  // Membership + source joins for all of the org's teams in two reads.
   const { data: memberJoins } = teamIds.length
     ? await supabase.from('team_members').select('team_id, user_id').in('team_id', teamIds)
     : { data: [] as { team_id: string; user_id: string }[] };
@@ -52,50 +59,19 @@ export default async function TeamsPage(): Promise<ReactElement> {
     membersByTeam.set(j.team_id as string, list);
   }
   const sourcesByTeam = new Map<string, string[]>();
+  const teamsByUser = new Map<string, string[]>();
+  for (const j of memberJoins ?? []) {
+    const list = teamsByUser.get(j.user_id as string) ?? [];
+    list.push(j.team_id as string);
+    teamsByUser.set(j.user_id as string, list);
+  }
   for (const j of sourceJoins ?? []) {
     const list = sourcesByTeam.get(j.team_id as string) ?? [];
     list.push(j.source_id as string);
     sourcesByTeam.set(j.team_id as string, list);
   }
 
-  // The org's selectable sources (the curation pool). Hide already-de-indexed rows.
-  const { data: srcRows } = await supabase
-    .from('sources')
-    .select('id, kind, display_name, repo_full_name, external_id')
-    .eq('org_id', orgId)
-    .neq('status', 'removed')
-    .order('kind', { ascending: true });
-
-  const sources: TeamSourceRow[] = (srcRows ?? []).map((s) => ({
-    id: s.id as string,
-    kind: (s.kind as string | null) ?? 'github',
-    label: sourceLabel(s),
-  }));
-
-  // Org roster (with display names) — the member-picker pool.
-  const { data: orgMemberRows } = await supabase
-    .from('org_members')
-    .select('user_id, role')
-    .eq('org_id', orgId)
-    .order('joined_at', { ascending: true });
-
-  const members: OrgMember[] = [];
-  for (const row of orgMemberRows ?? []) {
-    const userId = row.user_id as string;
-    const { data: u } = await service.auth.admin.getUserById(userId);
-    const email = u?.user?.email ?? userId;
-    const meta = (u?.user?.user_metadata ?? {}) as Record<string, unknown>;
-    const name = typeof meta['full_name'] === 'string' ? (meta['full_name'] as string) : null;
-    members.push({
-      userId,
-      email,
-      name,
-      role: row.role as string,
-      isSelf: userId === user.id,
-    });
-  }
-
-  const teams: TeamRow[] = (teamRows ?? []).map((t) => ({
+  const teams: TeamVM[] = (teamRows ?? []).map((t) => ({
     teamId: t.team_id as string,
     name: t.name as string,
     slug: t.slug as string,
@@ -103,8 +79,75 @@ export default async function TeamsPage(): Promise<ReactElement> {
     sourceIds: sourcesByTeam.get(t.team_id as string) ?? [],
   }));
 
+  // ── Selectable sources (curation pool) ────────────────────────────────────
+  const { data: srcRows } = await supabase
+    .from('sources')
+    .select('id, kind, display_name, repo_full_name, external_id')
+    .eq('org_id', orgId)
+    .neq('status', 'removed')
+    .order('kind', { ascending: true });
+
+  const sources: SourceVM[] = (srcRows ?? []).map((s) => ({
+    id: s.id as string,
+    kind: (s.kind as string | null) ?? 'github',
+    label: sourceLabel(s),
+  }));
+
+  // ── Org roster + auth display names / last-active ─────────────────────────
+  const { data: memberRows } = await supabase
+    .from('org_members')
+    .select('user_id, role, can_invite_bot, joined_at')
+    .eq('org_id', orgId)
+    .order('joined_at', { ascending: true });
+
+  const members: MemberVM[] = [];
+  const nameByUserId = new Map<string, string>();
+  for (const row of memberRows ?? []) {
+    const userId = row.user_id as string;
+    const { data: u } = await service.auth.admin.getUserById(userId);
+    const email = u?.user?.email ?? userId;
+    const meta = (u?.user?.user_metadata ?? {}) as Record<string, unknown>;
+    const name = typeof meta['full_name'] === 'string' ? (meta['full_name'] as string) : null;
+    nameByUserId.set(userId, name ?? email);
+    members.push({
+      userId,
+      email,
+      name,
+      role: row.role as string,
+      canInviteBot: row.can_invite_bot as boolean,
+      isSelf: userId === user.id,
+      lastSignInAt: u?.user?.last_sign_in_at ?? null,
+      teamIds: teamsByUser.get(userId) ?? [],
+    });
+  }
+
+  // ── Pending invites ───────────────────────────────────────────────────────
+  const { data: inviteRows } = await service
+    .from('org_invites')
+    .select('token, role, can_invite_bot, expires_at, created_at, created_by, name, team_id')
+    .eq('org_id', orgId)
+    .order('created_at', { ascending: false });
+
+  const invites: PendingInviteVM[] = (inviteRows ?? []).map((r) => ({
+    token: r.token as string,
+    role: r.role as string,
+    canInviteBot: r.can_invite_bot as boolean,
+    expiresAt: r.expires_at as string,
+    createdAt: r.created_at as string,
+    invitedByName: nameByUserId.get(r.created_by as string) ?? null,
+    name: (r.name as string | null) ?? null,
+    teamId: (r.team_id as string | null) ?? null,
+  }));
+
   return (
-    <TeamsClient orgName={orgName} teams={teams} members={members} sources={sources} />
+    <TeamsMembersClient
+      orgName={orgName}
+      members={members}
+      teams={teams}
+      sources={sources}
+      invites={invites}
+      isSuperAdmin={callerRole === 'super_admin'}
+    />
   );
 }
 
