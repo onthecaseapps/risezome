@@ -2,7 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { TranscriptUtterance } from '@risezome/hud-ui';
-import { ReviewClient, type ReviewClientProps } from '../app/(authed)/meetings/[meetingId]/review/_client';
+import {
+  ReviewClient,
+  nearestUtteranceIndex,
+  type ReviewClientProps,
+} from '../app/(authed)/meetings/[meetingId]/review/_client';
 import type { StructuredRecap } from '../src/inngest/lib/meeting-recap';
 import {
   normalizeCitations,
@@ -72,6 +76,15 @@ describe('ReviewClient (U8)', () => {
     // The anchored utterance is still clickable; its card stays open.
     await user.click(screen.getByText(/do we use AI/i));
     expect(screen.getByText(/uses Claude/i)).toBeInTheDocument();
+  });
+
+  it('wires synthesis pin actions so the surfaced answer shows a pin button', () => {
+    // Regression: the review page previously rendered SynthesisStreamItem with no
+    // SynthesisActionsProvider, so PinButton returned null (no pin on review).
+    const { container } = renderReview({ anchorMap: { q1: 's1' } });
+    const pin = container.querySelector('.pin-button');
+    expect(pin).not.toBeNull();
+    expect(pin?.getAttribute('aria-label')).toBe('Pin synthesis');
   });
 
   it('with no syntheses, shows the no-summaries hint and no anchors', () => {
@@ -256,5 +269,63 @@ describe('resolveSynthesisAnchors', () => {
   it('drops a synthesis with no utterance before it and no trigger', () => {
     const syn: AnchorSynthesis[] = [{ synthesisId: 's', triggerUtteranceId: null, createdAtMs: 500 }];
     expect(resolveSynthesisAnchors(syn, utterances)).toEqual({});
+  });
+});
+
+describe('nearestUtteranceIndex', () => {
+  it('returns -1 for an empty transcript', () => {
+    expect(nearestUtteranceIndex([], 100)).toBe(-1);
+  });
+
+  it('falls back to the first utterance when the moment precedes all of them', () => {
+    expect(nearestUtteranceIndex([100, 200], 50)).toBe(0);
+  });
+
+  it('returns the last utterance at or before the moment (inclusive)', () => {
+    expect(nearestUtteranceIndex([0, 100, 200, 300], 250)).toBe(2);
+    expect(nearestUtteranceIndex([0, 100, 200], 200)).toBe(2);
+    expect(nearestUtteranceIndex([0, 100, 200], 99999)).toBe(2);
+  });
+});
+
+describe('ReviewClient — jump-to-moment timestamps', () => {
+  // Transcript startMs is ABSOLUTE epoch ms; recap timestampMs is relative
+  // elapsed-from-first-utterance. The base below is an arbitrary epoch; the three
+  // utterances sit at +0s, +60s, +180s.
+  const BASE = 1_780_000_000_000;
+  const ABS_TRANSCRIPT: TranscriptUtterance[] = [
+    { utteranceId: 'a', text: 'opening remarks', speaker: 'Alice', isFinal: true, startMs: BASE, endMs: BASE + 1000, revision: 0 },
+    { utteranceId: 'b', text: 'the middle bit', speaker: 'Bob', isFinal: true, startMs: BASE + 60_000, endMs: BASE + 61_000, revision: 0 },
+    { utteranceId: 'c', text: 'the closing bit', speaker: 'Cara', isFinal: true, startMs: BASE + 180_000, endMs: BASE + 181_000, revision: 0 },
+  ];
+  // Topic at 02:50 (170_000ms relative) → nearest at/before is the +60s utterance.
+  const RECAP: StructuredRecap = {
+    ...STRUCTURED,
+    topics: [{ text: 'A mid-meeting topic', timestampMs: 170_000 }],
+  };
+
+  it('normalizes absolute transcript startMs against the relative recap timestamp (not the first line)', async () => {
+    const user = userEvent.setup();
+    const originalScroll = Element.prototype.scrollIntoView;
+    const scrollSpy = vi.fn();
+    Element.prototype.scrollIntoView = scrollSpy;
+    try {
+      const { container } = renderReview({
+        structuredRecap: RECAP,
+        initialTranscript: ABS_TRANSCRIPT,
+        anchorMap: {},
+      });
+      await user.click(screen.getByRole('button', { name: /jump to 02:50/i }));
+      expect(scrollSpy).toHaveBeenCalled();
+      // Lands on the +60s utterance, NOT the first (would be the bug).
+      const target = container.querySelector(`[data-start-ms="${BASE + 60_000}"]`);
+      expect(target).not.toBeNull();
+      expect(target!.classList.contains('rz-ts-pulse')).toBe(true);
+      // The first utterance must NOT be the pulsed one.
+      const first = container.querySelector(`[data-start-ms="${BASE}"]`);
+      expect(first!.classList.contains('rz-ts-pulse')).toBe(false);
+    } finally {
+      Element.prototype.scrollIntoView = originalScroll;
+    }
   });
 });

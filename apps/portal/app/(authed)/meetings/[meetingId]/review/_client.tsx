@@ -3,19 +3,23 @@
 import { useMemo, useState, useTransition, type ReactElement, type ReactNode } from 'react';
 import {
   AppStateProvider,
+  SynthesisActionsProvider,
   TranscriptPanel,
   SynthesisStreamItem,
+  useAppDispatch,
   useAppState,
   initialAppState,
   type AppState,
   type CardEvent,
   type CardRecord,
+  type SynthesisActions,
   type SynthesisRecord,
   type TranscriptUtterance,
 } from '@risezome/hud-ui';
 import type { InitialSynthesis } from '../_synthesis-seed';
 import type { RecapParticipant, StructuredRecap } from '../../../../../src/inngest/lib/meeting-recap';
 import type { RegenerateRecapResult } from './regenerate-recap-core';
+import { pinSynthesisAction } from '../live/synthesis-actions-server';
 
 /**
  * Post-meeting review (U8). Mirrors the live view's styling: a generated
@@ -113,10 +117,50 @@ export function ReviewClient(props: ReviewClientProps): ReactElement {
           recapStatus={props.recapStatus}
           onRegenerate={props.onRegenerate}
         />
-        <ReviewSplit anchorMap={props.anchorMap} transcript={props.initialTranscript} />
+        <ReviewSynthesisActions>
+          <ReviewSplit anchorMap={props.anchorMap} transcript={props.initialTranscript} />
+        </ReviewSynthesisActions>
       </AppStateProvider>
     </div>
   );
+}
+
+/**
+ * Provides pin/unpin for the surfaced synthesis cards on the review page — the
+ * same optimistic-then-server pattern the live page uses (rollback on failure),
+ * so a completed answer can be pinned post-meeting. Must sit inside
+ * AppStateProvider (it dispatches into the reducer). Without this the pin button
+ * hides entirely (SynthesisCard's PinButton returns null with no actions wired).
+ */
+function ReviewSynthesisActions({ children }: { children: ReactNode }): ReactElement {
+  const dispatch = useAppDispatch();
+  const actions = useMemo<SynthesisActions>(
+    () => ({
+      pin: async (synthesisId: string) => {
+        dispatch({ type: 'synthesisPinned', synthesisId, pinned: true, pinnedAt: new Date().toISOString() });
+        const result = await pinSynthesisAction(synthesisId, true);
+        if (!result.ok) {
+          dispatch({ type: 'synthesisPinned', synthesisId, pinned: false, pinnedAt: null });
+          throw new Error(result.error);
+        }
+      },
+      unpin: async (synthesisId: string) => {
+        dispatch({ type: 'synthesisPinned', synthesisId, pinned: false, pinnedAt: null });
+        const result = await pinSynthesisAction(synthesisId, false);
+        if (!result.ok) {
+          dispatch({
+            type: 'synthesisPinned',
+            synthesisId,
+            pinned: true,
+            pinnedAt: new Date().toISOString(),
+          });
+          throw new Error(result.error);
+        }
+      },
+    }),
+    [dispatch],
+  );
+  return <SynthesisActionsProvider actions={actions}>{children}</SynthesisActionsProvider>;
 }
 
 function ReviewSplit({
@@ -372,11 +416,68 @@ function categoryColor(cat: string): string {
   return CATEGORY_COLORS[cat] ?? hashed(cat);
 }
 
-/** A jump-to-moment timestamp chip (clock + mm:ss). Display-only (no deep-link in v1). */
-function Moment({ label }: { label: string }): ReactElement {
+/**
+ * Index of the transcript utterance "playing" at `ms`: the last one whose start
+ * is at or before the moment (the utterances are in ascending start order). Falls
+ * back to the first when the moment precedes all of them. -1 for an empty list.
+ * Pure + exported for unit testing.
+ */
+export function nearestUtteranceIndex(startMsAsc: readonly number[], ms: number): number {
+  if (startMsAsc.length === 0) return -1;
+  let idx = 0;
+  for (let i = 0; i < startMsAsc.length; i += 1) {
+    const s = startMsAsc[i]!;
+    if (s <= ms) idx = i;
+    else break;
+  }
+  return idx;
+}
+
+/**
+ * Scroll the transcript to the utterance spoken at `ms` and briefly pulse it.
+ * Targets the `data-start-ms` anchors TranscriptPanel renders (DOM order ==
+ * time order). Honors prefers-reduced-motion (instant scroll, no animation).
+ *
+ * Reference-frame note: transcript `startMs` is ABSOLUTE (epoch-style) ms, but a
+ * recap's `timestampMs` is relative elapsed-from-first-utterance (the recap
+ * builder subtracts the earliest startMs — see flattenTranscriptLines). So we
+ * normalize each utterance the same way (subtract the minimum startMs) before
+ * matching, otherwise every relative `ms` is smaller than every absolute start
+ * and the match collapses to the first line.
+ */
+function scrollToMoment(ms: number): void {
+  const nodes = Array.from(document.querySelectorAll<HTMLElement>('.transcript [data-start-ms]'));
+  if (nodes.length === 0) return;
+  const starts = nodes.map((n) => Number(n.dataset['startMs']));
+  const finite = starts.filter((s) => Number.isFinite(s));
+  const baseline = finite.length > 0 ? Math.min(...finite) : 0;
+  const relative = starts.map((s) => (Number.isFinite(s) ? s - baseline : 0));
+  const idx = nearestUtteranceIndex(relative, ms);
+  const target = nodes[idx];
+  if (target === undefined) return;
+  const reduce =
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+  target.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+  // Restart the animation if the same target is clicked again: drop the class,
+  // force a reflow, then re-add. The class self-clears via the timer.
+  target.classList.remove('rz-ts-pulse');
+  void target.offsetWidth;
+  target.classList.add('rz-ts-pulse');
+  window.setTimeout(() => target.classList.remove('rz-ts-pulse'), 1600);
+}
+
+/** A jump-to-moment timestamp chip (clock + mm:ss). Click scrolls the transcript
+ *  to that moment and briefly pulses the utterance. */
+function Moment({ ms }: { ms: number }): ReactElement {
+  const label = mmss(ms) ?? '';
   return (
-    <span
-      className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[11.5px] font-semibold text-accent"
+    <button
+      type="button"
+      onClick={() => scrollToMoment(ms)}
+      title="Jump to this moment in the transcript"
+      aria-label={`Jump to ${label} in the transcript`}
+      className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[11.5px] font-semibold text-accent transition-colors hover:brightness-110"
       style={{ background: 'var(--accent-soft)' }}
     >
       <Icon
@@ -390,7 +491,7 @@ function Moment({ label }: { label: string }): ReactElement {
         sw={2}
       />
       {label}
-    </span>
+    </button>
   );
 }
 
@@ -540,7 +641,6 @@ function StructuredRecapView({
             <SectionTitle count={recap.topics.length}>Key topics</SectionTitle>
             <div className="flex flex-col">
               {recap.topics.map((t, i) => {
-                const ts = mmss(t.timestampMs);
                 return (
                   <div
                     key={i}
@@ -550,7 +650,7 @@ function StructuredRecapView({
                       {String(i + 1).padStart(2, '0')}
                     </span>
                     <span className="min-w-0 flex-1 text-sm leading-snug text-fg">{t.text}</span>
-                    {ts !== null ? <Moment label={ts} /> : null}
+                    {t.timestampMs !== null ? <Moment ms={t.timestampMs} /> : null}
                   </div>
                 );
               })}
@@ -605,7 +705,7 @@ function StructuredRecapView({
                             {a.assignee}
                           </span>
                         ) : null}
-                        {ts !== null ? <Moment label={ts} /> : null}
+                        {a.timestampMs !== null ? <Moment ms={a.timestampMs} /> : null}
                       </div>
                     ) : null}
                   </div>
