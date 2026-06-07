@@ -4,14 +4,15 @@ import { createServerClient } from '../../_lib/supabase-server';
 import { cookies } from 'next/headers';
 import { SidebarFrame } from './sidebar-frame';
 import { SidebarNavLink } from './sidebar-nav-link';
-import { CalendarIcon, CapturesIcon, DebugIcon, GapsIcon, LiveIcon, SettingsIcon, SourcesIcon, WhatsNewIcon } from './nav-icons';
+import { CalendarIcon, CapturesIcon, DebugIcon, GapsIcon, LiveIcon, SettingsIcon, SourcesIcon } from './nav-icons';
 
 /**
  * Left nav icon rail shared across all `(authed)` routes. The brand, team
  * switcher, notifications bell, and user menu now live in the top bar (U6); the
  * rail holds only the nav links:
  *   Upcoming, Live meeting (dynamic), Captures, Knowledge gaps,
- *   Sources / Members / Settings (managers only), What's new, dev links.
+ *   Sources / Settings (managers only), dev links. ("What's new" moved to the
+ *   user-avatar menu — it's product news, not primary nav.)
  *
  * "Live meeting" always routes to /meetings/live (the list page). A pulsing red
  * dot appears over its icon when one or more meetings are currently recording in
@@ -109,12 +110,6 @@ export async function Sidebar(): Promise<ReactElement> {
             />
           </>
         )}
-        <SidebarNavLink
-          href="/whats-new"
-          matchPrefix="/whats-new"
-          icon={<WhatsNewIcon />}
-          label="What's new"
-        />
 
         {/* Dev-only Debug section. Hidden in production builds so
          *  internal-only surfaces (live-mic, /ask retrieval probe)

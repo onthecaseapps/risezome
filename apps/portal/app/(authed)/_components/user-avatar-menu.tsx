@@ -101,6 +101,15 @@ export function UserAvatarMenu({
               Notification settings
             </a>
           </li>
+          <li>
+            <a
+              href="/whats-new"
+              role="menuitem"
+              className="block px-3 py-2 text-sm hover:bg-accent-soft/50"
+            >
+              What&apos;s new
+            </a>
+          </li>
         </ul>
 
         <div className="border-t border-border px-3 py-2">

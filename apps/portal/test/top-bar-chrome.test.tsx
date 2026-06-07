@@ -149,6 +149,11 @@ describe('UserAvatarMenu (U6)', () => {
     const menu = screen.getByRole('menu');
     expect(within(menu).getByText(/profile & account/i)).toBeInTheDocument();
     expect(within(menu).getByText(/notification settings/i)).toBeInTheDocument();
+    // "What's new" moved here from the sidebar (it's product news, not config).
+    expect(within(menu).getByRole('menuitem', { name: /what's new/i })).toHaveAttribute(
+      'href',
+      '/whats-new',
+    );
     expect(within(menu).getByRole('menuitem', { name: /sign out/i })).toBeInTheDocument();
     // Single-org model: there is no workspace switcher in the user menu.
     expect(within(menu).queryByText(/switch workspace/i)).not.toBeInTheDocument();
