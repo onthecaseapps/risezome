@@ -158,4 +158,26 @@ describe('UserAvatarMenu (U6)', () => {
     render(<UserAvatarMenu email="jordan@acme.dev" fullName="Jordan Lee" />);
     expect(screen.getAllByText('JL').length).toBeGreaterThan(0);
   });
+
+  it('closes the open account menu on an outside pointer-down', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<UserAvatarMenu email="jordan@acme.dev" fullName="Jordan Lee" />);
+    const details = container.querySelector('details')!;
+    await user.click(details.querySelector('summary')!);
+    expect(details.open).toBe(true);
+
+    await user.click(document.body);
+    expect(details.open).toBe(false);
+  });
+
+  it('closes the open account menu on Escape', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<UserAvatarMenu email="jordan@acme.dev" fullName="Jordan Lee" />);
+    const details = container.querySelector('details')!;
+    await user.click(details.querySelector('summary')!);
+    expect(details.open).toBe(true);
+
+    await user.keyboard('{Escape}');
+    expect(details.open).toBe(false);
+  });
 });

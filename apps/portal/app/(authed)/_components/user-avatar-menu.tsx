@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import {
   applyTheme,
   readStoredTheme,
@@ -27,11 +27,34 @@ export function UserAvatarMenu({
   fullName?: string | undefined;
 }): ReactElement {
   const [open, setOpen] = useState(false);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
   const display = fullName ?? email;
   const initials = initialsFor(display);
 
+  // Native <details> only toggles via its <summary>; it stays open on an outside
+  // click. Close it on a pointer-down outside the element or on Escape whenever
+  // it's open, matching normal dropdown behaviour (same idiom as TeamSwitcher).
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: PointerEvent): void {
+      if (detailsRef.current !== null && !detailsRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
   return (
     <details
+      ref={detailsRef}
       open={open}
       onToggle={(e) => setOpen(e.currentTarget.open)}
       className="relative"
