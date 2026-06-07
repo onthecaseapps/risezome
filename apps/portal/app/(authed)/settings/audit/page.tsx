@@ -2,9 +2,10 @@ import type { ReactElement } from 'react';
 import { requireSuperAdmin } from '../../../_lib/auth';
 import { createServerClient, createServiceRoleClient } from '../../../_lib/supabase-server';
 import { roleLabel } from '../../../_lib/roles';
+import { AuditLogClient, type AuditEntry, type Category } from './_audit-log-client';
 
 /**
- * Settings → Audit log (permissions overhaul U7). SUPER-ADMIN ONLY.
+ * Settings → Audit log (permissions overhaul U7 + redesign). SUPER-ADMIN ONLY.
  *
  * requireSuperAdmin() redirects every non-super_admin away (app-layer
  * defense-in-depth). The permission_audit_log read itself goes through the
@@ -12,26 +13,15 @@ import { roleLabel } from '../../../_lib/roles';
  * so a non-super_admin would read ZERO rows even if they reached this code — RLS
  * is the real boundary; the route guard is the UX layer.
  *
- * Two enrichment reads stay on service-role (mirroring the members page): actor
- * display names come from the admin auth API (cannot run under RLS), and target
- * meeting titles are read org-scoped (the audit row already proves the actor's
- * org context). Both are presentation-only labels.
+ * Enrichment reads stay on service-role (mirroring the members page): actor +
+ * target display names come from the admin auth API (cannot run under RLS), and
+ * target meeting titles / team names are read org-scoped (the audit row already
+ * proves the actor's org context). All presentation-only labels.
  *
- * This is intentionally BASIC (plan U7 / Scope Boundaries): a newest-first table.
- * Export + richer filtering are deferred.
+ * This server component does ALL the async work and hands a fully serialized,
+ * search-ready `entries` array to the client (search / filter / CSV export /
+ * grouping / expand are pure-render from props — no further awaits client-side).
  */
-
-const ACTION_LABEL: Record<string, string> = {
-  // Current (teams restructure) actions.
-  role_change: 'Role change',
-  master_key_access: 'Master-key access',
-  team_change: 'Team change',
-  team_membership_change: 'Team membership change',
-  gap_assignment: 'Gap assignment',
-  // Historical (pre-attendees-only) actions — retained so old rows still label.
-  privacy_change: 'Privacy change',
-  admin_override: 'Admin override',
-};
 
 /**
  * Historical privacy-level labels. The privacy ladder is gone (attendees-only,
@@ -43,6 +33,22 @@ const HISTORICAL_PRIVACY_LABEL: Record<string, string> = {
   only_me: 'Only me',
   only_participants: 'Only participants',
   only_teammates: 'Only teammates (workspace)',
+};
+
+/**
+ * action → category. Two team actions collapse into one "Team membership"
+ * category. NOTE: the mockup also showed a "Bot setting" category, but there is
+ * NO bot-setting audit action in the system yet (bot-setting auditing isn't
+ * implemented) — so it's intentionally omitted. Add a row here when it lands.
+ */
+const ACTION_CATEGORY: Record<string, Category> = {
+  privacy_change: 'privacy_change',
+  role_change: 'role_change',
+  team_change: 'team_membership',
+  team_membership_change: 'team_membership',
+  master_key_access: 'master_key_access',
+  admin_override: 'admin_override',
+  gap_assignment: 'gap_assignment',
 };
 
 interface AuditRow {
@@ -75,20 +81,30 @@ export default async function AuditLogPage(): Promise<ReactElement> {
     createdAt: r.created_at as string,
   }));
 
-  // Resolve actor display names (admin auth API — cannot run under RLS).
-  const actorIds = Array.from(new Set(rows.map((r) => r.actorId)));
-  const actorName = new Map<string, string>();
+  // ── Resolve user display names (actors + every target user referenced) ──────
+  // detail.user_id appears on role_change + team_membership_change; detail
+  // .assignee_id on gap_assignment. Dedupe actor + target ids into ONE batch
+  // against the admin auth API (cannot run under RLS).
+  const userIds = new Set<string>();
+  for (const r of rows) {
+    userIds.add(r.actorId);
+    const uid = stringField(r.detail, 'user_id');
+    if (uid !== null) userIds.add(uid);
+    const aid = stringField(r.detail, 'assignee_id');
+    if (aid !== null) userIds.add(aid);
+  }
+  const userName = new Map<string, string>();
   await Promise.all(
-    actorIds.map(async (id) => {
+    Array.from(userIds).map(async (id) => {
       const { data: u } = await service.auth.admin.getUserById(id);
       const email = u?.user?.email ?? id;
       const meta = (u?.user?.user_metadata ?? {}) as Record<string, unknown>;
       const name = typeof meta['full_name'] === 'string' ? (meta['full_name'] as string) : null;
-      actorName.set(id, name ?? email);
+      userName.set(id, name ?? email);
     }),
   );
 
-  // Resolve target meeting titles (service-role, org-scoped).
+  // ── Resolve target meeting titles (service-role, org-scoped) ────────────────
   const meetingIds = Array.from(
     new Set(rows.map((r) => r.targetMeetingId).filter((id): id is string => id !== null)),
   );
@@ -105,6 +121,55 @@ export default async function AuditLogPage(): Promise<ReactElement> {
     }
   }
 
+  // ── Resolve team names (service-role, org-scoped) ───────────────────────────
+  const teamIds = new Set<string>();
+  for (const r of rows) {
+    const tid = stringField(r.detail, 'team_id');
+    if (tid !== null) teamIds.add(tid);
+  }
+  const teamName = new Map<string, string>();
+  if (teamIds.size > 0) {
+    const { data: tRows } = await service
+      .from('teams')
+      .select('team_id, name')
+      .eq('org_id', orgId)
+      .in('team_id', Array.from(teamIds));
+    for (const t of tRows ?? []) {
+      teamName.set(t.team_id as string, (t.name as string | null) ?? 'a team');
+    }
+  }
+
+  // ── Build fully-enriched, serializable entries ──────────────────────────────
+  const resolveUser = (id: string | null): string => (id !== null ? userName.get(id) ?? id : '—');
+  const resolveTeam = (id: string | null): string => (id !== null ? teamName.get(id) ?? 'a team' : 'a team');
+
+  const entries: AuditEntry[] = rows.map((r) => {
+    const category = ACTION_CATEGORY[r.action] ?? 'admin_override';
+    const sensitive = r.action === 'master_key_access';
+    const title = CATEGORY_TITLE[category];
+    const description = describeDetail(r, resolveUser, resolveTeam);
+    const { targetLabel, targetHref } = resolveTarget(r, meetingTitle, resolveUser);
+    const actorName = userName.get(r.actorId) ?? r.actorId;
+    const searchText = [actorName, title, description, targetLabel ?? '']
+      .join(' ')
+      .toLowerCase();
+    return {
+      id: r.id,
+      createdAt: r.createdAt,
+      actorId: r.actorId,
+      actorName,
+      category,
+      action: r.action,
+      title,
+      sensitive,
+      description,
+      targetLabel,
+      targetHref,
+      detail: r.detail,
+      searchText,
+    };
+  });
+
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       <header className="mb-6">
@@ -117,86 +182,101 @@ export default async function AuditLogPage(): Promise<ReactElement> {
         </p>
       </header>
 
-      {rows.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border bg-card/40 px-6 py-12 text-center text-sm text-muted">
-          No permission events recorded yet.
-        </div>
-      ) : (
-        <div className="overflow-hidden rounded-xl border border-border">
-          <div className="grid grid-cols-[auto_1fr_1fr_1fr_2fr] gap-4 border-b border-border bg-card/40 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted">
-            <span>When</span>
-            <span>Actor</span>
-            <span>Action</span>
-            <span>Target</span>
-            <span>Detail</span>
-          </div>
-          <ul>
-            {rows.map((r) => (
-              <li
-                key={r.id}
-                className="grid grid-cols-[auto_1fr_1fr_1fr_2fr] items-start gap-4 border-b border-border px-5 py-3 text-sm last:border-b-0"
-              >
-                <span className="whitespace-nowrap text-muted" title={r.createdAt}>
-                  {formatWhen(r.createdAt)}
-                </span>
-                <span className="truncate text-fg" title={actorName.get(r.actorId) ?? r.actorId}>
-                  {actorName.get(r.actorId) ?? r.actorId}
-                </span>
-                <span className="text-fg">{ACTION_LABEL[r.action] ?? r.action}</span>
-                <span className="truncate text-muted">
-                  {r.targetMeetingId !== null ? (
-                    <a
-                      href={`/meetings/${r.targetMeetingId}/review`}
-                      className="text-accent hover:underline"
-                      title={meetingTitle.get(r.targetMeetingId) ?? r.targetMeetingId}
-                    >
-                      {meetingTitle.get(r.targetMeetingId) ?? 'Meeting'}
-                    </a>
-                  ) : (
-                    '—'
-                  )}
-                </span>
-                <span className="text-muted">{describeDetail(r.action, r.detail)}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <AuditLogClient entries={entries} orgName={orgName} />
     </div>
   );
 }
 
-function formatWhen(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
+/** Per-category event title shown in the EVENT cell (matches CATEGORY_META). */
+const CATEGORY_TITLE: Record<Category, string> = {
+  privacy_change: 'Privacy change',
+  role_change: 'Role change',
+  team_membership: 'Team membership',
+  master_key_access: 'Master-key access',
+  admin_override: 'Admin override',
+  gap_assignment: 'Gap assignment',
+};
 
-/** Human-readable old→new summary for a row, by action type. */
-function describeDetail(action: string, detail: Record<string, unknown> | null): string {
-  if (detail === null) return '—';
-  if (action === 'role_change') {
+/** Human-readable description for a row, by action type. */
+function describeDetail(
+  r: AuditRow,
+  resolveUser: (id: string | null) => string,
+  resolveTeam: (id: string | null) => string,
+): string {
+  const detail = r.detail;
+  if (detail === null) return '';
+
+  if (r.action === 'role_change') {
     const oldR = typeof detail['old_role'] === 'string' ? roleLabel(detail['old_role']) : '—';
     const newR = typeof detail['new_role'] === 'string' ? roleLabel(detail['new_role']) : '—';
     return `${oldR} → ${newR}`;
   }
-  if (action === 'privacy_change' || action === 'admin_override') {
-    const oldL = privacyLabel(detail['old']);
-    const newL = privacyLabel(detail['new']);
-    return `${oldL} → ${newL}`;
+
+  if (r.action === 'team_change') {
+    const act = stringField(detail, 'action');
+    const name = stringField(detail, 'name');
+    if (act === 'create') return `Created ${name ?? 'team'}`;
+    if (act === 'rename') return `Renamed to ${name ?? 'team'}`;
+    if (act === 'archive') return 'Archived team';
+    return '';
   }
-  if (action === 'master_key_access') {
-    // Attendees-only (U2): the master-key audit detail now carries {reason}
-    // instead of a privacy level.
-    return 'Viewed (master key)';
+
+  if (r.action === 'team_membership_change') {
+    const act = stringField(detail, 'action');
+    const who = resolveUser(stringField(detail, 'user_id'));
+    const team = resolveTeam(stringField(detail, 'team_id'));
+    if (act === 'add') return `Added ${who} to ${team}`;
+    if (act === 'remove') return `Removed ${who} from ${team}`;
+    return '';
   }
-  return JSON.stringify(detail);
+
+  if (r.action === 'master_key_access') {
+    const reason = stringField(detail, 'reason') ?? 'unspecified';
+    return `Accessed under master key (${reason})`;
+  }
+
+  if (r.action === 'privacy_change' || r.action === 'admin_override') {
+    return `${privacyLabel(detail['old'])} → ${privacyLabel(detail['new'])}`;
+  }
+
+  if (r.action === 'gap_assignment') {
+    return `Assigned to ${resolveUser(stringField(detail, 'assignee_id'))}`;
+  }
+
+  return '';
+}
+
+/**
+ * Resolve the `· {targetLabel}` shown next to the event title (+ optional link):
+ *  - role_change → the affected user (no link)
+ *  - master_key_access / privacy_change / admin_override → the meeting (link to
+ *    review when target_meeting_id is set)
+ */
+function resolveTarget(
+  r: AuditRow,
+  meetingTitle: Map<string, string>,
+  resolveUser: (id: string | null) => string,
+): { targetLabel: string | null; targetHref: string | null } {
+  if (r.action === 'role_change') {
+    const uid = stringField(r.detail, 'user_id');
+    if (uid !== null) return { targetLabel: resolveUser(uid), targetHref: null };
+  }
+  if (r.targetMeetingId !== null) {
+    return {
+      targetLabel: meetingTitle.get(r.targetMeetingId) ?? 'Meeting',
+      targetHref: `/meetings/${r.targetMeetingId}/review`,
+    };
+  }
+  return { targetLabel: null, targetHref: null };
 }
 
 function privacyLabel(v: unknown): string {
   if (typeof v !== 'string') return '—';
   return HISTORICAL_PRIVACY_LABEL[v] ?? v;
+}
+
+function stringField(detail: Record<string, unknown> | null, key: string): string | null {
+  if (detail === null) return null;
+  const v = detail[key];
+  return typeof v === 'string' && v.length > 0 ? v : null;
 }
