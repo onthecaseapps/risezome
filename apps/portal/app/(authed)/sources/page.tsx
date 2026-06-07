@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { requireAdmin } from '../../_lib/auth';
 import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
+import { decryptForOrgFromBytea, EnvelopeCryptoError } from '@risezome/crypto';
 import { requireTrelloApiKey } from '../../_lib/trello';
 import { listBoards } from '../../_lib/trello-client';
 import { getValidAtlassianToken } from '../../_lib/atlassian-token';
@@ -111,9 +112,14 @@ export default async function SourcesPage(props: {
   const githubSources = (githubSourceRows ?? []) as GithubSourceRow[];
 
   // ── Trello: connection + sources + available boards ───────────────────────
+  // The token is encrypted at rest (token_enc; the plaintext `token` column was
+  // dropped by 20260607010000_encrypt_trello_token). Select token_enc and decrypt
+  // it for the live board listing — selecting the dropped `token` 400s the query,
+  // which silently nulls the row and shows "Connect Trello" despite a stored
+  // connection.
   const { data: trelloConnRow } = await serviceRole
     .from('trello_connections')
-    .select('id, token, username')
+    .select('id, token_enc, username')
     .eq('org_id', orgId)
     .maybeSingle();
 
@@ -128,14 +134,23 @@ export default async function SourcesPage(props: {
       .neq('status', 'removed')
       .order('display_name', { ascending: true });
     trelloSources = (tSrc ?? []) as ConnectionSourceRow[];
+
+    // Decrypt the token for the live board listing. DEGRADE on a crypto failure
+    // (KMS blip): skip board listing but keep the connection shown.
+    let trelloToken: string | null = null;
     try {
-      const boards = await listBoards({
-        token: trelloConnRow.token as string,
-        apiKey: requireTrelloApiKey(),
-      });
-      trelloBoards = boards.map((b) => ({ id: b.id, name: b.name }));
-    } catch {
-      // Board listing failed (e.g. revoked token); fall back to indexed-only.
+      trelloToken = await decryptForOrgFromBytea(orgId, trelloConnRow.token_enc as string);
+    } catch (err) {
+      if (!(err instanceof EnvelopeCryptoError)) throw err;
+      console.error('[sources] trello token decrypt failed:', err);
+    }
+    if (trelloToken !== null) {
+      try {
+        const boards = await listBoards({ token: trelloToken, apiKey: requireTrelloApiKey() });
+        trelloBoards = boards.map((b) => ({ id: b.id, name: b.name }));
+      } catch {
+        // Board listing failed (e.g. revoked token); fall back to indexed-only.
+      }
     }
   }
 
