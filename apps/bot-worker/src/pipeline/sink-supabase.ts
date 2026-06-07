@@ -63,8 +63,10 @@ export interface SupabaseSinkArgs {
    *  ungrounded). The core already gates no_hits on the heuristic. */
   readonly onMiss?: (miss: MissRecord) => void;
   /** Close-the-loop: invoked with the grounded answer body on synthesisDone so
-   *  the summarizer can retire the open question it resolved. */
-  readonly onGroundedAnswer?: (text: string) => void;
+   *  the summarizer can retire the open question it resolved. The grounded
+   *  source docIds (Mechanism B) ride along so the adapter can record the
+   *  answered source-set for same-source dedup. */
+  readonly onGroundedAnswer?: (text: string, sourceDocIds: readonly string[]) => void;
   /** Demand-driven rolling-summary refresh: invoked once per synthesis attempt
    *  (the first terminal event — start OR refusal — for a synthesisId), the same
    *  "a question is being answered" signal `maybeRetrieveAndEmit` fired right
@@ -263,7 +265,7 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
 
         // Close the loop: hand the grounded answer to the summarizer so the
         // open question it resolved retires from the next rolling summary.
-        args.onGroundedAnswer?.(info.text);
+        args.onGroundedAnswer?.(info.text, info.sourceDocIds ?? []);
 
         startedCardIds.delete(info.synthesisId);
         startedTraceIds.delete(info.synthesisId);

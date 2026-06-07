@@ -390,6 +390,63 @@ describe('runPipeline — surface path', () => {
   });
 });
 
+describe('runPipeline — same-source answer-dedup (Mechanism B)', () => {
+  it('duplicate source set → no cards, no synthesis, skipped: duplicate_answer_sources', async () => {
+    const synthesizer = fakeSynthesizer('STATUS: answer\nThe answer is [1: "forty two"].');
+    const { deps, search } = makeDeps({
+      synthesizer,
+      // Predicate reports the candidate set as a duplicate.
+      isDuplicateAnswerSources: vi.fn((docIds: readonly string[]) => docIds.length > 0),
+    });
+    const sink = new RecordingSink();
+    const result = await runPipeline(input(), deps, sink);
+
+    expect(result).toEqual({ emitted: 0, skipped: 'duplicate_answer_sources' });
+    // Search DID run (the dedup is post-retrieval), but no cards/synthesis.
+    expect(search.mock.calls).toHaveLength(1);
+    expect(sink.cards).toHaveLength(0);
+    expect(sink.starts).toHaveLength(0);
+    expect(sink.dones).toHaveLength(0);
+    expect(sink.skips).toHaveLength(1);
+    expect(sink.skips[0]).toEqual({
+      stage: 'answer-dedup',
+      reason: 'duplicate_answer_sources',
+    });
+  });
+
+  it('passes the candidate docId set to the predicate', async () => {
+    const predicate = vi.fn(() => false);
+    const { deps } = makeDeps({ isDuplicateAnswerSources: predicate });
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+    expect(predicate).toHaveBeenCalledTimes(1);
+    expect(predicate).toHaveBeenCalledWith(['doc_1']);
+  });
+
+  it('a NEW (non-duplicate) source set is NOT skipped — cards + synthesis run', async () => {
+    const { deps } = makeDeps({
+      synthesizer: fakeSynthesizer('STATUS: answer\nThe answer is [1: "forty two"].'),
+      isDuplicateAnswerSources: () => false,
+    });
+    const sink = new RecordingSink();
+    const result = await runPipeline(input(), deps, sink);
+    expect(result.emitted).toBe(1);
+    expect(sink.cards).toHaveLength(1);
+    expect(sink.dones).toHaveLength(1);
+    // Mechanism B record-side: the grounded docIds ride on synthesisDone.
+    expect(sink.dones[0]!.sourceDocIds).toEqual(['doc_1']);
+  });
+
+  it('no predicate (eval/legacy) → check skipped entirely, surface path unaffected', async () => {
+    const { deps } = makeDeps(); // no isDuplicateAnswerSources
+    const sink = new RecordingSink();
+    const result = await runPipeline(input(), deps, sink);
+    expect(result.emitted).toBe(1);
+    expect(sink.cards).toHaveLength(1);
+    expect(sink.skips).toHaveLength(0);
+  });
+});
+
 describe('runPipeline — zero hits', () => {
   it('substantive question, 0 hits → recordMiss(no_hits), no card', async () => {
     const search = vi.fn(async () => [] as HybridHit[]);

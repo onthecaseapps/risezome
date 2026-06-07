@@ -525,6 +525,42 @@ export async function runPipeline(
     );
   }
 
+  // ── Stage: same-source answer-dedup (live answer-dedup, Mechanism B) ──
+  // Once the surviving docId set is known, ask the adapter whether this exact
+  // source set was already used for a recent grounded answer this meeting. If so,
+  // a new answer would just repeat an already-shown source — emit NO cards, run
+  // NO synthesis. Gated behind the optional predicate, so eval/legacy callers
+  // (no predicate) are unaffected. Conservative: only fires when the candidate
+  // set adds no new source (see the predicate's contract).
+  if (deps.isDuplicateAnswerSources !== undefined) {
+    const candidateDocIds = Array.from(
+      new Set(
+        sourceHits.flatMap((h) => {
+          const docId = enriched.chunkById.get(h.chunk_id)?.docId;
+          return docId === undefined ? [] : [docId];
+        }),
+      ),
+    );
+    if (deps.isDuplicateAnswerSources(candidateDocIds)) {
+      sink.recordSkip({ stage: 'answer-dedup', reason: 'duplicate_answer_sources' });
+      if (trace !== null) {
+        trace.push(
+          stageRecord('dedup-expand', 'short_circuited', dedupStart, {
+            decision: 'skip',
+            reason: 'duplicate_answer_sources',
+            data: { candidates: candidateDocIds.length },
+          }),
+        );
+        emitTrace();
+      }
+      deps.logger.info(
+        { meetingId: input.meetingId, candidates: candidateDocIds.length },
+        'pipeline.answer_dedup.skip',
+      );
+      return { emitted: 0, skipped: 'duplicate_answer_sources' };
+    }
+  }
+
   // ── Stage: emit one card per surviving document ──────────────────────
   let emitted = 0;
   const surfacedCardIds: string[] = [];
@@ -1138,6 +1174,12 @@ async function runSynthesis(args: {
           stopReason: chunk.stopReason,
           latencyMs,
           utteranceId: input.utteranceId,
+          // Mechanism B: the grounded source docIds (deduped, order-independent
+          // on the consumer) so the adapter records this answer's source set.
+          // A tool source (source[0]) carries no docId — filter those out.
+          sourceDocIds: Array.from(
+            new Set(sources.flatMap((s) => (s.docId !== undefined ? [s.docId] : []))),
+          ),
           rawSynthesis: accumulated,
           citationDetails: detail,
         });

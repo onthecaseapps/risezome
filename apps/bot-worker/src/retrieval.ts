@@ -49,6 +49,10 @@ const COOLDOWN_MS = 10_000; // ... but at most once per 10s
 // Canonical top-K is resolved in the core (5 — U1 resolution). Prod historically
 // used 3; the gate + vector floor hold precision, not a tight K.
 const WINDOW_UTTERANCES = 8; // last 8 final utterances form the query
+// Mechanism A — bound on the answered-transcript-span ledger so a long meeting
+// can't grow `consumedFinals` unboundedly. Comfortably larger than the rolling
+// window, so every still-in-window answered utterance stays voidable.
+const CONSUMED_FINALS_CAP = 60;
 
 
 /**
@@ -140,6 +144,24 @@ function buildQuestionQuery(
   return parts.join(' ').trim();
 }
 
+/**
+ * Mechanism A — the EFFECTIVE window: `recentFinals` with any utterance text
+ * present in `consumedFinals` (already answered) removed, BUT the current
+ * utterance (the last element — the new, not-yet-answered question) is ALWAYS
+ * kept. This is the view that feeds all question UNDERSTANDING (query build,
+ * ambient join, synthesizer recentContext); the raw `recentFinals` rolling
+ * window is unaffected.
+ */
+function effectiveWindow(
+  recentFinals: readonly string[],
+  consumedFinals: readonly string[],
+): string[] {
+  if (recentFinals.length === 0) return [];
+  const consumed = new Set(consumedFinals);
+  const lastIdx = recentFinals.length - 1;
+  return recentFinals.filter((text, i) => i === lastIdx || !consumed.has(text));
+}
+
 export interface RetrievalRuntime {
   /** Concatenated text of recent final utterances (the rolling query window). */
   recentFinals: string[];
@@ -152,6 +174,21 @@ export interface RetrievalRuntime {
   /** Embeddings + timestamps of questions ANSWERED (grounded) this meeting,
    *  for near-duplicate suppression. Recency-pruned. */
   answeredQuestions: { embedding: number[]; at: number }[];
+  /**
+   * Mechanism A — verbatim text of recent final utterances that have ALREADY
+   * produced a grounded answer this meeting. Removed from the EFFECTIVE window
+   * (derived query/context) so lingering answered transcript can't re-seed the
+   * next question's query and re-answer the same thing. Deduped + bounded
+   * (CONSUMED_FINALS_CAP). The raw `recentFinals` rolling window is untouched.
+   */
+  consumedFinals: string[];
+  /**
+   * Mechanism B — grounded source-doc SETS answered this meeting (+ timestamp),
+   * recency-pruned by QUESTION_DUP_WINDOW_MS. A new question whose surviving
+   * source set duplicates one of these (adds no new source) is skipped before
+   * cards are emitted.
+   */
+  answeredSourceSets: { docIds: string[]; at: number }[];
   /**
    * Most recent cardId surfaced for a given docId in this meeting. Drives the
    * stale-card retractor (now in the Supabase sink): a new card for a docId that
@@ -177,6 +214,8 @@ export function newRetrievalRuntime(): RetrievalRuntime {
     questionFireTimestamps: [],
     questionFireCount: 0,
     answeredQuestions: [],
+    consumedFinals: [],
+    answeredSourceSets: [],
     liveCardByDocId: new Map<string, string>(),
     effectiveSourceIds: [],
     effectiveSourceIdsResolved: false,
@@ -250,10 +289,15 @@ export async function maybeRetrieveAndEmit(args: {
   // core's embed step would have produced. The env-gated key_terms boost
   // (ambient-only) is still applied by the core's keyTermsBoost(input) at embed
   // time; the ambient lane therefore does NOT reuse a precomputed vector.
+  // Mechanism A: derive the effective window (answered spans voided, current
+  // utterance always kept) and use it EVERYWHERE recentFinals feeds question
+  // understanding. Built BEFORE the grounded callback marks this call's spans
+  // consumed, so the current question is never voided before it's answered.
+  const effective = effectiveWindow(args.runtime.recentFinals, args.runtime.consumedFinals);
   const queryText =
     lane === 'question'
-      ? buildQuestionQuery(args.utteranceText, args.runtime.recentFinals, args.lastSummary)
-      : args.runtime.recentFinals.join(' ').trim();
+      ? buildQuestionQuery(args.utteranceText, effective, args.lastSummary)
+      : effective.join(' ').trim();
   if (queryText.length === 0) return { emitted: 0, skipped: 'empty_query' };
 
   // ── Near-duplicate question suppression (KTD4) ───────────────────────
@@ -313,7 +357,9 @@ export async function maybeRetrieveAndEmit(args: {
   if (args.lastSummary !== undefined && args.lastSummary.summary.length > 0) {
     recentContext.push(args.lastSummary.summary);
   }
-  for (const finalText of args.runtime.recentFinals.slice(0, -1)) {
+  // Mechanism A: the effective window (answered spans voided) excluding the
+  // current utterance (which IS the query).
+  for (const finalText of effective.slice(0, -1)) {
     recentContext.push(finalText);
   }
 
@@ -373,6 +419,22 @@ export async function maybeRetrieveAndEmit(args: {
     parentDocEnabled,
     logger: args.logger,
     relevanceStrict: RELEVANCE_STRICT,
+    // Mechanism B (read side): true when the candidate grounded source set
+    // duplicates a recent answered set — non-empty AND every candidate docId is
+    // contained in a single recent `answeredSourceSets` entry (the new answer
+    // would add no new source). Order-independent; recency-pruned by the same
+    // window as answeredQuestions. Synchronous (no await) — read-only on the
+    // runtime, safe to call from the core before card emit.
+    isDuplicateAnswerSources: (docIds: readonly string[]): boolean => {
+      if (docIds.length === 0) return false;
+      args.runtime.answeredSourceSets = args.runtime.answeredSourceSets.filter(
+        (e) => now - e.at < QUESTION_DUP_WINDOW_MS,
+      );
+      return args.runtime.answeredSourceSets.some((entry) => {
+        const answered = new Set(entry.docIds);
+        return docIds.every((id) => answered.has(id));
+      });
+    },
   };
 
   // ── Supabase PipelineSink (the prod output seam) ─────────────────────
@@ -386,11 +448,31 @@ export async function maybeRetrieveAndEmit(args: {
     liveCardByDocId: args.runtime.liveCardByDocId,
     logger: args.logger,
     ...(args.onMiss !== undefined ? { onMiss: args.onMiss } : {}),
-    // Record the question embedding for dedup ONLY when the answer grounded
-    // (onGroundedAnswer never fires on a refusal), then forward to the caller.
-    onGroundedAnswer: (text: string): void => {
+    // Record dedup state ONLY when the answer grounded (onGroundedAnswer never
+    // fires on a refusal), then forward to the caller.
+    onGroundedAnswer: (text: string, sourceDocIds: readonly string[] = []): void => {
       if (lane === 'question' && questionVec !== undefined) {
         args.runtime.answeredQuestions.push({ embedding: questionVec, at: now });
+      }
+      // Mechanism A: void the transcript spans that produced THIS answer — the
+      // effective window for this call — so they can't re-seed the next
+      // question's query/context. Append, dedupe, cap to the most-recent bound.
+      const merged = [...args.runtime.consumedFinals, ...effective];
+      const seen = new Set<string>();
+      const deduped: string[] = [];
+      // Iterate newest-last so the cap keeps the freshest entries.
+      for (const txt of merged) {
+        if (txt.length === 0 || seen.has(txt)) continue;
+        seen.add(txt);
+        deduped.push(txt);
+      }
+      args.runtime.consumedFinals =
+        deduped.length > CONSUMED_FINALS_CAP ? deduped.slice(-CONSUMED_FINALS_CAP) : deduped;
+      // Mechanism B (record side): remember this answer's grounded source set so
+      // a later question retrieving the same set is skipped. Only when there's a
+      // real source set (a pure tool answer carries none).
+      if (sourceDocIds.length > 0) {
+        args.runtime.answeredSourceSets.push({ docIds: Array.from(new Set(sourceDocIds)), at: now });
       }
       args.onGroundedAnswer?.(text);
     },

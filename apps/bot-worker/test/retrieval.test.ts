@@ -8,11 +8,11 @@ const h = vi.hoisted(() => ({
     Promise.resolve({ emitted: 1 }),
   ),
   // Captures each createSupabaseSink({...}) arg so a test can fire onGroundedAnswer.
-  sinkArgs: [] as { onGroundedAnswer?: (t: string) => void }[],
+  sinkArgs: [] as { onGroundedAnswer?: (t: string, docIds?: readonly string[]) => void }[],
 }));
 vi.mock('../src/pipeline/core.js', () => ({ runPipeline: h.runPipeline }));
 vi.mock('../src/pipeline/sink-supabase.js', () => ({
-  createSupabaseSink: (a: { onGroundedAnswer?: (t: string) => void }) => {
+  createSupabaseSink: (a: { onGroundedAnswer?: (t: string, docIds?: readonly string[]) => void }) => {
     h.sinkArgs.push(a);
     return {};
   },
@@ -57,13 +57,22 @@ const baseArgs = (runtime: RetrievalRuntime, utteranceText: string) => ({
   logger: { info: () => undefined, warn: () => undefined },
 });
 
-/** Simulate the sink reporting a grounded (non-refusal) answer for the last fire. */
-function fireGroundedAnswer(): void {
-  h.sinkArgs.at(-1)?.onGroundedAnswer?.('a grounded answer');
+/** Simulate the sink reporting a grounded (non-refusal) answer for the last
+ *  fire. `docIds` are the grounded source set (Mechanism B); default empty. */
+function fireGroundedAnswer(docIds: readonly string[] = []): void {
+  h.sinkArgs.at(-1)?.onGroundedAnswer?.('a grounded answer', docIds);
 }
 
 function lastInput(): PipelineInput {
   return h.runPipeline.mock.calls.at(-1)![0] as PipelineInput;
+}
+
+/** The PipelineDeps the adapter built for the most recent fire (Mechanism B's
+ *  isDuplicateAnswerSources predicate lives here). */
+function lastDeps(): { isDuplicateAnswerSources?: (docIds: readonly string[]) => boolean } {
+  return h.runPipeline.mock.calls.at(-1)![1] as {
+    isDuplicateAnswerSources?: (docIds: readonly string[]) => boolean;
+  };
 }
 
 describe('maybeRetrieveAndEmit — two-lane triggering', () => {
@@ -271,6 +280,108 @@ describe('maybeRetrieveAndEmit — near-duplicate question suppression (U5)', ()
     const onGroundedAnswer = vi.fn();
     await maybeRetrieveAndEmit({ ...baseArgs(rt, 'what ai models do we use'), onGroundedAnswer });
     fireGroundedAnswer();
+    // The adapter forwards only the answer text to the caller (the source docIds
+    // are consumed internally for Mechanism B).
     expect(onGroundedAnswer).toHaveBeenCalledWith('a grounded answer');
+  });
+});
+
+describe('Mechanism A — void already-answered transcript spans', () => {
+  beforeEach(() => {
+    h.runPipeline.mockClear();
+    h.sinkArgs.length = 0;
+  });
+
+  it('an answered final is excluded from the NEXT question’s recentContext while the new question stays', async () => {
+    const rt = newRetrievalRuntime();
+    // First (ambient-ish) statement establishes a transcript span, then a
+    // question is asked and grounds — that span produced the answer.
+    rt.recentFinals = ['css question about flexbox alignment'];
+    await maybeRetrieveAndEmit(baseArgs(rt, 'how do i center a div'));
+    // The effective window for this call = ['css question...', 'how do i center a div'].
+    fireGroundedAnswer(['doc-css']);
+    // Both texts that produced the grounded answer are now consumed.
+    expect(rt.consumedFinals).toContain('css question about flexbox alignment');
+    expect(rt.consumedFinals).toContain('how do i center a div');
+
+    // A NEW question fires. Its recentContext must NOT carry the consumed spans,
+    // but the new utterance itself is the query (never voided).
+    const res = await maybeRetrieveAndEmit(baseArgs(rt, 'what database do we use'));
+    expect(res.skipped).toBeUndefined();
+    const ctx = lastInput().recentContext ?? [];
+    expect(ctx).not.toContain('css question about flexbox alignment');
+    expect(ctx).not.toContain('how do i center a div');
+    expect(lastInput().queryText).toBe('what database do we use');
+  });
+
+  it('an answered prior final is dropped from a follow-up question’s built query (buildQuestionQuery view)', async () => {
+    const rt = newRetrievalRuntime();
+    rt.recentFinals = ['the css alignment topic'];
+    await maybeRetrieveAndEmit(baseArgs(rt, 'how do i center a div'));
+    fireGroundedAnswer(['doc-css']);
+
+    // A fragment follow-up would normally pull in the immediately-prior final as
+    // its referent — but that prior final is now consumed, so it must NOT leak.
+    const args = {
+      ...baseArgs(rt, 'what about it'),
+      lastSummary: { summary: '', current_topic: 'databases', open_questions: [], key_terms: [] },
+    };
+    const res = await maybeRetrieveAndEmit(args);
+    expect(res.skipped).toBeUndefined();
+    const q = lastInput().queryText;
+    expect(q).toContain('what about it');
+    expect(q).not.toContain('how do i center a div'); // consumed prior final voided
+    expect(q).toContain('databases'); // summary topic still feeds it
+  });
+
+  it('the current utterance is never voided even if its exact text was previously consumed', async () => {
+    const rt = newRetrievalRuntime();
+    // Pre-seed the exact current text into consumedFinals.
+    rt.consumedFinals = ['what ai models do we use'];
+    const res = await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    // The query is the current question — keep-last guarantees it survives.
+    expect(res.skipped).toBeUndefined();
+    expect(lastInput().queryText).toBe('what ai models do we use');
+  });
+});
+
+describe('Mechanism B — skip a synthesis grounding on an already-answered source set', () => {
+  beforeEach(() => {
+    h.runPipeline.mockClear();
+    h.sinkArgs.length = 0;
+  });
+
+  it('a question whose source set was already answered is flagged duplicate; a new docId is not', async () => {
+    const rt = newRetrievalRuntime();
+    await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    fireGroundedAnswer(['doc-a', 'doc-b']); // records answeredSourceSets
+
+    // Next question: the predicate the adapter injected should report a duplicate
+    // for the SAME (or a subset) source set, and NOT for one with a new docId.
+    await maybeRetrieveAndEmit(baseArgs(rt, 'remind me which ai models'));
+    const pred = lastDeps().isDuplicateAnswerSources;
+    expect(pred).toBeDefined();
+    expect(pred!(['doc-a', 'doc-b'])).toBe(true); // exact set
+    expect(pred!(['doc-b', 'doc-a'])).toBe(true); // order-independent
+    expect(pred!(['doc-a'])).toBe(true); // subset adds no new source
+    expect(pred!(['doc-a', 'doc-c'])).toBe(false); // doc-c is new
+    expect(pred!([])).toBe(false); // empty candidate never dedups
+  });
+
+  it('the answered source set expires after the recency window', async () => {
+    const rt = newRetrievalRuntime();
+    await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    fireGroundedAnswer(['doc-a']);
+    // Age the recorded set past the 5-minute window.
+    rt.answeredSourceSets[0]!.at = Date.now() - 6 * 60_000;
+    await maybeRetrieveAndEmit(baseArgs(rt, 'remind me which ai models'));
+    expect(lastDeps().isDuplicateAnswerSources!(['doc-a'])).toBe(false);
+  });
+
+  it('a pure tool answer (no source docIds) records no answered source set', async () => {
+    const rt = newRetrievalRuntime();
+    await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    fireGroundedAnswer([]); // grounded but no source docs
+    expect(rt.answeredSourceSets).toHaveLength(0);
   });
 });

@@ -174,6 +174,17 @@ export interface PipelineDeps {
   /** Canonical top-K for hybrid search. The single canonical value (5 — see
    *  U1 resolution); a dep so a caller can still override. */
   readonly topK?: number;
+  /**
+   * OPTIONAL same-source answer-dedup predicate (live answer-dedup, Mechanism
+   * B). Called AFTER dedup/parent-expand, BEFORE emitting cards, with the
+   * candidate grounded docId set (the surviving deduped docs). Returns true when
+   * the candidate set duplicates a recent grounded answer's source set (every
+   * candidate docId contained in a single recent answered set — the new answer
+   * would add no new source), in which case the core emits no cards and skips
+   * synthesis. Absent (eval/legacy callers) ⇒ the check is skipped entirely.
+   * Order-independent; the adapter owns the recency window + recorded sets.
+   */
+  readonly isDuplicateAnswerSources?: (docIds: readonly string[]) => boolean;
 }
 
 // ── Sink (the output seam, KTD6) ────────────────────────────────────────
@@ -253,6 +264,13 @@ export interface SynthesisDoneInfo {
   readonly stopReason: string;
   readonly latencyMs: number;
   readonly utteranceId: string;
+  /**
+   * The docIds of the sources this answer grounded on (the surviving deduped
+   * docs fed to synthesis). Carried so the adapter can record the answered
+   * source-set for same-source dedup (live answer-dedup, Mechanism B). De-duped
+   * and order-independent on the consumer side.
+   */
+  readonly sourceDocIds?: readonly string[];
   // ── Eval-only intermediates (ignored by the supabase + ws sinks) ──
   /** The raw synthesizer output including the leading STATUS line (the eval's
    *  `rawSynthesis`). The card surface only needs the parsed body. */
@@ -323,9 +341,11 @@ export interface SynthesisRefusalInfo {
   readonly citationDetails?: readonly CitationDetail[];
 }
 
-/** A skip decision the gate made (no embed/search ran). */
+/** A skip decision the gate made (no embed/search ran), or the same-source
+ *  answer-dedup short-circuit (embed/search DID run, but the surviving source
+ *  set duplicated a recent grounded answer — Mechanism B). */
 export interface SkipInfo {
-  readonly stage: 'heuristic-gate' | 'llm-judge';
+  readonly stage: 'heuristic-gate' | 'llm-judge' | 'answer-dedup';
   readonly reason: string;
   readonly confidence?: number;
 }
