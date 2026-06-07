@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── Mocks ───────────────────────────────────────────────────────────
-const getUser = vi.fn();
+// requireAuthedUser verifies the JWT via getClaims() (local verification), not
+// getUser() (Auth-server round-trip), so the identity mock returns claims.
+const getClaims = vi.fn();
 const orgMembersResult = vi.fn();
 const cookieGet = vi.fn();
 
@@ -18,7 +20,7 @@ vi.mock('next/headers', () => ({
 vi.mock('../../app/_lib/supabase-server', () => ({
   createServerClient: () =>
     Promise.resolve({
-      auth: { getUser: () => getUser() },
+      auth: { getClaims: () => getClaims() },
       from: () => ({ select: () => ({ order: () => orgMembersResult() }) }),
     }),
 }));
@@ -30,7 +32,7 @@ function membershipRow(role: string, canInviteBot: boolean, orgId = 'org_1', nam
 }
 
 beforeEach(() => {
-  getUser.mockResolvedValue({ data: { user: { id: 'user_1' } }, error: null });
+  getClaims.mockResolvedValue({ data: { claims: { sub: 'user_1' } }, error: null });
   cookieGet.mockReturnValue(undefined);
 });
 afterEach(() => vi.clearAllMocks());

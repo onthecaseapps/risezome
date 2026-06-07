@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { createServerClient as createSsrClient } from '@supabase/ssr';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
@@ -11,8 +12,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * The cookie store mediates session refresh — the matching middleware in
  * apps/portal/middleware.ts touches `getUser()` on each request to write any
  * refreshed cookies back to the response.
+ *
+ * Wrapped in React `cache()` so every caller within a single request shares ONE
+ * client instance (deduped cookie reads, and a shared getClaims JWKS cache).
+ * The cache is per-request — concurrent requests still get isolated clients.
  */
-export async function createServerClient(): Promise<SupabaseClient> {
+export const createServerClient = cache(async (): Promise<SupabaseClient> => {
   const cookieStore = await cookies();
   return createSsrClient(requireEnv('NEXT_PUBLIC_SUPABASE_URL'), requireEnv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY'), {
     cookies: {
@@ -31,7 +36,7 @@ export async function createServerClient(): Promise<SupabaseClient> {
       },
     },
   });
-}
+});
 
 /**
  * Service-role Supabase client. BYPASSES RLS. Reserved for trusted server

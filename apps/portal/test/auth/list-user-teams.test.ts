@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── Mocks ───────────────────────────────────────────────────────────
-const getUser = vi.fn();
+// listUserTeams takes the caller id from requireAuthedUser, which verifies the
+// JWT via getClaims() (local), so the identity mock returns claims.
+const getClaims = vi.fn();
 const teamRows = vi.fn();
 // Captures the column/value the query filtered on, so we can assert the
 // membership scoping is applied (the team_members SELECT policy is org-scoped,
@@ -20,7 +22,7 @@ vi.mock('next/headers', () => ({
 vi.mock('../../app/_lib/supabase-server', () => ({
   createServerClient: () =>
     Promise.resolve({
-      auth: { getUser: () => getUser() },
+      auth: { getClaims: () => getClaims() },
       from: () => ({
         select: () => ({
           eq: (col: string, val: unknown) => {
@@ -48,7 +50,7 @@ function row(team_id: string, slug: string, opts: Partial<{ org_id: string; arch
 
 beforeEach(() => {
   eqArgs = null;
-  getUser.mockResolvedValue({ data: { user: { id: 'user_1' } }, error: null });
+  getClaims.mockResolvedValue({ data: { claims: { sub: 'user_1' } }, error: null });
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -79,9 +81,11 @@ describe('listUserTeams', () => {
     expect(await listUserTeams('org_1')).toEqual([]);
   });
 
-  it('returns [] (and skips the query) when there is no authenticated user', async () => {
-    getUser.mockResolvedValue({ data: { user: null }, error: null });
-    expect(await listUserTeams('org_1')).toEqual([]);
+  it('redirects to /sign-in (and skips the query) when there is no authenticated user', async () => {
+    // listUserTeams now resolves the caller via requireAuthedUser, which
+    // redirects on a missing/invalid session rather than silently returning [].
+    getClaims.mockResolvedValue({ data: null, error: null });
+    await expect(listUserTeams('org_1')).rejects.toThrow('REDIRECT:/sign-in');
     expect(eqArgs).toBeNull(); // never reached the query
   });
 

@@ -1,10 +1,22 @@
+import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import type { User } from '@supabase/supabase-js';
 import { createServerClient } from './supabase-server';
 import { isAdminRole } from './roles';
 
 export const CURRENT_ORG_COOKIE = 'risezome.current_org_id';
+
+/**
+ * The authenticated identity we surface to the app. A trimmed projection of the
+ * Supabase user — the only fields any caller reads (id everywhere; email +
+ * full_name in the top-bar). Sourced from the verified JWT claims (no
+ * Auth-server round-trip), so we deliberately do NOT expose the full `User`.
+ */
+export interface AuthedUser {
+  id: string;
+  email: string | null;
+  user_metadata: Record<string, unknown>;
+}
 
 /**
  * Selected team for the browse "lens" (set by the top-bar team switcher).
@@ -15,18 +27,32 @@ export const CURRENT_ORG_COOKIE = 'risezome.current_org_id';
 export const CURRENT_TEAM_COOKIE = 'risezome.current_team_id';
 
 /**
- * Returns the current Supabase user, or redirects to /sign-in if there is no
- * session. Use in Server Components and Server Actions on `(authed)` routes
- * that don't require an org context (e.g., onboarding).
+ * Returns the current authenticated identity, or redirects to /sign-in if there
+ * is no valid session. Use in Server Components and Server Actions on `(authed)`
+ * routes that don't require an org context (e.g., onboarding).
+ *
+ * Uses `getClaims()` — which verifies the JWT locally against the project's
+ * signing keys (no Auth-server round-trip when asymmetric keys are in use, and
+ * never slower than `getUser()` otherwise). The middleware's per-request
+ * `getUser()` already handles session refresh, so verifying the (now-fresh)
+ * cookie's claims here is sufficient and cheap.
+ *
+ * Wrapped in React `cache()`: the layout (top bar), sidebar, and the page each
+ * need the identity, so this dedupes them to a single verification per request.
  */
-export async function requireAuthedUser(): Promise<User> {
+export const requireAuthedUser = cache(async (): Promise<AuthedUser> => {
   const supabase = await createServerClient();
-  const { data, error } = await supabase.auth.getUser();
-  if (error !== null || data.user === null) {
+  const { data, error } = await supabase.auth.getClaims();
+  if (error !== null || data === null) {
     redirect('/sign-in');
   }
-  return data.user;
-}
+  const claims = data.claims;
+  return {
+    id: claims.sub,
+    email: typeof claims.email === 'string' ? claims.email : null,
+    user_metadata: (claims.user_metadata ?? {}) as Record<string, unknown>,
+  };
+});
 
 /**
  * Returns the user's org memberships. Used by the topbar to render the org
@@ -43,7 +69,7 @@ export interface UserOrg {
   canInviteBot: boolean;
 }
 
-export async function listUserOrgs(): Promise<UserOrg[]> {
+export const listUserOrgs = cache(async (): Promise<UserOrg[]> => {
   const supabase = await createServerClient();
   const { data, error } = await supabase
     .from('org_members')
@@ -65,7 +91,7 @@ export async function listUserOrgs(): Promise<UserOrg[]> {
     });
   }
   return out;
-}
+});
 
 /** A team the current user belongs to, within a single org. */
 export interface UserTeam {
@@ -87,11 +113,11 @@ export interface UserTeam {
  * Returns [] on error or when the user is on no teams in this org. Mirrors
  * {@link listUserOrgs}.
  */
-export async function listUserTeams(orgId: string): Promise<UserTeam[]> {
+export const listUserTeams = cache(async (orgId: string): Promise<UserTeam[]> => {
   const supabase = await createServerClient();
-  const { data: auth } = await supabase.auth.getUser();
-  const userId = auth.user?.id;
-  if (userId === undefined) return [];
+  // The caller's id comes from the cached identity (one verification per
+  // request) rather than its own Auth round-trip.
+  const { id: userId } = await requireAuthedUser();
   const { data, error } = await supabase
     .from('team_members')
     .select('team:teams(team_id, name, slug, org_id, archived_at)')
@@ -116,7 +142,7 @@ export async function listUserTeams(orgId: string): Promise<UserTeam[]> {
     out.push({ id: team.team_id, name: team.name, slug: team.slug });
   }
   return out;
-}
+});
 
 /**
  * Returns the current user + the resolved current org_id. Redirects:
@@ -134,7 +160,7 @@ export async function listUserTeams(orgId: string): Promise<UserTeam[]> {
  * (illegal); the switcher's server action handles cleanup.
  */
 export interface AuthedOrgContext {
-  user: User;
+  user: AuthedUser;
   orgId: string;
   orgName: string;
   /** The user's role in the resolved org: 'member' | 'manager' | 'super_admin'.
