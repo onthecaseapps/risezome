@@ -1053,7 +1053,8 @@ body {
   border: none;
   background: transparent;
   border-radius: 4px;
-  color: var(--muted);
+  /* Fallback gray so the glyph is never invisible if --muted isn't in scope. */
+  color: var(--muted, #6b7280);
   cursor: pointer;
   transition: color 120ms ease-out, background-color 120ms ease-out;
 }

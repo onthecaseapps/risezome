@@ -158,6 +158,11 @@ describe('SynthesisCard — pin button (U5)', () => {
     expect(btn).not.toBeNull();
     expect(btn?.getAttribute('aria-pressed')).toBe('false');
     expect(btn?.getAttribute('aria-label')).toBe('Pin synthesis');
+    // Regression: the unpinned glyph must render a visible (non-dimmed) icon —
+    // an opacity<1 muted glyph read as an empty button ("pin doesn't show").
+    const svg = btn?.querySelector('svg');
+    expect(svg).not.toBeNull();
+    expect(svg?.getAttribute('opacity')).toBeNull();
   });
 
   it('renders a pinned glyph when pinned=true and unpin action is wired', async () => {
