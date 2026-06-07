@@ -65,7 +65,7 @@ describe('TeamSwitcher (U6)', () => {
   });
 
   it('renders the current page as a third segment: Org / team / page', () => {
-    mockPathname = '/teams';
+    mockPathname = '/settings/teams';
     render(<TeamSwitcher orgName="Acme" currentTeamId="t1" teams={TEAMS} />);
     expect(screen.getByText('Acme')).toBeInTheDocument(); // org
     expect(screen.getByText('#platform')).toBeInTheDocument(); // team (dropdown trigger)

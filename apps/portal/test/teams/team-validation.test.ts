@@ -4,7 +4,7 @@ import {
   slugify,
   validateTeamName,
   validateTeamSlug,
-} from '../../app/(authed)/teams/_lib/team-validation';
+} from '../../app/(authed)/settings/teams/_lib/team-validation';
 
 describe('validateTeamName', () => {
   it('trims and accepts a normal name', () => {

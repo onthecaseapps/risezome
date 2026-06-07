@@ -1,8 +1,8 @@
 'use client';
 
 import { useMemo, useState, useTransition, type ReactElement } from 'react';
-import { roleLabel } from '../../../_lib/roles';
-import { primaryButtonClass } from '../../_components/ui';
+import { roleLabel } from '../../../../_lib/roles';
+import { primaryButtonClass } from '../../../_components/ui';
 import {
   addTeamMemberAction,
   archiveTeamAction,
@@ -21,7 +21,7 @@ import type { MemberVM, TeamVM } from './teams-members-client';
  *
  * Member mutations reuse the shipped team actions — rename/archive, add/remove
  * member — with the optimistic-then-revert idiom; the actions'
- * revalidatePath('/teams') reconciles server truth. Source curation moved to
+ * revalidatePath('/settings/teams') reconciles server truth. Source curation moved to
  * /sources?team=<teamId>.
  */
 export function TeamDetail({

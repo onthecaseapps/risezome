@@ -8,7 +8,7 @@ import type { ReactElement } from 'react';
  * Settings left category nav (mockup #24). The mockup categories are Profile,
  * Workspace, Meeting bot, Members, Billing; Audit log is appended so the
  * existing audit page stays reachable. Profile/Workspace/Billing are stubs until
- * their pages are built. Members links to the existing top-level /members page.
+ * their pages are built. Teams & members links to /settings/teams.
  *
  * Client component: active state keys off the current pathname. A category is
  * active when the path equals its href or is nested under it.
@@ -17,7 +17,7 @@ const ITEMS: { label: string; href: string }[] = [
   { label: 'Profile', href: '/settings/profile' },
   { label: 'Workspace', href: '/settings/workspace' },
   { label: 'Meeting bot', href: '/settings/meeting-bot' },
-  { label: 'Members', href: '/members' },
+  { label: 'Teams & members', href: '/settings/teams' },
   { label: 'Billing', href: '/settings/billing' },
   { label: 'Audit log', href: '/settings/audit' },
 ];

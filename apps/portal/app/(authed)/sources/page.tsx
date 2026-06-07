@@ -357,7 +357,7 @@ function NoTeamsState(): ReactElement {
       <h2 className="text-lg font-semibold tracking-tight">No teams yet</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted">
         Sources are configured per team. Create a team first on the{' '}
-        <a href="/teams" className="text-accent hover:underline">Teams &amp; members</a> page, then
+        <a href="/settings/teams" className="text-accent hover:underline">Teams &amp; members</a> page, then
         come back here to choose what it searches.
       </p>
     </div>

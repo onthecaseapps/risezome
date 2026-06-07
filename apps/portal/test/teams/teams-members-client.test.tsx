@@ -25,7 +25,7 @@ const renameTeamAction = vi.fn();
 const archiveTeamAction = vi.fn();
 const addTeamMemberAction = vi.fn();
 const removeTeamMemberAction = vi.fn();
-vi.mock('../../app/(authed)/teams/team-actions', () => ({
+vi.mock('../../app/(authed)/settings/teams/team-actions', () => ({
   createTeamAction: (...a: unknown[]) => createTeamAction(...a),
   renameTeamAction: (...a: unknown[]) => renameTeamAction(...a),
   archiveTeamAction: (...a: unknown[]) => archiveTeamAction(...a),
@@ -37,7 +37,7 @@ import {
   TeamsMembersClient,
   type MemberVM,
   type TeamVM,
-} from '../../app/(authed)/teams/_components/teams-members-client';
+} from '../../app/(authed)/settings/teams/_components/teams-members-client';
 
 const MEMBERS: MemberVM[] = [
   {

@@ -7,13 +7,13 @@ import {
   useTransition,
   type ReactElement,
 } from 'react';
-import { roleLabel } from '../../../_lib/roles';
-import { primaryButtonClass } from '../../_components/ui';
-import { createInviteAction, revokeInviteAction } from '../../members/invite-action';
+import { roleLabel } from '../../../../_lib/roles';
+import { primaryButtonClass } from '../../../_components/ui';
+import { createInviteAction, revokeInviteAction } from '../../../members/invite-action';
 import {
   changeRoleAction,
   removeMemberAction,
-} from '../../members/member-actions';
+} from '../../../members/member-actions';
 import { createTeamAction } from '../team-actions';
 import { slugify } from '../_lib/team-validation';
 import { avatarColor, avatarInitial, teamDotColor } from './visuals';
@@ -65,7 +65,7 @@ type WorkspaceRole = 'member' | 'manager' | 'super_admin';
  * the All-members roster and a per-team detail view; an Invite modal mints links.
  * Backend logic is entirely reused — every mutation routes through the existing
  * server actions (changeRole/removeMember/createInvite/revokeInvite, createTeam,
- * add/removeTeamMember) and reconciles via their revalidatePath('/teams').
+ * add/removeTeamMember) and reconciles via their revalidatePath('/settings/teams').
  * Source curation moved to the Sources page (KTD5); the team-detail Sources card
  * is read-only, so this surface no longer needs the sources pool.
  */

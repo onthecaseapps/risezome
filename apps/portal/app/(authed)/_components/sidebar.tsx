@@ -4,7 +4,7 @@ import { createServerClient } from '../../_lib/supabase-server';
 import { cookies } from 'next/headers';
 import { SidebarFrame } from './sidebar-frame';
 import { SidebarNavLink } from './sidebar-nav-link';
-import { CalendarIcon, CapturesIcon, DebugIcon, GapsIcon, LiveIcon, SettingsIcon, SourcesIcon, TeamsIcon, WhatsNewIcon } from './nav-icons';
+import { CalendarIcon, CapturesIcon, DebugIcon, GapsIcon, LiveIcon, SettingsIcon, SourcesIcon, WhatsNewIcon } from './nav-icons';
 
 /**
  * Left nav icon rail shared across all `(authed)` routes. The brand, team
@@ -100,12 +100,6 @@ export async function Sidebar(): Promise<ReactElement> {
               matchPrefix="/sources"
               icon={<SourcesIcon />}
               label="Sources"
-            />
-            <SidebarNavLink
-              href="/teams"
-              matchPrefix="/teams"
-              icon={<TeamsIcon />}
-              label="Teams & members"
             />
             <SidebarNavLink
               href="/settings"

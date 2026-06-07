@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event';
 // component's call (right action, right args) + optimistic/revert behavior.
 const addTeamMemberAction = vi.fn();
 const removeTeamMemberAction = vi.fn();
-vi.mock('../../app/(authed)/teams/team-actions', () => ({
+vi.mock('../../app/(authed)/settings/teams/team-actions', () => ({
   addTeamMemberAction: (...a: unknown[]) => addTeamMemberAction(...a),
   removeTeamMemberAction: (...a: unknown[]) => removeTeamMemberAction(...a),
   // unused by these tests but exported by the real module:
@@ -18,14 +18,14 @@ vi.mock('../../app/(authed)/teams/team-actions', () => ({
 
 const addTeamSourceAction = vi.fn();
 const removeTeamSourceAction = vi.fn();
-vi.mock('../../app/(authed)/teams/source-actions', () => ({
+vi.mock('../../app/(authed)/settings/teams/source-actions', () => ({
   addTeamSourceAction: (...a: unknown[]) => addTeamSourceAction(...a),
   removeTeamSourceAction: (...a: unknown[]) => removeTeamSourceAction(...a),
 }));
 
-import { MemberPicker } from '../../app/(authed)/teams/_components/member-picker';
-import { SourcePicker } from '../../app/(authed)/teams/_components/source-picker';
-import type { OrgMember, TeamSourceRow } from '../../app/(authed)/teams/_components/teams-client';
+import { MemberPicker } from '../../app/(authed)/settings/teams/_components/member-picker';
+import { SourcePicker } from '../../app/(authed)/settings/teams/_components/source-picker';
+import type { OrgMember, TeamSourceRow } from '../../app/(authed)/settings/teams/_components/teams-client';
 
 const MEMBERS: OrgMember[] = [
   { userId: 'u1', email: 'alice@acme.com', name: 'Alice', role: 'super_admin', isSelf: true },

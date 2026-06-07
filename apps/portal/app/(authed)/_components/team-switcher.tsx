@@ -165,6 +165,7 @@ function pageLabelFromPath(pathname: string): string | null {
     ['/sources', 'Sources'],
     ['/teams', 'Teams & members'],
     ['/members', 'Teams & members'],
+    ['/settings/teams', 'Teams & members'],
     ['/settings', 'Settings'],
     ['/whats-new', "What's new"],
     ['/debug/live-mic', 'Live-mic debug'],

@@ -1,8 +1,8 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { requireAdmin } from '../../_lib/auth';
-import { addSourceToTeam, removeSourceFromTeam } from '../../_lib/team-source-lifecycle';
+import { requireAdmin } from '../../../_lib/auth';
+import { addSourceToTeam, removeSourceFromTeam } from '../../../_lib/team-source-lifecycle';
 
 /**
  * Team source-curation actions (teams restructure U7; drives U3's KTD4
@@ -26,7 +26,7 @@ export async function addTeamSourceAction(teamId: string, sourceId: string): Pro
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'add_failed' };
   }
-  revalidatePath('/teams');
+  revalidatePath('/settings/teams');
   return { ok: true };
 }
 
@@ -39,6 +39,6 @@ export async function removeTeamSourceAction(teamId: string, sourceId: string): 
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'remove_failed' };
   }
-  revalidatePath('/teams');
+  revalidatePath('/settings/teams');
   return { ok: true };
 }

@@ -70,7 +70,7 @@ export async function createInviteAction(
   const proto = h.get('x-forwarded-proto') ?? 'https';
   const url = `${proto}://${host}/invite/${token}`;
 
-  revalidatePath('/teams');
+  revalidatePath('/settings/teams');
   return { ok: true, url };
 }
 
@@ -91,6 +91,6 @@ export async function revokeInviteAction(
   if (error !== null) {
     return { ok: false, error: error.message };
   }
-  revalidatePath('/teams');
+  revalidatePath('/settings/teams');
   return { ok: true };
 }

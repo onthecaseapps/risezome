@@ -1,8 +1,8 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { requireAdmin } from '../../_lib/auth';
-import { createServiceRoleClient } from '../../_lib/supabase-server';
+import { requireAdmin } from '../../../_lib/auth';
+import { createServiceRoleClient } from '../../../_lib/supabase-server';
 import {
   isDuplicateSlugError,
   validateTeamName,
@@ -81,7 +81,7 @@ export async function createTeamAction(name: string, slug: string): Promise<Crea
     detail: { action: 'create', team_id: teamId, name: nameCheck.value },
   });
 
-  revalidatePath('/teams');
+  revalidatePath('/settings/teams');
   return { ok: true, teamId };
 }
 
@@ -107,7 +107,7 @@ export async function renameTeamAction(teamId: string, name: string): Promise<Ac
     detail: { action: 'rename', team_id: teamId, name: nameCheck.value },
   });
 
-  revalidatePath('/teams');
+  revalidatePath('/settings/teams');
   return { ok: true };
 }
 
@@ -132,7 +132,7 @@ export async function archiveTeamAction(teamId: string): Promise<ActionResult> {
     detail: { action: 'archive', team_id: teamId },
   });
 
-  revalidatePath('/teams');
+  revalidatePath('/settings/teams');
   return { ok: true };
 }
 
@@ -175,7 +175,7 @@ export async function addTeamMemberAction(teamId: string, userId: string): Promi
     detail: { action: 'add', team_id: teamId, user_id: userId },
   });
 
-  revalidatePath('/teams');
+  revalidatePath('/settings/teams');
   return { ok: true };
 }
 
@@ -206,6 +206,6 @@ export async function removeTeamMemberAction(teamId: string, userId: string): Pr
     detail: { action: 'remove', team_id: teamId, user_id: userId },
   });
 
-  revalidatePath('/teams');
+  revalidatePath('/settings/teams');
   return { ok: true };
 }

@@ -9,7 +9,7 @@ import type { TeamSourceRow } from './teams-client';
  * on = the source is selected for this team (a row in team_sources). Toggling
  * calls add/removeTeamSourceAction — which delegate to the U3 refcount lifecycle
  * (first selection indexes; last de-selection de-indexes). Optimistic local
- * state, reverted on failure, reconciled by the action's revalidatePath('/teams').
+ * state, reverted on failure, reconciled by the action's revalidatePath('/settings/teams').
  */
 export function SourcePicker({
   teamId,

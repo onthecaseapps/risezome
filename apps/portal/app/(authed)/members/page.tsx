@@ -6,5 +6,5 @@ import { redirect } from 'next/navigation';
  * members" path — still land on the live page.
  */
 export default function MembersPage(): never {
-  redirect('/teams');
+  redirect('/settings/teams');
 }

@@ -3,8 +3,8 @@
 import { useMemo, useState, useTransition, type ReactElement } from 'react';
 import { createTeamAction } from '../team-actions';
 import { slugify } from '../_lib/team-validation';
-import { roleLabel } from '../../../_lib/roles';
-import { primaryButtonClass } from '../../_components/ui';
+import { roleLabel } from '../../../../_lib/roles';
+import { primaryButtonClass } from '../../../_components/ui';
 import { MemberPicker } from './member-picker';
 import { SourcePicker } from './source-picker';
 
@@ -34,7 +34,7 @@ export interface TeamRow {
  * Teams management surface. Left: the team list (with create). Right: the editor
  * for the selected team — a member picker + a source picker, each mirroring
  * _member-list.tsx's client-action idiom (useTransition + action result +
- * optimistic local state, reconciled by the action's revalidatePath('/teams')).
+ * optimistic local state, reconciled by the action's revalidatePath('/settings/teams')).
  */
 export function TeamsClient({
   orgName,

@@ -70,7 +70,7 @@ export async function changeRoleAction(userId: string, role: string): Promise<Ac
     }
   }
 
-  revalidatePath('/teams');
+  revalidatePath('/settings/teams');
   return { ok: true };
 }
 
@@ -84,7 +84,7 @@ export async function setCanInviteBotAction(userId: string, value: boolean): Pro
     .eq('org_id', orgId)
     .eq('user_id', userId);
   if (error !== null) return { ok: false, error: error.message };
-  revalidatePath('/teams');
+  revalidatePath('/settings/teams');
   return { ok: true };
 }
 
@@ -99,7 +99,7 @@ export async function removeMemberAction(userId: string): Promise<ActionResult> 
     .eq('org_id', orgId)
     .eq('user_id', userId);
   if (error !== null) return { ok: false, error: lastManagerError(error.message) };
-  revalidatePath('/teams');
+  revalidatePath('/settings/teams');
   return { ok: true };
 }
 
