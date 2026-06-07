@@ -121,4 +121,28 @@ describe('ConnectionCard (U2)', () => {
     const menu = screen.getByRole('menu');
     expect(within(menu).queryByRole('menuitem', { name: /Reindex/i })).not.toBeInTheDocument();
   });
+
+  it('Trello master toggle opens the board picker instead of auto-selecting all boards', async () => {
+    const boards: SourceItem[] = [
+      { key: 'b1', externalId: 'board1', label: 'Board One', count: 0, total: null, status: null },
+      { key: 'b2', externalId: 'board2', label: 'Board Two', count: 0, total: null, status: null },
+    ];
+    render(
+      <ConnectionCard
+        teamId="t1"
+        data={card({ provider: 'trello', name: 'Trello', cardKey: 'trello', manageUrl: null, items: boards, selectedExternalIds: [] })}
+      />,
+    );
+    // Picker starts collapsed.
+    expect(screen.queryByRole('checkbox', { name: /board one for team/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('switch', { name: /select all items/i }));
+    // Turning Trello on expands the picker and adds NOTHING — the user picks.
+    expect(screen.getByRole('checkbox', { name: /board one for team/i })).toBeInTheDocument();
+    expect(setItemForTeamAction).not.toHaveBeenCalled();
+  });
+
+  it('does not clip the kebab dropdown — card root is not overflow-hidden', () => {
+    const { container } = render(<ConnectionCard teamId="t1" data={card()} />);
+    expect((container.firstElementChild as HTMLElement).className).not.toContain('overflow-hidden');
+  });
 });

@@ -81,6 +81,14 @@ export function ConnectionCard({
 
   function masterToggle(): void {
     const turnOn = !allSelected;
+    // Trello: don't bulk-add every board on turn-on. Boards are individually
+    // meaningful and auto-indexing all of them is rarely wanted (and costly), so
+    // turning Trello "on" opens the board picker instead — the user chooses which
+    // boards to index. Other providers keep the select-all/none master toggle.
+    if (turnOn && data.provider === 'trello') {
+      setExpanded(true);
+      return;
+    }
     // Targets: items that need flipping to reach the desired state.
     const targets = data.items.filter((it) => selected.has(it.externalId) !== turnOn);
     // Optimistically reflect the new state.
@@ -104,7 +112,7 @@ export function ConnectionCard({
   const statusLine = useMemo(() => buildStatusLine(data, selected.size), [data, selected.size]);
 
   return (
-    <div className={`overflow-hidden rounded-xl border bg-card ${data.suspended === true ? 'border-amber-500/40' : 'border-border'}`}>
+    <div className={`rounded-xl border bg-card ${data.suspended === true ? 'border-amber-500/40' : 'border-border'}`}>
       <div className="flex items-center gap-4 p-4">
         <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-bg">
           {data.icon}
@@ -206,13 +214,17 @@ export function ConnectionCard({
       </div>
 
       {expanded ? (
-        <SourceItemList
-          provider={data.provider}
-          teamId={teamId}
-          items={data.items}
-          selectedKeys={selected}
-          onSelectionChange={localSet}
-        />
+        // Scope the rounded-corner clip to the expandable list so the card root
+        // can stay overflow-visible — otherwise it clips the kebab dropdown.
+        <div className="overflow-hidden rounded-b-xl">
+          <SourceItemList
+            provider={data.provider}
+            teamId={teamId}
+            items={data.items}
+            selectedKeys={selected}
+            onSelectionChange={localSet}
+          />
+        </div>
       ) : null}
     </div>
   );
