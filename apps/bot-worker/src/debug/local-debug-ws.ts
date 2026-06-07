@@ -55,6 +55,13 @@ import { buildSkillRegistry } from '../skills/index.js';
 import { runPipeline } from '../pipeline/core.js';
 import type { PipelineDeps, PipelineInput } from '../pipeline/contract.js';
 import { createWsSink } from '../pipeline/sink-ws.js';
+import {
+  effectiveWindow,
+  isDuplicateAnswerSourceSet,
+  addConsumedFinals,
+  CONSUMED_FINALS_CAP,
+  QUESTION_DUP_WINDOW_MS,
+} from '../pipeline/answer-dedup.js';
 
 export interface LocalDebugHandlerArgs {
   readonly db: SupabaseClient;
@@ -225,6 +232,15 @@ export async function handleLocalDebugWs(
   let currentSynthesisId: string | null = null;
   const recentFinals: { text: string; at: number }[] = [];
 
+  // Mechanism A/B per-connection dedup state, mirroring `RetrievalRuntime` on the
+  // prod path. `consumedFinals` — answered transcript spans voided from the
+  // effective window so they can't re-seed the next query. `answeredSourceSets` —
+  // grounded source-doc sets answered this session (+ timestamp), recency-pruned,
+  // so a question retrieving the same set is skipped before cards emit. Mutated in
+  // place (the closures below need stable references).
+  const consumedFinals: string[] = [];
+  const answeredSourceSets: { docIds: string[]; at: number }[] = [];
+
   runner.on('frame', (frame: AudioFrame) => {
     engine.sendFrame(frame.samples);
   });
@@ -267,21 +283,32 @@ export async function handleLocalDebugWs(
       recentFinals.shift();
     }
 
+    // Mechanism A: derive the EFFECTIVE window — recentFinals with any
+    // already-answered span (in `consumedFinals`) voided, but the current
+    // utterance (last element) always kept. Captured in this closure so the
+    // grounded callback below can mark exactly these spans consumed once an
+    // answer grounds. The raw `recentFinals` rolling buffer is untouched.
+    const effective = effectiveWindow(
+      recentFinals.map((f) => f.text),
+      consumedFinals,
+    );
+
     // Heuristic fragment merge: if the prior final landed within
     // CONTINUATION_WINDOW_MS and the new utterance looks like a
     // continuation (lowercase start, or starts with a connective like
     // "and", "but", "in", "where"), treat the new utterance as
     // extending the prior one. Effective query = concat. We still pass
     // the full recent context as a backstop in case the heuristic is
-    // wrong.
+    // wrong. Mechanism A: a CONSUMED prior fragment must NOT seed the next
+    // query, so only merge when the prior final hasn't been answered already.
+    const priorFinal =
+      recentFinals.length >= 2 ? recentFinals[recentFinals.length - 2]! : undefined;
     const isContinuation =
-      recentFinals.length >= 2 &&
-      looksLikeContinuation(
-        recentFinals[recentFinals.length - 2]!,
-        recentFinals[recentFinals.length - 1]!,
-      );
+      priorFinal !== undefined &&
+      !consumedFinals.includes(priorFinal.text) &&
+      looksLikeContinuation(priorFinal, recentFinals[recentFinals.length - 1]!);
     const effectiveUtterance = isContinuation
-      ? `${recentFinals[recentFinals.length - 2]!.text} ${text}`
+      ? `${priorFinal.text} ${text}`
       : text;
 
     // Build recentContext for the synthesizer. The latest rolling
@@ -296,11 +323,13 @@ export async function handleLocalDebugWs(
     // lastSummary AFTER, atomically, so this call's context is the prior one.
     summarizerRuntime.refreshIfStale();
     const lastSummaryAtBuild = summarizerRuntime.getLastSummary();
+    // Mechanism A: the effective window (answered spans voided) excluding the
+    // current utterance (which IS the query) feeds the synthesizer context.
     const recentContext = [
       ...(lastSummaryAtBuild !== null && lastSummaryAtBuild.summary.length > 0
         ? [lastSummaryAtBuild.summary]
         : []),
-      ...recentFinals.slice(0, -1).map((u) => u.text),
+      ...effective.slice(0, -1),
     ];
 
     // Abort prior in-flight synthesis. Send an aborted event so the
@@ -352,6 +381,30 @@ export async function handleLocalDebugWs(
         if (currentSynthesisId === synthesisId) {
           currentSynthesisId = null;
           currentSynthesisAbort = null;
+        }
+      },
+      // Mechanism B (read side): prune the answered-source ledger by the recency
+      // window, then run the shared pure predicate. Read-only on the runtime;
+      // the core checks this before emitting cards and short-circuits a dup.
+      isDuplicateAnswerSources: (docIds) => {
+        const nowDup = Date.now();
+        // Prune in place (the array is a stable per-connection reference).
+        const kept = answeredSourceSets.filter((e) => nowDup - e.at < QUESTION_DUP_WINDOW_MS);
+        answeredSourceSets.length = 0;
+        answeredSourceSets.push(...kept);
+        return isDuplicateAnswerSourceSet(docIds, answeredSourceSets, nowDup, QUESTION_DUP_WINDOW_MS);
+      },
+      // Mechanism A/B (record side): once an answer grounds, void this call's
+      // effective spans (so they can't re-seed the next query) and remember the
+      // grounded source set (so a later same-source question is skipped). Mutate
+      // the per-connection arrays in place.
+      onGroundedAnswer: (_text, sourceDocIds) => {
+        const groundedAt = Date.now();
+        const nextConsumed = addConsumedFinals(consumedFinals, effective, CONSUMED_FINALS_CAP);
+        consumedFinals.length = 0;
+        consumedFinals.push(...nextConsumed);
+        if (sourceDocIds.length > 0) {
+          answeredSourceSets.push({ docIds: [...new Set(sourceDocIds)], at: groundedAt });
         }
       },
     }).catch((err: unknown) => {
@@ -430,6 +483,12 @@ interface PipelineArgs {
    *  (close-the-loop: an answered question retires from the next rolling
    *  summary). */
   readonly onComplete: (answerText: string) => void;
+  /** Mechanism B (read side): injected into `deps` so the core skips a question
+   *  whose grounded source set duplicates a recent answered one. */
+  readonly isDuplicateAnswerSources: (docIds: readonly string[]) => boolean;
+  /** Mechanism A/B (record side): invoked on a grounded answer so the handler
+   *  voids this call's transcript spans + records the answered source set. */
+  readonly onGroundedAnswer: (text: string, sourceDocIds: readonly string[]) => void;
 }
 
 /**
@@ -499,15 +558,21 @@ async function runDebugPipeline(p: PipelineArgs): Promise<void> {
     logger: args.logger,
     relevanceStrict: RELEVANCE_STRICT,
     topK: TOP_K,
+    // Mechanism B (read side): the core checks this before emitting cards and
+    // short-circuits a question whose grounded source set duplicates a recent
+    // answered one. Mirrors the prod Recall path.
+    isDuplicateAnswerSources: p.isDuplicateAnswerSources,
   };
 
   // ── WS sink: maps every core result onto the existing local-debug events and
-  // adds the `trace` event (dev = trace ON).
+  // adds the `trace` event (dev = trace ON). Mechanism A/B record side rides the
+  // sink's onGroundedAnswer (the grounded body + source docIds).
   const sink = createWsSink({
     socket,
     synthesisId: p.synthesisId,
     logger: args.logger,
     onComplete: p.onComplete,
+    onGroundedAnswer: p.onGroundedAnswer,
   });
 
   await runPipeline(input, deps, sink);

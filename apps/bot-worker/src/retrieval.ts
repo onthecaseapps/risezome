@@ -13,6 +13,13 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { runPipeline } from './pipeline/core.js';
 import type { PipelineDeps, PipelineInput } from './pipeline/contract.js';
 import { createSupabaseSink } from './pipeline/sink-supabase.js';
+import {
+  effectiveWindow,
+  isDuplicateAnswerSourceSet,
+  addConsumedFinals,
+  CONSUMED_FINALS_CAP,
+  QUESTION_DUP_WINDOW_MS,
+} from './pipeline/answer-dedup.js';
 
 /**
  * Production Recall retrieval/synthesis loop. Since U2 this is a THIN ADAPTER:
@@ -49,10 +56,9 @@ const COOLDOWN_MS = 10_000; // ... but at most once per 10s
 // Canonical top-K is resolved in the core (5 — U1 resolution). Prod historically
 // used 3; the gate + vector floor hold precision, not a tight K.
 const WINDOW_UTTERANCES = 8; // last 8 final utterances form the query
-// Mechanism A — bound on the answered-transcript-span ledger so a long meeting
-// can't grow `consumedFinals` unboundedly. Comfortably larger than the rolling
-// window, so every still-in-window answered utterance stays voidable.
-const CONSUMED_FINALS_CAP = 60;
+// Mechanism A — CONSUMED_FINALS_CAP and the answered-source recency window
+// (QUESTION_DUP_WINDOW_MS) now live in ./pipeline/answer-dedup.ts, shared with
+// the local-debug path so both apply identical dedup.
 
 
 /**
@@ -87,8 +93,7 @@ const QUESTION_DUP_DISTANCE = (() => {
   const parsed = Number.parseFloat(process.env.RISEZOME_QUESTION_DUP_DISTANCE ?? '0.15');
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.15;
 })();
-const QUESTION_DUP_WINDOW_MS =
-  Number.parseInt(process.env.RISEZOME_QUESTION_DUP_WINDOW_MS ?? '300000', 10) || 300_000;
+// QUESTION_DUP_WINDOW_MS is imported from ./pipeline/answer-dedup.js (shared).
 
 async function embedQuestion(
   embedder: VoyageEmbedder,
@@ -144,23 +149,8 @@ function buildQuestionQuery(
   return parts.join(' ').trim();
 }
 
-/**
- * Mechanism A — the EFFECTIVE window: `recentFinals` with any utterance text
- * present in `consumedFinals` (already answered) removed, BUT the current
- * utterance (the last element — the new, not-yet-answered question) is ALWAYS
- * kept. This is the view that feeds all question UNDERSTANDING (query build,
- * ambient join, synthesizer recentContext); the raw `recentFinals` rolling
- * window is unaffected.
- */
-function effectiveWindow(
-  recentFinals: readonly string[],
-  consumedFinals: readonly string[],
-): string[] {
-  if (recentFinals.length === 0) return [];
-  const consumed = new Set(consumedFinals);
-  const lastIdx = recentFinals.length - 1;
-  return recentFinals.filter((text, i) => i === lastIdx || !consumed.has(text));
-}
+// Mechanism A's `effectiveWindow` is imported from ./pipeline/answer-dedup.js
+// (shared verbatim with the local-debug path).
 
 export interface RetrievalRuntime {
   /** Concatenated text of recent final utterances (the rolling query window). */
@@ -426,14 +416,17 @@ export async function maybeRetrieveAndEmit(args: {
     // window as answeredQuestions. Synchronous (no await) — read-only on the
     // runtime, safe to call from the core before card emit.
     isDuplicateAnswerSources: (docIds: readonly string[]): boolean => {
-      if (docIds.length === 0) return false;
+      // Prune the ledger by the recency window first (caller owns the runtime
+      // state), then run the shared pure predicate.
       args.runtime.answeredSourceSets = args.runtime.answeredSourceSets.filter(
         (e) => now - e.at < QUESTION_DUP_WINDOW_MS,
       );
-      return args.runtime.answeredSourceSets.some((entry) => {
-        const answered = new Set(entry.docIds);
-        return docIds.every((id) => answered.has(id));
-      });
+      return isDuplicateAnswerSourceSet(
+        docIds,
+        args.runtime.answeredSourceSets,
+        now,
+        QUESTION_DUP_WINDOW_MS,
+      );
     },
   };
 
@@ -457,17 +450,11 @@ export async function maybeRetrieveAndEmit(args: {
       // Mechanism A: void the transcript spans that produced THIS answer — the
       // effective window for this call — so they can't re-seed the next
       // question's query/context. Append, dedupe, cap to the most-recent bound.
-      const merged = [...args.runtime.consumedFinals, ...effective];
-      const seen = new Set<string>();
-      const deduped: string[] = [];
-      // Iterate newest-last so the cap keeps the freshest entries.
-      for (const txt of merged) {
-        if (txt.length === 0 || seen.has(txt)) continue;
-        seen.add(txt);
-        deduped.push(txt);
-      }
-      args.runtime.consumedFinals =
-        deduped.length > CONSUMED_FINALS_CAP ? deduped.slice(-CONSUMED_FINALS_CAP) : deduped;
+      args.runtime.consumedFinals = addConsumedFinals(
+        args.runtime.consumedFinals,
+        effective,
+        CONSUMED_FINALS_CAP,
+      );
       // Mechanism B (record side): remember this answer's grounded source set so
       // a later question retrieving the same set is skipped. Only when there's a
       // real source set (a pure tool answer carries none).

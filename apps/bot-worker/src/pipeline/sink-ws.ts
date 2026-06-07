@@ -59,6 +59,11 @@ export interface WsSinkArgs {
   /** Close-the-loop: invoked with the grounded answer body on synthesisDone so
    *  the handler can feed it to the summarizer (retire the resolved question). */
   readonly onComplete?: (answerText: string) => void;
+  /** Mechanism A/B record side: invoked with the grounded answer body + its
+   *  source docIds on synthesisDone so the local-debug handler can void the
+   *  answered transcript spans and remember the answered source set (mirrors the
+   *  prod Supabase sink's `onGroundedAnswer`). */
+  readonly onGroundedAnswer?: (text: string, sourceDocIds: readonly string[]) => void;
 }
 
 /** WS send helper — drop on a non-OPEN socket (mirrors the handler's `send`). */
@@ -129,6 +134,7 @@ export function createWsSink(args: WsSinkArgs): PipelineSink {
         citations: info.citations,
       });
       args.onComplete?.(info.text);
+      args.onGroundedAnswer?.(info.text, info.sourceDocIds ?? []);
     },
 
     synthesisRefusal(info: SynthesisRefusalInfo): void {
