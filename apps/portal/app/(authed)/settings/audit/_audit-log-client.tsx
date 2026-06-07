@@ -458,10 +458,18 @@ export function buildCsv(entries: AuditEntry[]): string {
 }
 
 function csvCell(value: string): string {
-  if (/[",\r\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
+  // CSV/formula-injection guard: audit fields carry user-controlled text (actor
+  // names, team/meeting titles, descriptions). A cell starting with a formula
+  // trigger executes when the CSV is opened in Excel/Sheets, so prefix those with
+  // a single quote to neutralise them. Applied to every cell, before quoting.
+  let safe = value;
+  if (/^[=+\-@\t\r]/.test(safe)) {
+    safe = `'${safe}`;
   }
-  return value;
+  if (/[",\r\n]/.test(safe)) {
+    return `"${safe.replace(/"/g, '""')}"`;
+  }
+  return safe;
 }
 
 export function slugify(text: string): string {

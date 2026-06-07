@@ -205,6 +205,26 @@ describe('pure helpers', () => {
     expect(lines[1]).toContain('"Member, then ""Admin"""');
   });
 
+  it('buildCsv neutralizes formula-injection cells (=, +, -, @) by prefixing a quote', () => {
+    const csv = buildCsv([
+      entry({
+        id: 1,
+        category: 'team_membership',
+        actorName: '=cmd|"/c calc"!A1', // malicious actor display name
+        description: '@SUM(A1:A9)',
+        targetLabel: '+1234',
+        createdAt: '2026-06-06T10:42:00.000Z',
+      }),
+    ]);
+    const line = csv.split('\r\n')[1]!;
+    // Each formula-triggering cell is prefixed with a single quote so spreadsheets
+    // treat it as text. (The actor cell also contains a comma/quote, so it's
+    // additionally CSV-quoted — the leading ' sits inside the quotes.)
+    expect(line).toContain(`"'=cmd`);
+    expect(line).toContain(`'@SUM(A1:A9)`);
+    expect(line).toContain(`'+1234`);
+  });
+
   it('colorForActor is deterministic and returns a bg-*-500 class', () => {
     expect(colorForActor('actor-1')).toBe(colorForActor('actor-1'));
     expect(colorForActor('actor-1')).toMatch(/^bg-[a-z]+-500$/);
