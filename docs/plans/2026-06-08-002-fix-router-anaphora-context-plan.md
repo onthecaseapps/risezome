@@ -1,6 +1,6 @@
 ---
 date: 2026-06-08
-status: active
+status: completed
 type: fix
 ---
 
