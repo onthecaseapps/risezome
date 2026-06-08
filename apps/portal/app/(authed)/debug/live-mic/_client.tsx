@@ -28,7 +28,7 @@ import {
   type ReplayCadence,
   type ScheduledUtterance,
 } from './_replay-driver';
-import { formatReplaySummary } from './_replay-summary';
+import { formatReplaySummary, type ReplayUtteranceOutput } from './_replay-summary';
 
 /**
  * Client component for the local-mic debug page. Opens a WebSocket to
@@ -218,7 +218,8 @@ function DebugInner({
   orgId: string;
 }): ReactElement {
   const dispatch = useAppDispatch();
-  const synthesisCount = useAppState().syntheses.size;
+  const appState = useAppState();
+  const synthesisCount = appState.syntheses.size;
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'closed' | 'errored'>(
     'idle',
   );
@@ -304,7 +305,14 @@ function DebugInner({
         // `utteranceId` is debug-only.
         dispatch({
           type: 'synthesisStart',
-          start: { synthesisId: s.synthesisId, sourceCardIds: s.sourceCardIds, traceId: s.traceId },
+          // Thread the (debug-only) utteranceId so the copy-summary can map the
+          // answer text back to its utterance.
+          start: {
+            synthesisId: s.synthesisId,
+            sourceCardIds: s.sourceCardIds,
+            traceId: s.traceId,
+            triggerUtteranceId: s.utteranceId,
+          },
         });
         return;
       }
@@ -581,7 +589,26 @@ function DebugInner({
   // U5: copy a structured, LLM-pasteable dump of the whole replay (every
   // utterance's outcome, skill-vs-RAG route + reason, gates, prior context).
   const copyReplaySummary = useCallback(() => {
-    const text = formatReplaySummary(replayUtterances, tracesByUtterance, replayScope);
+    // Per-utterance I/O the trace doesn't carry: retrieved cards (from the card
+    // stream) and the synthesized answer (from the reducer), keyed by utteranceId.
+    const outputsById = new Map<string, ReplayUtteranceOutput>();
+    for (const g of cardGroups) {
+      outputsById.set(g.utteranceId, {
+        cards: g.cards.map((c) => ({
+          rank: c.rank,
+          source: c.source,
+          title: c.title,
+          ...(c.score !== undefined ? { score: c.score } : {}),
+          ...(c.distance !== undefined ? { distance: c.distance } : {}),
+        })),
+      });
+    }
+    for (const syn of appState.syntheses.values()) {
+      const uid = syn.triggerUtteranceId;
+      if (uid == null || syn.accumulatedText.length === 0) continue;
+      outputsById.set(uid, { ...outputsById.get(uid), answer: syn.accumulatedText });
+    }
+    const text = formatReplaySummary(replayUtterances, tracesByUtterance, replayScope, outputsById);
     void navigator.clipboard
       .writeText(text)
       .then(() => {
@@ -590,7 +617,7 @@ function DebugInner({
         summaryCopiedTimerRef.current = window.setTimeout(() => setSummaryCopied(false), 1500);
       })
       .catch(() => setReplayError('clipboard write failed'));
-  }, [replayUtterances, tracesByUtterance, replayScope]);
+  }, [replayUtterances, tracesByUtterance, replayScope, cardGroups, appState.syntheses]);
 
   const reset = useCallback(() => {
     // Clears the debug-specific panels AND the HUD reducer (synthesis cards +

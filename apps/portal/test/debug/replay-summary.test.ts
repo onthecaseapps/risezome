@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { formatReplaySummary } from '../../app/(authed)/debug/live-mic/_replay-summary';
+import {
+  formatReplaySummary,
+  type ReplayUtteranceOutput,
+} from '../../app/(authed)/debug/live-mic/_replay-summary';
 import type { ReplayUtterance } from '../../app/(authed)/debug/live-mic/_replay-source';
 import type { StageRecord, UtteranceTrace } from '../../app/(authed)/debug/live-mic/_pipeline-model';
 
@@ -153,5 +156,106 @@ describe('formatReplaySummary (U5)', () => {
     );
     expect(out).toContain('outcome: skip');
     expect(out).toContain('suppressed at: cooldown — skip (cooldown)');
+  });
+
+  describe('full gate ledger + cards + answer (copy-summary completeness)', () => {
+    it('renders the gate-by-gate ledger with codes, stage names, statuses, and reached rows', () => {
+      const out = formatReplaySummary(
+        [u({ utteranceId: 'a', text: 'how many github issues are there' })],
+        new Map([['a', trace('a', ragStages, ['rolling summary'])]]),
+      );
+      // The ledger header + the catalog rows that actually ran.
+      expect(out).toContain('gates:');
+      expect(out).toContain('S05 Relevance gate [PASS]');
+      expect(out).toContain('S06 Router (parallel) [PASS]');
+      expect(out).toContain('S13 Router collect + skill [PASS]');
+      expect(out).toContain('S17 Reveal [PASS]');
+      // Latency from the wire record is carried through.
+      expect(out).toMatch(/Reveal \[PASS\].*\(12ms\)/);
+      // Notreached rows downstream of the terminal stop are NOT dumped (noise cut).
+      expect(out).not.toContain('[—]');
+    });
+
+    it('renders a derived PRE gate (cooldown) as an N/A info row when it did not suppress', () => {
+      const out = formatReplaySummary(
+        [u({ utteranceId: 'a' })],
+        new Map([['a', trace('a', ragStages)]]),
+      );
+      // Threshold + cooldown ran in the adapter without suppressing → info rows.
+      expect(out).toContain('PRE Utterance gate [N/A]');
+      expect(out).toContain('PRE Cooldown [N/A]');
+    });
+
+    it('renders a real SKIP ledger row for a suppressing gate (question-dedup)', () => {
+      const qdedup: StageRecord = {
+        stage: 'question-dedup',
+        status: 'short_circuited',
+        latencyMs: 1,
+        decision: 'skip',
+        reason: 'duplicate_question',
+      };
+      const out = formatReplaySummary(
+        [u({ utteranceId: 'q' })],
+        new Map([['q', trace('q', [qdedup])]]),
+      );
+      expect(out).toContain('PRE Question dedup [SKIP] duplicate_question (1ms)');
+    });
+
+    it('lists retrieved cards with rank, source, title, and scores', () => {
+      const outputs = new Map<string, ReplayUtteranceOutput>([
+        [
+          'a',
+          {
+            cards: [
+              { rank: 1, source: 'github', title: 'Open issues report', score: 0.8123, distance: 0.21 },
+              { rank: 2, source: 'transcript', title: 'Standup notes' },
+            ],
+          },
+        ],
+      ]);
+      const out = formatReplaySummary(
+        [u({ utteranceId: 'a' })],
+        new Map([['a', trace('a', ragStages)]]),
+        undefined,
+        outputs,
+      );
+      expect(out).toContain('retrieved cards (2):');
+      expect(out).toContain('[1] github · Open issues report score=0.8123 dist=0.210');
+      expect(out).toContain('[2] transcript · Standup notes');
+    });
+
+    it('includes the synthesized answer text for a grounded utterance', () => {
+      const outputs = new Map<string, ReplayUtteranceOutput>([
+        ['a', { answer: 'There are 47 open GitHub issues.' }],
+      ]);
+      const out = formatReplaySummary(
+        [u({ utteranceId: 'a' })],
+        new Map([['a', trace('a', ragStages)]]),
+        undefined,
+        outputs,
+      );
+      expect(out).toContain('answer: There are 47 open GitHub issues.');
+    });
+
+    it('clips a very long answer rather than dumping the whole body', () => {
+      const long = 'x'.repeat(900);
+      const outputs = new Map<string, ReplayUtteranceOutput>([['a', { answer: long }]]);
+      const out = formatReplaySummary(
+        [u({ utteranceId: 'a' })],
+        new Map([['a', trace('a', ragStages)]]),
+        undefined,
+        outputs,
+      );
+      expect(out).toContain('… (+300 chars)');
+      expect(out).not.toContain('x'.repeat(900));
+    });
+
+    it('omits the cards/answer blocks when no output is provided (back-compat)', () => {
+      const out = formatReplaySummary([u({ utteranceId: 'a' })], new Map([['a', trace('a', ragStages)]]));
+      expect(out).not.toContain('retrieved cards');
+      expect(out).not.toContain('answer:');
+      // But the gate ledger is still always present.
+      expect(out).toContain('gates:');
+    });
   });
 });

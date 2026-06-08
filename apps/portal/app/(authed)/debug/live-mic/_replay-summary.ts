@@ -12,7 +12,29 @@
  * silently dropped).
  */
 import type { ReplayUtterance } from './_replay-source';
-import { deriveOutcome, type StageRecord, type UtteranceTrace } from './_pipeline-model';
+import {
+  buildLedger,
+  deriveOutcome,
+  STATUS_LABEL,
+  type StageRecord,
+  type UtteranceTrace,
+} from './_pipeline-model';
+
+/** A retrieved card surfaced for an utterance (subset used in the summary). */
+export interface ReplaySummaryCard {
+  readonly rank: number;
+  readonly source: string;
+  readonly title: string;
+  readonly score?: number;
+  readonly distance?: number;
+}
+
+/** Per-utterance I/O the trace doesn't carry: the synthesized answer text and the
+ *  retrieved cards (both live in the page's reducer, passed in for the full dump). */
+export interface ReplayUtteranceOutput {
+  readonly answer?: string;
+  readonly cards?: readonly ReplaySummaryCard[];
+}
 
 /** mm:ss for a startMs offset (the same clock the file format uses). */
 function clock(ms: number): string {
@@ -76,7 +98,41 @@ function suppressionLine(trace: UtteranceTrace): string | null {
   return `${stop.stage} — ${stop.decision ?? stop.status} (${stop.reason ?? 'n/a'})`;
 }
 
-function utteranceBlock(u: ReplayUtterance, index: number, trace: UtteranceTrace | undefined): string {
+/** The FULL gate-by-gate ledger (every stage that ran/decided), so a paste can
+ *  be diagnosed without the live page. Uses the same ledger the trace panel
+ *  renders; skips rows downstream of the terminal stop (notreached) to cut noise.
+ *  Excludes raw vectors/embeddings — only decisions + counts/scores. */
+function gateLedgerLines(trace: UtteranceTrace): string[] {
+  const ledger = buildLedger(trace);
+  const lines: string[] = ['gates:'];
+  for (const row of ledger) {
+    if (row.status === 'notreached') continue;
+    const ms = row.latencyMs != null ? ` (${String(row.latencyMs)}ms)` : '';
+    let line = `  ${row.code} ${row.name} [${STATUS_LABEL[row.status]}] ${row.result}${ms}`;
+    // Append data-bearing detail (counts/scores/etc.) that the one-line result
+    // doesn't already carry — skip decision/reason (already in `result`) + the
+    // bulky hits list.
+    const extra = row.detail
+      .filter(([k]) => k !== 'decision' && k !== 'reason' && k !== 'hits')
+      .map(([k, v]) => `${k}=${v}`);
+    if (extra.length > 0) line += ` · ${extra.join(', ')}`;
+    lines.push(line);
+  }
+  return lines;
+}
+
+/** Truncate a long answer/body for the paste while keeping it legible. */
+function clip(text: string, max = 600): string {
+  const t = text.trim();
+  return t.length > max ? `${t.slice(0, max)}… (+${String(t.length - max)} chars)` : t;
+}
+
+function utteranceBlock(
+  u: ReplayUtterance,
+  index: number,
+  trace: UtteranceTrace | undefined,
+  output: ReplayUtteranceOutput | undefined,
+): string {
   const who = u.speaker !== null ? u.speaker : 'unknown';
   const head = `[${String(index + 1)}] ${who} @ ${clock(u.startMs)}`;
   const lines = [head, `text: ${u.text}`];
@@ -100,6 +156,26 @@ function utteranceBlock(u: ReplayUtterance, index: number, trace: UtteranceTrace
     lines.push(`prior context (${String(ctx.length)}):`);
     for (const entry of ctx) lines.push(`  · ${entry}`);
   }
+
+  // Full gate-by-gate ledger (every stage decision/reason/data).
+  for (const line of gateLedgerLines(trace)) lines.push(line);
+
+  // Retrieved cards (the I/O the trace doesn't carry).
+  const cards = output?.cards ?? [];
+  if (cards.length > 0) {
+    lines.push(`retrieved cards (${String(cards.length)}):`);
+    for (const c of cards) {
+      const score = c.score !== undefined ? ` score=${c.score.toFixed(4)}` : '';
+      const dist = c.distance !== undefined ? ` dist=${c.distance.toFixed(3)}` : '';
+      lines.push(`  [${String(c.rank)}] ${c.source} · ${c.title}${score}${dist}`);
+    }
+  }
+
+  // Synthesized answer text.
+  if (output?.answer !== undefined && output.answer.trim().length > 0) {
+    lines.push(`answer: ${clip(output.answer)}`);
+  }
+
   return lines.join('\n');
 }
 
@@ -112,11 +188,14 @@ export function formatReplaySummary(
   utterances: readonly ReplayUtterance[],
   tracesById: ReadonlyMap<string, UtteranceTrace>,
   scope?: { scoped: boolean; meetingId: string | null } | null,
+  outputsById?: ReadonlyMap<string, ReplayUtteranceOutput>,
 ): string {
   if (utterances.length === 0) {
     return '# Replay summary\n\nNo utterances were replayed.';
   }
-  const blocks = utterances.map((u, i) => utteranceBlock(u, i, tracesById.get(u.utteranceId)));
+  const blocks = utterances.map((u, i) =>
+    utteranceBlock(u, i, tracesById.get(u.utteranceId), outputsById?.get(u.utteranceId)),
+  );
   // U5: the resolved retrieval scope for this replay session (R6) — scoped to a
   // meeting's effective source set, or whole-org / unscoped for a file load.
   const scopeLine =
