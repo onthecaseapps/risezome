@@ -70,8 +70,32 @@ describe('dispatchBroadcast — meeting status liveness (U2)', () => {
     });
   });
 
-  it('ignores partial transcript events (so persisted partials never re-render)', () => {
+  it('dispatches an interim transcript utterance on the LIVE broadcast path', () => {
     const h = harness();
+    dispatchBroadcast(
+      'transcript.partial_data',
+      { utteranceId: 'u1', text: 'hel', speaker: 'Alice', startMs: 100, revision: 2 },
+      h.dispatch,
+      h.setState,
+      true, // fromLiveBroadcast
+    );
+    expect(h.dispatched).toContainEqual({
+      type: 'transcriptUtterance',
+      utterance: {
+        utteranceId: 'u1',
+        text: 'hel',
+        speaker: 'Alice',
+        isFinal: false,
+        startMs: 100,
+        endMs: 100,
+        revision: 2,
+      },
+    });
+  });
+
+  it('DROPS the same partial on the reconnect/poll path (persisted partials never re-render)', () => {
+    const h = harness();
+    // Default fromLiveBroadcast=false mirrors the reconnect/poll replay path.
     dispatchBroadcast(
       'transcript.partial_data',
       { utteranceId: 'u1', text: 'hel', speaker: 'Alice', startMs: 100, revision: 0 },

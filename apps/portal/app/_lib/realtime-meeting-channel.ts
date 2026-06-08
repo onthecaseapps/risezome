@@ -101,7 +101,10 @@ export function useRealtimeMeetingChannel(opts: UseRealtimeMeetingChannelOpts): 
         if (eventId !== null && eventId > lastSeenRef.current) {
           lastSeenRef.current = eventId;
         }
-        dispatchBroadcast(eventType, payload, dispatch, setState);
+        // LIVE broadcast path — interim (partial) utterances are dispatched
+        // here so the live line can morph word-by-word. Interims carry no
+        // persisted eventId, so lastSeenRef is never advanced by them above.
+        dispatchBroadcast(eventType, payload, dispatch, setState, true);
       });
 
       channel.subscribe(async (status) => {
@@ -209,6 +212,11 @@ export function dispatchBroadcast(
   payload: Record<string, unknown>,
   dispatch: (action: AppAction) => void,
   setState: React.Dispatch<React.SetStateAction<ChannelState>>,
+  /** True only for the LIVE Realtime broadcast path. Interim (partial)
+   *  transcript events are transient and dispatched ONLY when live; the
+   *  reconnect/poll replay path (default false) drops them so persisted
+   *  historical partials never re-render. */
+  fromLiveBroadcast = false,
 ): void {
   switch (eventType) {
     case 'meetingStatus': {
@@ -273,28 +281,44 @@ export function dispatchBroadcast(
       }
       return;
     case 'transcript.data': {
-      const utterance = toTranscriptUtterance(payload);
+      const utterance = toTranscriptUtterance(payload, true);
       if (utterance !== null) dispatch({ type: 'transcriptUtterance', utterance });
       return;
     }
-    // transcript.partial_data: intentionally ignored. The transcript renders
-    // only settled finals — Recall's partials drift their start timestamps, so
-    // they have no stable id to merge into their final and pile up as stuck
-    // "still typing" lines. The bot-worker no longer broadcasts partials, but
-    // meetings recorded before that change still have persisted partials that
-    // the reconnect-fetch replays; dropping them here keeps the transcript
-    // clean on those too.
+    case 'transcript.partial_data': {
+      // Interim utterances are transient: the bot-worker broadcasts them as
+      // TRANSIENT Realtime events with a STABLE utteranceId (shared with the
+      // eventual final) and a monotonic revision, so the live line can morph
+      // word-by-word and then settle in place when the final arrives.
+      //
+      // LIVE-ONLY: only dispatch on the live broadcast path. On the
+      // reconnect/poll replay path any persisted historical partials must stay
+      // suppressed (they have drifting timestamps / are superseded by finals),
+      // so we drop them. Interims carry no persisted eventId, so the caller
+      // never advances lastSeenRef on them.
+      if (!fromLiveBroadcast) return;
+      const utterance = toTranscriptUtterance(payload, false);
+      if (utterance !== null) dispatch({ type: 'transcriptUtterance', utterance });
+      return;
+    }
     default:
       return;
   }
 }
 
 /**
- * Map a transcript.data broadcast payload (utteranceToEventPayload from the
- * bot-worker) into the reducer's TranscriptUtterance. Only finals reach here.
- * Returns null when the payload is missing required fields.
+ * Map a transcript.data / transcript.partial_data broadcast payload
+ * (utteranceToEventPayload from the bot-worker) into the reducer's
+ * TranscriptUtterance. The two events share an identical payload shape; the
+ * caller passes `isFinal` (true for transcript.data, false for the partial).
+ * A partial and its eventual final share a STABLE utteranceId, so the reducer
+ * merges them in place. Returns null when the payload is missing required
+ * fields.
  */
-function toTranscriptUtterance(payload: Record<string, unknown>): TranscriptUtterance | null {
+function toTranscriptUtterance(
+  payload: Record<string, unknown>,
+  isFinal: boolean,
+): TranscriptUtterance | null {
   const utteranceId = payload['utteranceId'];
   const text = payload['text'];
   if (typeof utteranceId !== 'string' || typeof text !== 'string') return null;
@@ -302,7 +326,7 @@ function toTranscriptUtterance(payload: Record<string, unknown>): TranscriptUtte
   const startMs = typeof payload['startMs'] === 'number' ? payload['startMs'] : 0;
   const endMs = typeof payload['endMs'] === 'number' ? payload['endMs'] : startMs;
   const revision = typeof payload['revision'] === 'number' ? payload['revision'] : 0;
-  return { utteranceId, text, speaker, isFinal: true, startMs, endMs, revision };
+  return { utteranceId, text, speaker, isFinal, startMs, endMs, revision };
 }
 
 async function reconnectFetch(args: {
