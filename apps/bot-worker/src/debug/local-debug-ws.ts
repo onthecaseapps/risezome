@@ -144,6 +144,10 @@ export async function handleLocalDebugWs(
   // ⇒ the debug page reflects the live pipeline's answer/suppress decision
   // exactly (U3).
   let runtime = newRetrievalRuntime();
+  // KTD4/U4: the real meeting being replayed (set on `replay-reset`). When set,
+  // retrieval scopes to that meeting's effective source set (parity); when null
+  // (live-mic, or a file-loaded transcript) retrieval runs whole-org / unscoped.
+  let replayMeetingId: string | null = null;
 
   runner.on('frame', (frame: AudioFrame) => {
     engine.sendFrame(frame.samples);
@@ -200,9 +204,10 @@ export async function handleLocalDebugWs(
       runtime,
       utteranceText: text,
       utteranceId: utterance.utteranceId,
-      // The dev sidecar has no real meeting yet (U4 threads one); the org doubles
-      // as the scope id and `unscoped: true` searches whole-org.
-      meetingId: args.orgId,
+      // KTD4/U4: replaying a real meeting scopes retrieval to that meeting's
+      // effective source set (parity); live-mic / file-loaded (replayMeetingId
+      // null) runs whole-org / unscoped. orgId always doubles as the org scope.
+      meetingId: replayMeetingId ?? args.orgId,
       orgId: args.orgId,
       db: args.db,
       embedder,
@@ -214,9 +219,7 @@ export async function handleLocalDebugWs(
       ...(lastSummary !== undefined ? { lastSummary } : {}),
       logger: args.logger,
       ...(now !== undefined ? { now } : {}),
-      // Whole-org retrieval (no meeting scope) — matches the OLD dev path; U4
-      // threads the real meeting for scoped retrieval.
-      unscoped: true,
+      unscoped: replayMeetingId === null,
       // WS+trace sink: maps every core result onto the existing local-debug WS
       // events and emits the per-stage `trace`. The sink's onGroundedAnswer is
       // the adapter's runtime-recording hook (`wiring.onGroundedAnswer`) so dedup
@@ -258,8 +261,16 @@ export async function handleLocalDebugWs(
   // adapter owns. Per-utterance abort is gone (prod doesn't abort — parity
   // intent), so there's nothing else to tear down; the page clears client-side
   // on reset. The rolling summarizer is intentionally left to age out on its own.
-  const resetReplayState = (): void => {
+  const resetReplayState = (meetingId: string | null): void => {
     runtime = newRetrievalRuntime();
+    replayMeetingId = meetingId;
+    // KTD4/U4: tell the page the retrieval scope for this run so the trace +
+    // summary can label it ("scoped to meeting …" vs "unscoped (no meeting)").
+    send(socket, {
+      type: 'replay-scope',
+      scoped: meetingId !== null,
+      meetingId,
+    });
   };
 
   // Live mic path: Deepgram finals drive the shared handler with wall-clock time
@@ -275,7 +286,7 @@ export async function handleLocalDebugWs(
     const msg = parseReplayInbound(rawToString(raw));
     if (msg === null) return;
     if (msg.kind === 'reset') {
-      resetReplayState();
+      resetReplayState(msg.meetingId);
       return;
     }
     // Replay supplies the meeting-logical clock (startMs) so the adapter's
@@ -343,7 +354,11 @@ function send(socket: WebSocket, payload: Record<string, unknown>): void {
 /** Inbound replay control message, parsed from a WS frame. */
 export type ReplayInbound =
   | { readonly kind: 'utterance'; readonly utterance: Utterance }
-  | { readonly kind: 'reset' };
+  // KTD4/U4: `replay-reset` optionally carries the real meeting id being
+  // replayed, so retrieval scopes to that meeting's effective source set
+  // (parity). Absent ⇒ whole-org / unscoped (live-mic or a file-loaded
+  // transcript with no meeting).
+  | { readonly kind: 'reset'; readonly meetingId: string | null };
 
 /** Coerce a ws RawData frame (string | Buffer | Buffer[] | ArrayBuffer) to text. */
 function rawToString(raw: unknown): string {
@@ -370,7 +385,11 @@ export function parseReplayInbound(raw: string): ReplayInbound | null {
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
   const m = parsed as Record<string, unknown>;
-  if (m.type === 'replay-reset') return { kind: 'reset' };
+  if (m.type === 'replay-reset') {
+    const meetingId =
+      typeof m.meetingId === 'string' && m.meetingId.length > 0 ? m.meetingId : null;
+    return { kind: 'reset', meetingId };
+  }
   if (m.type !== 'replay-utterance') return null;
 
   const text = typeof m.text === 'string' ? m.text.trim() : '';

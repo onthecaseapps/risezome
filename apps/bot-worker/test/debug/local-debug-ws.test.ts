@@ -41,8 +41,25 @@ describe('parseReplayInbound (U1 — transcript replay inbound)', () => {
     });
   });
 
-  it('parses a replay-reset', () => {
-    expect(parseReplayInbound(JSON.stringify({ type: 'replay-reset' }))).toEqual({ kind: 'reset' });
+  it('parses a replay-reset with no meeting (unscoped)', () => {
+    expect(parseReplayInbound(JSON.stringify({ type: 'replay-reset' }))).toEqual({
+      kind: 'reset',
+      meetingId: null,
+    });
+  });
+
+  it('parses a replay-reset carrying the real meeting id (scoped)', () => {
+    expect(parseReplayInbound(JSON.stringify({ type: 'replay-reset', meetingId: 'm-123' }))).toEqual({
+      kind: 'reset',
+      meetingId: 'm-123',
+    });
+  });
+
+  it('treats an empty/blank meetingId on replay-reset as unscoped (null)', () => {
+    expect(parseReplayInbound(JSON.stringify({ type: 'replay-reset', meetingId: '' }))).toEqual({
+      kind: 'reset',
+      meetingId: null,
+    });
   });
 
   it('drops a replay-utterance with empty/whitespace text (mirrors the live empty guard)', () => {

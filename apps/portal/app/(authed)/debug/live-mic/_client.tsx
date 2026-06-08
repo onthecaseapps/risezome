@@ -247,6 +247,9 @@ function DebugInner({
   const replayElapsedRef = useRef(0);
   const replayStartWallRef = useRef(0);
   const summaryCopiedTimerRef = useRef<number | null>(null);
+  // U4: the meeting id the loaded transcript came from (null for a file load),
+  // sent on every `replay-reset` so the sidecar scopes retrieval to that meeting.
+  const loadedMeetingIdRef = useRef<string | null>(null);
 
   const handleEvent = useCallback((evt: DebugEvent) => {
     switch (evt.type) {
@@ -444,19 +447,28 @@ function DebugInner({
     replayTimersRef.current = [];
   }, []);
 
+  // U4: a `replay-reset` carries the loaded transcript's meeting id (when it came
+  // from a past meeting) so the sidecar scopes retrieval to that meeting; a file
+  // load sends null → whole-org / unscoped.
+  const sendReplayReset = useCallback((): void => {
+    const meetingId = loadedMeetingIdRef.current;
+    sendWs({ type: 'replay-reset', ...(meetingId !== null ? { meetingId } : {}) });
+  }, [sendWs]);
+
   const onReplayLoaded = useCallback(
-    (us: ReplayUtterance[]) => {
+    (us: ReplayUtterance[], meetingId: string | null) => {
       // Loading a new source mid-playback must cancel the prior schedule (and
       // reset the sidecar) — otherwise its timers keep sending the old transcript.
+      loadedMeetingIdRef.current = meetingId;
       clearReplayTimers();
-      sendWs({ type: 'replay-reset' });
+      sendReplayReset();
       setReplayUtterances(us);
       setReplayState('idle');
       setReplaySent(0);
       replaySentRef.current = 0;
       replayElapsedRef.current = 0;
     },
-    [clearReplayTimers, sendWs],
+    [clearReplayTimers, sendReplayReset],
   );
 
   const loadReplayFromMeeting = useCallback(async () => {
@@ -470,7 +482,7 @@ function DebugInner({
         setReplayError(json.error ?? `load failed (${String(res.status)})`);
         return;
       }
-      onReplayLoaded(json.utterances);
+      onReplayLoaded(json.utterances, id); // scoped to this meeting (parity)
     } catch (e) {
       setReplayError(String(e));
     }
@@ -485,7 +497,7 @@ function DebugInner({
           setReplayError('no utterances parsed from file');
           return;
         }
-        onReplayLoaded(parsed);
+        onReplayLoaded(parsed, null); // file load — no meeting → whole-org / unscoped
       } catch (e) {
         setReplayError(String(e));
       }
@@ -502,7 +514,7 @@ function DebugInner({
     setReplayError(null);
     // Fresh run from idle/done resets the sidecar + schedule; resume keeps elapsed.
     if (replayState !== 'paused') {
-      sendWs({ type: 'replay-reset' });
+      sendReplayReset();
       replaySchedRef.current = computeSchedule(replayUtterances, cadence);
       replaySentRef.current = 0;
       replayElapsedRef.current = 0;
@@ -529,7 +541,7 @@ function DebugInner({
       }, fireIn);
       replayTimersRef.current.push(timer);
     });
-  }, [replayUtterances, cadence, replayState, sendWs, clearReplayTimers]);
+  }, [replayUtterances, cadence, replayState, sendWs, sendReplayReset, clearReplayTimers]);
 
   const pauseReplay = useCallback(() => {
     clearReplayTimers();
@@ -539,12 +551,12 @@ function DebugInner({
 
   const restartReplay = useCallback(() => {
     clearReplayTimers();
-    sendWs({ type: 'replay-reset' });
+    sendReplayReset();
     replaySentRef.current = 0;
     replayElapsedRef.current = 0;
     setReplaySent(0);
     setReplayState('idle');
-  }, [clearReplayTimers, sendWs]);
+  }, [clearReplayTimers, sendReplayReset]);
 
   // U5: copy a structured, LLM-pasteable dump of the whole replay (every
   // utterance's outcome, skill-vs-RAG route + reason, gates, prior context).
