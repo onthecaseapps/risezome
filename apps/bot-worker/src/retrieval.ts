@@ -333,6 +333,13 @@ export async function maybeRetrieveAndEmit(args: {
     recentContext.push(finalText);
   }
 
+  // Router/intent classifier window: the RAW recent finals (answered spans
+  // RETAINED, un-voided) excluding the current utterance. Unlike recentContext,
+  // this keeps a just-answered turn so an anaphoric follow-up ("how many of THESE
+  // issues") can resolve its pronoun in the classifier and route to the skill —
+  // Mechanism A would otherwise void the antecedent the moment it grounded.
+  const routerRecentFinals = args.runtime.recentFinals.slice(0, -1);
+
   // ── PipelineInput (the source seam) ──────────────────────────────────
   const input: PipelineInput = {
     utteranceText: args.utteranceText,
@@ -344,6 +351,7 @@ export async function maybeRetrieveAndEmit(args: {
     // Latency U1: reuse the dedup embed as the retrieval embed (question lane).
     ...(questionVec !== undefined ? { queryVector: questionVec } : {}),
     ...(recentContext.length > 0 ? { recentContext } : {}),
+    ...(routerRecentFinals.length > 0 ? { routerRecentFinals } : {}),
     ...(args.lastSummary !== undefined ? { lastSummary: args.lastSummary } : {}),
   };
 

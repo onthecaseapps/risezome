@@ -320,6 +320,25 @@ describe('Mechanism A — void already-answered transcript spans', () => {
     expect(lastInput().queryText).toBe('what database do we use');
   });
 
+  it('the router classifier window (routerRecentFinals) RETAINS an answered antecedent the synthesizer window voids', async () => {
+    const rt = newRetrievalRuntime();
+    // A github question is asked and grounds — its span is voided (Mechanism A).
+    rt.recentFinals = ['are there any open github issues'];
+    await maybeRetrieveAndEmit(baseArgs(rt, 'are there any open github issues'));
+    fireGroundedAnswer(['doc-gh']);
+    expect(rt.consumedFinals).toContain('are there any open github issues');
+
+    // The anaphoric follow-up fires. The synthesizer window (recentContext) must
+    // NOT carry the voided antecedent, but the classifier window MUST — that's the
+    // whole point: the two windows diverge so the pronoun stays resolvable.
+    const res = await maybeRetrieveAndEmit(baseArgs(rt, 'how many of these issues are there'));
+    expect(res.skipped).toBeUndefined();
+    const ctx = lastInput().recentContext ?? [];
+    const routerFinals = lastInput().routerRecentFinals ?? [];
+    expect(ctx).not.toContain('are there any open github issues'); // voided for synthesis
+    expect(routerFinals).toContain('are there any open github issues'); // retained for routing
+  });
+
   it('an answered prior final is dropped from a follow-up question’s built query (buildQuestionQuery view)', async () => {
     const rt = newRetrievalRuntime();
     rt.recentFinals = ['the css alignment topic'];
