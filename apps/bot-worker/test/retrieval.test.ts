@@ -18,7 +18,13 @@ vi.mock('../src/pipeline/sink-supabase.js', () => ({
   },
 }));
 
-import { maybeRetrieveAndEmit, newRetrievalRuntime, type RetrievalRuntime } from '../src/retrieval';
+import {
+  maybeRetrieveAndEmit,
+  newRetrievalRuntime,
+  type RetrievalRuntime,
+  type SinkWiring,
+} from '../src/retrieval';
+import { QUESTION_DUP_WINDOW_MS } from '../src/pipeline/answer-dedup';
 import type { PipelineInput } from '../src/pipeline/contract';
 
 // Deterministic pseudo-embedder: identical text → identical one-hot vector
@@ -383,5 +389,64 @@ describe('Mechanism B — skip a synthesis grounding on an already-answered sour
     await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
     fireGroundedAnswer([]); // grounded but no source docs
     expect(rt.answeredSourceSets).toHaveLength(0);
+  });
+});
+
+describe('maybeRetrieveAndEmit — injected clock + sink factory (U1 seams)', () => {
+  beforeEach(() => {
+    h.runPipeline.mockClear();
+    h.sinkArgs.length = 0;
+  });
+
+  it('injected `now` drives the cooldown window (not Date.now)', async () => {
+    const rt = newRetrievalRuntime();
+    // Logical timestamps far from real Date.now() prove the injected clock is used.
+    const a = await maybeRetrieveAndEmit({ ...baseArgs(rt, 'so the build is green now'), now: 1_000_000 });
+    expect(a.skipped).toBeUndefined();
+    // 5s later (logical) — within the 10s cooldown → skipped.
+    const b = await maybeRetrieveAndEmit({ ...baseArgs(rt, 'and the tests pass too now'), now: 1_005_000 });
+    expect(b.skipped).toBe('cooldown');
+    // 11s after the fire — cooldown elapsed → fires.
+    const c = await maybeRetrieveAndEmit({ ...baseArgs(rt, 'deploy looks healthy as well'), now: 1_011_000 });
+    expect(c.skipped).toBeUndefined();
+  });
+
+  it('injected `now` drives the near-duplicate-question recency window', async () => {
+    const rt = newRetrievalRuntime();
+    const q1 = await maybeRetrieveAndEmit({ ...baseArgs(rt, 'what ai models do we use'), now: 1_000_000 });
+    expect(q1.skipped).toBeUndefined();
+    fireGroundedAnswer(); // records the question embedding at logical t=1_000_000
+    // Same question 1s later (logical) → near-duplicate → suppressed.
+    const q2 = await maybeRetrieveAndEmit({ ...baseArgs(rt, 'what ai models do we use'), now: 1_001_000 });
+    expect(q2.skipped).toBe('duplicate_question');
+    // Same question past the dup recency window → fires again.
+    const q3 = await maybeRetrieveAndEmit({
+      ...baseArgs(rt, 'what ai models do we use'),
+      now: 1_000_000 + QUESTION_DUP_WINDOW_MS + 1,
+    });
+    expect(q3.skipped).toBeUndefined();
+  });
+
+  it('uses the injected createSink factory instead of the Supabase sink; the wiring still records dedup state', async () => {
+    const rt = newRetrievalRuntime();
+    let captured: SinkWiring | undefined;
+    const createSink = (wiring: SinkWiring): never => {
+      captured = wiring;
+      return {} as never;
+    };
+    const res = await maybeRetrieveAndEmit({
+      ...baseArgs(rt, 'what ai models do we use'),
+      now: 1_000_000,
+      createSink,
+    });
+    expect(res.skipped).toBeUndefined();
+    expect(captured).toBeDefined();
+    // The Supabase sink was NOT built (the mock would have captured its args).
+    expect(h.sinkArgs).toHaveLength(0);
+    // The adapter's grounded-answer wiring still records dedup state on the runtime.
+    captured!.onGroundedAnswer('a grounded answer', ['doc1']);
+    expect(rt.answeredQuestions).toHaveLength(1);
+    expect(rt.answeredSourceSets).toHaveLength(1);
+    expect(rt.answeredSourceSets[0]!.at).toBe(1_000_000); // recorded with the injected clock
   });
 });

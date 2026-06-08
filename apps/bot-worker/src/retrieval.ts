@@ -11,7 +11,7 @@ import { type SkillRegistry } from '@risezome/engine/skills';
 import type { MeetingSummary } from '@risezome/engine/summarize';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { runPipeline } from './pipeline/core.js';
-import type { PipelineDeps, PipelineInput } from './pipeline/contract.js';
+import type { PipelineDeps, PipelineInput, PipelineSink } from './pipeline/contract.js';
 import { createSupabaseSink } from './pipeline/sink-supabase.js';
 import {
   effectiveWindow,
@@ -157,8 +157,32 @@ export function newRetrievalRuntime(): RetrievalRuntime {
   };
 }
 
+/** Runtime-recording hooks the adapter owns and threads into WHATEVER sink it
+ *  builds — so dedup/voiding state (answeredQuestions/consumedFinals/
+ *  answeredSourceSets) is maintained identically whether the output is the prod
+ *  Supabase sink or the debug WS+trace sink. `onGroundedAnswer` closes over this
+ *  call's lane/effective-window/question-vector and the injected clock. */
+export interface SinkWiring {
+  readonly onGroundedAnswer: (text: string, sourceDocIds?: readonly string[]) => void;
+  readonly onMiss?: (miss: MissRecord) => void;
+  readonly onSynthesisRequested?: () => void;
+}
+
+/** Builds the output sink from the adapter's runtime-recording wiring. Prod
+ *  passes nothing (defaults to the Supabase sink); the debug sidecar passes a
+ *  factory that builds the WS+trace sink. (KTD2.) */
+export type SinkFactory = (wiring: SinkWiring) => PipelineSink;
+
 export async function maybeRetrieveAndEmit(args: {
   runtime: RetrievalRuntime;
+  /** Injected clock for the time-based gates (cooldown, question ceiling,
+   *  near-duplicate recency). Defaults to `Date.now()`. Replay passes the
+   *  utterance's meeting-logical `startMs` so replay speed can't distort
+   *  suppression; live-mic/prod omit it. (KTD3.) */
+  now?: number;
+  /** Optional output-sink factory. Omitted ⇒ the prod Supabase sink. The debug
+   *  path passes a WS+trace sink factory. (KTD2.) */
+  createSink?: SinkFactory;
   utteranceText: string;
   utteranceId: string;
   meetingId: string;
@@ -209,7 +233,7 @@ export async function maybeRetrieveAndEmit(args: {
   // A detected substantive question takes the QUESTION lane: it bypasses the
   // cooldown so a real question is never throttled out (the original incident).
   // Everything else takes the AMBIENT lane and keeps the cost-budgeted cooldown.
-  const now = Date.now();
+  const now = args.now ?? Date.now();
   const lane = classifyLane(args.utteranceText);
 
   // ── Build the query text (lane-aware; KTD5) ──────────────────────────
@@ -372,19 +396,12 @@ export async function maybeRetrieveAndEmit(args: {
     },
   };
 
-  // ── Supabase PipelineSink (the prod output seam) ─────────────────────
-  // Owns card persistence + Realtime broadcast, the flash-fix buffered synthesis
-  // broadcasts, stale-card retraction (via runtime.liveCardByDocId), and
-  // knowledge-gap miss capture. No recordTrace ⇒ the core runs trace-free.
-  const sink = createSupabaseSink({
-    db: args.db,
-    meetingId: args.meetingId,
-    orgId: args.orgId,
-    liveCardByDocId: args.runtime.liveCardByDocId,
-    logger: args.logger,
-    ...(args.onMiss !== undefined ? { onMiss: args.onMiss } : {}),
-    // Record dedup state ONLY when the answer grounded (onGroundedAnswer never
-    // fires on a refusal), then forward to the caller.
+  // ── Sink wiring (KTD2) ───────────────────────────────────────────────
+  // The runtime-recording hooks the adapter OWNS, threaded into whatever sink it
+  // builds. `onGroundedAnswer` records dedup state ONLY when the answer grounded
+  // (never on a refusal), then forwards to the caller — identical on prod and
+  // debug so dedup/voiding stay in lockstep across sinks.
+  const sinkWiring: SinkWiring = {
     onGroundedAnswer: (text: string, sourceDocIds: readonly string[] = []): void => {
       if (lane === 'question' && questionVec !== undefined) {
         args.runtime.answeredQuestions.push({ embedding: questionVec, at: now });
@@ -405,10 +422,31 @@ export async function maybeRetrieveAndEmit(args: {
       }
       args.onGroundedAnswer?.(text);
     },
+    ...(args.onMiss !== undefined ? { onMiss: args.onMiss } : {}),
     ...(args.onSynthesisRequested !== undefined
       ? { onSynthesisRequested: args.onSynthesisRequested }
       : {}),
-  });
+  };
+
+  // ── Output sink: prod Supabase sink by default, injected factory for debug ──
+  // The Supabase sink owns card persistence + Realtime broadcast, flash-fix
+  // buffered synthesis, stale-card retraction (via runtime.liveCardByDocId), and
+  // knowledge-gap miss capture. No recordTrace ⇒ the core runs trace-free. A
+  // debug factory builds the WS+trace sink instead. (KTD2.)
+  const sink: PipelineSink = args.createSink
+    ? args.createSink(sinkWiring)
+    : createSupabaseSink({
+        db: args.db,
+        meetingId: args.meetingId,
+        orgId: args.orgId,
+        liveCardByDocId: args.runtime.liveCardByDocId,
+        logger: args.logger,
+        ...(sinkWiring.onMiss !== undefined ? { onMiss: sinkWiring.onMiss } : {}),
+        onGroundedAnswer: sinkWiring.onGroundedAnswer,
+        ...(sinkWiring.onSynthesisRequested !== undefined
+          ? { onSynthesisRequested: sinkWiring.onSynthesisRequested }
+          : {}),
+      });
 
   return runPipeline(input, deps, sink);
 }
