@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ── Mock the I/O boundaries so the controller can be exercised without a real
 //    sidecar binary, Deepgram socket, or Supabase. vi.hoisted shares spies +
@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   runnerStart: vi.fn(() => Promise.resolve()),
   runnerStop: vi.fn(() => Promise.resolve()),
   persistAndBroadcast: vi.fn((_db: unknown, _args: unknown) => Promise.resolve({ eventId: 1, broadcasted: true })),
+  broadcastOnly: vi.fn((_db: unknown, _args: unknown) => Promise.resolve({ broadcasted: true })),
   maybeRetrieveAndEmit: vi.fn((_args: unknown) => Promise.resolve({ emitted: 1 })),
   recordMiss: vi.fn(() => Promise.resolve()),
 }));
@@ -56,11 +57,20 @@ vi.mock('../../src/debug/local-debug-ws.js', () => ({
 
 vi.mock('../../src/db.js', () => ({
   persistAndBroadcast: h.persistAndBroadcast,
+  broadcastOnly: h.broadcastOnly,
   // Real-shape passthrough so the asserted payload carries the utterance fields.
-  utteranceToEventPayload: (u: { utteranceId: string; text: string; speaker?: string | null }) => ({
+  utteranceToEventPayload: (u: {
+    utteranceId: string;
+    text: string;
+    isFinal?: boolean;
+    speaker?: string | null;
+    revision?: number;
+  }) => ({
     utteranceId: u.utteranceId,
     text: u.text,
+    isFinal: u.isFinal ?? false,
     speaker: u.speaker ?? null,
+    revision: u.revision ?? 0,
   }),
 }));
 
@@ -103,6 +113,12 @@ function lastEngine() {
 
 function emitFinal(text: string, utteranceId = 'u1'): void {
   lastEngine().handlers.final!({ utterance: { utteranceId, text, isFinal: true, startMs: 0, endMs: 1, revision: 0 } });
+}
+
+function emitPartial(text: string, revision = 0, utteranceId = 'u1'): void {
+  lastEngine().handlers.partial!({
+    utterance: { utteranceId, text, isFinal: false, startMs: 0, endMs: 1, revision },
+  });
 }
 
 describe('local capture controller', () => {
@@ -181,5 +197,80 @@ describe('local capture controller', () => {
     await startLocalCapture('m1', 'org1', deps());
     expect(await stopLocalCapture('other', noopLogger)).toBe(false);
     expect(activeLocalCapture()).toBe('m1');
+  });
+
+  describe('interim (partial) transcript broadcasts', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('broadcasts a partial transiently (transcript.partial_data, isFinal:false) and never persists it', async () => {
+      await startLocalCapture('m1', 'org1', deps());
+      emitPartial('how many');
+      await Promise.resolve();
+
+      expect(h.broadcastOnly).toHaveBeenCalledTimes(1);
+      expect(h.persistAndBroadcast).not.toHaveBeenCalled(); // transient: no DB write
+      expect(h.maybeRetrieveAndEmit).not.toHaveBeenCalled(); // no retrieval on partials
+      const [, arg] = h.broadcastOnly.mock.calls[0]! as [
+        unknown,
+        { meetingId: string; orgId: string; type: string; payload: { isFinal: boolean } },
+      ];
+      expect(arg.meetingId).toBe('m1');
+      expect(arg.orgId).toBe('org1');
+      expect(arg.type).toBe('transcript.partial_data');
+      expect(arg.payload.isFinal).toBe(false);
+    });
+
+    it('throttles: two rapid partials within the window broadcast only once', async () => {
+      await startLocalCapture('m1', 'org1', deps());
+      emitPartial('how', 0);
+      vi.advanceTimersByTime(100); // still inside the 250ms window
+      emitPartial('how many', 1);
+      await Promise.resolve();
+
+      expect(h.broadcastOnly).toHaveBeenCalledTimes(1); // second is dropped (next supersedes)
+    });
+
+    it('a partial after the throttle window broadcasts again', async () => {
+      await startLocalCapture('m1', 'org1', deps());
+      emitPartial('how', 0);
+      vi.advanceTimersByTime(300); // past the 250ms window
+      emitPartial('how many', 1);
+      await Promise.resolve();
+
+      expect(h.broadcastOnly).toHaveBeenCalledTimes(2);
+    });
+
+    it('skips empty/whitespace partials (no broadcast)', async () => {
+      await startLocalCapture('m1', 'org1', deps());
+      emitPartial('   ');
+      await Promise.resolve();
+      expect(h.broadcastOnly).not.toHaveBeenCalled();
+    });
+
+    it('a final persists transcript.data AND resets the throttle so the next speech broadcasts immediately', async () => {
+      await startLocalCapture('m1', 'org1', deps());
+      emitPartial('how', 0);
+      expect(h.broadcastOnly).toHaveBeenCalledTimes(1);
+
+      // Final lands within the window — still persists, and resets the throttle.
+      vi.advanceTimersByTime(50);
+      emitFinal('how many times', 'u1');
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(h.persistAndBroadcast).toHaveBeenCalledTimes(1);
+      const persistArg = h.persistAndBroadcast.mock.calls[0]![1] as { type: string };
+      expect(persistArg.type).toBe('transcript.data');
+
+      // Next speech's first partial broadcasts immediately despite being inside
+      // a window relative to the prior partial — the final reset lastBroadcastAt.
+      emitPartial('and then', 0, 'u2');
+      await Promise.resolve();
+      expect(h.broadcastOnly).toHaveBeenCalledTimes(2);
+    });
   });
 });

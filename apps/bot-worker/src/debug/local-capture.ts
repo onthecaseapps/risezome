@@ -28,7 +28,8 @@ import { SidecarRunner } from './sidecar-runner.js';
 import { DeepgramTranscriptionEngine } from './deepgram.js';
 import { defaultSidecarPath, computeFileSha256 } from './local-debug-ws.js';
 import { MeetingSummarizerRuntime } from '../summarizer-runtime.js';
-import { persistAndBroadcast, utteranceToEventPayload } from '../db.js';
+import { persistAndBroadcast, broadcastOnly, utteranceToEventPayload } from '../db.js';
+import { transcriptLogFields } from '../transcript-log.js';
 import { recordMiss } from '../gap-capture.js';
 import { maybeRetrieveAndEmit, newRetrievalRuntime, type RetrievalRuntime } from '../retrieval.js';
 
@@ -66,6 +67,14 @@ interface ActiveCapture {
 
 // One mic → one capture at a time (KTD5). Module singleton.
 let active: ActiveCapture | null = null;
+
+/**
+ * Throttle window for interim (partial) transcript broadcasts. Deepgram emits
+ * partials many times per second; we cap to ≤4/sec (one per 250ms). Dropping the
+ * intermediate partials is harmless — each one supersedes the last, and the
+ * final always lands. Mirrors the Recall path's INTERIM_THROTTLE_MS.
+ */
+const INTERIM_THROTTLE_MS = 250;
 
 /** The meetingId of the active local capture, or null. */
 export function activeLocalCapture(): string | null {
@@ -119,8 +128,61 @@ export async function startLocalCapture(
   engine.on('error', (err: Error) =>
     deps.logger.error({ meetingId, err: err.message }, 'local-capture.deepgram.error'),
   );
+
+  // ── Live transcript wire contract (for the portal / hud-ui side) ──────────
+  // Event:     `transcript.partial_data`
+  // Transient: NEVER persisted (broadcastOnly — no meeting_events row, no
+  //            encryption-at-rest). Display-only; superseded by the final.
+  // Payload:   SAME shape as `transcript.data` (utteranceToEventPayload) but
+  //            with isFinal:false.
+  // utteranceId: a STABLE per-speech id that the Deepgram engine reuses across
+  //            every partial of a speech AND its final (deepgram.ts pins
+  //            #currentUtteranceId on the first partial, resets on final). So
+  //            the final's persisted `transcript.data` carries the SAME id and
+  //            the client upserts-by-id — the final REPLACES the interim line
+  //            rather than appending a duplicate.
+  // revision:  monotonically increasing per speech (engine #currentRevision),
+  //            so a stale/equal-revision partial can be rejected client-side;
+  //            a final always wins regardless of revision.
+  // The client must dispatch `transcript.partial_data` ONLY from the live
+  // broadcast — never replay it on the reconnect/poll path (it is transient and
+  // absent from meeting_events).
+  //
+  // Throttle: only the FIRST partial within each INTERIM_THROTTLE_MS window is
+  // broadcast; lastPartialBroadcastAt resets to 0 on each final so the next
+  // speech's first partial broadcasts immediately.
+  let lastPartialBroadcastAt = 0;
+  engine.on('partial', (t) => {
+    const text = t.utterance.text.trim();
+    if (text.length === 0) return; // skip empty interims
+    const now = Date.now();
+    if (now - lastPartialBroadcastAt < INTERIM_THROTTLE_MS) return; // throttled; next supersedes
+    lastPartialBroadcastAt = now;
+    // Transient broadcast: NO persist, NO retrieval. Fire-and-forget; a dropped
+    // partial is harmless (the next one — or the final — supersedes it).
+    void broadcastOnly(deps.db, {
+      meetingId,
+      orgId,
+      type: 'transcript.partial_data',
+      payload: utteranceToEventPayload(t.utterance),
+    });
+    deps.logger.info(
+      {
+        meetingId,
+        revision: t.utterance.revision,
+        speaker: t.utterance.speaker,
+        // Transcript body redacted by default (U6); verbatim only under LOG_TRANSCRIPTS=1.
+        ...transcriptLogFields(t.utterance.text),
+      },
+      'local-capture.partial',
+    );
+  });
+
   // Only FINAL utterances persist + drive retrieval (mirrors the Recall path).
+  // Resetting the throttle here lets the next speech's first partial broadcast
+  // immediately rather than waiting out a window from the prior speech.
   engine.on('final', (t) => {
+    lastPartialBroadcastAt = 0;
     void onFinalUtterance(meetingId, orgId, retrieval, summarizerRuntime, t.utterance, deps);
   });
 

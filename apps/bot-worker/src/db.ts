@@ -17,10 +17,19 @@ import { CRYPTO_VERSION, encryptForOrgToBytea, EnvelopeCryptoError } from '@rise
 export function createServiceClient(): SupabaseClient {
   const url = requireEnv('SUPABASE_URL');
   const key = requireEnv('SUPABASE_SECRET_KEY');
-  return createClient(url, key, {
+  const client = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
     realtime: { params: { eventsPerSecond: 10 } },
   }) as SupabaseClient;
+  // The live page subscribes to a PRIVATE Realtime topic (meeting:<org>:<mtg>),
+  // which authorizes the socket via its access token against the realtime.messages
+  // RLS policy. The bot-worker must join + broadcast on that SAME private topic
+  // (see subscribeChannel) or its sends never reach the private subscribers — they
+  // succeed (broadcasted:true) but land on the non-private topic nobody is on.
+  // Set the realtime access token to the privileged secret key so the worker's
+  // join/broadcast is authorized (the secret key bypasses RLS).
+  client.realtime.setAuth(key);
+  return client;
 }
 
 /**
@@ -144,19 +153,60 @@ export async function persistAndBroadcast(
   }
   const eventId = data.event_id as number;
 
-  // Broadcast under the meeting topic. We pool one channel per meeting
-  // so we pay the subscribe cost once, not per-event. Earlier we did
-  // subscribe + send + unsubscribe per broadcast — `channel.subscribe()`
-  // returns synchronously but the actual server-side subscription is
-  // async; sending immediately after races with the SUBSCRIBED ack and
-  // the message gets dropped server-side. Result: DB writes worked but
-  // broadcasts never reached the browser.
+  // Broadcast under the meeting topic, carrying the durable eventId so the
+  // client can dedup against a later reconnect-fetch.
+  const broadcasted = await sendBroadcast(client, {
+    orgId: args.orgId,
+    meetingId: args.meetingId,
+    event: args.type,
+    payload: { ...args.payload, eventId },
+  });
+  return { eventId, broadcasted };
+}
+
+/**
+ * Transient broadcast — NO DB insert, NO encryption. Pass-2 enabler for the
+ * live transcript UI: streams INTERIM (partial) utterances to the live page
+ * over the SAME pooled meeting channel as persistAndBroadcast, but without
+ * touching durable storage. Used for `transcript.partial_data`, which is
+ * display-only and superseded by the eventual persisted `transcript.data`
+ * final. Send errors are swallowed/logged exactly like persistAndBroadcast's
+ * broadcast path — a dropped partial is harmless (the next one supersedes it).
+ */
+export async function broadcastOnly(
+  client: SupabaseClient,
+  args: { meetingId: string; orgId: string; type: string; payload: Record<string, unknown> },
+): Promise<{ broadcasted: boolean }> {
+  const broadcasted = await sendBroadcast(client, {
+    orgId: args.orgId,
+    meetingId: args.meetingId,
+    event: args.type,
+    payload: args.payload,
+  });
+  return { broadcasted };
+}
+
+/**
+ * Shared channel-send used by both persistAndBroadcast and broadcastOnly.
+ * We pool one channel per meeting so we pay the subscribe cost once, not
+ * per-event. Earlier we did subscribe + send + unsubscribe per broadcast —
+ * `channel.subscribe()` returns synchronously but the actual server-side
+ * subscription is async; sending immediately after races with the SUBSCRIBED
+ * ack and the message gets dropped server-side. Result: DB writes worked but
+ * broadcasts never reached the browser. Returns whether the send acked 'ok';
+ * never throws (errors are logged, since for persistAndBroadcast the event is
+ * already durable in the DB and for broadcastOnly the payload is transient).
+ */
+async function sendBroadcast(
+  client: SupabaseClient,
+  args: { orgId: string; meetingId: string; event: string; payload: Record<string, unknown> },
+): Promise<boolean> {
   try {
     const channel = await getOrSubscribeChannel(client, args.orgId, args.meetingId);
     const sendResult = await channel.send({
       type: 'broadcast',
-      event: args.type,
-      payload: { ...args.payload, eventId },
+      event: args.event,
+      payload: args.payload,
     });
     const broadcasted = sendResult === 'ok';
     if (!broadcasted) {
@@ -164,10 +214,10 @@ export async function persistAndBroadcast(
         `[bot-worker.db] broadcast send returned ${String(sendResult)} (event durable in DB)`,
       );
     }
-    return { eventId, broadcasted };
+    return broadcasted;
   } catch (err) {
     console.warn('[bot-worker.db] broadcast failed (event durable in DB):', err);
-    return { eventId, broadcasted: false };
+    return false;
   }
 }
 
@@ -196,7 +246,9 @@ async function subscribeChannel(
   client: SupabaseClient,
   name: string,
 ): Promise<ReturnType<SupabaseClient['channel']>> {
-  const channel = client.channel(name);
+  // Private to match the live page's `channel(name, { config: { private: true } })`.
+  // A non-private send does NOT reach private subscribers, so both ends must agree.
+  const channel = client.channel(name, { config: { private: true } });
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     const timeout = setTimeout(() => {

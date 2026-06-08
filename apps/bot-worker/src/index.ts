@@ -40,11 +40,18 @@ import {
 } from './debug/local-capture.js';
 import { registerEvalRoutes } from './debug/eval-routes.js';
 import {
+  broadcastOnly,
   createServiceClient,
   markRecordingIfFirst,
   persistAndBroadcast,
   utteranceToEventPayload,
 } from './db.js';
+import {
+  newSegmentTracker,
+  resolveFinal,
+  resolvePartial,
+  type SegmentTracker,
+} from './segment-tracker.js';
 import { maybeRetrieveAndEmit, newRetrievalRuntime, type RetrievalRuntime } from './retrieval.js';
 import { MeetingSummarizerRuntime } from './summarizer-runtime.js';
 import { recordMiss } from './gap-capture.js';
@@ -66,6 +73,11 @@ interface PerMeetingRuntime {
    *  + key_terms boost + synthesizer recentContext. Null when
    *  ANTHROPIC_API_KEY is unset (summarizer disabled). */
   summarizer: MeetingSummarizerRuntime | null;
+  /** Interim-transcript segment tracker — per-participant open speech, used to
+   *  pin a STABLE utteranceId across drifting partials + the final, and to
+   *  throttle interim broadcasts. Cleared per-final; torn down with the
+   *  runtime. See segment-tracker.ts for the pass-2 wire contract. */
+  segments: SegmentTracker;
 }
 
 const runtimes = new Map<string, PerMeetingRuntime>();
@@ -283,6 +295,7 @@ async function main(): Promise<void> {
             utteranceCount: 0,
             markedRecording: false,
             retrieval: newRetrievalRuntime(),
+            segments: newSegmentTracker(),
             summarizer:
               summarizer !== null
                 ? new MeetingSummarizerRuntime({
@@ -476,28 +489,81 @@ async function handleMessage(
     }
   }
 
-  // Only FINAL utterances are persisted + broadcast for the transcript.
-  // Recall's partial transcripts drift their start timestamps, so a partial and
-  // its final get different utteranceIds (participantId::startMs) and can't be
-  // merged — every partial would otherwise become permanent "still typing"
-  // clutter. Broadcasting + persisting every partial also floods Realtime (the
-  // live page stalled). Finals are the clean, durable running transcript; the
-  // live page updates as each utterance settles.
-  if (adapted.utterance.isFinal) {
+  // Transcript broadcast. Branch on finality:
+  //   - PARTIAL (interim): transient broadcast for the live transcript UI —
+  //     `transcript.partial_data`, NEVER persisted, throttled, carrying a STABLE
+  //     per-speech utteranceId so the client can morph the interim into its
+  //     final. See segment-tracker.ts for the full pass-2 wire contract.
+  //   - FINAL: the clean, durable running transcript — persisted (encrypted at
+  //     rest) + broadcast as `transcript.data`. We override its id with the open
+  //     segment's stable id so the final REPLACES the interim line on the client
+  //     rather than appending a duplicate.
+  //
+  // `resolvedUtterance` is the final utterance (id resolved) threaded through to
+  // BOTH the persist+broadcast and the downstream retrieval/synthesis so they
+  // anchor on the same id. It's only set on the final branch.
+  let resolvedUtterance = adapted.utterance;
+  if (!adapted.utterance.isFinal) {
+    // Partials are display-only: broadcast even in transcript-only / no-Voyage
+    // mode (no embedder/summarizer dependency). When no runtime exists (e.g. a
+    // stray message before registration) there's no segment store, so skip.
+    if (runtime !== undefined) {
+      const now = Date.now();
+      const { utteranceId, revision, shouldBroadcast } = resolvePartial(
+        runtime.segments,
+        adapted.utterance.utteranceId,
+        now,
+      );
+      if (shouldBroadcast) {
+        const { broadcasted } = await broadcastOnly(db, {
+          meetingId,
+          orgId,
+          type: 'transcript.partial_data',
+          // Same payload shape as transcript.data, with the stable id + the
+          // monotonic segment revision + isFinal:false. NOT persisted.
+          payload: utteranceToEventPayload({
+            ...adapted.utterance,
+            utteranceId,
+            revision,
+            isFinal: false,
+          }),
+        });
+        logger.info(
+          {
+            meetingId,
+            broadcasted,
+            revision,
+            speaker: adapted.utterance.speaker,
+            // Transcript body redacted by default (U6); verbatim only under LOG_TRANSCRIPTS=1.
+            ...transcriptLogFields(adapted.utterance.text),
+          },
+          'utterance.partial',
+        );
+      }
+    }
+  } else {
+    // Resolve the final's id against any open segment so it lands on the same id
+    // the partials used (and clear the segment).
+    const { utteranceId, revision } =
+      runtime !== undefined
+        ? resolveFinal(runtime.segments, adapted.utterance.utteranceId)
+        : { utteranceId: adapted.utterance.utteranceId, revision: adapted.utterance.revision };
+    resolvedUtterance = { ...adapted.utterance, utteranceId, revision };
+
     const result = await persistAndBroadcast(db, {
       meetingId,
       orgId,
       type: 'transcript.data',
-      payload: utteranceToEventPayload(adapted.utterance),
+      payload: utteranceToEventPayload(resolvedUtterance),
     });
     logger.info(
       {
         meetingId,
         eventId: result.eventId,
         broadcasted: result.broadcasted,
-        speaker: adapted.utterance.speaker,
+        speaker: resolvedUtterance.speaker,
         // Transcript body redacted by default (U6); verbatim only under LOG_TRANSCRIPTS=1.
-        ...transcriptLogFields(adapted.utterance.text),
+        ...transcriptLogFields(resolvedUtterance.text),
       },
       'utterance',
     );
@@ -520,8 +586,8 @@ async function handleMessage(
     const lastSummary = runtime.summarizer !== null ? runtime.summarizer.getLastSummary() : null;
     const retrievalResult = await maybeRetrieveAndEmit({
       runtime: runtime.retrieval,
-      utteranceText: adapted.utterance.text,
-      utteranceId: adapted.utterance.utteranceId,
+      utteranceText: resolvedUtterance.text,
+      utteranceId: resolvedUtterance.utteranceId,
       meetingId,
       orgId,
       db,

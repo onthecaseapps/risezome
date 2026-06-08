@@ -13,13 +13,24 @@ vi.mock('@risezome/crypto', () => ({
   EnvelopeCryptoError: cryptoMock.EnvelopeCryptoError,
 }));
 
-import { persistAndBroadcast, teardownChannelForMeeting } from '../src/db';
+import { persistAndBroadcast, broadcastOnly, teardownChannelForMeeting } from '../src/db';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /** Minimal Supabase double: records the inserted meeting_events row and acks
  *  the broadcast channel synchronously. */
-function fakeClient(): { client: SupabaseClient; inserts: Record<string, unknown>[] } {
+interface SentBroadcast {
+  channelName: string;
+  type: string;
+  event: string;
+  payload: Record<string, unknown>;
+}
+function fakeClient(): {
+  client: SupabaseClient;
+  inserts: Record<string, unknown>[];
+  sends: SentBroadcast[];
+} {
   const inserts: Record<string, unknown>[] = [];
+  const sends: SentBroadcast[] = [];
   const client = {
     from() {
       return {
@@ -29,18 +40,21 @@ function fakeClient(): { client: SupabaseClient; inserts: Record<string, unknown
         },
       };
     },
-    channel() {
+    channel(name: string) {
       return {
         subscribe(cb: (s: string) => void) {
           cb('SUBSCRIBED');
           return this;
         },
-        send: () => Promise.resolve('ok'),
+        send: (msg: { type: string; event: string; payload: Record<string, unknown> }) => {
+          sends.push({ channelName: name, ...msg });
+          return Promise.resolve('ok');
+        },
         unsubscribe: () => Promise.resolve('ok'),
       };
     },
   };
-  return { client: client as unknown as SupabaseClient, inserts };
+  return { client: client as unknown as SupabaseClient, inserts, sends };
 }
 
 const ORG = 'org_1';
@@ -112,5 +126,38 @@ describe('persistAndBroadcast meeting_events insert', () => {
     expect('transcript_text_enc' in row).toBe(false);
     expect('transcript_key_version' in row).toBe(false);
     expect(res.eventId).toBe(1);
+  });
+});
+
+describe('broadcastOnly (transient — no DB write)', () => {
+  afterEach(async () => {
+    for (let i = 1; i <= meetingSeq; i++) {
+      await teardownChannelForMeeting(fakeClient().client, ORG, `mtg_${String(i)}`).catch(() => undefined);
+    }
+  });
+
+  it('sends on the meeting channel with the event+payload and inserts NOTHING', async () => {
+    const { client, inserts, sends } = fakeClient();
+    const meetingId = nextMeeting();
+    const payload = { utteranceId: 'u1', text: 'how many', isFinal: false, revision: 3 };
+    const res = await broadcastOnly(client, {
+      meetingId,
+      orgId: ORG,
+      type: 'transcript.partial_data',
+      payload,
+    });
+
+    // Transient: no meeting_events row, no encryption.
+    expect(inserts).toHaveLength(0);
+    // Broadcast on the right private channel, with the partial event + payload
+    // passed THROUGH untouched (no eventId stamped on, unlike persistAndBroadcast).
+    expect(sends).toHaveLength(1);
+    const sent = sends[0]!;
+    expect(sent.channelName).toBe(`meeting:${ORG}:${meetingId}`);
+    expect(sent.type).toBe('broadcast');
+    expect(sent.event).toBe('transcript.partial_data');
+    expect(sent.payload).toEqual(payload);
+    expect('eventId' in sent.payload).toBe(false);
+    expect(res.broadcasted).toBe(true);
   });
 });
