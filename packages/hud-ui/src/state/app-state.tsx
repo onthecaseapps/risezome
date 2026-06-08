@@ -115,7 +115,12 @@ export type AppAction =
   | { type: 'synthesisError'; error: SynthesisErrorEvent }
   | { type: 'synthesisRetracted'; retracted: SynthesisRetractedEvent }
   | { type: 'synthesisPinned'; synthesisId: string; pinned: boolean; pinnedAt: string | null }
-  | { type: 'transcriptUtterance'; utterance: TranscriptUtterance };
+  | { type: 'transcriptUtterance'; utterance: TranscriptUtterance }
+  // Clear all live data (cards, syntheses, transcript, announce/streak) while
+  // preserving the connection-level state (status, meeting). Drives the
+  // local-mic debug page's "Clear" button — without it, cleared panels leave the
+  // synthesis cards on screen (they live in this reducer, not local component state).
+  | { type: 'reset' };
 
 function cloneMap<K, V>(m: ReadonlyMap<K, V>): Map<K, V> {
   return new Map(m);
@@ -343,6 +348,11 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
       transcript.set(incoming.utteranceId, incoming);
       return { ...state, transcript };
     }
+
+    case 'reset':
+      // Clear live data; keep the connection-level state so the page stays
+      // usable (no reconnect needed) after a Clear.
+      return { ...initialAppState, status: state.status, meeting: state.meeting };
 
     default: {
       const _exhaustive: never = action;

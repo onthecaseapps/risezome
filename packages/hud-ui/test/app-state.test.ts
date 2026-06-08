@@ -630,4 +630,30 @@ describe('appStateReducer — transcript (U3)', () => {
     });
     expect(s.transcript.get('p1::1000')?.speaker).toBeNull();
   });
+
+  it('reset clears all live data but preserves connection state (status + meeting)', () => {
+    // Populate cards, a synthesis, and a transcript utterance.
+    let s = appStateReducer(initialAppState, { type: 'wsStatus', status: 'open' });
+    s = appStateReducer(s, { type: 'meetingStatus', mode: 'live' });
+    s = appStateReducer(s, { type: 'card', card: mkCard() });
+    s = appStateReducer(s, {
+      type: 'synthesisStart',
+      start: { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' },
+    });
+    s = appStateReducer(s, { type: 'synthesisDelta', delta: { synthesisId: 'syn1', delta: 'Answer.' } });
+    s = appStateReducer(s, { type: 'transcriptUtterance', utterance: mkUtterance() });
+    expect(s.cards.size).toBe(1);
+    expect(s.syntheses.size).toBe(1);
+    expect(s.transcript.size).toBe(1);
+
+    const cleared = appStateReducer(s, { type: 'reset' });
+    expect(cleared.cards.size).toBe(0);
+    expect(cleared.syntheses.size).toBe(0);
+    expect(cleared.transcript.size).toBe(0);
+    expect(cleared.lastSynthesisAnnounce).toBeNull();
+    expect(cleared.synthesisFailureStreak).toBe(0);
+    // Connection-level state is kept so the page stays usable without reconnect.
+    expect(cleared.status).toBe('open');
+    expect(cleared.meeting).toBe('live');
+  });
 });

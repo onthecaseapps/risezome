@@ -593,8 +593,9 @@ function DebugInner({
   }, [replayUtterances, tracesByUtterance, replayScope]);
 
   const reset = useCallback(() => {
-    // Clears the debug-specific panels. The HUD reducer (synthesis cards)
-    // isn't cleared here — reload the page for a fully fresh session.
+    // Clears the debug-specific panels AND the HUD reducer (synthesis cards +
+    // retrieval cards + transcript live in the reducer, not local component
+    // state) via the `reset` action, so Clear fully wipes the screen.
     // Cancel any in-flight replay too, so Clear during playback doesn't leave
     // timers firing into the cleared panels.
     clearReplayTimers();
@@ -611,7 +612,8 @@ function DebugInner({
     setTracesByUtterance(new Map());
     setSelectedUtteranceId(null);
     setReplayScope(null);
-  }, [clearReplayTimers]);
+    dispatch({ type: 'reset' });
+  }, [clearReplayTimers, dispatch]);
 
   // U5: the selected utterance's trace + text + retrieved cards. The cards
   // arrive via `card` events (the trace's hybrid-search stage carries only a
