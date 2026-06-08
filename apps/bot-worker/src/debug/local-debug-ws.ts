@@ -261,11 +261,13 @@ export async function handleLocalDebugWs(
     forwardUtterance(socket, t.utterance);
   });
 
-  // Final utterances flow to the client, get appended to the rolling
-  // context, then trigger the retrieval pipeline.
-  engine.on('final', (t) => {
-    forwardUtterance(socket, t.utterance);
-    const text = t.utterance.text.trim();
+  // Per-utterance pipeline trigger. Extracted (U1) so BOTH the live Deepgram-
+  // final path and the transcript-replay inbound (`replay-utterance`) drive the
+  // EXACT same gate / voiding / continuation-merge / pipeline logic. Closes over
+  // the per-connection state above.
+  const handleFinalUtterance = (utterance: Utterance): void => {
+    forwardUtterance(socket, utterance);
+    const text = utterance.text.trim();
     if (text.length === 0) return;
 
     // Feed the summarizer runtime — fires asynchronously when cadence
@@ -363,7 +365,7 @@ export async function handleLocalDebugWs(
     void runDebugPipeline({
       synthesisId,
       utteranceText: effectiveUtterance,
-      utteranceId: t.utterance.utteranceId,
+      utteranceId: utterance.utteranceId,
       recentContext,
       lastSummary: lastSummaryAtBuild,
       socket,
@@ -411,6 +413,38 @@ export async function handleLocalDebugWs(
       args.logger.warn({ err: String(err) }, 'local-debug.pipeline.error');
       send(socket, { type: 'pipeline-error', message: String(err) });
     });
+  };
+
+  // Clear per-connection replay state between runs so successive replays don't
+  // bleed context (voided spans, answered source sets, in-flight synthesis).
+  // Note: the rolling summarizer is intentionally left to age out on its own.
+  const resetReplayState = (): void => {
+    recentFinals.length = 0;
+    consumedFinals.length = 0;
+    answeredSourceSets.length = 0;
+    if (currentSynthesisAbort !== null) {
+      currentSynthesisAbort.abort();
+      currentSynthesisAbort = null;
+      currentSynthesisId = null;
+    }
+  };
+
+  // Live mic path: Deepgram finals drive the shared handler.
+  engine.on('final', (t) => {
+    handleFinalUtterance(t.utterance);
+  });
+
+  // Replay path: the page sends timed `replay-utterance` messages (no audio /
+  // Deepgram) and a `replay-reset` before each run. Same handler as live, so
+  // replayed utterances exercise identical gate/voiding/merge/pipeline logic.
+  socket.on('message', (raw) => {
+    const msg = parseReplayInbound(rawToString(raw));
+    if (msg === null) return;
+    if (msg.kind === 'reset') {
+      resetReplayState();
+      return;
+    }
+    handleFinalUtterance(msg.utterance);
   });
 
   engine.on('error', (err: Error) => {
@@ -592,6 +626,55 @@ function forwardUtterance(socket: WebSocket, utt: Utterance): void {
 function send(socket: WebSocket, payload: Record<string, unknown>): void {
   if (socket.readyState !== 1) return; // OPEN
   socket.send(JSON.stringify(payload));
+}
+
+/** Inbound replay control message, parsed from a WS frame. */
+export type ReplayInbound =
+  | { readonly kind: 'utterance'; readonly utterance: Utterance }
+  | { readonly kind: 'reset' };
+
+/** Coerce a ws RawData frame (string | Buffer | Buffer[] | ArrayBuffer) to text. */
+function rawToString(raw: unknown): string {
+  if (typeof raw === 'string') return raw;
+  if (Array.isArray(raw)) return Buffer.concat(raw as Buffer[]).toString('utf8');
+  if (Buffer.isBuffer(raw)) return raw.toString('utf8');
+  if (raw instanceof ArrayBuffer) return Buffer.from(raw).toString('utf8');
+  return '';
+}
+
+/**
+ * Parse a replay control frame. Pure + exported for unit testing. Returns null
+ * for anything unrecognized — malformed JSON, unknown type, or a replay-utterance
+ * missing usable text / id (empty/whitespace text is dropped here, mirroring the
+ * live handler's `text.length === 0` guard). A `replay-utterance` is normalized
+ * into a finalized `Utterance` so it drives the same handler as a Deepgram final.
+ */
+export function parseReplayInbound(raw: string): ReplayInbound | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const m = parsed as Record<string, unknown>;
+  if (m.type === 'replay-reset') return { kind: 'reset' };
+  if (m.type !== 'replay-utterance') return null;
+
+  const text = typeof m.text === 'string' ? m.text.trim() : '';
+  const utteranceId = typeof m.utteranceId === 'string' ? m.utteranceId : '';
+  if (text.length === 0 || utteranceId.length === 0) return null;
+  const startMs = typeof m.startMs === 'number' && Number.isFinite(m.startMs) ? m.startMs : 0;
+  const utterance: Utterance = {
+    utteranceId,
+    text,
+    isFinal: true,
+    ...(typeof m.speaker === 'string' && m.speaker.length > 0 ? { speaker: m.speaker } : {}),
+    startMs,
+    endMs: startMs,
+    revision: 0,
+  };
+  return { kind: 'utterance', utterance };
 }
 
 export function defaultSidecarPath(): string {
