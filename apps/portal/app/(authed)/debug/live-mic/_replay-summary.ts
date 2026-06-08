@@ -106,13 +106,23 @@ function utteranceBlock(u: ReplayUtterance, index: number, trace: UtteranceTrace
 export function formatReplaySummary(
   utterances: readonly ReplayUtterance[],
   tracesById: ReadonlyMap<string, UtteranceTrace>,
+  scope?: { scoped: boolean; meetingId: string | null } | null,
 ): string {
   if (utterances.length === 0) {
     return '# Replay summary\n\nNo utterances were replayed.';
   }
   const blocks = utterances.map((u, i) => utteranceBlock(u, i, tracesById.get(u.utteranceId)));
+  // U5: the resolved retrieval scope for this replay session (R6) — scoped to a
+  // meeting's effective source set, or whole-org / unscoped for a file load.
+  const scopeLine =
+    scope !== undefined && scope !== null
+      ? scope.scoped && scope.meetingId !== null
+        ? `retrieval scope: scoped to meeting ${scope.meetingId}`
+        : 'retrieval scope: unscoped (no meeting)'
+      : null;
   return [
     `# Replay summary — ${String(utterances.length)} utterance${utterances.length === 1 ? '' : 's'}`,
+    ...(scopeLine !== null ? [scopeLine] : []),
     '',
     blocks.join('\n\n'),
   ].join('\n');

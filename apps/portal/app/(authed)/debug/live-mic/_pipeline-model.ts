@@ -23,6 +23,8 @@
 /** The ordered pipeline stages a trace record can describe. Extended in U1 with
  *  the previously-implicit stages so the dev ledger is faithful to runPipeline. */
 export type PipelineStage =
+  | 'threshold'
+  | 'cooldown'
   | 'question-dedup'
   | 'empty-query'
   | 'heuristic-gate'
@@ -211,7 +213,9 @@ function statusOf(rec: StageRecord): DisplayStatus {
       rec.stage === 'heuristic-gate' ||
       rec.stage === 'llm-judge' ||
       rec.stage === 'empty-query' ||
-      rec.stage === 'question-dedup'
+      rec.stage === 'question-dedup' ||
+      rec.stage === 'threshold' ||
+      rec.stage === 'cooldown'
     ) {
       return 'skip';
     }
@@ -242,7 +246,11 @@ export function buildLedger(trace: UtteranceTrace | null): LedgerRow[] {
 
   let stopped = false;
   return STAGE_CATALOG.map((cat): LedgerRow => {
-    if (cat.derived) {
+    // Derived PRE rows (threshold/cooldown) are "not gated in dev" info rows
+    // ONLY when no real trace record exists for them. Once the adapter runs in
+    // the debug path it can emit an actual short-circuit record for these
+    // stages, in which case they render as real SKIP stops (like question-dedup).
+    if (cat.derived && !byStage.has(cat.id as PipelineStage)) {
       // Portal-derived PRE rows: not gated in the dev path (R9).
       return {
         ...cat,
@@ -318,7 +326,17 @@ export function deriveOutcome(trace: UtteranceTrace | null): Outcome {
   let type: OutcomeType = 'pending';
   let sub = '';
 
-  if (has('question-dedup')?.status === 'short_circuited') {
+  if (has('threshold')?.status === 'short_circuited') {
+    // Pre-pipeline gate parity (KTD1): not enough finalized utterances since
+    // the last retrieval to clear the utterance threshold.
+    type = 'skip';
+    sub = 'utterance threshold — not enough finals since last retrieval';
+  } else if (has('cooldown')?.status === 'short_circuited') {
+    // Pre-pipeline gate parity (KTD1): cooldown / question-rate ceiling.
+    type = 'skip';
+    const reason = has('cooldown')?.reason;
+    sub = reason === 'question_ceiling' ? 'question rate ceiling' : 'within the 10s cooldown';
+  } else if (has('question-dedup')?.status === 'short_circuited') {
     // Adapter-gate parity (KTD4): suppressed before the core as a semantic
     // near-duplicate of an already-answered question.
     type = 'skip';

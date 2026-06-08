@@ -100,4 +100,43 @@ describe('formatReplaySummary (U5)', () => {
     expect(out).toContain('No utterances were replayed.');
     expect(out.length).toBeGreaterThan(0);
   });
+
+  it('renders a scoped retrieval-scope header when given a meeting scope', () => {
+    const out = formatReplaySummary(
+      [u({ utteranceId: 'a' })],
+      new Map([['a', trace('a', ragStages)]]),
+      { scoped: true, meetingId: '6675501a' },
+    );
+    expect(out).toContain('retrieval scope: scoped to meeting 6675501a');
+  });
+
+  it('renders an unscoped retrieval-scope header for a no-meeting (file) replay', () => {
+    const out = formatReplaySummary(
+      [u({ utteranceId: 'a' })],
+      new Map([['a', trace('a', ragStages)]]),
+      { scoped: false, meetingId: null },
+    );
+    expect(out).toContain('retrieval scope: unscoped (no meeting)');
+  });
+
+  it('omits the scope header when no scope is provided (back-compat)', () => {
+    const out = formatReplaySummary([u({ utteranceId: 'a' })], new Map([['a', trace('a', ragStages)]]));
+    expect(out).not.toContain('retrieval scope:');
+  });
+
+  it('shows a cooldown-suppressed utterance as a skip with its suppression gate', () => {
+    const cooldown: StageRecord = {
+      stage: 'cooldown',
+      status: 'short_circuited',
+      latencyMs: 0,
+      decision: 'skip',
+      reason: 'cooldown',
+    };
+    const out = formatReplaySummary(
+      [u({ utteranceId: 'c', text: 'how many github issues are there' })],
+      new Map([['c', trace('c', [cooldown])]]),
+    );
+    expect(out).toContain('outcome: skip');
+    expect(out).toContain('suppressed at: cooldown — skip (cooldown)');
+  });
 });

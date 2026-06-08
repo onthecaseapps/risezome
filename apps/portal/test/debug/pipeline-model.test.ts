@@ -63,6 +63,67 @@ describe('question-dedup outcome (KTD4 adapter parity)', () => {
   });
 });
 
+describe('pre-pipeline gate outcomes (KTD1 adapter parity)', () => {
+  const cooldown: StageRecord = {
+    stage: 'cooldown',
+    status: 'short_circuited',
+    latencyMs: 0,
+    decision: 'skip',
+    reason: 'cooldown',
+  };
+  const ceiling: StageRecord = {
+    stage: 'cooldown',
+    status: 'short_circuited',
+    latencyMs: 0,
+    decision: 'skip',
+    reason: 'question_ceiling',
+  };
+  const threshold: StageRecord = {
+    stage: 'threshold',
+    status: 'short_circuited',
+    latencyMs: 0,
+    decision: 'skip',
+    reason: 'below_utterance_threshold',
+  };
+
+  it('a cooldown short-circuit reads as a skip outcome (not pending)', () => {
+    const map = indexTrace(new Map(), traceEvent({ stages: [cooldown] }));
+    const outcome = deriveOutcome(map.get('u1')!);
+    expect(outcome.type).toBe('skip');
+    expect(outcome.sub).toContain('cooldown');
+  });
+
+  it('the question-ceiling variant of cooldown reads as a skip with a ceiling sub', () => {
+    const map = indexTrace(new Map(), traceEvent({ stages: [ceiling] }));
+    const outcome = deriveOutcome(map.get('u1')!);
+    expect(outcome.type).toBe('skip');
+    expect(outcome.sub).toContain('ceiling');
+  });
+
+  it('renders the cooldown ledger row SKIP and stops downstream rows', () => {
+    const map = indexTrace(new Map(), traceEvent({ stages: [cooldown] }));
+    const ledger = buildLedger(map.get('u1')!);
+    const row = ledger.find((r) => r.id === 'cooldown')!;
+    expect(row.status).toBe('skip');
+    expect(ledger.find((r) => r.id === 'reveal')!.status).toBe('notreached');
+  });
+
+  it('a threshold short-circuit reads as a skip outcome (not pending)', () => {
+    const map = indexTrace(new Map(), traceEvent({ stages: [threshold] }));
+    const outcome = deriveOutcome(map.get('u1')!);
+    expect(outcome.type).toBe('skip');
+    expect(outcome.sub).toContain('threshold');
+  });
+
+  it('renders the threshold ledger row SKIP and stops downstream rows', () => {
+    const map = indexTrace(new Map(), traceEvent({ stages: [threshold] }));
+    const ledger = buildLedger(map.get('u1')!);
+    const row = ledger.find((r) => r.id === 'threshold')!;
+    expect(row.status).toBe('skip');
+    expect(ledger.find((r) => r.id === 'reveal')!.status).toBe('notreached');
+  });
+});
+
 describe('skill route decision surfaces in the ledger (U4/KTD6)', () => {
   it('renders the router-chose-RAG decision with the classifier intent', () => {
     const skill: StageRecord = {

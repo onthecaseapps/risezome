@@ -156,6 +156,12 @@ interface SynthesisRetractEvent {
   synthesisId: string;
 }
 
+interface ReplayScopeEvent {
+  type: 'replay-scope';
+  scoped: boolean;
+  meetingId: string | null;
+}
+
 type DebugEvent =
   | UtteranceEvent
   | CardEvent
@@ -168,6 +174,7 @@ type DebugEvent =
   | SkillResultEvent
   | SummaryEvent
   | TraceEvent
+  | ReplayScopeEvent
   | OtherEvent;
 
 
@@ -228,6 +235,12 @@ function DebugInner({
     () => new Map(),
   );
   const [selectedUtteranceId, setSelectedUtteranceId] = useState<string | null>(null);
+  // U5: the retrieval scope the sidecar resolved for the current replay session
+  // (scoped to a meeting's source set, or whole-org / unscoped). Set on the
+  // `replay-scope` WS event emitted on every replay-reset.
+  const [replayScope, setReplayScope] = useState<{ scoped: boolean; meetingId: string | null } | null>(
+    null,
+  );
   const [outputTab, setOutputTab] = useState<OutputTab>('retrievals');
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -370,6 +383,13 @@ function DebugInner({
         // U5: index the per-stage trace under its utteranceId (latest run wins).
         const t = evt as TraceEvent;
         setTracesByUtterance((prev) => indexTrace(prev, t));
+        return;
+      }
+      case 'replay-scope': {
+        // U5: the sidecar resolved the retrieval scope for this replay session
+        // (emitted on every replay-reset). Surface it on the trace + summary.
+        const s = evt as ReplayScopeEvent;
+        setReplayScope({ scoped: s.scoped, meetingId: s.meetingId });
         return;
       }
       default: {
@@ -561,7 +581,7 @@ function DebugInner({
   // U5: copy a structured, LLM-pasteable dump of the whole replay (every
   // utterance's outcome, skill-vs-RAG route + reason, gates, prior context).
   const copyReplaySummary = useCallback(() => {
-    const text = formatReplaySummary(replayUtterances, tracesByUtterance);
+    const text = formatReplaySummary(replayUtterances, tracesByUtterance, replayScope);
     void navigator.clipboard
       .writeText(text)
       .then(() => {
@@ -570,7 +590,7 @@ function DebugInner({
         summaryCopiedTimerRef.current = window.setTimeout(() => setSummaryCopied(false), 1500);
       })
       .catch(() => setReplayError('clipboard write failed'));
-  }, [replayUtterances, tracesByUtterance]);
+  }, [replayUtterances, tracesByUtterance, replayScope]);
 
   const reset = useCallback(() => {
     // Clears the debug-specific panels. The HUD reducer (synthesis cards)
@@ -590,6 +610,7 @@ function DebugInner({
     setSummaryAt(null);
     setTracesByUtterance(new Map());
     setSelectedUtteranceId(null);
+    setReplayScope(null);
   }, [clearReplayTimers]);
 
   // U5: the selected utterance's trace + text + retrieved cards. The cards
@@ -844,11 +865,23 @@ function DebugInner({
               : 'Trace'
           }
         >
-          <TracePanel
-            trace={selectedTrace}
-            utteranceText={selectedUtteranceText}
-            onOpenOutput={onOpenOutput}
-          />
+          <>
+            {replayScope !== null ? (
+              <div className="mb-2 text-[10px] uppercase tracking-wider text-muted">
+                Retrieval scope:{' '}
+                <span className="normal-case text-fg">
+                  {replayScope.scoped && replayScope.meetingId !== null
+                    ? `scoped to meeting ${replayScope.meetingId}`
+                    : 'unscoped (no meeting)'}
+                </span>
+              </div>
+            ) : null}
+            <TracePanel
+              trace={selectedTrace}
+              utteranceText={selectedUtteranceText}
+              onOpenOutput={onOpenOutput}
+            />
+          </>
         </Panel>
 
         <section className="flex min-h-0 flex-col rounded-xl border border-border bg-card/40 p-3">
