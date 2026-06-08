@@ -255,18 +255,30 @@ export async function runPipeline(
     classifierController = new AbortController();
     setTimeout(() => classifierController?.abort(), ROUTER_TIMEOUT_MS);
     const summary = input.lastSummary;
-    const hasContext =
+    const hasSummaryContext =
       summary !== undefined &&
       ((summary.current_topic?.length ?? 0) > 0 || summary.open_questions.length > 0);
+    // Recent finals (the immediate anaphora antecedent) — the rolling summary
+    // lags, so feed the classifier the recent turns too, the same window the
+    // synthesizer + relevance gate already get. Lets a follow-up like "how many
+    // of these issues" resolve the pronoun to the established entity and route to
+    // the skill instead of falling back to RAG. (KTD1/KTD2.)
+    const recentFinals = input.recentContext ?? [];
+    const hasContext = hasSummaryContext || recentFinals.length > 0;
     classifierPromise = deps.routerClassifier.classify(
       {
         utterance: input.utteranceText,
         registry: deps.skillRegistry,
-        ...(hasContext && summary !== undefined
+        ...(hasContext
           ? {
               context: {
-                current_topic: summary.current_topic,
-                open_questions: summary.open_questions,
+                ...(hasSummaryContext && summary !== undefined
+                  ? {
+                      current_topic: summary.current_topic,
+                      open_questions: summary.open_questions,
+                    }
+                  : {}),
+                ...(recentFinals.length > 0 ? { recent_finals: recentFinals } : {}),
               },
             }
           : {}),

@@ -840,3 +840,76 @@ describe('runPipeline — router classifier timeout budget (B1)', () => {
     }
   });
 });
+
+describe('runPipeline — router classifier context (U2)', () => {
+  function toolRegistry(): SkillRegistry {
+    const reg = new SkillRegistry();
+    const skill: Skill = {
+      source: 'github',
+      name: 'github_count',
+      description: 'count issues',
+      inputSchema: { type: 'object', properties: {} },
+      handler: () => Promise.resolve({ kind: 'count', summary: '47 open issues' }),
+    };
+    reg.register(skill);
+    return reg;
+  }
+
+  interface CapturedClassify {
+    context?: { recent_finals?: readonly string[]; current_topic?: string; open_questions?: readonly string[] };
+  }
+
+  function capturingClassifier(captured: CapturedClassify[]): NonNullable<PipelineDeps['routerClassifier']> {
+    const classify = (inp: CapturedClassify): Promise<unknown> => {
+      captured.push(inp);
+      return Promise.resolve({ intent: 'rag' });
+    };
+    return { classify } as unknown as NonNullable<PipelineDeps['routerClassifier']>;
+  }
+
+  it('passes the recent finals (recentContext) to the classifier as context.recent_finals', async () => {
+    const captured: CapturedClassify[] = [];
+    const { deps } = makeDeps({
+      routerClassifier: capturingClassifier(captured),
+      skillRegistry: toolRegistry(),
+    });
+    await runPipeline(
+      input({
+        utteranceText: 'how many github issues are there',
+        recentContext: ['are there any open github issues'],
+      }),
+      deps,
+      new RecordingSink(),
+    );
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.context?.recent_finals).toEqual(['are there any open github issues']);
+  });
+
+  it('still passes context (recent_finals) when there is no rolling summary — hasContext fires on finals alone', async () => {
+    const captured: CapturedClassify[] = [];
+    const { deps } = makeDeps({
+      routerClassifier: capturingClassifier(captured),
+      skillRegistry: toolRegistry(),
+    });
+    // No lastSummary at all → previously no context was passed; now the finals do.
+    await runPipeline(
+      input({ utteranceText: 'how many github issues are there', recentContext: ['are there any open github issues'] }),
+      deps,
+      new RecordingSink(),
+    );
+    expect(captured[0]!.context).toBeDefined();
+    expect(captured[0]!.context?.recent_finals).toEqual(['are there any open github issues']);
+    expect(captured[0]!.context?.current_topic).toBeUndefined();
+  });
+
+  it('passes NO context when there is neither a summary nor recent finals (legacy isolated path)', async () => {
+    const captured: CapturedClassify[] = [];
+    const { deps } = makeDeps({
+      routerClassifier: capturingClassifier(captured),
+      skillRegistry: toolRegistry(),
+    });
+    await runPipeline(input({ utteranceText: 'how many github issues are there' }), deps, new RecordingSink());
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.context).toBeUndefined();
+  });
+});
