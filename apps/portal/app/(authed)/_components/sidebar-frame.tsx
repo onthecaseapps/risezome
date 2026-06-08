@@ -49,7 +49,7 @@ export function SidebarFrame({ nav }: { nav: ReactNode }): ReactElement {
       <Link
         href="/upcoming"
         aria-label="Risezome home"
-        className="flex h-14 shrink-0 items-center gap-2.5 border-b border-border px-4 group-data-[collapsed=true]/sb:justify-center group-data-[collapsed=true]/sb:px-2"
+        className="flex h-14 shrink-0 items-center gap-2.5 px-4 group-data-[collapsed=true]/sb:justify-center group-data-[collapsed=true]/sb:px-2"
       >
         <Logo size={26} className="shrink-0 text-accent" />
         <span className="text-base font-semibold tracking-tight group-data-[collapsed=true]/sb:hidden">

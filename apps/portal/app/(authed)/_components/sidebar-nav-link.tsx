@@ -42,12 +42,17 @@ export function SidebarNavLink({
   const pathname = usePathname();
   const isActive = !disabled && pathname.startsWith(matchPrefix);
 
+  // `border border-transparent` reserves the 1px border slot on every item so
+  // the active border doesn't shift content. `relative` anchors the active rail.
   const baseClasses =
-    'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors group-data-[collapsed=true]/sb:justify-center group-data-[collapsed=true]/sb:px-2';
+    'relative flex items-center gap-2.5 rounded-md border border-transparent px-3 py-2 text-sm font-medium transition-colors group-data-[collapsed=true]/sb:justify-center group-data-[collapsed=true]/sb:px-2';
+  // Active = a left accent rail (short, centered, rounded) + a ~15% accent tint +
+  // accent-tinted border + bright accent label/icon. Obvious but calm. The rail
+  // is hidden in the collapsed icon rail where there's no room for it.
   const stateClasses = disabled
     ? 'cursor-not-allowed text-muted opacity-50'
     : isActive
-      ? 'bg-accent-soft text-accent'
+      ? "bg-accent/15 text-accent border-accent/25 before:absolute before:left-1 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:bg-accent before:content-[''] group-data-[collapsed=true]/sb:before:hidden"
       : 'text-fg/80 hover:bg-accent-soft/50 hover:text-fg';
 
   const inner = (

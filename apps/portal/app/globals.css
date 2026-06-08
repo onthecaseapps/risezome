@@ -16,12 +16,19 @@
  * components (U5) reuse the same card/source/synthesis tokens.
  */
 :root {
-  --bg: #f6f7f9;
+  /* Crisp Slate (light): tighter, cooler surfaces; flat by default. */
+  --bg: #f3f5f8;
   --fg: #1a1a1c;
   --muted: #6b6b73;
-  --border: #e1e3e8;
+  --border: #e3e7ef;
+  --border-strong: #d4dae6; /* hairline for interactive controls (buttons/inputs/menus) */
   --card-bg: #ffffff;
-  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 6px rgba(0, 0, 0, 0.03);
+  /* Flat by default — no ambient elevation on resting content (Crisp Slate). */
+  --card-shadow: none;
+  /* The one restrained elevation, reserved for floating layers (menus, popovers,
+     modals, toasts). Rolled out per-component in the follow-up pass. */
+  --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06);
+  --accent-ring: rgba(81, 89, 224, 0.35); /* keyboard focus ring */
   --pinned-bg: #fff8e0;
   --provisional-bg: #f0f0f5;
   --accent: #5159e0;       /* indigo-deep, matches the rising chevron logo */
@@ -45,12 +52,16 @@
 }
 
 :root.dark {
-  --bg: #0f1115;
-  --fg: #e6e8eb;
-  --muted: #8a8f99;
-  --border: #262a31;
-  --card-bg: #161a20;
-  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);
+  /* Crisp Slate (dark): cooler near-black slate; flat by default. */
+  --bg: #0b0e15;
+  --fg: #e9edf6;
+  --muted: #8d96aa;
+  --border: #242c3e;
+  --border-strong: #2f3850; /* hairline for interactive controls */
+  --card-bg: #131826;
+  --card-shadow: none;
+  --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --accent-ring: rgba(124, 131, 255, 0.4);
   --pinned-bg: #2a2614;
   --provisional-bg: #1a1a25;
   --accent: #7c83ff;       /* indigo-400, lifts in dark mode */
@@ -82,6 +93,7 @@
   --color-fg: var(--fg);
   --color-muted: var(--muted);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-card: var(--card-bg);
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
@@ -94,6 +106,23 @@
   --color-src-default: var(--src-default);
   --color-gap: var(--gap-fg);
   --color-error: var(--error);
+
+  /*
+   * Crisp Slate radius scale — standardized to three working sizes (controls,
+   * cards, modals) plus a 14px ceiling. Fixed px (not rem) so corners stay
+   * crisp and consistent regardless of the 18px root scale, and so the whole
+   * app tightens in one place instead of editing every `rounded-*` className.
+   * Maps onto the existing utility usage: rounded-md (controls) → 6px,
+   * rounded-lg (controls/cards) → 8px, rounded-xl (cards) → 10px,
+   * rounded-2xl (cards/modals) → 12px. rounded-full is unaffected.
+   */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 8px;
+  --radius-2xl: 12px;
+  --radius-3xl: 14px;
 
   --font-sans:
     var(--font-schibsted-grotesk), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
@@ -132,4 +161,31 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/*
+ * Transient highlight for "jump to this moment" — clicking a recap timestamp
+ * scrolls the transcript to the matching utterance and adds .rz-ts-pulse for a
+ * brief accent flash that fades out (the class is removed by a timer). box-
+ * decoration-break keeps the highlight clean across wrapped lines of an
+ * inline utterance span.
+ */
+@keyframes rz-ts-pulse {
+  0% {
+    background-color: var(--accent-soft);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.rz-ts-pulse {
+  animation: rz-ts-pulse 1.5s ease-out;
+  border-radius: 4px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rz-ts-pulse {
+    animation: none;
+  }
 }
