@@ -28,6 +28,7 @@ import {
   type ReplayCadence,
   type ScheduledUtterance,
 } from './_replay-driver';
+import { formatReplaySummary } from './_replay-summary';
 
 /**
  * Client component for the local-mic debug page. Opens a WebSocket to
@@ -239,6 +240,7 @@ function DebugInner({
   const [replaySent, setReplaySent] = useState(0);
   const [cadence, setCadence] = useState<ReplayCadence>(DEFAULT_CADENCE);
   const [replayError, setReplayError] = useState<string | null>(null);
+  const [summaryCopied, setSummaryCopied] = useState(false);
   const replayTimersRef = useRef<number[]>([]);
   const replaySchedRef = useRef<ScheduledUtterance[]>([]);
   const replaySentRef = useRef(0);
@@ -530,6 +532,19 @@ function DebugInner({
     setReplayState('idle');
   }, [clearReplayTimers, sendWs]);
 
+  // U5: copy a structured, LLM-pasteable dump of the whole replay (every
+  // utterance's outcome, skill-vs-RAG route + reason, gates, prior context).
+  const copyReplaySummary = useCallback(() => {
+    const text = formatReplaySummary(replayUtterances, tracesByUtterance);
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setSummaryCopied(true);
+        setTimeout(() => setSummaryCopied(false), 1500);
+      })
+      .catch(() => setReplayError('clipboard write failed'));
+  }, [replayUtterances, tracesByUtterance]);
+
   const reset = useCallback(() => {
     // Clears the debug-specific panels. The HUD reducer (synthesis cards)
     // isn't cleared here — reload the page for a fully fresh session.
@@ -696,6 +711,15 @@ function DebugInner({
           <span className="tabular-nums text-muted">
             {replaySent}/{replayUtterances.length}
           </span>
+          <button
+            type="button"
+            onClick={copyReplaySummary}
+            disabled={replayUtterances.length === 0}
+            title="Copy a structured summary of every utterance's route, gates, and prior context for LLM analysis"
+            className="rounded-md border border-border bg-card px-2 py-1 font-medium text-muted hover:text-fg disabled:opacity-40"
+          >
+            {summaryCopied ? 'Copied ✓' : 'Copy summary'}
+          </button>
 
           <span className="mx-1 h-4 w-px bg-border" />
 
