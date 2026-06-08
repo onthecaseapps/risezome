@@ -1,6 +1,6 @@
 ---
 date: 2026-06-08
-status: active
+status: completed
 type: refactor
 origin: docs/brainstorms/2026-06-08-debug-pipeline-parity-requirements.md
 ---
