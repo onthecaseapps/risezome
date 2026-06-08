@@ -30,10 +30,22 @@ export function effectiveWindow(
 }
 
 /**
+ * Fraction of the candidate's docIds (default 0.7) that must already be in one
+ * answered set to count as a near-duplicate. Strict subset (1.0) was too tight:
+ * near-identical re-asks ("how many issues" → "how many github issues") retrieve
+ * a slightly different card set each time, so the full-subset test never matched
+ * and each one re-synthesized — the "answered 4×" bug the replay harness surfaced.
+ * A majority-overlap test collapses those while still letting a genuinely new
+ * question (mostly-fresh sources) through.
+ */
+export const DUP_OVERLAP_RATIO = 0.7;
+
+/**
  * Mechanism B (read side, PURE) — true when the candidate grounded source set
- * duplicates a recent answered set: non-empty AND every candidate docId is
- * contained in a single answered entry within the recency window (the new answer
- * would add no new source). Order-independent.
+ * substantially duplicates a recent answered set: non-empty AND at least
+ * `DUP_OVERLAP_RATIO` of the candidate docIds are contained in a single answered
+ * entry within the recency window (the new answer would mostly repeat sources
+ * already shown). Order-independent.
  *
  * This is the pure form of the predicate that was inline in `retrieval.ts`; the
  * caller is responsible for pruning `answeredSets` by the window FIRST (or, as
@@ -45,12 +57,15 @@ export function isDuplicateAnswerSourceSet(
   answeredSets: readonly { docIds: string[]; at: number }[],
   now: number,
   windowMs: number,
+  overlapRatio: number = DUP_OVERLAP_RATIO,
 ): boolean {
   if (candidateDocIds.length === 0) return false;
+  const unique = [...new Set(candidateDocIds)];
   return answeredSets.some((entry) => {
     if (now - entry.at >= windowMs) return false;
     const answered = new Set(entry.docIds);
-    return candidateDocIds.every((id) => answered.has(id));
+    const overlap = unique.filter((id) => answered.has(id)).length / unique.length;
+    return overlap >= overlapRatio;
   });
 }
 

@@ -346,12 +346,18 @@ export function buildSystemPrefix(): SystemBlock[] {
  *  excerpt distinct from the (wider) `text`, present them separately so the
  *  model judges relevance from the matched excerpt but can draw on the full
  *  context for detail. Otherwise fall back to the plain single-block form. */
-function renderSource(s: SynthesisSource): string {
+function renderSource(s: SynthesisSource, index: number): string {
   // Self-healing (U5): a repaired tool source carries a leading "Note:" caveat
   // in its body; flag it on the header too so the model can't miss that its
   // numbers reflect an adjusted query (behavior rule 12).
   const flag = s.suspect === true ? ' [UNCERTAIN: read the Note before stating its numbers]' : '';
-  const head = `[${String(s.rank)}] ${s.title}${flag}`;
+  // Number by 1-indexed ARRAY POSITION, not `s.rank`. The citation verifier maps
+  // a cited [N] back to `sources[N-1]`, so the label the model sees MUST equal
+  // position+1. RAG sources already have rank==position+1 (no change), but a tool
+  // source carries `rank: 0` (telemetry marker) and would otherwise render as
+  // `[0]` — a citation the verifier computes as `sources[-1]` and always drops,
+  // suppressing every executed-skill answer as "ungrounded".
+  const head = `[${String(index + 1)}] ${s.title}${flag}`;
   if (s.focus !== undefined && s.focus.length > 0 && s.focus !== s.text) {
     return (
       `${head}\n` +
@@ -367,7 +373,7 @@ export function buildUserMessage(
   sources: readonly SynthesisSource[],
   recentContext?: readonly string[],
 ): string {
-  const numbered = sources.map(renderSource).join('\n\n');
+  const numbered = sources.map((s, i) => renderSource(s, i)).join('\n\n');
   return `${renderQuestionBlock(utterance, recentContext)}\n\nSources:\n${numbered}`;
 }
 

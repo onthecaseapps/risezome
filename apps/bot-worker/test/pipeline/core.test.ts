@@ -8,6 +8,8 @@ import type {
 } from '@risezome/engine/synthesize';
 import type { RelevanceClassifier, RelevanceResult } from '@risezome/engine/relevance';
 import type { MissRecord } from '@risezome/engine/gaps';
+import { SkillRegistry } from '@risezome/engine/skills';
+import type { Skill } from '@risezome/engine/skills';
 import { runPipeline } from '../../src/pipeline/core.js';
 import type {
   PipelineDeps,
@@ -764,5 +766,77 @@ describe('runPipeline — topK honored', () => {
     const sink = new RecordingSink();
     await runPipeline(input(), rest, sink);
     expect(search.mock.calls[0]![0].limit).toBe(5);
+  });
+});
+
+describe('runPipeline — router classifier timeout budget (B1)', () => {
+  function toolRegistry(): SkillRegistry {
+    const reg = new SkillRegistry();
+    const skill: Skill = {
+      source: 'github',
+      name: 'github_count',
+      description: 'count issues',
+      inputSchema: { type: 'object', properties: {} },
+      handler: () => Promise.resolve({ kind: 'count', summary: '47 open issues' }),
+    };
+    reg.register(skill);
+    return reg;
+  }
+
+  // A classifier the test can drive: resolves `tool` after `resolveAfterMs` (or
+  // never), and rejects with AbortError the moment the pipeline aborts its signal.
+  function timedClassifier(resolveAfterMs: number | null): NonNullable<PipelineDeps['routerClassifier']> {
+    const classify = (_in: unknown, signal?: AbortSignal): Promise<unknown> =>
+      new Promise((resolve, reject) => {
+        const t =
+          resolveAfterMs !== null
+            ? setTimeout(() => resolve({ intent: 'tool', skillName: 'github_count', args: {} }), resolveAfterMs)
+            : null;
+        signal?.addEventListener('abort', () => {
+          if (t !== null) clearTimeout(t);
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        });
+      });
+    return { classify } as unknown as NonNullable<PipelineDeps['routerClassifier']>;
+  }
+
+  it('does NOT abort the router at the old 3s relevance budget — a 5s classify still routes to the skill', async () => {
+    vi.useFakeTimers();
+    try {
+      const { deps } = makeDeps({
+        routerClassifier: timedClassifier(5000),
+        skillRegistry: toolRegistry(),
+      });
+      const sink = new TracingSink();
+      const p = runPipeline(input({ utteranceText: 'how many github issues are there' }), deps, sink);
+      // Past the 5s classify, before the 10s router budget. The old shared 3s
+      // gate would have aborted at 3s → classifier_timeout → RAG fallback.
+      await vi.advanceTimersByTimeAsync(6000);
+      await p;
+      const skill = sink.traces[0]!.stages.find((s) => s.stage === 'skill')!;
+      expect(skill.decision).toBe('kept');
+      expect(skill.reason ?? '').not.toContain('timeout');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still aborts a hung classifier at the router budget (10s) → classifier_timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const { deps } = makeDeps({
+        routerClassifier: timedClassifier(null), // never resolves
+        skillRegistry: toolRegistry(),
+      });
+      const sink = new TracingSink();
+      const p = runPipeline(input({ utteranceText: 'how many github issues are there' }), deps, sink);
+      await vi.advanceTimersByTimeAsync(10001);
+      await p;
+      const skill = sink.traces[0]!.stages.find((s) => s.stage === 'skill')!;
+      expect(skill.decision).toBe('none');
+      expect(skill.reason).toBe('classifier_timeout');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

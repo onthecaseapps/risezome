@@ -103,6 +103,38 @@ describe('isDuplicateAnswerSourceSet (Mechanism B predicate, pure)', () => {
       ),
     ).toBe(true);
   });
+
+  // B3: near-duplicate re-asks retrieve a mostly-overlapping (not identical) card
+  // set. The strict-subset test missed these; the 0.7 overlap ratio catches them.
+  it('is true at majority overlap even when the candidate adds one fresh source (4/5)', () => {
+    expect(
+      isDuplicateAnswerSourceSet(
+        ['a', 'b', 'c', 'd', 'z'],
+        [{ docIds: ['a', 'b', 'c', 'd', 'e'], at: now }],
+        now,
+        windowMs,
+      ),
+    ).toBe(true); // 4/5 = 0.8 >= 0.7
+  });
+
+  it('is false when overlap is below the ratio (2/5 — a genuinely new question)', () => {
+    expect(
+      isDuplicateAnswerSourceSet(
+        ['a', 'b', 'x', 'y', 'z'],
+        [{ docIds: ['a', 'b', 'c', 'd', 'e'], at: now }],
+        now,
+        windowMs,
+      ),
+    ).toBe(false); // 2/5 = 0.4 < 0.7
+  });
+
+  it('honors a custom overlap ratio argument', () => {
+    const args = ['a', 'b', 'x'] as const;
+    const sets = [{ docIds: ['a', 'b', 'c'], at: now }];
+    // 2/3 = 0.667: below the default 0.7, but above an explicit 0.6.
+    expect(isDuplicateAnswerSourceSet([...args], sets, now, windowMs)).toBe(false);
+    expect(isDuplicateAnswerSourceSet([...args], sets, now, windowMs, 0.6)).toBe(true);
+  });
 });
 
 describe('addConsumedFinals (Mechanism A record side, pure)', () => {

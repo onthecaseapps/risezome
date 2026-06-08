@@ -7,6 +7,7 @@ import {
   parseSynthesisOutput,
   stripStatusPrefix,
   verifyCitations,
+  verifyCitationsDetailed,
   REFUSAL_SENTINEL,
   STATUS_ANSWER,
   STATUS_NO_CONTEXT,
@@ -90,6 +91,41 @@ describe('buildUserMessage', () => {
   it('renders a non-suspect source unchanged (no UNCERTAIN marker)', () => {
     const out = buildUserMessage('post meeting summary view', SAMPLE_SOURCES);
     expect(out).not.toContain('UNCERTAIN');
+  });
+
+  // B2: a tool source carries `rank: 0` (telemetry marker). Sources are numbered
+  // by 1-indexed POSITION so it renders as [1], not [0] — otherwise the model
+  // cites [0], the verifier computes sources[-1], and the skill answer is dropped.
+  it('numbers a rank-0 tool source by position → [1], never [0]', () => {
+    const tool: SynthesisSource = { rank: 0, title: 'Tool: github_count({})', text: '47 open issues.' };
+    const out = buildUserMessage('how many issues', [tool]);
+    expect(out).toContain('[1] Tool: github_count({})');
+    expect(out).not.toContain('[0]');
+  });
+
+  it('numbers a tool source + RAG sources contiguously from [1] by position', () => {
+    const tool: SynthesisSource = { rank: 0, title: 'Tool: github_count({})', text: '47 open issues.' };
+    const out = buildUserMessage('how many issues', [tool, SAMPLE_SOURCES[0]!]);
+    expect(out).toContain('[1] Tool: github_count({})');
+    expect(out).toContain('[2] Issue #6');
+  });
+});
+
+describe('verifyCitationsDetailed — tool source grounding (B2)', () => {
+  it('verifies a [1] citation against a rank-0 tool source at index 0', () => {
+    const sources = [{ text: '47 open issues.', docId: undefined }];
+    const detail = verifyCitationsDetailed(
+      [{ rank: 1, position: 0, quote: '47 open issues' }],
+      sources,
+    );
+    expect(detail).toHaveLength(1);
+    expect(detail[0]!.status).toBe('verified');
+  });
+
+  it('keeps a bare [1] tool citation (no quote) verified', () => {
+    const sources = [{ text: '47 open issues.', docId: undefined }];
+    const detail = verifyCitationsDetailed([{ rank: 1, position: 0, quote: undefined }], sources);
+    expect(detail[0]!.status).toBe('verified');
   });
 });
 

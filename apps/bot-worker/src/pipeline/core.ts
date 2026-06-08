@@ -52,6 +52,12 @@ import type {
 const DEFAULT_TOP_K = 5;
 const DEFAULT_RELEVANCE_SKIP_THRESHOLD = 0.7;
 const RELEVANCE_TIMEOUT_MS = 3000;
+// The router classifier is awaited AFTER cards emit, so its latency never delays
+// surfacing — only the (optional) skill answer. The 3s relevance-gate budget was
+// far too tight for it: real classify calls routinely take >3s, so the abort
+// fired and clear skill-intent questions silently fell back to RAG
+// (`classifier_timeout`). Give the router its own, generous budget.
+const ROUTER_TIMEOUT_MS = 10000;
 const SYNTHESIS_MAX_TOKENS = 150;
 
 /** Outcome of one `runPipeline` call (the same `{ emitted, skipped? }` the
@@ -247,7 +253,7 @@ export async function runPipeline(
   > | null = null;
   if (routerEligible && deps.routerClassifier !== undefined && deps.skillRegistry !== undefined) {
     classifierController = new AbortController();
-    setTimeout(() => classifierController?.abort(), RELEVANCE_TIMEOUT_MS);
+    setTimeout(() => classifierController?.abort(), ROUTER_TIMEOUT_MS);
     const summary = input.lastSummary;
     const hasContext =
       summary !== undefined &&
@@ -666,6 +672,12 @@ export async function runPipeline(
   // ── Stage: synthesis (grounded-or-nothing) ───────────────────────────
   if (deps.synthesizer !== undefined && (synthesisSources.length > 0 || toolSource !== null)) {
     const mergedSources = mergeToolSource(toolSource, synthesisSources);
+    // Keep the card-id array PARALLEL to `mergedSources`: a kept tool source sits
+    // at index 0, so its card id must too — otherwise a verified tool citation
+    // (rank 1 → surfacedCardIds[0]) resolves to the first RAG card (or undefined
+    // when RAG is empty, dropping the citation and re-suppressing the answer).
+    const mergedCardIds =
+      toolSource !== null ? [`tool_${traceId}`, ...surfacedCardIds] : surfacedCardIds;
     await runSynthesis({
       input,
       deps,
@@ -673,7 +685,7 @@ export async function runPipeline(
       traceId,
       trace,
       sources: mergedSources,
-      surfacedCardIds,
+      surfacedCardIds: mergedCardIds,
     });
   } else if (trace !== null) {
     trace.push(
