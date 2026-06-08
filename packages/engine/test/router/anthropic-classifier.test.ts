@@ -348,4 +348,33 @@ describe('AnthropicClassifier.classify', () => {
     const body = (await calls[0]!.json()) as { messages: { content: string }[] };
     expect(body.messages[0]!.content).toBe('how many issues');
   });
+
+  // U3 (router-boundary): the deterministic anchor is the REQUEST the classifier
+  // sends — given recent_finals carrying the antecedent, the outbound user
+  // message must include the recent-turns block + the antecedent text, so the
+  // model has what it needs to resolve the anaphoric "these issues". (The model's
+  // actual tool-vs-rag choice is non-deterministic and validated by replay.)
+  it('threads recent_finals (the anaphora antecedent) into the request user message', async () => {
+    const { fetchImpl, calls } = captureCalls([() => toolUseResponse('github_count', {})]);
+    const classifier = new AnthropicClassifier({ apiKey: 'k', fetchImpl });
+    await classifier.classify({
+      utterance: 'how many of these issues are there',
+      registry: makeRegistry(),
+      context: { recent_finals: ['are there any open github issues'] },
+    });
+    const body = (await calls[0]!.json()) as { messages: { content: string }[] };
+    const userMsg = body.messages[0]!.content;
+    expect(userMsg).toContain('Recent turns (most recent last):');
+    expect(userMsg).toContain('are there any open github issues');
+    expect(userMsg).toContain('Utterance: how many of these issues are there');
+  });
+
+  it('back-compat: no finals + no summary → the request user message is the bare utterance (no recent-turns block)', async () => {
+    const { fetchImpl, calls } = captureCalls([() => toolUseResponse('github_count', {})]);
+    const classifier = new AnthropicClassifier({ apiKey: 'k', fetchImpl });
+    await classifier.classify({ utterance: 'how many issues are there', registry: makeRegistry() });
+    const body = (await calls[0]!.json()) as { messages: { content: string }[] };
+    expect(body.messages[0]!.content).toBe('how many issues are there');
+    expect(body.messages[0]!.content).not.toContain('Recent turns');
+  });
 });
