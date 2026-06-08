@@ -183,6 +183,14 @@ export async function maybeRetrieveAndEmit(args: {
   /** Optional output-sink factory. Omitted ⇒ the prod Supabase sink. The debug
    *  path passes a WS+trace sink factory. (KTD2.) */
   createSink?: SinkFactory;
+  /** Whole-org / unscoped retrieval (KTD/U4). When true, SKIP the
+   *  `meeting_effective_source_ids` RPC entirely and search the WHOLE org (no
+   *  source-id filter) — the behavior the OLD dev sidecar had (it ran
+   *  `hybridSearch(db, params)` with no sourceIds). The dev sidecar has no real
+   *  meeting yet (U4 threads one), so it must search whole-org. Default
+   *  (undefined/false) keeps the existing scoped RPC resolution byte-identical so
+   *  prod is unaffected. */
+  unscoped?: boolean;
   utteranceText: string;
   utteranceId: string;
   meetingId: string;
@@ -338,21 +346,31 @@ export async function maybeRetrieveAndEmit(args: {
   // sources) and cache it on the runtime. Fail CLOSED: a resolution error
   // leaves the set empty (retrieve nothing) rather than over-surfacing the
   // whole-org corpus.
-  if (!args.runtime.effectiveSourceIdsResolved) {
-    const { data, error } = await args.db.rpc('meeting_effective_source_ids', {
-      p_meeting_id: args.meetingId,
-    });
-    if (error !== null) {
-      args.logger.warn({ err: error }, 'retrieval.effective-sources.failed');
-      args.runtime.effectiveSourceIds = [];
-    } else {
-      args.runtime.effectiveSourceIds = (Array.isArray(data) ? data : []).map((r) =>
-        typeof r === 'string' ? r : (Object.values(r as object)[0] as string),
-      );
+  //
+  // KTD/U4 — `unscoped`: the dev sidecar has no real meeting yet, so it searches
+  // the WHOLE org (no source filter). When set, SKIP the RPC and leave the
+  // effective ids `undefined` (whole-org) — exactly what the OLD dev path did
+  // (`hybridSearch(db, params)` with no sourceIds). Default keeps the scoped RPC.
+  let effectiveSourceIds: readonly string[] | undefined;
+  if (args.unscoped === true) {
+    effectiveSourceIds = undefined;
+  } else {
+    if (!args.runtime.effectiveSourceIdsResolved) {
+      const { data, error } = await args.db.rpc('meeting_effective_source_ids', {
+        p_meeting_id: args.meetingId,
+      });
+      if (error !== null) {
+        args.logger.warn({ err: error }, 'retrieval.effective-sources.failed');
+        args.runtime.effectiveSourceIds = [];
+      } else {
+        args.runtime.effectiveSourceIds = (Array.isArray(data) ? data : []).map((r) =>
+          typeof r === 'string' ? r : (Object.values(r as object)[0] as string),
+        );
+      }
+      args.runtime.effectiveSourceIdsResolved = true;
     }
-    args.runtime.effectiveSourceIdsResolved = true;
+    effectiveSourceIds = args.runtime.effectiveSourceIds;
   }
-  const effectiveSourceIds = args.runtime.effectiveSourceIds;
 
   // ── PipelineDeps (the injected capabilities) ─────────────────────────
   const deps: PipelineDeps = {
@@ -366,7 +384,14 @@ export async function maybeRetrieveAndEmit(args: {
     ...(args.skillRegistry !== undefined ? { skillRegistry: args.skillRegistry } : {}),
     // U4: inject the meeting's effective source set so every corpus search is
     // hard-filtered to the attendees' teams' sources.
-    hybridSearch: (params) => hybridSearch(args.db, { ...params, sourceIds: effectiveSourceIds }),
+    hybridSearch: (params) =>
+      hybridSearch(args.db, {
+        ...params,
+        // undefined ⇒ whole-org (no source filter), the OLD dev path. Omit the
+        // key entirely under exactOptionalPropertyTypes rather than passing
+        // `sourceIds: undefined`.
+        ...(effectiveSourceIds !== undefined ? { sourceIds: effectiveSourceIds } : {}),
+      }),
     isLowConfidenceHits,
     optionalReranker,
     optionalQueryExpander,

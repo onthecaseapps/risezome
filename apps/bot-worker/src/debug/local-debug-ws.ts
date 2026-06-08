@@ -34,40 +34,18 @@ import { fileURLToPath } from 'node:url';
 import { type WebSocket } from 'ws';
 import { SidecarRunner } from './sidecar-runner.js';
 import { DeepgramTranscriptionEngine } from './deepgram.js';
-import { logTranscripts } from '../transcript-log.js';
 import { VoyageEmbedder } from '@risezome/engine/embed';
 import { AnthropicSynthesizer } from '@risezome/engine/synthesize';
-import { hybridSearch, isLowConfidenceHits } from '../corpus-search';
-import { optionalReranker } from '../reranker';
-import { expandWinnersToParents, parentDocEnabled, dedupeByDoc } from '../parent-doc';
-import { optionalQueryExpander } from '../query-expand';
-import { AnthropicSummarizer, type MeetingSummary } from '@risezome/engine/summarize';
-import {
-  AnthropicRelevanceClassifier,
-  type RelevanceClassifier,
-} from '@risezome/engine/relevance';
-import { AnthropicClassifier, type Classifier } from '@risezome/engine/router';
-import { type SkillRegistry } from '@risezome/engine/skills';
+import { AnthropicSummarizer } from '@risezome/engine/summarize';
+import { AnthropicRelevanceClassifier } from '@risezome/engine/relevance';
+import { AnthropicClassifier } from '@risezome/engine/router';
 import type { AudioFrame } from '@risezome/shared-types';
 import type { Utterance } from '@risezome/engine/transcribe';
 import { MeetingSummarizerRuntime } from '../summarizer-runtime.js';
 import { buildSkillRegistry } from '../skills/index.js';
-import { runPipeline } from '../pipeline/core.js';
-import type { PipelineDeps, PipelineInput } from '../pipeline/contract.js';
 import { createWsSink } from '../pipeline/sink-ws.js';
-import {
-  effectiveWindow,
-  isDuplicateAnswerSourceSet,
-  addConsumedFinals,
-  CONSUMED_FINALS_CAP,
-  QUESTION_DUP_WINDOW_MS,
-} from '../pipeline/answer-dedup.js';
-import {
-  classifyLane,
-  embedQuestion,
-  isNearDuplicateQuestion,
-  buildQuestionQuery,
-} from '../pipeline/question-trigger.js';
+import { maybeRetrieveAndEmit, newRetrievalRuntime } from '../retrieval.js';
+import { skipReasonToTrace } from './gate-skip-trace.js';
 
 export interface LocalDebugHandlerArgs {
   readonly db: SupabaseClient;
@@ -84,70 +62,7 @@ export interface LocalDebugHandlerArgs {
   };
 }
 
-// Dev-only TOP_K — the broader recall the dev page intentionally used (the
-// canonical core default is also 5; passed explicitly via deps.topK).
-const TOP_K = 5;
 const SYNTHESIS_MAX_TOKENS = 200;
-
-// U3 strict "about-our-work" routing — route `clearly_substantive` through the
-// LLM judge too, not just `ambiguous`. Read from the SAME env var as the prod
-// Recall path (apps/bot-worker/src/retrieval.ts) so the dev sidecar and prod
-// make the same surface/suppress decision for a given utterance (the gate lives
-// in the shared core).
-const RELEVANCE_STRICT = process.env.RISEZOME_RELEVANCE_STRICT === 'true';
-
-// Rolling-context tuning. Five utterances or 60 seconds, whichever is
-// hit first — long enough to chain a question across 2-3 splits without
-// dragging in unrelated prior topics.
-const FINALS_BUFFER = 5;
-const FINALS_TTL_MS = 60_000;
-
-// Continuation merge: if the new utterance lands within this window
-// AND looks-like-continuation (lowercase / connective start), it gets
-// concatenated with the prior. Above the window we treat it as a
-// fresh utterance even if it starts lowercase (probably a topic break).
-const CONTINUATION_WINDOW_MS = 6_000;
-
-const CONTINUATION_LEADERS = new Set([
-  'and',
-  'but',
-  'or',
-  'so',
-  'in',
-  'on',
-  'at',
-  'of',
-  'to',
-  'for',
-  'with',
-  'from',
-  'where',
-  'when',
-  'how',
-  'why',
-  'which',
-  'who',
-  'because',
-  'since',
-  'while',
-  'that',
-]);
-
-function looksLikeContinuation(
-  prior: { text: string; at: number },
-  next: { text: string; at: number },
-): boolean {
-  if (next.at - prior.at > CONTINUATION_WINDOW_MS) return false;
-  const firstWord = next.text.trim().split(/\s+/)[0] ?? '';
-  if (firstWord.length === 0) return false;
-  // Lowercase start often signals continuation (ASR rarely capitalizes
-  // the start of a continuation utterance).
-  const firstChar = firstWord[0]!;
-  if (firstChar === firstChar.toLowerCase() && firstChar !== firstChar.toUpperCase()) {
-    return true;
-  }
-  return CONTINUATION_LEADERS.has(firstWord.toLowerCase());
-}
 
 export async function handleLocalDebugWs(
   socket: WebSocket,
@@ -221,36 +136,14 @@ export async function handleLocalDebugWs(
     },
   });
 
-  // Per-WS pipeline state.
-  //
-  // currentSynthesisAbort — abort signal for the in-flight synthesis.
-  //   On new utterance, abort the prior so the latest wins. The aborted
-  //   synthesis emits `synthesisAborted` so the page can clear its
-  //   stuck-streaming card (without this the prior card sits forever
-  //   showing "▊").
-  //
-  // recentFinals — rolling buffer of finalized utterances (oldest first).
-  //   Capped at FINALS_BUFFER and aged out after FINALS_TTL_MS so
-  //   long-running sessions don't accumulate stale context. Passed to
-  //   the synthesizer as `recentContext` so Claude can resolve pronouns
-  //   + fragments without an explicit pre-merge step.
-  let currentSynthesisAbort: AbortController | null = null;
-  let currentSynthesisId: string | null = null;
-  const recentFinals: { text: string; at: number }[] = [];
-
-  // Mechanism A/B per-connection dedup state, mirroring `RetrievalRuntime` on the
-  // prod path. `consumedFinals` — answered transcript spans voided from the
-  // effective window so they can't re-seed the next query. `answeredSourceSets` —
-  // grounded source-doc sets answered this session (+ timestamp), recency-pruned,
-  // so a question retrieving the same set is skipped before cards emit. Mutated in
-  // place (the closures below need stable references).
-  const consumedFinals: string[] = [];
-  const answeredSourceSets: { docIds: string[]; at: number }[] = [];
-  // KTD4 (adapter parity): embeddings + LOGICAL timestamps of questions ANSWERED
-  // this session, for the semantic near-duplicate-question suppression the prod
-  // adapter applies before the core. Recency-pruned. Without this the replay
-  // over-answers (every rephrasing re-synthesizes).
-  const answeredQuestions: { embedding: number[]; at: number }[] = [];
+  // Per-WS retrieval state. The dev sidecar now routes EVERY finalized utterance
+  // through the SAME prod adapter (`maybeRetrieveAndEmit`), so all gate/dedup
+  // state — recentFinals, consumedFinals, answeredSourceSets, answeredQuestions,
+  // cooldown, and the question ceiling — lives on this `RetrievalRuntime`, owned
+  // by the adapter. Reset on `replay-reset` (a fresh runtime). Single code path
+  // ⇒ the debug page reflects the live pipeline's answer/suppress decision
+  // exactly (U3).
+  let runtime = newRetrievalRuntime();
 
   runner.on('frame', (frame: AudioFrame) => {
     engine.sendFrame(frame.samples);
@@ -272,239 +165,105 @@ export async function handleLocalDebugWs(
     forwardUtterance(socket, t.utterance);
   });
 
-  // Per-utterance pipeline trigger. Extracted (U1) so BOTH the live Deepgram-
-  // final path and the transcript-replay inbound (`replay-utterance`) drive the
-  // EXACT same gate / voiding / continuation-merge / pipeline logic. Closes over
-  // the per-connection state above.
-  const handleFinalUtterance = (utterance: Utterance): void => {
+  // Per-utterance pipeline trigger. Routes EVERY finalized utterance (live
+  // Deepgram final OR replayed `replay-utterance`) through the SAME prod adapter
+  // (`maybeRetrieveAndEmit`) so the debug page reflects the live pipeline's
+  // answer/suppress decision exactly — the full gate stack (two-lane
+  // classification, near-dup-question suppression, per-minute/per-meeting
+  // ceiling, cooldown, threshold, source-set scope) runs in ONE place (U3).
+  //
+  // `opts.now` is the injected logical clock: the live path passes nothing (the
+  // adapter defaults to Date.now() — wall-clock, matching prod live); the replay
+  // path passes the meeting-logical `startMs` so the replay's compressed
+  // wall-clock can't distort the time-based gates.
+  const handleFinalUtterance = (utterance: Utterance, opts?: { now?: number }): void => {
     forwardUtterance(socket, utterance);
     const text = utterance.text.trim();
     if (text.length === 0) return;
 
-    // Feed the summarizer runtime — fires asynchronously when cadence
-    // + rate-cap conditions hold. Its onSummaryUpdated broadcasts the
-    // new summary as a `summary` WS event.
+    // Feed the summarizer runtime — fires asynchronously when cadence + rate-cap
+    // conditions hold. Its onSummaryUpdated broadcasts a `summary` WS event.
     summarizerRuntime.recordUtterance(text);
 
-    // Append to rolling buffer + age out old entries.
-    const now = Date.now();
-    recentFinals.push({ text, at: now });
-    while (
-      recentFinals.length > 0 &&
-      (recentFinals.length > FINALS_BUFFER || now - recentFinals[0]!.at > FINALS_TTL_MS)
-    ) {
-      recentFinals.shift();
-    }
-
-    // Mechanism A: derive the EFFECTIVE window — recentFinals with any
-    // already-answered span (in `consumedFinals`) voided, but the current
-    // utterance (last element) always kept. Captured in this closure so the
-    // grounded callback below can mark exactly these spans consumed once an
-    // answer grounds. The raw `recentFinals` rolling buffer is untouched.
-    const effective = effectiveWindow(
-      recentFinals.map((f) => f.text),
-      consumedFinals,
-    );
-
-    // Heuristic fragment merge: if the prior final landed within
-    // CONTINUATION_WINDOW_MS and the new utterance looks like a
-    // continuation (lowercase start, or starts with a connective like
-    // "and", "but", "in", "where"), treat the new utterance as
-    // extending the prior one. Effective query = concat. We still pass
-    // the full recent context as a backstop in case the heuristic is
-    // wrong. Mechanism A: a CONSUMED prior fragment must NOT seed the next
-    // query, so only merge when the prior final hasn't been answered already.
-    const priorFinal =
-      recentFinals.length >= 2 ? recentFinals[recentFinals.length - 2]! : undefined;
-    const isContinuation =
-      priorFinal !== undefined &&
-      !consumedFinals.includes(priorFinal.text) &&
-      looksLikeContinuation(priorFinal, recentFinals[recentFinals.length - 1]!);
-    const effectiveUtterance = isContinuation
-      ? `${priorFinal.text} ${text}`
-      : text;
-
-    // Build recentContext for the synthesizer. The latest rolling
-    // summary prose (if any) goes at the head as the OLDEST entry
-    // (longest-range context); the recent finals follow in oldest-
-    // first order. Reads lastSummary ONCE here (synchronously, before
-    // the pipeline starts) so a mid-stream summary refresh can't
-    // produce a torn read — the in-flight call keeps the summary it
-    // captured at start; the next call picks up the new one.
-    // A synthesis is about to fire → lazily refresh the rolling summary if
-    // stale (demand-driven; async, benefits the next utterance). Read
-    // lastSummary AFTER, atomically, so this call's context is the prior one.
+    // A synthesis may be about to fire → lazily refresh the rolling summary if
+    // stale (demand-driven; async, benefits the next utterance). Read lastSummary
+    // AFTER, atomically, so this call's context is the prior one.
     summarizerRuntime.refreshIfStale();
-    const lastSummaryAtBuild = summarizerRuntime.getLastSummary();
-    // Mechanism A: the effective window (answered spans voided) excluding the
-    // current utterance (which IS the query) feeds the synthesizer context.
-    const recentContext = [
-      ...(lastSummaryAtBuild !== null && lastSummaryAtBuild.summary.length > 0
-        ? [lastSummaryAtBuild.summary]
-        : []),
-      ...effective.slice(0, -1),
-    ];
+    const lastSummary = summarizerRuntime.getLastSummary() ?? undefined;
 
-    // ── Adapter gate parity (KTD4) ──────────────────────────────────────
-    // The prod adapter (maybeRetrieveAndEmit) applies two-lane classification +
-    // semantic near-duplicate-QUESTION suppression BEFORE the core pipeline; the
-    // replay path must too, or a real meeting OVER-answers (every rephrasing of
-    // the same question re-synthesizes). Ambient utterances skip the check.
-    // Logical time (utterance.startMs) is the recency clock so the replay's
-    // compressed wall-clock can't distort the dedup window.
-    const lane = classifyLane(text);
-    const questionQuery = buildQuestionQuery(text, effective, lastSummaryAtBuild ?? undefined);
-    const logicalNow = utterance.startMs > 0 ? utterance.startMs : Date.now();
+    // Stable id the WS sink rewrites every synthesis event onto, so the page's
+    // synthesis rendering keys on a single id per utterance.
+    const synthesisId = `synth_${randomUUID()}`;
+    const now = opts?.now;
 
-    void (async (): Promise<void> => {
-      let questionVec: number[] | undefined;
-      if (lane === 'question') {
-        questionVec = await embedQuestion(embedder, questionQuery, args.logger);
-        // Prune the answered-question ledger by the recency window (logical clock).
-        const kept = answeredQuestions.filter((e) => logicalNow - e.at < QUESTION_DUP_WINDOW_MS);
-        answeredQuestions.length = 0;
-        answeredQuestions.push(...kept);
-        if (questionVec !== undefined && isNearDuplicateQuestion(questionVec, answeredQuestions, logicalNow)) {
-          // Suppress like prod: do NOT abort the prior answer, emit NO cards, run
-          // NO synthesis. Emit a trace so the page/summary shows WHY this
-          // utterance produced nothing (a near-dup of an already-answered one).
-          send(socket, {
-            type: 'trace',
-            traceId: `qdedup_${utterance.utteranceId}`,
-            utteranceId: utterance.utteranceId,
-            meetingId: args.orgId,
-            priorContext: recentContext,
-            stages: [
-              {
-                stage: 'question-dedup',
-                status: 'short_circuited',
-                decision: 'skip',
-                reason: 'duplicate_question',
-                latencyMs: 0,
-              },
-            ],
-          });
-          args.logger.info(
-            { utteranceId: utterance.utteranceId },
-            'local-debug.question_dedup.skip',
-          );
-          return;
-        }
-      }
-
-      // Abort prior in-flight synthesis. Send an aborted event so the
-      // page clears the stuck-streaming card.
-      if (currentSynthesisAbort !== null && currentSynthesisId !== null) {
-        currentSynthesisAbort.abort();
-        send(socket, {
-          type: 'synthesisAborted',
-          synthesisId: currentSynthesisId,
-          reason: 'superseded-by-new-utterance',
-        });
-      }
-      const ac = new AbortController();
-      currentSynthesisAbort = ac;
-      const synthesisId = `synth_${randomUUID()}`;
-      currentSynthesisId = synthesisId;
-
-      args.logger.info(
-      {
-        // Transcript bodies redacted by default (U6); verbatim only under LOG_TRANSCRIPTS=1.
-        rawUtteranceLen: text.length,
-        effectiveUtteranceLen: effectiveUtterance.length,
-        ...(logTranscripts() ? { rawUtterance: text, effectiveUtterance } : {}),
-        isContinuation,
-        recentContextSize: recentContext.length,
-        bufferSize: recentFinals.length,
-      },
-      'local-debug.utterance.fire',
-    );
-
-    void runDebugPipeline({
-      synthesisId,
-      utteranceText: effectiveUtterance,
+    void maybeRetrieveAndEmit({
+      runtime,
+      utteranceText: text,
       utteranceId: utterance.utteranceId,
-      recentContext,
-      lastSummary: lastSummaryAtBuild,
-      socket,
-      args,
+      // The dev sidecar has no real meeting yet (U4 threads one); the org doubles
+      // as the scope id and `unscoped: true` searches whole-org.
+      meetingId: args.orgId,
+      orgId: args.orgId,
+      db: args.db,
       embedder,
       synthesizer,
       relevanceClassifier,
-      routerClassifier,
+      // The adapter names the router classifier arg `classifier`.
+      classifier: routerClassifier,
       skillRegistry,
-      abortSignal: ac.signal,
-      onComplete: (answerText) => {
-        // Close the loop: the grounded answer was shown, not spoken, so feed
-        // it to the summarizer to retire the open question it resolved.
-        summarizerRuntime.recordAssistantAnswer(answerText);
-        if (currentSynthesisId === synthesisId) {
-          currentSynthesisId = null;
-          currentSynthesisAbort = null;
-        }
-      },
-      // Mechanism B (read side): prune the answered-source ledger by the recency
-      // window, then run the shared pure predicate. Read-only on the runtime;
-      // the core checks this before emitting cards and short-circuits a dup.
-      isDuplicateAnswerSources: (docIds) => {
-        const nowDup = Date.now();
-        // Prune in place (the array is a stable per-connection reference).
-        const kept = answeredSourceSets.filter((e) => nowDup - e.at < QUESTION_DUP_WINDOW_MS);
-        answeredSourceSets.length = 0;
-        answeredSourceSets.push(...kept);
-        return isDuplicateAnswerSourceSet(docIds, answeredSourceSets, nowDup, QUESTION_DUP_WINDOW_MS);
-      },
-      // Mechanism A/B (record side): once an answer grounds, void this call's
-      // effective spans (so they can't re-seed the next query) and remember the
-      // grounded source set (so a later same-source question is skipped). Mutate
-      // the per-connection arrays in place.
-      onGroundedAnswer: (_text, sourceDocIds) => {
-        const groundedAt = Date.now();
-        const nextConsumed = addConsumedFinals(consumedFinals, effective, CONSUMED_FINALS_CAP);
-        consumedFinals.length = 0;
-        consumedFinals.push(...nextConsumed);
-        if (sourceDocIds.length > 0) {
-          answeredSourceSets.push({ docIds: [...new Set(sourceDocIds)], at: groundedAt });
-        }
-        // KTD4 (record side): remember this question's embedding (logical clock)
-        // so a later rephrasing is suppressed as a near-duplicate. Recorded only
-        // on a GROUNDED question answer — a refusal can still be re-asked.
-        if (lane === 'question' && questionVec !== undefined) {
-          answeredQuestions.push({ embedding: questionVec, at: logicalNow });
-        }
-      },
-      }).catch((err: unknown) => {
+      ...(lastSummary !== undefined ? { lastSummary } : {}),
+      logger: args.logger,
+      ...(now !== undefined ? { now } : {}),
+      // Whole-org retrieval (no meeting scope) — matches the OLD dev path; U4
+      // threads the real meeting for scoped retrieval.
+      unscoped: true,
+      // WS+trace sink: maps every core result onto the existing local-debug WS
+      // events and emits the per-stage `trace`. The sink's onGroundedAnswer is
+      // the adapter's runtime-recording hook (`wiring.onGroundedAnswer`) so dedup
+      // state (answeredQuestions/consumedFinals/answeredSourceSets) records.
+      // Close-the-loop (recordAssistantAnswer) rides the sink's onComplete, which
+      // fires once on a grounded synthesisDone — wired here exactly once, so the
+      // adapter-level onGroundedAnswer is omitted to avoid double-recording.
+      createSink: (wiring) =>
+        createWsSink({
+          socket,
+          synthesisId,
+          logger: args.logger,
+          onComplete: (answerText) => summarizerRuntime.recordAssistantAnswer(answerText),
+          onGroundedAnswer: wiring.onGroundedAnswer,
+        }),
+    })
+      .then((res) => {
+        // A pre-pipeline gate skip (throttle / near-dup / threshold) emits no
+        // core trace, so translate it into a single-stage trace event (KTD1) —
+        // else the page shows "no trace" for a suppressed utterance. A fired or
+        // core-originated skip returns null (the core already traced it).
+        const traceEvt = skipReasonToTrace(res.skipped, {
+          traceId: `gate_${utterance.utteranceId}`,
+          utteranceId: utterance.utteranceId,
+          meetingId: args.orgId,
+          // The adapter owns the real prior-context window; [] is acceptable here.
+          priorContext: [],
+        });
+        if (traceEvt !== null) send(socket, { ...traceEvt });
+      })
+      .catch((err: unknown) => {
         args.logger.warn({ err: String(err) }, 'local-debug.pipeline.error');
         send(socket, { type: 'pipeline-error', message: String(err) });
       });
-    })();
   };
 
   // Clear per-connection replay state between runs so successive replays don't
-  // bleed context (voided spans, answered source sets, in-flight synthesis).
-  // Note: the rolling summarizer is intentionally left to age out on its own.
+  // bleed gate/dedup/cooldown state. A fresh runtime resets everything the
+  // adapter owns. Per-utterance abort is gone (prod doesn't abort — parity
+  // intent), so there's nothing else to tear down; the page clears client-side
+  // on reset. The rolling summarizer is intentionally left to age out on its own.
   const resetReplayState = (): void => {
-    recentFinals.length = 0;
-    consumedFinals.length = 0;
-    answeredSourceSets.length = 0;
-    answeredQuestions.length = 0;
-    if (currentSynthesisAbort !== null) {
-      currentSynthesisAbort.abort();
-      // Tell the page to clear the in-progress streaming card (mirror the
-      // supersede path), else a reset mid-synthesis leaves it stuck.
-      if (currentSynthesisId !== null) {
-        send(socket, {
-          type: 'synthesisAborted',
-          synthesisId: currentSynthesisId,
-          reason: 'replay-reset',
-        });
-      }
-      currentSynthesisAbort = null;
-      currentSynthesisId = null;
-    }
+    runtime = newRetrievalRuntime();
   };
 
-  // Live mic path: Deepgram finals drive the shared handler.
+  // Live mic path: Deepgram finals drive the shared handler with wall-clock time
+  // (no opts ⇒ the adapter defaults to Date.now(), matching prod live).
   engine.on('final', (t) => {
     handleFinalUtterance(t.utterance);
   });
@@ -519,7 +278,9 @@ export async function handleLocalDebugWs(
       resetReplayState();
       return;
     }
-    handleFinalUtterance(msg.utterance);
+    // Replay supplies the meeting-logical clock (startMs) so the adapter's
+    // time-based gates read logical time, not the replay's compressed wall-clock.
+    handleFinalUtterance(msg.utterance, { now: msg.utterance.startMs });
   });
 
   engine.on('error', (err: Error) => {
@@ -541,7 +302,6 @@ export async function handleLocalDebugWs(
 
   const cleanup = async (): Promise<void> => {
     args.logger.info({}, 'local-debug.cleanup');
-    if (currentSynthesisAbort !== null) currentSynthesisAbort.abort();
     summarizerRuntime.dispose();
     try {
       await runner.stop();
@@ -562,129 +322,6 @@ export async function handleLocalDebugWs(
     args.logger.warn({ err: String(err) }, 'local-debug.ws.error');
     void cleanup();
   });
-}
-
-interface PipelineArgs {
-  readonly synthesisId: string;
-  readonly utteranceText: string;
-  readonly utteranceId: string;
-  /** Rolling prior-utterance context passed to the synthesizer. */
-  readonly recentContext: readonly string[];
-  /** Snapshot of the rolling summary at call-fire time. The core reads
-   *  `current_topic` + `open_questions` from this for the classifier's
-   *  coherence-in-context judgment, and reads `key_terms` for the embedding-
-   *  query boost (env-gated). Captured by the caller ONCE at fire time so a
-   *  mid-flight summary refresh can't produce a torn read. */
-  readonly lastSummary: MeetingSummary | null;
-  readonly socket: WebSocket;
-  readonly args: LocalDebugHandlerArgs;
-  readonly embedder: VoyageEmbedder;
-  readonly synthesizer: AnthropicSynthesizer;
-  readonly relevanceClassifier: RelevanceClassifier;
-  /** Router classifier — picks `tool` vs `rag` per utterance. When it
-   *  returns a tool intent, the chosen skill runs and its result is
-   *  prepended to the synthesizer's sources as [1]. */
-  readonly routerClassifier: Classifier;
-  readonly skillRegistry: SkillRegistry;
-  readonly abortSignal: AbortSignal;
-  /** Called after the pipeline completes successfully (non-refusal) with the
-   *  grounded answer body, so the caller can feed it to the summarizer
-   *  (close-the-loop: an answered question retires from the next rolling
-   *  summary). */
-  readonly onComplete: (answerText: string) => void;
-  /** Mechanism B (read side): injected into `deps` so the core skips a question
-   *  whose grounded source set duplicates a recent answered one. */
-  readonly isDuplicateAnswerSources: (docIds: readonly string[]) => boolean;
-  /** Mechanism A/B (record side): invoked on a grounded answer so the handler
-   *  voids this call's transcript spans + records the answered source set. */
-  readonly onGroundedAnswer: (text: string, sourceDocIds: readonly string[]) => void;
-}
-
-/**
- * Per-utterance pipeline — a THIN ADAPTER onto the shared core (U3). It builds
- * `PipelineInput` (single utterance + queryText + recentContext + lastSummary)
- * and `PipelineDeps` (the same bot-worker search fns + classifiers as prod),
- * then runs `runPipeline` behind a WS sink. The dev sidecar therefore runs the
- * SAME core as production — so the U3 strict gate (`RISEZOME_RELEVANCE_STRICT`)
- * now applies here too, fixing the drift where the dev page lacked it.
- *
- * Everything pipeline-specific (relevance gate → embed → search → CRAG →
- * dedup/expand → cards → synthesis → citation-verify) lives in the core; this
- * adapter keeps ONLY the dev transcription-source plumbing (continuation merge,
- * rolling finals, abort-on-new-utterance) in the handler above. The WS sink
- * defines `recordTrace`, so the core assembles + streams a per-stage `trace`
- * event to the page (dev = trace ON; prod's sink omits recordTrace).
- */
-async function runDebugPipeline(p: PipelineArgs): Promise<void> {
-  const {
-    socket,
-    args,
-    embedder,
-    synthesizer,
-    relevanceClassifier,
-    routerClassifier,
-    skillRegistry,
-  } = p;
-
-  args.logger.info(
-    { synthesisId: p.synthesisId, utteranceId: p.utteranceId, text: p.utteranceText },
-    'local-debug.pipeline.start',
-  );
-
-  const lastSummary = p.lastSummary ?? undefined;
-
-  // ── Source seam: build PipelineInput. The dev sidecar embeds/searches the
-  // single (continuation-merged) utterance — a legitimate per-source difference
-  // from prod's rolling-window queryText (KTD).
-  const input: PipelineInput = {
-    utteranceText: p.utteranceText,
-    utteranceId: p.utteranceId,
-    meetingId: args.orgId, // dev sidecar has no meeting; org doubles as the scope id
-    orgId: args.orgId,
-    queryText: p.utteranceText,
-    ...(p.recentContext.length > 0 ? { recentContext: p.recentContext } : {}),
-    ...(lastSummary !== undefined ? { lastSummary } : {}),
-  };
-
-  // ── PipelineDeps: the same bot-worker Supabase-bound capabilities prod
-  // injects. relevanceStrict comes from RISEZOME_RELEVANCE_STRICT so the dev
-  // page gets the U3 about-our-work routing prod has.
-  const deps: PipelineDeps = {
-    db: args.db,
-    embedder,
-    synthesizer,
-    relevanceClassifier,
-    routerClassifier,
-    skillRegistry,
-    hybridSearch: (params) => hybridSearch(args.db, params),
-    isLowConfidenceHits,
-    optionalReranker,
-    optionalQueryExpander,
-    dedupeByDoc,
-    expandWinnersToParents: (orgId, winners) =>
-      expandWinnersToParents(args.db, orgId, winners),
-    parentDocEnabled,
-    logger: args.logger,
-    relevanceStrict: RELEVANCE_STRICT,
-    topK: TOP_K,
-    // Mechanism B (read side): the core checks this before emitting cards and
-    // short-circuits a question whose grounded source set duplicates a recent
-    // answered one. Mirrors the prod Recall path.
-    isDuplicateAnswerSources: p.isDuplicateAnswerSources,
-  };
-
-  // ── WS sink: maps every core result onto the existing local-debug events and
-  // adds the `trace` event (dev = trace ON). Mechanism A/B record side rides the
-  // sink's onGroundedAnswer (the grounded body + source docIds).
-  const sink = createWsSink({
-    socket,
-    synthesisId: p.synthesisId,
-    logger: args.logger,
-    onComplete: p.onComplete,
-    onGroundedAnswer: p.onGroundedAnswer,
-  });
-
-  await runPipeline(input, deps, sink);
 }
 
 function forwardUtterance(socket: WebSocket, utt: Utterance): void {
