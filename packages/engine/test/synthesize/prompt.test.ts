@@ -113,7 +113,7 @@ describe('buildUserMessage', () => {
 
 describe('verifyCitationsDetailed — tool source grounding (B2)', () => {
   it('verifies a [1] citation against a rank-0 tool source at index 0', () => {
-    const sources = [{ text: '47 open issues.', docId: undefined }];
+    const sources = [{ text: '47 open issues.' }];
     const detail = verifyCitationsDetailed(
       [{ rank: 1, position: 0, quote: '47 open issues' }],
       sources,
@@ -123,7 +123,7 @@ describe('verifyCitationsDetailed — tool source grounding (B2)', () => {
   });
 
   it('keeps a bare [1] tool citation (no quote) verified', () => {
-    const sources = [{ text: '47 open issues.', docId: undefined }];
+    const sources = [{ text: '47 open issues.' }];
     const detail = verifyCitationsDetailed([{ rank: 1, position: 0, quote: undefined }], sources);
     expect(detail[0]!.status).toBe('verified');
   });
