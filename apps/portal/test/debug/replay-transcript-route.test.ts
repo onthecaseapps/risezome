@@ -18,9 +18,12 @@ vi.mock('../../app/_lib/supabase-server', () => ({
   createServerClient: () => Promise.resolve({}),
 }));
 vi.mock('@risezome/crypto', () => ({ EnvelopeCryptoError: h.Env }));
+const transcriptWithText = vi.fn((_db: unknown, _meetingId: string, _orgId: string) =>
+  h.throwCrypto ? Promise.reject(new h.Env('kms down')) : Promise.resolve(h.rows),
+);
 vi.mock('../../app/_lib/transcript', () => ({
-  transcriptWithText: () =>
-    h.throwCrypto ? Promise.reject(new h.Env('kms down')) : Promise.resolve(h.rows),
+  transcriptWithText: (db: unknown, meetingId: string, orgId: string) =>
+    transcriptWithText(db, meetingId, orgId),
 }));
 
 import { GET } from '../../app/api/debug/replay-transcript/route';
@@ -32,6 +35,7 @@ function get(meetingId?: string): Request {
 
 describe('GET /api/debug/replay-transcript', () => {
   beforeEach(() => {
+    transcriptWithText.mockClear();
     h.throwCrypto = false;
     h.rows = [
       { event_id: 2, payload: { utteranceId: 'b', speaker: 'S1', startMs: 5000 }, created_at: '', text: 'second' },
@@ -45,6 +49,8 @@ describe('GET /api/debug/replay-transcript', () => {
     const json = (await res.json()) as { ok: boolean; utterances: { utteranceId: string; startMs: number }[] };
     expect(json.ok).toBe(true);
     expect(json.utterances.map((u) => u.utteranceId)).toEqual(['a', 'b']); // sorted by startMs
+    // Org-scoping: the orgId from requireAuthedUserWithOrg must reach the query.
+    expect(transcriptWithText).toHaveBeenCalledWith(expect.anything(), 'm1', h.orgId);
   });
 
   it('400s when meetingId is missing', async () => {

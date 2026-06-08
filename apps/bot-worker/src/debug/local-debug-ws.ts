@@ -424,6 +424,15 @@ export async function handleLocalDebugWs(
     answeredSourceSets.length = 0;
     if (currentSynthesisAbort !== null) {
       currentSynthesisAbort.abort();
+      // Tell the page to clear the in-progress streaming card (mirror the
+      // supersede path), else a reset mid-synthesis leaves it stuck.
+      if (currentSynthesisId !== null) {
+        send(socket, {
+          type: 'synthesisAborted',
+          synthesisId: currentSynthesisId,
+          reason: 'replay-reset',
+        });
+      }
       currentSynthesisAbort = null;
       currentSynthesisId = null;
     }

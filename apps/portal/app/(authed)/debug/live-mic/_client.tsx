@@ -246,6 +246,7 @@ function DebugInner({
   const replaySentRef = useRef(0);
   const replayElapsedRef = useRef(0);
   const replayStartWallRef = useRef(0);
+  const summaryCopiedTimerRef = useRef<number | null>(null);
 
   const handleEvent = useCallback((evt: DebugEvent) => {
     switch (evt.type) {
@@ -403,6 +404,11 @@ function DebugInner({
       setStatus('closed');
       setStatusMessage('Closed');
       wsRef.current = null;
+      // A mid-replay disconnect must drain pending timers — otherwise they keep
+      // firing into a dead socket and the UI stays stuck on "playing".
+      for (const t of replayTimersRef.current) window.clearTimeout(t);
+      replayTimersRef.current = [];
+      setReplayState((s) => (s === 'playing' ? 'idle' : s));
     });
     ws.addEventListener('error', () => {
       setStatus('errored');
@@ -421,6 +427,7 @@ function DebugInner({
       wsRef.current?.close();
       wsRef.current = null;
       for (const t of replayTimersRef.current) window.clearTimeout(t);
+      if (summaryCopiedTimerRef.current !== null) window.clearTimeout(summaryCopiedTimerRef.current);
     };
   }, []);
 
@@ -437,13 +444,20 @@ function DebugInner({
     replayTimersRef.current = [];
   }, []);
 
-  const onReplayLoaded = useCallback((us: ReplayUtterance[]) => {
-    setReplayUtterances(us);
-    setReplayState('idle');
-    setReplaySent(0);
-    replaySentRef.current = 0;
-    replayElapsedRef.current = 0;
-  }, []);
+  const onReplayLoaded = useCallback(
+    (us: ReplayUtterance[]) => {
+      // Loading a new source mid-playback must cancel the prior schedule (and
+      // reset the sidecar) — otherwise its timers keep sending the old transcript.
+      clearReplayTimers();
+      sendWs({ type: 'replay-reset' });
+      setReplayUtterances(us);
+      setReplayState('idle');
+      setReplaySent(0);
+      replaySentRef.current = 0;
+      replayElapsedRef.current = 0;
+    },
+    [clearReplayTimers, sendWs],
+  );
 
   const loadReplayFromMeeting = useCallback(async () => {
     const id = replayMeetingId.trim();
@@ -540,7 +554,8 @@ function DebugInner({
       .writeText(text)
       .then(() => {
         setSummaryCopied(true);
-        setTimeout(() => setSummaryCopied(false), 1500);
+        if (summaryCopiedTimerRef.current !== null) window.clearTimeout(summaryCopiedTimerRef.current);
+        summaryCopiedTimerRef.current = window.setTimeout(() => setSummaryCopied(false), 1500);
       })
       .catch(() => setReplayError('clipboard write failed'));
   }, [replayUtterances, tracesByUtterance]);
@@ -548,6 +563,13 @@ function DebugInner({
   const reset = useCallback(() => {
     // Clears the debug-specific panels. The HUD reducer (synthesis cards)
     // isn't cleared here — reload the page for a fully fresh session.
+    // Cancel any in-flight replay too, so Clear during playback doesn't leave
+    // timers firing into the cleared panels.
+    clearReplayTimers();
+    replaySentRef.current = 0;
+    replayElapsedRef.current = 0;
+    setReplaySent(0);
+    setReplayState('idle');
     setUtterances([]);
     setCardGroups([]);
     setSkillResults([]);
@@ -556,7 +578,7 @@ function DebugInner({
     setSummaryAt(null);
     setTracesByUtterance(new Map());
     setSelectedUtteranceId(null);
-  }, []);
+  }, [clearReplayTimers]);
 
   // U5: the selected utterance's trace + text + retrieved cards. The cards
   // arrive via `card` events (the trace's hybrid-search stage carries only a
