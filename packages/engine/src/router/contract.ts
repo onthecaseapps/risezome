@@ -15,6 +15,13 @@ import type { SkillRegistry } from '../skills/registry.js';
 export interface ClassifyContext {
   readonly current_topic?: string;
   readonly open_questions?: readonly string[];
+  /** Recent finalized turns (oldest first / most-recent last), the immediate
+   *  anaphora antecedent. The rolling summary (`current_topic`) lags the live
+   *  transcript, so a follow-up whose referent is one or two turns back ("how
+   *  many of THESE issues") can't be resolved from the summary alone. Supplying
+   *  the recent turns lets the classifier resolve the pronoun to the established
+   *  entity and route to the right skill instead of falling back to RAG. */
+  readonly recent_finals?: readonly string[];
 }
 
 export interface ClassifyInput {

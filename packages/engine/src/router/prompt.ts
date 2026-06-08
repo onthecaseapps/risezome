@@ -127,6 +127,9 @@ export function buildClassifierSystem(): SystemBlock[] {
 export interface ClassifierUserContext {
   readonly current_topic?: string;
   readonly open_questions?: readonly string[];
+  /** Recent finalized turns (oldest first / most-recent last) — the immediate
+   *  anaphora antecedent the lagging rolling summary can't supply. */
+  readonly recent_finals?: readonly string[];
 }
 
 export function buildClassifierUserMessage(
@@ -135,9 +138,11 @@ export function buildClassifierUserMessage(
 ): string {
   const topic = context?.current_topic;
   const questions = context?.open_questions ?? [];
+  const finals = context?.recent_finals ?? [];
   const hasTopic = typeof topic === 'string' && topic.length > 0;
   const hasQuestions = questions.length > 0;
-  if (context === undefined || (!hasTopic && !hasQuestions)) {
+  const hasFinals = finals.length > 0;
+  if (context === undefined || (!hasTopic && !hasQuestions && !hasFinals)) {
     return utterance;
   }
   const lines: string[] = ['Meeting context so far:'];
@@ -147,6 +152,13 @@ export function buildClassifierUserMessage(
   if (hasQuestions) {
     lines.push('- Open questions:');
     for (const q of questions) lines.push(`    "${q}"`);
+  }
+  if (hasFinals) {
+    // Verbatim recent turns (most recent last) — the live antecedent the rolling
+    // summary lags. A pronoun in the utterance ("these issues") resolves against
+    // these even before the summary catches up.
+    lines.push('- Recent turns (most recent last):');
+    for (const f of finals) lines.push(`    "${f}"`);
   }
   lines.push('');
   lines.push(
