@@ -130,12 +130,14 @@ function JsonTab({ trace }: { trace: UtteranceTrace | null }): ReactElement {
   const obj = {
     traceId: trace.traceId,
     utteranceId: trace.utteranceId,
+    priorContext: trace.priorContext,
     stages: trace.stages.map((s) => ({
       stage: s.stage,
       status: s.status,
       latencyMs: s.latencyMs,
       ...(s.decision !== undefined ? { decision: s.decision } : {}),
       ...(s.reason !== undefined ? { reason: s.reason } : {}),
+      ...(s.data !== undefined ? { data: s.data } : {}),
     })),
   };
   return (

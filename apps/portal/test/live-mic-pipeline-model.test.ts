@@ -19,7 +19,7 @@ function rec(stage: StageRecord['stage'], over: Partial<StageRecord> = {}): Stag
 }
 
 function trace(stages: StageRecord[]): UtteranceTrace {
-  return { traceId: 't1', utteranceId: 'u1', meetingId: 'm1', stages };
+  return { traceId: 't1', utteranceId: 'u1', meetingId: 'm1', priorContext: [], stages };
 }
 
 const GROUNDED = trace([

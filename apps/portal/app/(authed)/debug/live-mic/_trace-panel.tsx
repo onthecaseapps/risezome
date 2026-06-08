@@ -313,6 +313,34 @@ function Empty({ label }: { label: string }): ReactElement {
   );
 }
 
+/** The exact prior context (effective window post-voiding) the synthesizer saw
+ *  for this utterance (KTD6) — oldest-first, rolling summary at the head. The
+ *  replay harness's core "what past text was passed" inspection surface. */
+function PriorContextView({ context }: { context: readonly string[] }): ReactElement {
+  return (
+    <div className="mb-[18px] rounded-[11px] border border-border bg-card/40 px-3.5 py-2.5">
+      <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted/70">
+        Prior context passed
+        <span className="font-mono text-muted/50">{context.length} {context.length === 1 ? 'entry' : 'entries'}</span>
+      </div>
+      {context.length === 0 ? (
+        <div className="text-[12px] italic text-muted/60">
+          None — no past turns fed the synthesizer (first utterance, or all prior spans voided as already-answered).
+        </div>
+      ) : (
+        <ol className="flex flex-col gap-1.5">
+          {context.map((entry, i) => (
+            <li key={i} className="flex gap-2 text-[12px] leading-snug">
+              <span className="flex-none font-mono text-[10px] text-muted/50">{i + 1}</span>
+              <span className="min-w-0 break-words text-muted">{entry}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 export function TracePanel({
   trace,
   utteranceText,
@@ -355,6 +383,7 @@ export function TracePanel({
     <div className="flex h-full min-w-0 flex-col">
       <OutcomeBanner outcome={outcome} ledger={ledger} />
       <GateRibbonView ribbon={ribbon} />
+      <PriorContextView context={trace.priorContext} />
       <div className="mb-3 text-[10px] font-bold uppercase tracking-wider text-muted/70">
         Stage ledger · {reached} / {ledger.length} reached
       </div>

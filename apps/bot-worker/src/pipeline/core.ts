@@ -120,6 +120,9 @@ export async function runPipeline(
         traceId,
         utteranceId: input.utteranceId,
         meetingId: input.meetingId,
+        // KTD6: the exact prior context this run saw (effective window
+        // post-voiding, summary at head) — surfaced for replay inspection.
+        priorContext: input.recentContext ?? [],
         stages: trace.stages(),
       });
     }
@@ -787,9 +790,15 @@ async function collectToolSource(
   trace: TraceBuilder | null,
 ): Promise<SynthesisSource | null> {
   const skillStart = Date.now();
-  const pushSkill = (decision: string, reason: string): void => {
+  const pushSkill = (decision: string, reason: string, data?: Record<string, unknown>): void => {
     if (trace !== null) {
-      trace.push(stageRecord('skill', 'ran', skillStart, { decision, reason }));
+      trace.push(
+        stageRecord('skill', 'ran', skillStart, {
+          decision,
+          reason,
+          ...(data !== undefined ? { data } : {}),
+        }),
+      );
     }
   };
   if (classifierPromise === null || deps.skillRegistry === undefined) {
@@ -799,7 +808,10 @@ async function collectToolSource(
   try {
     const result = await classifierPromise;
     if (result.intent !== 'tool') {
-      pushSkill('none', 'not_tool_intent');
+      // KTD6: the router classifier chose RAG over any skill. This is the exact
+      // skill-vs-RAG decision the replay harness needs — record the intent so a
+      // clear skill-intent question that lost to RAG is diagnosable.
+      pushSkill('none', 'not_tool_intent', { intent: result.intent });
       return null;
     }
     const skill: Skill | undefined = deps.skillRegistry.lookup(result.skillName);
@@ -813,7 +825,11 @@ async function collectToolSource(
         },
         'pipeline.skill.failed',
       );
-      pushSkill('dropped', `unknown_skill:${result.skillName}`);
+      pushSkill('dropped', `unknown_skill:${result.skillName}`, {
+        intent: 'tool',
+        skillName: result.skillName,
+        args: result.args,
+      });
       return null;
     }
     try {
@@ -840,10 +856,18 @@ async function collectToolSource(
       });
       const decision = decideToolSource(skillResult);
       if (decision.keep) {
-        pushSkill('kept', `${result.skillName} → source[0]`);
+        pushSkill('kept', `${result.skillName} → source[0]`, {
+          intent: 'tool',
+          skillName: result.skillName,
+          args: result.args,
+        });
         return formatAsSource(skillResult, result.skillName, result.args);
       }
-      pushSkill('dropped', `safety_net:${decision.status}`);
+      pushSkill('dropped', `safety_net:${decision.status}`, {
+        intent: 'tool',
+        skillName: result.skillName,
+        args: result.args,
+      });
       return null;
     } catch (err) {
       const code = err instanceof SkillExecutionError ? err.executionCode : 'execution-error';

@@ -70,6 +70,9 @@ export interface TraceEvent {
   traceId: string;
   utteranceId: string;
   meetingId: string;
+  /** The exact prior context (effective window post-voiding) this run saw —
+   *  oldest-first, rolling summary at the head when present (KTD6). */
+  priorContext?: string[];
   stages: StageRecord[];
 }
 
@@ -78,6 +81,9 @@ export interface UtteranceTrace {
   traceId: string;
   utteranceId: string;
   meetingId: string;
+  /** Prior context the synthesizer saw (KTD6). Empty/absent when there was
+   *  none — older traces predating the field decode as `[]`. */
+  priorContext: string[];
   stages: StageRecord[];
 }
 
@@ -98,6 +104,7 @@ export function indexTrace(
     traceId: evt.traceId,
     utteranceId: evt.utteranceId,
     meetingId: evt.meetingId,
+    priorContext: evt.priorContext ?? [],
     stages: evt.stages,
   });
   return next;

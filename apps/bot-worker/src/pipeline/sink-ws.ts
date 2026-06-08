@@ -203,6 +203,9 @@ export function createWsSink(args: WsSinkArgs): PipelineSink {
         traceId: trace.traceId,
         utteranceId: trace.utteranceId,
         meetingId: trace.meetingId,
+        // KTD6: forward the exact prior context this run saw so the page can
+        // surface "what past text was passed" for the selected utterance.
+        priorContext: trace.priorContext,
         stages: trace.stages,
       });
     },

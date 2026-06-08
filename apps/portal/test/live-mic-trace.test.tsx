@@ -44,6 +44,7 @@ const GROUNDED: UtteranceTrace = {
   traceId: 'tr_g',
   utteranceId: 'g',
   meetingId: 'm1',
+  priorContext: [],
   stages: [
     { stage: 'empty-query', status: 'ran', decision: 'pass', latencyMs: 0 },
     { stage: 'heuristic-gate', status: 'ran', decision: 'clearly_substantive', latencyMs: 4 },
@@ -86,6 +87,7 @@ describe('TracePanel (Pipeline Trace Debug)', () => {
       traceId: 'tr_f',
       utteranceId: 'f',
       meetingId: 'm1',
+      priorContext: [],
       stages: [
         { stage: 'empty-query', status: 'ran', decision: 'pass', latencyMs: 0 },
         { stage: 'heuristic-gate', status: 'short_circuited', decision: 'skip', reason: 'clearly_filler', latencyMs: 0 },
@@ -105,6 +107,7 @@ describe('TracePanel (Pipeline Trace Debug)', () => {
       traceId: 'tr_m',
       utteranceId: 'm',
       meetingId: 'm1',
+      priorContext: [],
       stages: [
         { stage: 'hybrid-search', status: 'ran', latencyMs: 47, data: { hits: [], count: 0 } },
         { stage: 'crag', status: 'ran', decision: 'kept_original', reason: 'miss', latencyMs: 318 },

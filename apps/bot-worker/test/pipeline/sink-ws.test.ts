@@ -249,6 +249,7 @@ describe('recordTrace → `trace` event', () => {
       traceId: 'trace_9',
       utteranceId: 'utt_9',
       meetingId: 'org_9',
+      priorContext: ['rolling summary so far', 'an earlier turn'],
       stages: [
         { stage: 'heuristic-gate', status: 'ran', latencyMs: 1, decision: 'ambiguous' },
         {
@@ -266,6 +267,8 @@ describe('recordTrace → `trace` event', () => {
     expect(ev).toBeDefined();
     expect(ev?.traceId).toBe('trace_9');
     expect(ev?.utteranceId).toBe('utt_9');
+    // KTD6: the prior context (effective window post-voiding) rides the event.
+    expect(ev?.priorContext).toEqual(['rolling summary so far', 'an earlier turn']);
     const stages = ev?.stages as PipelineTrace['stages'];
     expect(stages).toHaveLength(2);
     expect(stages[0]?.stage).toBe('heuristic-gate');

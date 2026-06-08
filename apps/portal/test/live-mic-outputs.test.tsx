@@ -34,6 +34,7 @@ const TRACE: UtteranceTrace = {
   traceId: 'tr1',
   utteranceId: 'u1',
   meetingId: 'm1',
+  priorContext: [],
   stages: [
     { stage: 'embed', status: 'ran', latencyMs: 38, data: { dims: 1024 } },
     { stage: 'reveal', status: 'ran', decision: 'revealed', latencyMs: 12 },

@@ -622,6 +622,24 @@ describe('runPipeline — trace (KTD4/R5)', () => {
     expect(gate.reason).toBe('clearly_filler');
   });
 
+  it('carries the exact prior context (effective window post-voiding) onto the trace (KTD6)', async () => {
+    const { deps } = makeDeps({ synthesizer: fakeSynthesizer('STATUS: answer\n[1: "forty two"]') });
+    const sink = new TracingSink();
+    const recentContext = ['rolling summary so far', 'an earlier answered turn'];
+    await runPipeline(input({ recentContext }), deps, sink);
+
+    expect(sink.traces).toHaveLength(1);
+    expect(sink.traces[0]!.priorContext).toEqual(recentContext);
+  });
+
+  it('defaults priorContext to [] when the run had no prior context', async () => {
+    const { deps } = makeDeps({ synthesizer: fakeSynthesizer('STATUS: answer\n[1: "forty two"]') });
+    const sink = new TracingSink();
+    await runPipeline(input(), deps, sink);
+
+    expect(sink.traces[0]!.priorContext).toEqual([]);
+  });
+
   it('trace sink ABSENT → no trace work observable (no recordTrace, nothing thrown)', async () => {
     const { deps } = makeDeps({ synthesizer: fakeSynthesizer('STATUS: answer\n[1: "forty two"]') });
     const sink = new RecordingSink();

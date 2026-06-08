@@ -476,5 +476,12 @@ export interface PipelineTrace {
   readonly traceId: string;
   readonly utteranceId: string;
   readonly meetingId: string;
+  /** The EXACT prior context (effective window post-voiding) this utterance's
+   *  pipeline ran with — `input.recentContext`, oldest-first with the rolling
+   *  summary at the head when present. Empty when there was none. This is what
+   *  the synthesizer actually saw as "past text"; surfacing it lets the replay
+   *  harness inspect why a question merged/resolved against the wrong context
+   *  (KTD6). Dev/eval-only — rides the optional `recordTrace`. */
+  readonly priorContext: readonly string[];
   readonly stages: readonly StageRecord[];
 }
