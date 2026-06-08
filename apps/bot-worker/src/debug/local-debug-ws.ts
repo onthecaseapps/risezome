@@ -62,6 +62,12 @@ import {
   CONSUMED_FINALS_CAP,
   QUESTION_DUP_WINDOW_MS,
 } from '../pipeline/answer-dedup.js';
+import {
+  classifyLane,
+  embedQuestion,
+  isNearDuplicateQuestion,
+  buildQuestionQuery,
+} from '../pipeline/question-trigger.js';
 
 export interface LocalDebugHandlerArgs {
   readonly db: SupabaseClient;
@@ -240,6 +246,11 @@ export async function handleLocalDebugWs(
   // place (the closures below need stable references).
   const consumedFinals: string[] = [];
   const answeredSourceSets: { docIds: string[]; at: number }[] = [];
+  // KTD4 (adapter parity): embeddings + LOGICAL timestamps of questions ANSWERED
+  // this session, for the semantic near-duplicate-question suppression the prod
+  // adapter applies before the core. Recency-pruned. Without this the replay
+  // over-answers (every rephrasing re-synthesizes).
+  const answeredQuestions: { embedding: number[]; at: number }[] = [];
 
   runner.on('frame', (frame: AudioFrame) => {
     engine.sendFrame(frame.samples);
@@ -334,22 +345,69 @@ export async function handleLocalDebugWs(
       ...effective.slice(0, -1),
     ];
 
-    // Abort prior in-flight synthesis. Send an aborted event so the
-    // page clears the stuck-streaming card.
-    if (currentSynthesisAbort !== null && currentSynthesisId !== null) {
-      currentSynthesisAbort.abort();
-      send(socket, {
-        type: 'synthesisAborted',
-        synthesisId: currentSynthesisId,
-        reason: 'superseded-by-new-utterance',
-      });
-    }
-    const ac = new AbortController();
-    currentSynthesisAbort = ac;
-    const synthesisId = `synth_${randomUUID()}`;
-    currentSynthesisId = synthesisId;
+    // ── Adapter gate parity (KTD4) ──────────────────────────────────────
+    // The prod adapter (maybeRetrieveAndEmit) applies two-lane classification +
+    // semantic near-duplicate-QUESTION suppression BEFORE the core pipeline; the
+    // replay path must too, or a real meeting OVER-answers (every rephrasing of
+    // the same question re-synthesizes). Ambient utterances skip the check.
+    // Logical time (utterance.startMs) is the recency clock so the replay's
+    // compressed wall-clock can't distort the dedup window.
+    const lane = classifyLane(text);
+    const questionQuery = buildQuestionQuery(text, effective, lastSummaryAtBuild ?? undefined);
+    const logicalNow = utterance.startMs > 0 ? utterance.startMs : Date.now();
 
-    args.logger.info(
+    void (async (): Promise<void> => {
+      let questionVec: number[] | undefined;
+      if (lane === 'question') {
+        questionVec = await embedQuestion(embedder, questionQuery, args.logger);
+        // Prune the answered-question ledger by the recency window (logical clock).
+        const kept = answeredQuestions.filter((e) => logicalNow - e.at < QUESTION_DUP_WINDOW_MS);
+        answeredQuestions.length = 0;
+        answeredQuestions.push(...kept);
+        if (questionVec !== undefined && isNearDuplicateQuestion(questionVec, answeredQuestions, logicalNow)) {
+          // Suppress like prod: do NOT abort the prior answer, emit NO cards, run
+          // NO synthesis. Emit a trace so the page/summary shows WHY this
+          // utterance produced nothing (a near-dup of an already-answered one).
+          send(socket, {
+            type: 'trace',
+            traceId: `qdedup_${utterance.utteranceId}`,
+            utteranceId: utterance.utteranceId,
+            meetingId: args.orgId,
+            priorContext: recentContext,
+            stages: [
+              {
+                stage: 'question-dedup',
+                status: 'short_circuited',
+                decision: 'skip',
+                reason: 'duplicate_question',
+                latencyMs: 0,
+              },
+            ],
+          });
+          args.logger.info(
+            { utteranceId: utterance.utteranceId },
+            'local-debug.question_dedup.skip',
+          );
+          return;
+        }
+      }
+
+      // Abort prior in-flight synthesis. Send an aborted event so the
+      // page clears the stuck-streaming card.
+      if (currentSynthesisAbort !== null && currentSynthesisId !== null) {
+        currentSynthesisAbort.abort();
+        send(socket, {
+          type: 'synthesisAborted',
+          synthesisId: currentSynthesisId,
+          reason: 'superseded-by-new-utterance',
+        });
+      }
+      const ac = new AbortController();
+      currentSynthesisAbort = ac;
+      const synthesisId = `synth_${randomUUID()}`;
+      currentSynthesisId = synthesisId;
+
+      args.logger.info(
       {
         // Transcript bodies redacted by default (U6); verbatim only under LOG_TRANSCRIPTS=1.
         rawUtteranceLen: text.length,
@@ -408,11 +466,18 @@ export async function handleLocalDebugWs(
         if (sourceDocIds.length > 0) {
           answeredSourceSets.push({ docIds: [...new Set(sourceDocIds)], at: groundedAt });
         }
+        // KTD4 (record side): remember this question's embedding (logical clock)
+        // so a later rephrasing is suppressed as a near-duplicate. Recorded only
+        // on a GROUNDED question answer — a refusal can still be re-asked.
+        if (lane === 'question' && questionVec !== undefined) {
+          answeredQuestions.push({ embedding: questionVec, at: logicalNow });
+        }
       },
-    }).catch((err: unknown) => {
-      args.logger.warn({ err: String(err) }, 'local-debug.pipeline.error');
-      send(socket, { type: 'pipeline-error', message: String(err) });
-    });
+      }).catch((err: unknown) => {
+        args.logger.warn({ err: String(err) }, 'local-debug.pipeline.error');
+        send(socket, { type: 'pipeline-error', message: String(err) });
+      });
+    })();
   };
 
   // Clear per-connection replay state between runs so successive replays don't
@@ -422,6 +487,7 @@ export async function handleLocalDebugWs(
     recentFinals.length = 0;
     consumedFinals.length = 0;
     answeredSourceSets.length = 0;
+    answeredQuestions.length = 0;
     if (currentSynthesisAbort !== null) {
       currentSynthesisAbort.abort();
       // Tell the page to clear the in-progress streaming card (mirror the

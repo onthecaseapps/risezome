@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   indexTrace,
   buildLedger,
+  deriveOutcome,
   stageDetailRows,
   type TraceEvent,
   type StageRecord,
@@ -34,6 +35,31 @@ describe('indexTrace — prior context (U4/KTD6)', () => {
     let map = indexTrace(new Map(), traceEvent({ priorContext: ['first'] }));
     map = indexTrace(map, traceEvent({ priorContext: ['second'] }));
     expect(map.get('u1')?.priorContext).toEqual(['second']);
+  });
+});
+
+describe('question-dedup outcome (KTD4 adapter parity)', () => {
+  const qdedup: StageRecord = {
+    stage: 'question-dedup',
+    status: 'short_circuited',
+    latencyMs: 0,
+    decision: 'skip',
+    reason: 'duplicate_question',
+  };
+
+  it('a question-dedup short-circuit reads as a skip outcome (not pending)', () => {
+    const map = indexTrace(new Map(), traceEvent({ stages: [qdedup] }));
+    const outcome = deriveOutcome(map.get('u1')!);
+    expect(outcome.type).toBe('skip');
+    expect(outcome.sub).toContain('near-duplicate');
+  });
+
+  it('renders the question-dedup ledger row with a SKIP status and stops downstream rows', () => {
+    const map = indexTrace(new Map(), traceEvent({ stages: [qdedup] }));
+    const ledger = buildLedger(map.get('u1')!);
+    const row = ledger.find((r) => r.id === 'question-dedup')!;
+    expect(row.status).toBe('skip');
+    expect(ledger.find((r) => r.id === 'reveal')!.status).toBe('notreached');
   });
 });
 

@@ -40,14 +40,17 @@ const GROUNDED = trace([
 ]);
 
 describe('STAGE_CATALOG', () => {
-  it('is the canonical 16-row ledger with PRE + S04..S17 codes in order', () => {
-    expect(STAGE_CATALOG).toHaveLength(16);
+  it('is the canonical 17-row ledger with PRE + S04..S17 codes in order', () => {
+    expect(STAGE_CATALOG).toHaveLength(17);
     expect(STAGE_CATALOG.map((r) => r.code)).toEqual([
-      'PRE', 'PRE', 'S04', 'S05', 'S06', 'S07', 'S08', 'S09', 'S10', 'S11', 'S12', 'S13', 'S14', 'S15', 'S16', 'S17',
+      'PRE', 'PRE', 'PRE', 'S04', 'S05', 'S06', 'S07', 'S08', 'S09', 'S10', 'S11', 'S12', 'S13', 'S14', 'S15', 'S16', 'S17',
     ]);
-    // threshold + cooldown are portal-derived.
+    // threshold + cooldown are portal-derived; question-dedup (KTD4) actually
+    // runs in the replay path, so it is NOT derived.
     expect(STAGE_CATALOG[0]!.derived).toBe(true);
     expect(STAGE_CATALOG[1]!.derived).toBe(true);
+    expect(STAGE_CATALOG[2]!.id).toBe('question-dedup');
+    expect(STAGE_CATALOG[2]!.derived).toBeUndefined();
     // relevance merges the two real stages (KTD3).
     expect(STAGE_CATALOG.find((r) => r.id === 'relevance')!.mergeFrom).toEqual(['heuristic-gate', 'llm-judge']);
   });
@@ -101,10 +104,12 @@ describe('deriveOutcome', () => {
 });
 
 describe('buildLedger', () => {
-  it('a grounded trace reaches 16/16', () => {
+  it('a grounded trace reaches 16/17 (question-dedup not exercised — not a near-dup)', () => {
     const ledger = buildLedger(GROUNDED);
-    expect(ledger).toHaveLength(16);
+    expect(ledger).toHaveLength(17);
+    // The question-dedup row has no record on a grounded (non-suppressed) trace.
     expect(reachedCount(ledger)).toBe(16);
+    expect(ledger.find((r) => r.id === 'question-dedup')!.status).toBe('notreached');
   });
 
   it('merges heuristic + judge into one Relevance row', () => {

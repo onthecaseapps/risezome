@@ -4,8 +4,8 @@ import { hybridSearch, isLowConfidenceHits } from './corpus-search';
 import { optionalReranker } from './reranker';
 import { expandWinnersToParents, parentDocEnabled, dedupeByDoc } from './parent-doc';
 import { optionalQueryExpander } from './query-expand';
-import { type MissRecord, cosineDistance } from '@risezome/engine/gaps';
-import { type RelevanceClassifier, classifySubstantiveQuestion } from '@risezome/engine/relevance';
+import { type MissRecord } from '@risezome/engine/gaps';
+import { type RelevanceClassifier } from '@risezome/engine/relevance';
 import { type Classifier } from '@risezome/engine/router';
 import { type SkillRegistry } from '@risezome/engine/skills';
 import type { MeetingSummary } from '@risezome/engine/summarize';
@@ -20,6 +20,12 @@ import {
   CONSUMED_FINALS_CAP,
   QUESTION_DUP_WINDOW_MS,
 } from './pipeline/answer-dedup.js';
+import {
+  classifyLane,
+  embedQuestion,
+  isNearDuplicateQuestion,
+  buildQuestionQuery,
+} from './pipeline/question-trigger.js';
 
 /**
  * Production Recall retrieval/synthesis loop. Since U2 this is a THIN ADAPTER:
@@ -82,72 +88,11 @@ const QUESTION_MAX_PER_MEETING =
   Number.parseInt(process.env.RISEZOME_QUESTION_MAX_PER_MEETING ?? '60', 10) || 60;
 const QUESTION_RATE_WINDOW_MS = 60_000;
 
-// Near-duplicate question suppression (KTD4). A question semantically close to
-// one already ANSWERED this meeting (within the recency window) is suppressed so
-// repeats/rephrasings don't re-answer or re-spend. Tighter than the gap-merge
-// distance (0.22) — questions must be genuinely the same to suppress.
-const QUESTION_DUP_DISTANCE = (() => {
-  // Guard against a non-numeric env value: parseFloat('abc') is NaN, and
-  // `cosineDistance(...) <= NaN` is always false — which would silently disable
-  // dedup entirely. Fall back to the default on NaN / non-positive.
-  const parsed = Number.parseFloat(process.env.RISEZOME_QUESTION_DUP_DISTANCE ?? '0.15');
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.15;
-})();
-// QUESTION_DUP_WINDOW_MS is imported from ./pipeline/answer-dedup.js (shared).
-
-async function embedQuestion(
-  embedder: VoyageEmbedder,
-  text: string,
-  logger: { warn: (obj: object, msg?: string) => void },
-): Promise<number[] | undefined> {
-  try {
-    const result = await embedder.embed({ items: [{ text, domain: 'text' }] });
-    const vec = result.vectors[0]?.vector;
-    return vec === undefined ? undefined : Array.from(vec);
-  } catch (err) {
-    // Dedup is best-effort; never block a fire on an embed error — but surface it
-    // (project convention: no silent swallowing).
-    logger.warn({ err }, 'retrieval.dedup.embed_failed');
-    return undefined;
-  }
-}
-
-function isNearDuplicateQuestion(
-  vec: readonly number[],
-  history: readonly { embedding: number[]; at: number }[],
-  now: number,
-): boolean {
-  return history.some(
-    (e) => now - e.at < QUESTION_DUP_WINDOW_MS && cosineDistance(vec, e.embedding) <= QUESTION_DUP_DISTANCE,
-  );
-}
-
-// Question-anchored query (KTD5). A standalone question embeds as itself so
-// surrounding off-domain talk can't dilute it. A fragment / follow-up needs a
-// referent, so it (and only it) gets a minimal context slice: the immediately-
-// preceding final + the rolling-summary topic.
-const FOLLOWUP_START = /^(and|or|but|so|what about|how about|and the|or the|what's that|then)\b/;
-const FOLLOWUP_MAX_WORDS = 3;
-
-function buildQuestionQuery(
-  question: string,
-  recentFinals: readonly string[],
-  lastSummary: MeetingSummary | undefined,
-): string {
-  const q = question.trim();
-  const words = q.split(/\s+/).filter((w) => w.length > 0).length;
-  const isFollowup = words <= FOLLOWUP_MAX_WORDS || FOLLOWUP_START.test(q.toLowerCase());
-  if (!isFollowup) return q; // standalone question — undiluted
-  const parts: string[] = [];
-  // recentFinals' last element IS the question (pushed on entry); the one before
-  // it is the conversational antecedent.
-  const priorFinal = recentFinals.length >= 2 ? recentFinals[recentFinals.length - 2] : undefined;
-  if (priorFinal !== undefined && priorFinal.trim().length > 0) parts.push(priorFinal.trim());
-  const topic = lastSummary?.current_topic?.trim();
-  if (topic !== undefined && topic.length > 0) parts.push(topic);
-  parts.push(q);
-  return parts.join(' ').trim();
-}
+// Near-duplicate question suppression (KTD4), two-lane classification, and the
+// question-anchored query build now live in ./pipeline/question-trigger.js,
+// shared verbatim with the local-debug REPLAY path so both apply identical
+// gates. `QUESTION_DUP_DISTANCE` and `QUESTION_DUP_WINDOW_MS` are re-homed there
+// / in answer-dedup.js respectively.
 
 // Mechanism A's `effectiveWindow` is imported from ./pipeline/answer-dedup.js
 // (shared verbatim with the local-debug path).
@@ -265,10 +210,7 @@ export async function maybeRetrieveAndEmit(args: {
   // cooldown so a real question is never throttled out (the original incident).
   // Everything else takes the AMBIENT lane and keeps the cost-budgeted cooldown.
   const now = Date.now();
-  const lane: 'question' | 'ambient' = classifySubstantiveQuestion(args.utteranceText)
-    .isQuestion
-    ? 'question'
-    : 'ambient';
+  const lane = classifyLane(args.utteranceText);
 
   // ── Build the query text (lane-aware; KTD5) ──────────────────────────
   // QUESTION lane: anchor on the question utterance (+ minimal context for

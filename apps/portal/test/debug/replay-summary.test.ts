@@ -54,6 +54,22 @@ describe('formatReplaySummary (U5)', () => {
     expect(out).toContain('@ 0:05');
   });
 
+  it('shows a near-duplicate question as a skip (KTD4 adapter parity), with its reason', () => {
+    const qdedup: StageRecord = {
+      stage: 'question-dedup',
+      status: 'short_circuited',
+      latencyMs: 0,
+      decision: 'skip',
+      reason: 'duplicate_question',
+    };
+    const out = formatReplaySummary(
+      [u({ utteranceId: 'q', text: 'how many github issues are there' })],
+      new Map([['q', trace('q', [qdedup])]]),
+    );
+    expect(out).toContain('outcome: skip');
+    expect(out).toContain('suppressed at: question-dedup — skip (duplicate_question)');
+  });
+
   it('lists a gated/suppressed utterance with its suppression reason (not omitted)', () => {
     const gated: StageRecord[] = [
       { stage: 'heuristic-gate', status: 'short_circuited', decision: 'skip', reason: 'clearly_filler', latencyMs: 0 },

@@ -77,7 +77,7 @@ describe('TracePanel (Pipeline Trace Debug)', () => {
   it('grounded trace: outcome banner, 16/16 reached, suppression-gate ribbon, reveal row', () => {
     render(<TracePanel trace={GROUNDED} utteranceText="how many times do we use ai" />);
     expect(screen.getByText('Grounded answer revealed')).toBeInTheDocument();
-    expect(screen.getByText(/16 \/ 16 reached/)).toBeInTheDocument();
+    expect(screen.getByText(/16 \/ 17 reached/)).toBeInTheDocument();
     expect(screen.getByText('Suppression gates')).toBeInTheDocument();
     expect(screen.getByText('Reveal')).toBeInTheDocument();
   });

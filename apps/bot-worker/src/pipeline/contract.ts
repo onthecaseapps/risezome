@@ -410,6 +410,10 @@ export interface PipelineSink {
  *  daemon's RetrievalTrace/relevanceSkip events and the eval's
  *  EvalQuestionView intermediates. */
 export type PipelineStage =
+  // Adapter-gate parity (KTD4): emitted by the local-debug REPLAY path when a
+  // question is suppressed as a semantic near-duplicate BEFORE the core runs.
+  // Not produced by runPipeline itself (the core starts at `empty-query`).
+  | 'question-dedup'
   | 'empty-query'
   | 'heuristic-gate'
   | 'llm-judge'

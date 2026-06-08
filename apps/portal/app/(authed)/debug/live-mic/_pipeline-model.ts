@@ -23,6 +23,7 @@
 /** The ordered pipeline stages a trace record can describe. Extended in U1 with
  *  the previously-implicit stages so the dev ledger is faithful to runPipeline. */
 export type PipelineStage =
+  | 'question-dedup'
   | 'empty-query'
   | 'heuristic-gate'
   | 'llm-judge'
@@ -141,6 +142,7 @@ export const STATUS_LABEL: Record<DisplayStatus, string> = {
 export type LedgerRowId =
   | 'threshold'
   | 'cooldown'
+  | 'question-dedup'
   | 'empty-query'
   | 'relevance'
   | 'router'
@@ -173,6 +175,7 @@ export interface CatalogRow {
 export const STAGE_CATALOG: readonly CatalogRow[] = [
   { id: 'threshold', code: 'PRE', name: 'Utterance gate', engine: 'min-length · finality threshold', derived: true },
   { id: 'cooldown', code: 'PRE', name: 'Cooldown', engine: 'per-doc emit cooldown', derived: true },
+  { id: 'question-dedup', code: 'PRE', name: 'Question dedup', engine: 'KTD4 · semantic near-duplicate suppression (adapter)' },
   { id: 'empty-query', code: 'S04', name: 'Empty-query gate', engine: 'trimmed length check' },
   { id: 'relevance', code: 'S05', name: 'Relevance gate', engine: 'KTD3 · heuristic → Haiku judge', mergeFrom: ['heuristic-gate', 'llm-judge'] },
   { id: 'router', code: 'S06', name: 'Router (parallel)', engine: 'intent classifier · skill registry' },
@@ -203,8 +206,13 @@ export interface LedgerRow extends CatalogRow {
 /** Map a single wire record to a display status (pre-stop-propagation). */
 function statusOf(rec: StageRecord): DisplayStatus {
   if (rec.status === 'short_circuited') {
-    // A relevance/heuristic stop is a skip; a no-hits/refusal stop is a miss.
-    if (rec.stage === 'heuristic-gate' || rec.stage === 'llm-judge' || rec.stage === 'empty-query') {
+    // A relevance/heuristic/dedup stop is a skip; a no-hits/refusal stop is a miss.
+    if (
+      rec.stage === 'heuristic-gate' ||
+      rec.stage === 'llm-judge' ||
+      rec.stage === 'empty-query' ||
+      rec.stage === 'question-dedup'
+    ) {
       return 'skip';
     }
     return 'miss';
@@ -310,7 +318,12 @@ export function deriveOutcome(trace: UtteranceTrace | null): Outcome {
   let type: OutcomeType = 'pending';
   let sub = '';
 
-  if (has('reveal')?.status === 'ran') {
+  if (has('question-dedup')?.status === 'short_circuited') {
+    // Adapter-gate parity (KTD4): suppressed before the core as a semantic
+    // near-duplicate of an already-answered question.
+    type = 'skip';
+    sub = 'near-duplicate of an already-answered question';
+  } else if (has('reveal')?.status === 'ran') {
     type = 'grounded';
     const cites = numberFrom(has('reveal')?.data, 'citations');
     const cards = numberFrom(has('emit')?.data, 'cards');
@@ -361,6 +374,7 @@ export interface RibbonSegment {
 const RIBBON: { id: LedgerRowId; label: string }[] = [
   { id: 'threshold', label: 'threshold' },
   { id: 'cooldown', label: 'cooldown' },
+  { id: 'question-dedup', label: 'q-dedup' },
   { id: 'empty-query', label: 'empty' },
   { id: 'relevance', label: 'relevance' },
   { id: 'hybrid-search', label: 'floor' },
