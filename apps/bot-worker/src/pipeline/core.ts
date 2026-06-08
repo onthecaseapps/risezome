@@ -259,11 +259,13 @@ export async function runPipeline(
       summary !== undefined &&
       ((summary.current_topic?.length ?? 0) > 0 || summary.open_questions.length > 0);
     // Recent finals (the immediate anaphora antecedent) — the rolling summary
-    // lags, so feed the classifier the recent turns too, the same window the
-    // synthesizer + relevance gate already get. Lets a follow-up like "how many
-    // of these issues" resolve the pronoun to the established entity and route to
-    // the skill instead of falling back to RAG. (KTD1/KTD2.)
-    const recentFinals = input.recentContext ?? [];
+    // lags, so feed the classifier the recent turns too. Prefer the UN-VOIDED
+    // router window (`routerRecentFinals`): a grounded answer voids its whole
+    // span out of `recentContext` (Mechanism A), which would strip the very
+    // antecedent a follow-up like "how many of these issues" needs. The voided
+    // `recentContext` is the synthesizer's window and the back-compat fallback
+    // (eval/legacy callers that set only it). (KTD1/KTD2.)
+    const recentFinals = input.routerRecentFinals ?? input.recentContext ?? [];
     const hasContext = hasSummaryContext || recentFinals.length > 0;
     classifierPromise = deps.routerClassifier.classify(
       {

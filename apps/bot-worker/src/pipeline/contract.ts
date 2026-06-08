@@ -81,6 +81,17 @@ export interface PipelineInput {
    * assembled by the caller from its own source state.
    */
   readonly recentContext?: readonly string[];
+  /**
+   * Recent finals for the ROUTER/intent classifier's anaphora resolution —
+   * the raw recent turns with answered spans RETAINED (un-voided), most-recent
+   * last. Distinct from `recentContext`, which is the answer-VOIDED window
+   * (Mechanism A) the synthesizer/query-build use. The two diverge by design:
+   * after a grounded answer the synthesizer must not re-feed the answered span,
+   * but the classifier MUST still see it to resolve a follow-up pronoun ("how
+   * many of THESE issues") against the turn that was just answered. When absent,
+   * the classifier falls back to `recentContext` (eval/legacy callers).
+   */
+  readonly routerRecentFinals?: readonly string[];
   /** Rolling-summary snapshot at call-fire time. Drives classifier context
    *  (current_topic + open_questions) and the env-gated key_terms boost. */
   readonly lastSummary?: MeetingSummary;

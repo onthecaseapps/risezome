@@ -912,4 +912,51 @@ describe('runPipeline — router classifier context (U2)', () => {
     expect(captured).toHaveLength(1);
     expect(captured[0]!.context).toBeUndefined();
   });
+
+  it('prefers the UN-VOIDED routerRecentFinals over the (voided) recentContext for the classifier', async () => {
+    // The motivating bug: a grounded answer voids the antecedent out of
+    // recentContext (synthesizer window), but the classifier must still see it.
+    const captured: CapturedClassify[] = [];
+    const { deps } = makeDeps({
+      routerClassifier: capturingClassifier(captured),
+      skillRegistry: toolRegistry(),
+      synthesizer: fakeSynthesizer('STATUS: answer\n[1: "forty two"]'),
+    });
+    const sink = new TracingSink();
+    await runPipeline(
+      input({
+        utteranceText: 'how many of these issues are there',
+        // recentContext has been voided of the github antecedent (Mechanism A)…
+        recentContext: ['the participant is checking whether the transcript is working'],
+        // …but the un-voided router window retains it.
+        routerRecentFinals: ['are there any open github issues'],
+      }),
+      deps,
+      sink,
+    );
+    expect(captured).toHaveLength(1);
+    // The classifier got the un-voided antecedent, NOT the voided synthesizer window.
+    expect(captured[0]!.context?.recent_finals).toEqual(['are there any open github issues']);
+    // The synthesizer-facing priorContext still reflects the (voided) recentContext.
+    expect(sink.traces[0]!.priorContext).toEqual([
+      'the participant is checking whether the transcript is working',
+    ]);
+  });
+
+  it('falls back to recentContext for the classifier when routerRecentFinals is absent (back-compat)', async () => {
+    const captured: CapturedClassify[] = [];
+    const { deps } = makeDeps({
+      routerClassifier: capturingClassifier(captured),
+      skillRegistry: toolRegistry(),
+    });
+    await runPipeline(
+      input({
+        utteranceText: 'how many github issues are there',
+        recentContext: ['are there any open github issues'],
+      }),
+      deps,
+      new RecordingSink(),
+    );
+    expect(captured[0]!.context?.recent_finals).toEqual(['are there any open github issues']);
+  });
 });
