@@ -54,6 +54,21 @@ describe('formatReplaySummary (U5)', () => {
     expect(out).toContain('@ 0:05');
   });
 
+  it('does NOT report a grounded question-lane utterance as "suppressed at: heuristic-gate" (bypass is not a stop)', () => {
+    const questionLaneGrounded: StageRecord[] = [
+      // The question lane bypasses the relevance gate — short_circuited but NOT a
+      // suppression; the utterance proceeds and grounds.
+      { stage: 'heuristic-gate', status: 'short_circuited', decision: 'bypassed', reason: 'question_lane', latencyMs: 0 },
+      { stage: 'reveal', status: 'ran', decision: 'revealed', data: { citations: 4 }, latencyMs: 12 },
+    ];
+    const out = formatReplaySummary(
+      [u({ utteranceId: 'q', text: 'is the transcript working' })],
+      new Map([['q', trace('q', questionLaneGrounded)]]),
+    );
+    expect(out).toContain('outcome: grounded');
+    expect(out).not.toContain('suppressed at:'); // the bypass must not read as a suppression
+  });
+
   it('shows a near-duplicate question as a skip (KTD4 adapter parity), with its reason', () => {
     const qdedup: StageRecord = {
       stage: 'question-dedup',

@@ -61,11 +61,16 @@ function relevanceLine(trace: UtteranceTrace): string {
   return parts.length > 0 ? parts.join(' → ') : 'not recorded';
 }
 
-/** Any stage that stopped the pipeline (skip/miss/ungrounded/refusal), so a
- *  suppressed utterance is never silently omitted. */
+/** Any stage that genuinely STOPPED the pipeline (skip/miss/ungrounded/refusal),
+ *  so a suppressed utterance is never silently omitted. Excludes the question-
+ *  lane heuristic-gate BYPASS: that's a short-circuit (the question lane skips
+ *  the relevance gate) but NOT a suppression — the utterance proceeds and may
+ *  ground, so reporting it as "suppressed at: heuristic-gate" is misleading. */
 function suppressionLine(trace: UtteranceTrace): string | null {
   const stop = trace.stages.find(
-    (s) => s.status === 'short_circuited' || (s.stage === 'citation-verify' && s.decision === 'ungrounded'),
+    (s) =>
+      (s.status === 'short_circuited' && s.decision !== 'bypassed') ||
+      (s.stage === 'citation-verify' && s.decision === 'ungrounded'),
   );
   if (stop === undefined) return null;
   return `${stop.stage} — ${stop.decision ?? stop.status} (${stop.reason ?? 'n/a'})`;
