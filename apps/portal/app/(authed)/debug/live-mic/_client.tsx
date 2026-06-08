@@ -21,6 +21,13 @@ import {
 } from './_trace-panel';
 import { OutputsPanel, type OutputCard, type OutputTab } from './_outputs-panel';
 import { deriveOutcome, type OutcomeType } from './_pipeline-model';
+import { parseTranscriptFile, type ReplayUtterance } from './_replay-source';
+import {
+  computeSchedule,
+  DEFAULT_CADENCE,
+  type ReplayCadence,
+  type ScheduledUtterance,
+} from './_replay-driver';
 
 /**
  * Client component for the local-mic debug page. Opens a WebSocket to
@@ -223,6 +230,21 @@ function DebugInner({
   const [outputTab, setOutputTab] = useState<OutputTab>('retrievals');
   const wsRef = useRef<WebSocket | null>(null);
 
+  // U3 transcript replay: load a captured transcript + timings, replay through
+  // the same WS at faithful (long-gap-capped) cadence. Refs hold the live timer
+  // loop state so pause/resume/restart don't re-render every tick.
+  const [replayUtterances, setReplayUtterances] = useState<ReplayUtterance[]>([]);
+  const [replayMeetingId, setReplayMeetingId] = useState('');
+  const [replayState, setReplayState] = useState<'idle' | 'playing' | 'paused' | 'done'>('idle');
+  const [replaySent, setReplaySent] = useState(0);
+  const [cadence, setCadence] = useState<ReplayCadence>(DEFAULT_CADENCE);
+  const [replayError, setReplayError] = useState<string | null>(null);
+  const replayTimersRef = useRef<number[]>([]);
+  const replaySchedRef = useRef<ScheduledUtterance[]>([]);
+  const replaySentRef = useRef(0);
+  const replayElapsedRef = useRef(0);
+  const replayStartWallRef = useRef(0);
+
   const handleEvent = useCallback((evt: DebugEvent) => {
     switch (evt.type) {
       case 'utterance': {
@@ -396,8 +418,117 @@ function DebugInner({
     return () => {
       wsRef.current?.close();
       wsRef.current = null;
+      for (const t of replayTimersRef.current) window.clearTimeout(t);
     };
   }, []);
+
+  // ── U3 replay control ──────────────────────────────────────────────────────
+  const sendWs = useCallback((payload: Record<string, unknown>): boolean => {
+    const ws = wsRef.current;
+    if (ws === null || ws.readyState !== 1) return false;
+    ws.send(JSON.stringify(payload));
+    return true;
+  }, []);
+
+  const clearReplayTimers = useCallback(() => {
+    for (const t of replayTimersRef.current) window.clearTimeout(t);
+    replayTimersRef.current = [];
+  }, []);
+
+  const onReplayLoaded = useCallback((us: ReplayUtterance[]) => {
+    setReplayUtterances(us);
+    setReplayState('idle');
+    setReplaySent(0);
+    replaySentRef.current = 0;
+    replayElapsedRef.current = 0;
+  }, []);
+
+  const loadReplayFromMeeting = useCallback(async () => {
+    const id = replayMeetingId.trim();
+    if (id.length === 0) return;
+    setReplayError(null);
+    try {
+      const res = await fetch(`/api/debug/replay-transcript?meetingId=${encodeURIComponent(id)}`);
+      const json = (await res.json()) as { ok: boolean; utterances?: ReplayUtterance[]; error?: string };
+      if (!res.ok || !json.ok || json.utterances === undefined) {
+        setReplayError(json.error ?? `load failed (${String(res.status)})`);
+        return;
+      }
+      onReplayLoaded(json.utterances);
+    } catch (e) {
+      setReplayError(String(e));
+    }
+  }, [replayMeetingId, onReplayLoaded]);
+
+  const loadReplayFromFile = useCallback(
+    async (file: File) => {
+      setReplayError(null);
+      try {
+        const parsed = parseTranscriptFile(await file.text());
+        if (parsed.length === 0) {
+          setReplayError('no utterances parsed from file');
+          return;
+        }
+        onReplayLoaded(parsed);
+      } catch (e) {
+        setReplayError(String(e));
+      }
+    },
+    [onReplayLoaded],
+  );
+
+  const playReplay = useCallback(() => {
+    if (replayUtterances.length === 0) return;
+    if (wsRef.current?.readyState !== 1) {
+      setReplayError('Start the session first (the replay drives the live pipeline over the WS).');
+      return;
+    }
+    setReplayError(null);
+    // Fresh run from idle/done resets the sidecar + schedule; resume keeps elapsed.
+    if (replayState !== 'paused') {
+      sendWs({ type: 'replay-reset' });
+      replaySchedRef.current = computeSchedule(replayUtterances, cadence);
+      replaySentRef.current = 0;
+      replayElapsedRef.current = 0;
+      setReplaySent(0);
+    }
+    const schedule = replaySchedRef.current;
+    setReplayState('playing');
+    replayStartWallRef.current = Date.now();
+    clearReplayTimers();
+    schedule.forEach((s, i) => {
+      if (i < replaySentRef.current) return; // already sent (resume)
+      const fireIn = Math.max(0, s.offsetMs - replayElapsedRef.current);
+      const timer = window.setTimeout(() => {
+        sendWs({
+          type: 'replay-utterance',
+          utteranceId: s.utterance.utteranceId,
+          text: s.utterance.text,
+          speaker: s.utterance.speaker,
+          startMs: s.utterance.startMs,
+        });
+        replaySentRef.current = i + 1;
+        setReplaySent(i + 1);
+        if (i + 1 >= schedule.length) setReplayState('done');
+      }, fireIn);
+      replayTimersRef.current.push(timer);
+    });
+  }, [replayUtterances, cadence, replayState, sendWs, clearReplayTimers]);
+
+  const pauseReplay = useCallback(() => {
+    clearReplayTimers();
+    replayElapsedRef.current += Date.now() - replayStartWallRef.current;
+    setReplayState('paused');
+  }, [clearReplayTimers]);
+
+  const restartReplay = useCallback(() => {
+    clearReplayTimers();
+    sendWs({ type: 'replay-reset' });
+    replaySentRef.current = 0;
+    replayElapsedRef.current = 0;
+    setReplaySent(0);
+    setReplayState('idle');
+  }, [clearReplayTimers, sendWs]);
 
   const reset = useCallback(() => {
     // Clears the debug-specific panels. The HUD reducer (synthesis cards)
@@ -503,6 +634,100 @@ function DebugInner({
       </header>
 
       <SummaryStrip summary={currentSummary} summaryAt={summaryAt} />
+
+      <div className="mb-4 rounded-lg border border-border bg-card px-3 py-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Replay</span>
+          <input
+            value={replayMeetingId}
+            onChange={(e) => setReplayMeetingId(e.target.value)}
+            placeholder="meeting ID"
+            className="w-72 rounded-md border border-border bg-bg px-2 py-1 font-mono text-[11px]"
+          />
+          <button
+            type="button"
+            onClick={() => void loadReplayFromMeeting()}
+            className="rounded-md border border-border bg-card px-2 py-1 font-medium hover:bg-accent-soft"
+          >
+            Load meeting
+          </button>
+          <label className="cursor-pointer rounded-md border border-border bg-card px-2 py-1 font-medium hover:bg-accent-soft">
+            Load file
+            <input
+              type="file"
+              accept=".txt,.json,.jsonl,.md"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f !== undefined) void loadReplayFromFile(f);
+              }}
+            />
+          </label>
+          <span className="text-muted">{replayUtterances.length} utterances</span>
+
+          <span className="mx-1 h-4 w-px bg-border" />
+
+          {replayState === 'playing' ? (
+            <button
+              type="button"
+              onClick={pauseReplay}
+              className="rounded-md border border-border bg-card px-2 py-1 font-medium hover:bg-accent-soft"
+            >
+              Pause
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={playReplay}
+              disabled={replayUtterances.length === 0}
+              className="rounded-md bg-accent px-2 py-1 font-medium text-white hover:bg-accent-press disabled:opacity-40"
+            >
+              {replayState === 'paused' ? 'Resume' : 'Play'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={restartReplay}
+            disabled={replayUtterances.length === 0}
+            className="rounded-md border border-border bg-card px-2 py-1 font-medium text-muted hover:text-fg disabled:opacity-40"
+          >
+            Restart
+          </button>
+          <span className="tabular-nums text-muted">
+            {replaySent}/{replayUtterances.length}
+          </span>
+
+          <span className="mx-1 h-4 w-px bg-border" />
+
+          <label className="flex items-center gap-1 text-muted">
+            speed×
+            <input
+              type="number"
+              min={0.25}
+              step={0.25}
+              value={cadence.speed}
+              onChange={(e) =>
+                setCadence((c) => ({ ...c, speed: Number(e.target.value) > 0 ? Number(e.target.value) : c.speed }))
+              }
+              className="w-14 rounded-md border border-border bg-bg px-1 py-0.5 tabular-nums"
+            />
+          </label>
+          <label className="flex items-center gap-1 text-muted">
+            max gap ms
+            <input
+              type="number"
+              min={0}
+              step={500}
+              value={cadence.maxGapMs}
+              onChange={(e) =>
+                setCadence((c) => ({ ...c, maxGapMs: Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : c.maxGapMs }))
+              }
+              className="w-20 rounded-md border border-border bg-bg px-1 py-0.5 tabular-nums"
+            />
+          </label>
+          {replayError !== null ? <span className="text-rose-400">{replayError}</span> : null}
+        </div>
+      </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(220px,260px)_1fr_minmax(340px,440px)] gap-4">
         <Panel title={`Utterances (${utterances.length})`}>
