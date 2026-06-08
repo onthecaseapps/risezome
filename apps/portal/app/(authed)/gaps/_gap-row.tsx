@@ -57,7 +57,9 @@ export function GapRow({
       <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
         <div className="flex items-center gap-2">
           <span className="truncate font-medium text-fg">{gap.title}</span>
-          {gap.extraPhrasings > 0 ? (
+          {/* "+N phrasings" is content-derived (reads 0 for non-content viewers
+              under the tightened gap_occurrences RLS) — hide it for them. */}
+          {gap.canViewContent && gap.extraPhrasings > 0 ? (
             <span className="flex-none rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-accent">
               +{gap.extraPhrasings} phrasings
             </span>
@@ -69,35 +71,43 @@ export function GapRow({
           ) : null}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted">
-          <span
-            className="inline-flex items-center gap-1"
-            title="People who asked"
-            aria-label={`${gap.people} ${gap.people === 1 ? 'person' : 'people'} asked`}
-          >
-            <PersonGlyph />
-            {gap.people}
-          </span>
-          <span
-            className="inline-flex items-center gap-1"
-            title="Meetings where this came up"
-            aria-label={`${gap.meetings} ${gap.meetings === 1 ? 'meeting' : 'meetings'}`}
-          >
-            <VideoGlyph />
-            {gap.meetings}
-          </span>
+          {/* people / meetings / moments are content-derived aggregates (0 for
+              non-content viewers) — drop them; keep the row-level last-asked. */}
+          {gap.canViewContent ? (
+            <>
+              <span
+                className="inline-flex items-center gap-1"
+                title="People who asked"
+                aria-label={`${gap.people} ${gap.people === 1 ? 'person' : 'people'} asked`}
+              >
+                <PersonGlyph />
+                {gap.people}
+              </span>
+              <span
+                className="inline-flex items-center gap-1"
+                title="Meetings where this came up"
+                aria-label={`${gap.meetings} ${gap.meetings === 1 ? 'meeting' : 'meetings'}`}
+              >
+                <VideoGlyph />
+                {gap.meetings}
+              </span>
+            </>
+          ) : null}
           {lastAsked !== null ? (
             <span className="inline-flex items-center gap-1" title="Last asked">
               <ClockGlyph />
               {lastAsked}
             </span>
           ) : null}
-          <span
-            className="inline-flex items-center gap-1 text-accent"
-            title="Conversation moments — open to view"
-          >
-            <MomentsGlyph />
-            {gap.moments} {gap.moments === 1 ? 'moment' : 'moments'}
-          </span>
+          {gap.canViewContent ? (
+            <span
+              className="inline-flex items-center gap-1 text-accent"
+              title="Conversation moments — open to view"
+            >
+              <MomentsGlyph />
+              {gap.moments} {gap.moments === 1 ? 'moment' : 'moments'}
+            </span>
+          ) : null}
         </div>
       </button>
 

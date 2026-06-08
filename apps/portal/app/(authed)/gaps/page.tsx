@@ -123,7 +123,10 @@ export default async function GapsPage(): Promise<ReactElement> {
 
   // Per-gap aggregates: prefer the single-round-trip RPC, fall back to a JS
   // tally over the occurrences we already loaded.
-  const stats = new Map<string, { people: number; meetings: number; moments: number; phrasings: number }>();
+  const stats = new Map<
+    string,
+    { people: number; meetings: number; moments: number; phrasings: number; canViewContent: boolean }
+  >();
   if (gapIds.length > 0) {
     const { data: statRows, error: statErr } = await supabase.rpc('knowledge_gaps_stats', {
       p_gap_ids: gapIds,
@@ -135,20 +138,24 @@ export default async function GapsPage(): Promise<ReactElement> {
         meetings: number;
         moments: number;
         phrasings: number;
+        can_view_content: boolean;
       }>) {
         stats.set(r.gap_id, {
           people: r.people ?? 0,
           meetings: r.meetings ?? 0,
           moments: r.moments ?? 0,
           phrasings: r.phrasings ?? 0,
+          canViewContent: r.can_view_content ?? false,
         });
       }
     } else {
+      // Fallback (RPC absent): if we loaded any occurrences for a gap, RLS let us
+      // read its content, so canViewContent is true; gaps with none default false.
       for (const [gapId, list] of occByGap.entries()) {
         const people = new Set(list.map((o) => o.askerName)).size;
         const meetings = new Set(list.map((o) => o.meetingId)).size;
         const phrasings = new Set(list.map((o) => o.verbatimQuestion)).size;
-        stats.set(gapId, { people, meetings, moments: list.length, phrasings });
+        stats.set(gapId, { people, meetings, moments: list.length, phrasings, canViewContent: true });
       }
     }
   }
@@ -182,7 +189,13 @@ export default async function GapsPage(): Promise<ReactElement> {
   }
 
   const gapViews: GapView[] = gaps.map((g) => {
-    const s = stats.get(g.gap_id) ?? { people: 0, meetings: 0, moments: 0, phrasings: 0 };
+    const s = stats.get(g.gap_id) ?? {
+      people: 0,
+      meetings: 0,
+      moments: 0,
+      phrasings: 0,
+      canViewContent: false,
+    };
     const occurrences = occByGap.get(g.gap_id) ?? [];
     return {
       gapId: g.gap_id,
@@ -204,6 +217,7 @@ export default async function GapsPage(): Promise<ReactElement> {
       moments: s.moments,
       // "+N phrasings" pill = distinct verbatim minus the canonical title.
       extraPhrasings: Math.max(0, s.phrasings - 1),
+      canViewContent: s.canViewContent,
       occurrences,
     };
   });

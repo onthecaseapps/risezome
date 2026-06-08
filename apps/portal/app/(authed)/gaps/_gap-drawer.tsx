@@ -226,46 +226,60 @@ export function GapDrawer({
             </div>
           </Block>
 
-          {/* merged phrasings */}
-          {phrasings.length > 0 ? (
-            <Block label={`Merged phrasings · ${String(phrasings.length)}`}>
-              <ul className="flex flex-col gap-1.5">
-                {phrasings.map((p, i) => (
-                  <li key={`${p}-${String(i)}`} className="border-l-2 border-border pl-3 text-sm italic text-muted">
-                    “{p}”
-                  </li>
-                ))}
-              </ul>
-            </Block>
-          ) : null}
+          {/* CONTENT tier (verbatim paraphrases + captured moments) — gated to
+              meeting participants. An outsider-assignee or org-wide-share viewer
+              (canViewContent=false) sees the gap ROW above but not the room's
+              verbatim; the occurrence list comes back empty under RLS anyway, and
+              we never render the "Open moment" deep-link for them. */}
+          {gap.canViewContent ? (
+            <>
+              {/* merged phrasings */}
+              {phrasings.length > 0 ? (
+                <Block label={`Merged phrasings · ${String(phrasings.length)}`}>
+                  <ul className="flex flex-col gap-1.5">
+                    {phrasings.map((p, i) => (
+                      <li key={`${p}-${String(i)}`} className="border-l-2 border-border pl-3 text-sm italic text-muted">
+                        “{p}”
+                      </li>
+                    ))}
+                  </ul>
+                </Block>
+              ) : null}
 
-          {/* moments */}
-          <Block label={`Where it was asked · ${String(gap.moments)} ${gap.moments === 1 ? 'moment' : 'moments'}`}>
-            <ul className="flex flex-col gap-4">
-              {gap.occurrences.map((o) => (
-                <li key={o.occurrenceId} className="flex flex-col gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <Avatar name={o.askerName} size={6} />
-                    <span className="text-sm font-medium text-fg">{o.askerName}</span>
-                    <span className="text-xs text-muted">{shortDate(o.askedAtIso)}</span>
-                  </div>
-                  <p className="border-l-2 border-border pl-3 text-sm italic text-muted">“{o.verbatimQuestion}”</p>
-                  <div className="flex items-center justify-between gap-2 pl-3">
-                    <span className="inline-flex items-center gap-1.5 text-xs text-muted">
-                      <VideoGlyph />
-                      {o.meetingTitle.length > 0 ? o.meetingTitle : 'Untitled meeting'}
-                    </span>
-                    <a
-                      href={momentHref(o.meetingId, o.utteranceId)}
-                      className="text-xs font-medium text-accent hover:underline"
-                    >
-                      Open moment →
-                    </a>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </Block>
+              {/* moments */}
+              <Block label={`Where it was asked · ${String(gap.moments)} ${gap.moments === 1 ? 'moment' : 'moments'}`}>
+                <ul className="flex flex-col gap-4">
+                  {gap.occurrences.map((o) => (
+                    <li key={o.occurrenceId} className="flex flex-col gap-1.5">
+                      <div className="flex items-center gap-2">
+                        <Avatar name={o.askerName} size={6} />
+                        <span className="text-sm font-medium text-fg">{o.askerName}</span>
+                        <span className="text-xs text-muted">{shortDate(o.askedAtIso)}</span>
+                      </div>
+                      <p className="border-l-2 border-border pl-3 text-sm italic text-muted">“{o.verbatimQuestion}”</p>
+                      <div className="flex items-center justify-between gap-2 pl-3">
+                        <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+                          <VideoGlyph />
+                          {o.meetingTitle.length > 0 ? o.meetingTitle : 'Untitled meeting'}
+                        </span>
+                        <a
+                          href={momentHref(o.meetingId, o.utteranceId)}
+                          className="text-xs font-medium text-accent hover:underline"
+                        >
+                          Open moment →
+                        </a>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </Block>
+            </>
+          ) : (
+            <p className="rounded-lg border border-border bg-card/40 px-3.5 py-3 text-sm leading-relaxed text-muted">
+              You’re assigned this question but weren’t in the original meeting — the paraphrases and the
+              captured moment are hidden.
+            </p>
+          )}
 
           {/* audit footer */}
           <p className="border-t border-border pt-4 text-xs leading-relaxed text-muted">

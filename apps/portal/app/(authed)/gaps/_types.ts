@@ -37,6 +37,13 @@ export interface GapView {
   moments: number;
   /** distinct verbatim_question count minus the canonical title (clamped ≥ 0). */
   extraPhrasings: number;
+  /**
+   * Whether the viewer may see this gap's verbatim paraphrases + captured
+   * moments. False for an outsider-assignee or org-wide-share viewer who can see
+   * the gap ROW (title/status) but not the room's content (gap_occurrences /
+   * "open moment" deep-link). Mirrors the can_view_gap_content RLS predicate.
+   */
+  canViewContent: boolean;
   occurrences: GapOccurrenceView[];
 }
 

@@ -61,6 +61,7 @@ if (!stackReachable && !FORCE) {
     let manager: TestUser; // manager of org A
     let participant: TestUser; // member of org A, viewer of the seeded gap
     let nonParticipant: TestUser; // member of org A, NOT a viewer
+    let superAdmin: TestUser; // super_admin of org A (master key)
     let outsider: TestUser; // member of org B
     let orgA: string;
     let meetingA: string;
@@ -72,11 +73,16 @@ if (!stackReachable && !FORCE) {
       manager = await createTestUser(admin, 'rls-gaps-mgr@example.com');
       participant = await createTestUser(admin, 'rls-gaps-part@example.com');
       nonParticipant = await createTestUser(admin, 'rls-gaps-non@example.com');
+      superAdmin = await createTestUser(admin, 'rls-gaps-sa@example.com');
       outsider = await createTestUser(admin, 'rls-gaps-out@example.com');
 
       orgA = await createOrgWithMember(admin, 'Gaps Org A', manager.id, 'manager');
       await addMember(admin, orgA, participant.id, 'member');
       await addMember(admin, orgA, nonParticipant.id, 'member');
+      // super_admin role is the org master key for both ROW and CONTENT tiers.
+      await admin
+        .from('org_members')
+        .insert({ org_id: orgA, user_id: superAdmin.id, role: 'super_admin' });
       // Outsider belongs to a different org entirely (cross-org isolation).
       await createOrgWithMember(admin, 'Gaps Org B', outsider.id, 'manager');
 
@@ -90,7 +96,7 @@ if (!stackReachable && !FORCE) {
     });
 
     afterAll(async () => {
-      for (const u of [manager, participant, nonParticipant, outsider]) {
+      for (const u of [manager, participant, nonParticipant, superAdmin, outsider]) {
         await admin.auth.admin.deleteUser(u.id).catch(() => undefined);
       }
     });
@@ -126,6 +132,43 @@ if (!stackReachable && !FORCE) {
       return (data ?? []).length === 1;
     }
 
+    async function seedOccurrence(gapId: string): Promise<void> {
+      const { error } = await admin.from('gap_occurrences').insert({
+        gap_id: gapId,
+        org_id: orgA,
+        meeting_id: meetingA,
+        utterance_id: `utt_${Math.random().toString(36).slice(2)}`,
+        verbatim_question: 'SECRET VERBATIM: where are we on the auth migration?',
+        asker_name: 'Dana',
+        reason: 'no_hits',
+      });
+      if (error !== null) throw new Error(`seed occurrence: ${error.message}`);
+    }
+
+    async function occCount(user: TestUser, gapId: string): Promise<number> {
+      const { data } = await user.client.from('gap_occurrences').select('occurrence_id').eq('gap_id', gapId);
+      return (data ?? []).length;
+    }
+
+    async function viewerCount(user: TestUser, gapId: string): Promise<number> {
+      const { data } = await user.client.from('gap_viewers').select('user_id').eq('gap_id', gapId);
+      return (data ?? []).length;
+    }
+
+    interface StatRow {
+      gap_id: string;
+      people: number;
+      meetings: number;
+      moments: number;
+      phrasings: number;
+      can_view_content: boolean;
+    }
+    async function statFor(user: TestUser, gapId: string): Promise<StatRow | null> {
+      const { data } = await user.client.rpc('knowledge_gaps_stats', { p_gap_ids: [gapId] });
+      const rows = (data ?? []) as StatRow[];
+      return rows.find((r) => r.gap_id === gapId) ?? null;
+    }
+
     it('a viewer can SELECT the gap; a non-viewer member cannot', async () => {
       const gapId = await seedGap({ viewers: [participant.id] });
       expect(await canSelectGap(participant, gapId)).toBe(true);
@@ -144,12 +187,13 @@ if (!stackReachable && !FORCE) {
       expect(await canSelectGap(nonParticipant, gapId)).toBe(true);
     });
 
-    it('an assignee does NOT gain gap visibility (metadata-only, U5) and cannot directly PATCH', async () => {
+    it('an assignee sees the gap ROW (re-added branch) but still cannot directly PATCH', async () => {
       const gapId = await seedGap({ assignee: nonParticipant.id });
-      // Teams restructure (KTD6): assignment no longer grants can_view_gap. A
-      // non-attendee assignee sees the question/asker/metrics ONLY via
-      // list_assigned_questions, never the gap row or its verbatim occurrences.
-      expect(await canSelectGap(nonParticipant, gapId)).toBe(false);
+      // Content gate (20260611010000) re-adds the assignee branch to can_view_gap:
+      // a non-attendee assignee CAN now see the gap ROW (title/status) so they can
+      // resolve the assigned question. (Verbatim stays gated by can_view_gap_content
+      // — covered by the CONTENT gate tests below.)
+      expect(await canSelectGap(nonParticipant, gapId)).toBe(true);
 
       // And a direct PATCH must be denied (no client UPDATE policy) — otherwise an
       // assignee could escalate a private gap org-wide by PATCHing shared_with_org.
@@ -250,6 +294,76 @@ if (!stackReachable && !FORCE) {
         .select('occurrence_id')
         .eq('gap_id', gapId);
       expect((nonViewerSees.data ?? []).length).toBe(0);
+    });
+
+    // ── CONTENT gate (20260611010000_gap_content_gate) ──────────────────────
+    // ROW (knowledge_gaps) = participant ∪ shared-with-org ∪ super-admin ∪
+    // ASSIGNEE. CONTENT (gap_occurrences / gap_viewers) = participant ∪
+    // super-admin ONLY — NOT shared-with-org, NOT the assignee.
+
+    it('an outsider-assignee sees the gap ROW but NOT its content (occurrences/viewers/stats)', async () => {
+      // nonParticipant is the assignee but was never seeded as a gap_viewer.
+      const gapId = await seedGap({ assignee: nonParticipant.id, viewers: [participant.id] });
+      await seedOccurrence(gapId);
+
+      // ROW visible (assignee branch re-added → can see + resolve the question).
+      expect(await canSelectGap(nonParticipant, gapId)).toBe(true);
+      // CONTENT hidden: occurrences + viewers come back empty.
+      expect(await occCount(nonParticipant, gapId)).toBe(0);
+      expect(await viewerCount(nonParticipant, gapId)).toBe(0);
+
+      // Stats: can_view_content=false and the content aggregates read 0.
+      const s = await statFor(nonParticipant, gapId);
+      expect(s).not.toBeNull();
+      expect(s?.can_view_content).toBe(false);
+      expect(s?.moments).toBe(0);
+      expect(s?.people).toBe(0);
+      expect(s?.meetings).toBe(0);
+      expect(s?.phrasings).toBe(0);
+    });
+
+    it('a shared-with-org non-participant sees the gap ROW but NOT its content (tightened)', async () => {
+      // Previously shared_with_org could read occurrences — the gate removes that.
+      const gapId = await seedGap({ shared: true, viewers: [participant.id] });
+      await seedOccurrence(gapId);
+
+      expect(await canSelectGap(nonParticipant, gapId)).toBe(true);
+      expect(await occCount(nonParticipant, gapId)).toBe(0);
+      expect(await viewerCount(nonParticipant, gapId)).toBe(0);
+
+      const s = await statFor(nonParticipant, gapId);
+      expect(s?.can_view_content).toBe(false);
+      expect(s?.moments).toBe(0);
+    });
+
+    it('a participant sees both the gap ROW and its content; stats can_view_content=true', async () => {
+      const gapId = await seedGap({ viewers: [participant.id] });
+      await seedOccurrence(gapId);
+
+      expect(await canSelectGap(participant, gapId)).toBe(true);
+      expect(await occCount(participant, gapId)).toBe(1);
+      expect(await viewerCount(participant, gapId)).toBe(1);
+
+      const s = await statFor(participant, gapId);
+      expect(s?.can_view_content).toBe(true);
+      expect(s?.moments).toBe(1);
+      expect(s?.people).toBe(1);
+      expect(s?.meetings).toBe(1);
+    });
+
+    it('a super_admin (master key) sees both the gap ROW and its content; stats can_view_content=true', async () => {
+      const gapId = await seedGap({ viewers: [participant.id] });
+      await seedOccurrence(gapId);
+
+      expect(await canSelectGap(superAdmin, gapId)).toBe(true);
+      expect(await occCount(superAdmin, gapId)).toBe(1);
+      // gap_viewers includes the participant; the super-admin reads it via the
+      // master key even though they aren't a viewer themselves.
+      expect(await viewerCount(superAdmin, gapId)).toBe(1);
+
+      const s = await statFor(superAdmin, gapId);
+      expect(s?.can_view_content).toBe(true);
+      expect(s?.moments).toBe(1);
     });
 
     it('cross-org isolation: an outsider cannot see org A gaps or sections', async () => {
