@@ -145,7 +145,13 @@ export function newRetrievalRuntime(): RetrievalRuntime {
   return {
     recentFinals: [],
     utteranceCountSinceLastRetrieval: 0,
-    lastRetrievalAt: 0,
+    // "Never fired" sentinel: `now - NEGATIVE_INFINITY === Infinity`, never < the
+    // cooldown, so the FIRST utterance always passes the cooldown gate on ANY
+    // clock. Prod is unaffected (wall-clock `now` is huge, already passed a 0
+    // baseline). Critical for the injected logical clock: a replay's first
+    // utterance has `startMs ≈ 0`, which against a `0` baseline would otherwise
+    // be spuriously cooldown-suppressed.
+    lastRetrievalAt: Number.NEGATIVE_INFINITY,
     questionFireTimestamps: [],
     questionFireCount: 0,
     answeredQuestions: [],

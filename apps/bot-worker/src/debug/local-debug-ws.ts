@@ -244,7 +244,8 @@ export async function handleLocalDebugWs(
         const traceEvt = skipReasonToTrace(res.skipped, {
           traceId: `gate_${utterance.utteranceId}`,
           utteranceId: utterance.utteranceId,
-          meetingId: args.orgId,
+          // Mirror the adapter call's scope: the scoped meeting when replaying one.
+          meetingId: replayMeetingId ?? args.orgId,
           // The adapter owns the real prior-context window; [] is acceptable here.
           priorContext: [],
         });
@@ -395,7 +396,10 @@ export function parseReplayInbound(raw: string): ReplayInbound | null {
   const text = typeof m.text === 'string' ? m.text.trim() : '';
   const utteranceId = typeof m.utteranceId === 'string' ? m.utteranceId : '';
   if (text.length === 0 || utteranceId.length === 0) return null;
-  const startMs = typeof m.startMs === 'number' && Number.isFinite(m.startMs) ? m.startMs : 0;
+  // Clamp to >= 0: startMs is the replay's logical clock; a negative value would
+  // drive the cooldown / near-dup recency windows negative (now - at < 0).
+  const startMs =
+    typeof m.startMs === 'number' && Number.isFinite(m.startMs) ? Math.max(0, m.startMs) : 0;
   const utterance: Utterance = {
     utteranceId,
     text,

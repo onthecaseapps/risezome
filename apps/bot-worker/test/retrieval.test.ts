@@ -449,4 +449,40 @@ describe('maybeRetrieveAndEmit — injected clock + sink factory (U1 seams)', ()
     expect(rt.answeredSourceSets).toHaveLength(1);
     expect(rt.answeredSourceSets[0]!.at).toBe(1_000_000); // recorded with the injected clock
   });
+
+  it('a fresh runtime fires the first AMBIENT utterance even at now=0 (never-fired sentinel)', async () => {
+    // Regression: a replay injects now=startMs, and a real meeting's first
+    // utterance has startMs≈0. With the old lastRetrievalAt=0 baseline this hit
+    // `now - 0 < COOLDOWN_MS` and was spuriously cooldown-suppressed. The
+    // NEGATIVE_INFINITY sentinel makes the first fire always pass on any clock.
+    const rt = newRetrievalRuntime();
+    const res = await maybeRetrieveAndEmit({ ...baseArgs(rt, 'so the build is green now'), now: 0 });
+    expect(res.skipped).toBeUndefined();
+  });
+});
+
+describe('maybeRetrieveAndEmit — unscoped whole-org retrieval (U3 seam)', () => {
+  beforeEach(() => {
+    h.runPipeline.mockClear();
+    h.sinkArgs.length = 0;
+  });
+
+  it('unscoped:true SKIPS the meeting_effective_source_ids RPC (whole-org, no source filter)', async () => {
+    const rt = newRetrievalRuntime();
+    const db = fakeDb();
+    const res = await maybeRetrieveAndEmit({
+      ...baseArgs(rt, 'what ai models do we use'),
+      db: db as never,
+      unscoped: true,
+    });
+    expect(res.skipped).toBeUndefined();
+    expect(db.rpc).not.toHaveBeenCalled(); // no scope resolution → whole-org
+  });
+
+  it('the default (scoped) path resolves the effective source set via the RPC', async () => {
+    const rt = newRetrievalRuntime();
+    const db = fakeDb();
+    await maybeRetrieveAndEmit({ ...baseArgs(rt, 'what ai models do we use'), db: db as never });
+    expect(db.rpc).toHaveBeenCalledWith('meeting_effective_source_ids', { p_meeting_id: 'm1' });
+  });
 });

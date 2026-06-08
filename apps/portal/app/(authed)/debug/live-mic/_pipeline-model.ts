@@ -165,8 +165,10 @@ export interface CatalogRow {
   code: string; // 'PRE' | 'S04'..'S17'
   name: string;
   engine: string;
-  /** Portal-derived (not from the trace) — threshold/cooldown aren't gated in
-   *  the dev path, so they render as informational "not gated in dev" rows. */
+  /** Portal-derived row (threshold/cooldown). Rendered as an informational
+   *  "not gated in dev" row ONLY when the trace carries no record for the stage;
+   *  once the debug path runs the prod adapter it CAN emit a real skip record for
+   *  these, in which case buildLedger renders them as a real SKIP stop. */
   derived?: boolean;
   /** When set, this display row is built by merging these wire stages (KTD3). */
   mergeFrom?: PipelineStage[];
@@ -251,13 +253,15 @@ export function buildLedger(trace: UtteranceTrace | null): LedgerRow[] {
     // the debug path it can emit an actual short-circuit record for these
     // stages, in which case they render as real SKIP stops (like question-dedup).
     if (cat.derived && !byStage.has(cat.id as PipelineStage)) {
-      // Portal-derived PRE rows: not gated in the dev path (R9).
+      // No skip record for this gate on this utterance → informational row (the
+      // gate ran in the adapter but didn't suppress; a suppression would carry a
+      // record and render as a real SKIP above).
       return {
         ...cat,
         status: 'info',
         latencyMs: null,
-        result: 'not gated in dev — runs in the prod adapter only',
-        detail: [['applies', 'prod Recall path only'], ['dev', 'runPipeline called directly — no throttle']],
+        result: 'did not gate this utterance',
+        detail: [['gate', 'ran in the adapter — no suppression recorded']],
         records: [],
       };
     }

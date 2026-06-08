@@ -134,12 +134,12 @@ describe('buildLedger', () => {
     for (const row of ledger.slice(idxRel + 1)) expect(row.status).toBe('notreached');
   });
 
-  it('threshold + cooldown render as informational "not gated in dev" rows (R9)', () => {
+  it('threshold + cooldown render as informational rows when no skip record exists (R9)', () => {
     const ledger = buildLedger(GROUNDED);
     for (const id of ['threshold', 'cooldown'] as const) {
       const row = ledger.find((r) => r.id === id)!;
       expect(row.status).toBe('info');
-      expect(row.result).toMatch(/not gated in dev/i);
+      expect(row.result).toMatch(/did not gate this utterance/i);
     }
   });
 
