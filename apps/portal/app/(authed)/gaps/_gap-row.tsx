@@ -114,13 +114,18 @@ export function GapRow({
       {/* right */}
       <div className="flex flex-none items-center gap-2.5">
         <StatusPill status={gap.status} />
-        {gap.assigneeId !== null ? (
-          <Avatar name={gap.assigneeName ?? '?'} size={7} />
-        ) : isManager ? (
-          <AssignButton members={members} onAssign={onAssign} />
-        ) : (
-          <span className="text-xs text-muted">Unassigned</span>
-        )}
+        {/* Fixed-width, right-aligned assignee slot so the status pill lands at
+            the same x on every row regardless of the assignee state (avatar vs.
+            the wider "Unassigned" text / Assign button). */}
+        <div className="flex w-24 justify-end">
+          {gap.assigneeId !== null ? (
+            <Avatar name={gap.assigneeName ?? '?'} size={7} />
+          ) : isManager ? (
+            <AssignButton members={members} onAssign={onAssign} />
+          ) : (
+            <span className="text-xs text-muted">Unassigned</span>
+          )}
+        </div>
         <OverflowMenu
           isManager={isManager}
           onOpen={onOpen}
