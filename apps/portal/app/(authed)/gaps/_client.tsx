@@ -132,7 +132,7 @@ export function GapsClient({
         <div>
           <h1 className="text-4xl font-bold tracking-tight">Knowledge gaps</h1>
           <p className="mt-2 max-w-xl text-pretty text-muted">
-            Questions Risezome couldn&apos;t answer in meetings — captured automatically and ranked by how
+            Questions Risezome couldn&apos;t answer in meetings, captured automatically and ranked by how
             often your team asks.
           </p>
         </div>
@@ -275,8 +275,15 @@ export function GapsClient({
             const section = group.sectionId !== null ? (sectionById.get(group.sectionId) ?? null) : null;
             const otherSections = sections.filter((s) => s.sectionId !== group.sectionId);
             return (
-              <section key={group.key} className="overflow-hidden rounded-2xl border border-border">
-                <div className="flex items-center justify-between gap-3 bg-card/40 px-4 py-2.5">
+              <section key={group.key} className="rounded-2xl border border-border">
+                {/* No overflow-hidden on the section — it would clip a row's kebab
+                    dropdown (which opens below the row). Round the header + last
+                    row directly so corners stay clean in both states. */}
+                <div
+                  className={`flex items-center justify-between gap-3 bg-card/40 px-4 py-2.5 ${
+                    isCollapsed ? 'rounded-2xl' : 'rounded-t-2xl'
+                  }`}
+                >
                   <button
                     type="button"
                     onClick={() => toggleSection(group.key)}

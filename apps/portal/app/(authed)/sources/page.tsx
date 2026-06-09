@@ -251,7 +251,7 @@ export default async function SourcesPage(props: {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Sources</h1>
           <p className="mt-1.5 max-w-xl text-sm text-muted">
-            Configured per team — pick whole accounts or specific repos, boards and projects for the
+            Configured per team. Pick whole accounts or specific repos, boards and projects for the
             team to search.
           </p>
         </div>
@@ -384,7 +384,7 @@ function EmptyConnectState(): ReactElement {
     <div className="rounded-xl border border-border bg-card p-10 text-center">
       <h2 className="text-lg font-semibold tracking-tight">No connections yet</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted">
-        Connect GitHub, Jira, Confluence or Trello to start indexing — then choose which repos,
+        Connect GitHub, Jira, Confluence or Trello to start indexing, then choose which repos,
         projects, spaces or boards this team searches.
       </p>
     </div>

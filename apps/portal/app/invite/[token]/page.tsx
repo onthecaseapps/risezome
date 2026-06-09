@@ -66,8 +66,8 @@ export default async function InvitePage({
       <p className="mt-2 text-sm text-muted">
         as a {role === 'manager' ? 'manager' : 'member'}
         {role === 'manager'
-          ? ' — you’ll be able to manage sources, settings, the bot, and members.'
-          : ' — you’ll see your own upcoming meetings and captures.'}
+          ? '. You’ll be able to manage sources, settings, the bot, and members.'
+          : '. You’ll see your own upcoming meetings and captures.'}
       </p>
 
       {errorCode !== undefined && (

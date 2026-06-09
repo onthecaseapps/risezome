@@ -20,7 +20,7 @@ export function GapsEmptyState({ isManager = false }: { isManager?: boolean }): 
       </span>
       <h2 className="text-lg font-semibold tracking-tight">No knowledge gaps yet</h2>
       <p className="mt-2 text-pretty text-sm leading-relaxed text-muted">
-        When Risezome can&apos;t answer a question in a meeting, it&apos;ll surface here automatically —
+        When Risezome can&apos;t answer a question in a meeting, it&apos;ll surface here automatically:
         merged, ranked by demand, and grouped into sections. Nothing to set up.
       </p>
       <div className="mt-6 flex items-center gap-3">

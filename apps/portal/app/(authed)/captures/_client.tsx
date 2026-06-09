@@ -86,7 +86,7 @@ export function CapturesClient({
         <h1 className="text-4xl font-bold tracking-tight">Captures</h1>
         <p className="mt-2 text-pretty text-muted">
           The shared library of past meetings for{' '}
-          <span className="font-medium text-fg">{orgName}</span> — workspace-visible captures plus
+          <span className="font-medium text-fg">{orgName}</span>: workspace-visible captures plus
           any private ones you can see.
         </p>
       </header>
@@ -192,7 +192,8 @@ function FilterSelect({
 
 function CaptureCardView({ capture: c }: { capture: CaptureCard }): ReactElement {
   const dur = durationMin(c);
-  const time = c.startedAtIso !== null ? formatTime(c.startedAtIso) : formatTime(c.createdAtIso);
+  const whenIso = c.startedAtIso ?? c.createdAtIso;
+  const when = `${formatDate(whenIso)} · ${formatTime(whenIso)}`;
   return (
     <a
       href={`/meetings/${c.meetingId}/review`}
@@ -201,7 +202,7 @@ function CaptureCardView({ capture: c }: { capture: CaptureCard }): ReactElement
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <PlatformIcon platform={c.platform} />
-          <span className="text-sm text-muted">{time}</span>
+          <span className="text-sm text-muted">{when}</span>
         </div>
         <div className="flex items-center gap-2">
           <span className={`text-sm font-medium ${PLATFORM_TEXT[c.platform]}`}>
@@ -225,9 +226,18 @@ function CaptureCardView({ capture: c }: { capture: CaptureCard }): ReactElement
 
       <div className="mt-4 flex items-center justify-between border-t border-border/70 pt-3.5">
         <div className="flex items-center gap-3.5 text-xs text-muted">
-          <Metric icon={<SparkleGlyph />} value={c.answersCount} label="answers given" accent />
-          <Metric icon={<LayersGlyph />} value={c.sourcesCount} label="sources surfaced" />
-          {dur !== null ? <Metric icon={<ClockGlyph />} value={`${String(dur)}m`} label="duration" /> : null}
+          <Metric
+            icon={<SparkleGlyph />}
+            value={c.answersCount}
+            unit={c.answersCount === 1 ? 'answer' : 'answers'}
+            accent
+          />
+          <Metric
+            icon={<LayersGlyph />}
+            value={c.sourcesCount}
+            unit={c.sourcesCount === 1 ? 'source' : 'sources'}
+          />
+          {dur !== null ? <Metric icon={<ClockGlyph />} value={dur} unit="min" /> : null}
         </div>
         <SpeakerAvatars speakers={c.speakers} />
       </div>
@@ -259,22 +269,23 @@ function firstLine(text: string): string {
 function Metric({
   icon,
   value,
-  label,
+  unit,
   accent = false,
 }: {
   icon: ReactElement;
   value: number | string;
-  label: string;
+  /** Visible label after the value, e.g. "answers", "sources", "min". */
+  unit: string;
   accent?: boolean;
 }): ReactElement {
   return (
     <span
-      title={label}
-      aria-label={`${String(value)} ${label}`}
-      className={`inline-flex items-center gap-1 tabular-nums ${accent ? 'text-accent' : ''}`}
+      aria-label={`${String(value)} ${unit}`}
+      className={`inline-flex items-center gap-1 ${accent ? 'text-accent' : ''}`}
     >
       {icon}
-      {value}
+      <span className="tabular-nums">{value}</span>
+      <span>{unit}</span>
     </span>
   );
 }
@@ -377,7 +388,7 @@ function EmptyState(): ReactElement {
     <div className="rounded-2xl border border-dashed border-border bg-card/40 px-6 py-16 text-center">
       <h2 className="text-lg font-semibold tracking-tight">No captures yet</h2>
       <p className="mx-auto mt-2 max-w-sm text-pretty text-sm text-muted">
-        Meetings the Risezome bot attended appear here once they wrap — your workspace’s shared
+        Meetings the Risezome bot attended appear here once they wrap. They form your workspace’s shared
         library, plus any private meetings you can see. Toggle the bot on for a meeting on the{' '}
         <a href="/upcoming" className="text-accent hover:underline">
           Upcoming
@@ -394,6 +405,11 @@ function durationMin(c: CaptureCard): number | null {
   if (c.startedAtIso === null || c.endedAtIso === null) return null;
   const m = Math.round((new Date(c.endedAtIso).getTime() - new Date(c.startedAtIso).getTime()) / 60_000);
   return m >= 0 ? m : null;
+}
+
+/** Short calendar date for the card's top line, e.g. "Jun 9". */
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function formatTime(iso: string): string {

@@ -234,7 +234,7 @@ function InviteCard(): ReactElement {
             onChange={(v) => { setCanInviteBot(v); setLink(null); }}
           />
           <span className="font-medium text-fg">Can invite the bot to their meetings</span>
-          <span className="hidden text-muted sm:inline">— lets them add Risezome to calls they own.</span>
+          <span className="hidden text-muted sm:inline">Lets them add Risezome to calls they own.</span>
         </label>
         <button
           type="button"

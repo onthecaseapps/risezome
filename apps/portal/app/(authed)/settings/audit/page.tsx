@@ -176,7 +176,7 @@ export default async function AuditLogPage(): Promise<ReactElement> {
         <p className="text-xs uppercase tracking-wider text-muted">Settings</p>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Audit log</h1>
         <p className="mt-1.5 text-sm text-muted">
-          Every privileged permission event in <span className="text-fg">{orgName}</span> — privacy
+          Every privileged permission event in <span className="text-fg">{orgName}</span>: privacy
           changes, admin overrides, role changes, and master-key access. Visible to Super Admins
           only; the log is append-only.
         </p>

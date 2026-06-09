@@ -125,8 +125,8 @@ export default async function AskPage(props: {
 
       {query.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-card/40 p-8 text-center text-sm text-muted">
-          Type a query above. This page is for sanity-checking the indexer&apos;s output —
-          it shows raw chunks with no synthesis layer.
+          Type a query above. This page is for sanity-checking the indexer&apos;s output. It shows
+          raw chunks with no synthesis layer.
         </div>
       ) : null}
     </div>

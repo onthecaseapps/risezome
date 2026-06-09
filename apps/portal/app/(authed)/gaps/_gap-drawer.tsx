@@ -276,7 +276,7 @@ export function GapDrawer({
             </>
           ) : (
             <p className="rounded-lg border border-border bg-card/40 px-3.5 py-3 text-sm leading-relaxed text-muted">
-              You’re assigned this question but weren’t in the original meeting — the paraphrases and the
+              You’re assigned this question but weren’t in the original meeting, so the paraphrases and the
               captured moment are hidden.
             </p>
           )}
