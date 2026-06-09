@@ -46,7 +46,7 @@ export function GapRow({
     gap.lastAskedAtIso !== null && now !== null ? relativeTime(gap.lastAskedAtIso, now) : null;
 
   return (
-    <div className="flex items-center gap-4 border-b border-border px-4 py-3.5 last:border-b-0 hover:bg-card/40">
+    <div className="flex items-center gap-4 border-b border-border px-4 py-3.5 last:rounded-b-2xl last:border-b-0 hover:bg-card/40">
       {/* demand */}
       <div className="flex w-10 flex-none flex-col items-center">
         <span className={`text-lg font-bold tabular-nums ${tier.text}`}>{gap.frequency}×</span>
