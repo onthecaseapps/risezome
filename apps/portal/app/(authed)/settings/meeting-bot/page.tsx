@@ -39,8 +39,8 @@ export default async function MeetingBotSettingsPage(): Promise<ReactElement> {
     <div className="mx-auto max-w-3xl px-6 py-8">
       <header className="mb-6">
         <p className="text-xs uppercase tracking-wider text-muted">Settings</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Meeting bot</h1>
-        <p className="mt-1.5 text-sm text-muted">
+        <h1 className="mt-1 text-4xl font-bold tracking-tight">Meeting bot</h1>
+        <p className="mt-2 text-pretty text-muted">
           Defaults for <span className="text-fg">{orgName}</span>. Apply to every meeting unless overridden per-meeting.
         </p>
       </header>

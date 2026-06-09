@@ -10,8 +10,8 @@ export function SettingsStub({ title, blurb }: { title: string; blurb: string })
     <div className="mx-auto max-w-3xl px-6 py-8">
       <header className="mb-6">
         <p className="text-xs uppercase tracking-wider text-muted">Settings</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{title}</h1>
-        <p className="mt-1.5 text-sm text-muted">{blurb}</p>
+        <h1 className="mt-1 text-4xl font-bold tracking-tight">{title}</h1>
+        <p className="mt-2 text-pretty text-muted">{blurb}</p>
       </header>
       <div className="rounded-xl border border-dashed border-border bg-card/50 px-6 py-12 text-center">
         <p className="text-sm font-medium text-fg">Coming soon</p>

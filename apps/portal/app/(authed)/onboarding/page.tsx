@@ -32,8 +32,8 @@ export default async function OnboardingPage({
     <main className="mx-auto flex min-h-dvh max-w-lg flex-col items-center justify-center px-6 py-12">
       <div className="w-full space-y-8">
         <header className="flex flex-col items-center gap-3 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">Welcome to Risezome</h1>
-          <p className="max-w-sm text-sm text-muted">
+          <h1 className="text-4xl font-bold tracking-tight">Welcome to Risezome</h1>
+          <p className="max-w-sm text-pretty text-muted">
             A workspace is your team&apos;s private corner of Risezome. Its members, sources, and
             the answers grounded from them all live inside it. Name your first one to begin.
           </p>

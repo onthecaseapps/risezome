@@ -249,8 +249,8 @@ export default async function SourcesPage(props: {
       <SourcesAutoRefresh shouldPoll={hasInflight} />
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Sources</h1>
-          <p className="mt-1.5 max-w-xl text-sm text-muted">
+          <h1 className="text-4xl font-bold tracking-tight">Sources</h1>
+          <p className="mt-2 max-w-xl text-pretty text-muted">
             Configured per team. Pick whole accounts or specific repos, boards and projects for the
             team to search.
           </p>

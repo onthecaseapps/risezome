@@ -77,9 +77,9 @@ export default async function LiveMeetingsListPage(): Promise<ReactElement> {
             aria-hidden="true"
             className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-rose-400"
           />
-          <h1 className="text-2xl font-semibold tracking-tight">Live meetings</h1>
+          <h1 className="text-4xl font-bold tracking-tight">Live meetings</h1>
         </div>
-        <p className="mt-1.5 text-sm text-muted">
+        <p className="mt-2 text-pretty text-muted">
           {meetings.length === 0
             ? `No meetings recording right now in `
             : `Meetings the bot is currently recording in `}

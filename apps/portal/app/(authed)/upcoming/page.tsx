@@ -76,8 +76,8 @@ export default async function UpcomingPage(): Promise<ReactElement> {
     <div className="mx-auto max-w-5xl px-6 py-8">
       <header className="mb-6 flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Upcoming meetings</h1>
-          <p className="mt-1.5 text-sm text-muted">
+          <h1 className="text-4xl font-bold tracking-tight">Upcoming meetings</h1>
+          <p className="mt-2 text-pretty text-muted">
             {formatHeaderDate()} {todayCount > 0 ? `· ${todayCount} today` : '· no meetings today'}
             <span className="ml-1 text-muted/70">· {orgName}</span>
           </p>

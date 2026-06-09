@@ -18,8 +18,8 @@ export default async function NewOrgPage({
   return (
     <main className="mx-auto max-w-md px-6 py-12">
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Create a new workspace</h1>
-        <p className="mt-2 text-sm text-muted">
+        <h1 className="text-4xl font-bold tracking-tight">Create a new workspace</h1>
+        <p className="mt-2 text-pretty text-muted">
           You&apos;ll be added as the admin. Switch between workspaces from the sidebar.
         </p>
       </header>

@@ -51,10 +51,10 @@ export default function WhatsNewPage(): ReactElement {
           >
             Risezome
           </Link>
-          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-[#1a1a1c] dark:text-white">
+          <h1 className="mt-1.5 text-4xl font-bold tracking-tight text-[#1a1a1c] dark:text-white">
             What&rsquo;s new
           </h1>
-          <p className="mt-1 text-sm text-black/55 dark:text-white/55">
+          <p className="mt-2 text-pretty text-black/55 dark:text-white/55">
             The latest improvements to your meeting copilot.
           </p>
 
