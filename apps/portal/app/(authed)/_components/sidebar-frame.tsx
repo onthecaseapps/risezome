@@ -56,7 +56,7 @@ export function SidebarFrame({ nav }: { nav: ReactNode }): ReactElement {
           Risezome
         </span>
       </Link>
-      <nav className="flex-1 space-y-0.5 px-2 py-3">{nav}</nav>
+      <nav className="flex flex-1 flex-col space-y-0.5 px-2 py-3">{nav}</nav>
       <div className="border-t border-border px-2 py-2">
         <button
           type="button"

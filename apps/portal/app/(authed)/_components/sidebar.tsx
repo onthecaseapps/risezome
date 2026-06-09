@@ -115,9 +115,11 @@ export async function Sidebar(): Promise<ReactElement> {
          *  internal-only surfaces (live-mic, /ask retrieval probe)
          *  don't ship to end users. NODE_ENV is set by Next.js based
          *  on `next dev` vs `next build` — no separate flag needed. */}
+        {/* mt-auto pins the Dev section to the BOTTOM of the nav (above the
+            collapse toggle), out of the way of the primary nav. */}
         {process.env.NODE_ENV === 'development' && (
-          <>
-            <div className="mt-4 px-3 pb-1 text-[10px] uppercase tracking-wider text-muted group-data-[collapsed=true]/sb:hidden">
+          <div className="mt-auto space-y-0.5 pt-4">
+            <div className="px-3 pb-1 text-[10px] uppercase tracking-wider text-muted group-data-[collapsed=true]/sb:hidden">
               Dev
             </div>
             <SidebarNavLink
@@ -138,7 +140,7 @@ export async function Sidebar(): Promise<ReactElement> {
               icon={<DebugIcon />}
               label="Corpus eval"
             />
-          </>
+          </div>
         )}
         </>
       }
