@@ -249,6 +249,10 @@ export default async function SourcesPage(props: {
     });
   }
 
+  // Every card surfaces the workspace default preset (for the "Inherit" label
+  // in its filtering editor).
+  for (const c of cards) c.orgDefaultPreset = orgPolicyPreset;
+
   const banner = readBanner(searchParams);
   const allItems = cards.flatMap((c) => c.items);
   const hasInflight = allItems.some((it) => it.status === 'pending' || it.status === 'indexing');

@@ -5,6 +5,7 @@ import { useMenuBehaviors } from '../_components/overlay';
 import { setItemForTeamAction } from './team-source-toggle-action';
 import { reindexSourceAction } from './reindex-action';
 import { SourceItemList, type Provider, type SourceItem } from './_source-item-list';
+import { CardFilterEditor } from './_card-filter-editor';
 
 /**
  * A single connection card (U2): GitHub renders one per installation; Jira,
@@ -31,6 +32,8 @@ export interface ConnectionCardData {
   /** External ids selected for the team (drives checked state + master toggle). */
   selectedExternalIds: string[];
   installationId?: number;
+  /** Workspace default filtering preset (for the "Inherit" option label). */
+  orgDefaultPreset?: string;
 }
 
 export function ConnectionCard({
@@ -70,6 +73,22 @@ export function ConnectionCard({
   }
 
   const allSelected = data.items.length > 0 && data.items.every((it) => selected.has(it.externalId));
+
+  // Card-level filtering: applies to every source under this connection. The
+  // representative preset is the common per-source override, or null (inherit).
+  const cardSourceIds = useMemo(
+    () => data.items.map((it) => it.sourceId).filter((id): id is string => id !== undefined),
+    [data.items],
+  );
+  const overridePresets = useMemo(
+    () => data.items.filter((it) => it.sourceId !== undefined).map((it) => it.presetKey ?? null),
+    [data.items],
+  );
+  const uniqueOverrides = new Set(overridePresets);
+  const cardPreset = uniqueOverrides.size === 1 ? (overridePresets[0] ?? null) : null;
+  const orgDefaultPreset = data.orgDefaultPreset ?? 'recommended';
+  const filterPillLabel =
+    uniqueOverrides.size > 1 ? 'Mixed' : cardPreset === null ? presetLabel(orgDefaultPreset) : presetLabel(cardPreset);
 
   function localSet(externalId: string, on: boolean): void {
     setSelected((prev) => {
@@ -132,6 +151,15 @@ export function ConnectionCard({
         </div>
 
         <div className="relative flex flex-shrink-0 items-center gap-2">
+          {cardSourceIds.length > 0 ? (
+            <span
+              className="hidden items-center gap-1 rounded-full border border-border bg-bg px-2 py-0.5 text-[11px] font-medium text-muted sm:inline-flex"
+              title="Active corpus filtering. Expand to change."
+            >
+              <FilterIcon />
+              {filterPillLabel}
+            </span>
+          ) : null}
           <MasterToggle
             checked={allSelected}
             disabled={bulkPending || data.items.length === 0}
@@ -217,6 +245,16 @@ export function ConnectionCard({
         // Scope the rounded-corner clip to the expandable list so the card root
         // can stay overflow-visible — otherwise it clips the kebab dropdown.
         <div className="overflow-hidden rounded-b-xl">
+          {cardSourceIds.length > 0 ? (
+            <div className="border-t border-border px-4 py-4">
+              <CardFilterEditor
+                provider={data.provider}
+                sourceIds={cardSourceIds}
+                currentPreset={cardPreset}
+                orgDefaultPreset={orgDefaultPreset}
+              />
+            </div>
+          ) : null}
           <SourceItemList
             provider={data.provider}
             teamId={teamId}
@@ -227,6 +265,26 @@ export function ConnectionCard({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function presetLabel(key: string): string {
+  return key === 'index_everything'
+    ? 'Index everything'
+    : key === 'code_only'
+      ? 'Code only'
+      : key === 'recommended'
+        ? 'Recommended'
+        : key === 'custom'
+          ? 'Custom'
+          : key;
+}
+
+function FilterIcon(): ReactElement {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+    </svg>
   );
 }
 
