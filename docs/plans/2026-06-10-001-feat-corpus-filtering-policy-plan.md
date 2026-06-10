@@ -1,6 +1,6 @@
 ---
 title: "feat: Configurable corpus filtering policy"
-status: active
+status: completed
 date: 2026-06-10
 type: feat
 origin: docs/brainstorms/2026-06-10-corpus-filtering-policy-requirements.md
