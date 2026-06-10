@@ -5,7 +5,8 @@ import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
 import { getInstallationOctokit } from '../../../app/_lib/github-app';
 import { chunkIssue } from '../../lib/github/chunk-issues';
 import type { GithubIssue } from '../../lib/github/issue-types';
-import { reconcile, clearDocChunks } from '../lib/corpus-reconcile';
+import { reconcile, writeReconciledDoc, type CorpusWriteClient } from '../lib/corpus-reconcile';
+import { pgCorpusWriter } from '../lib/corpus-pg';
 import { mapWithConcurrency } from '../lib/concurrency';
 import {
   contextualizeChunks,
@@ -176,12 +177,13 @@ export const indexGithubIssuesFn = inngest.createFunction(
     const embedder = new VoyageEmbedder({ apiKey: requireEnv('VOYAGE_API_KEY') });
     const contextGenerator = optionalContextGenerator();
     const docSummarizer = optionalDocSummarizer();
+    const corpusWriter = pgCorpusWriter(); // direct Postgres write (bypasses REST/WAF)
     const BATCH_SIZE = 20;
     let totalChunks = 0;
     for (let i = 0; i < toIndexIssues.length; i += BATCH_SIZE) {
       const batch = toIndexIssues.slice(i, i + BATCH_SIZE);
       const result = await step.run(`index-issues-batch-${String(i)}`, async () => {
-        return await indexBatch({ batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator, docSummarizer });
+        return await indexBatch({ batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator, docSummarizer, corpusWriter });
       });
       totalChunks += result.chunks;
     }
@@ -198,20 +200,16 @@ export const indexGithubIssuesFn = inngest.createFunction(
 
 /**
  * Embed + upsert a batch of new/changed issues, one issue at a time so a
- * single failure can't corrupt the others. Atomicity contract (R2/F5):
+ * single failure can't corrupt the others. The corpus write itself goes
+ * through writeReconciledDoc on the direct-Postgres writer, which commits
+ * clear-on-changed + doc + chunks + embeddings + content_hash in ONE
+ * transaction (so a crash mid-write rolls back atomically — no half-written
+ * doc that reads as "unchanged" forever) and bypasses the REST/Cloudflare WAF.
  *
- *   1. For a CHANGED issue, clearDocChunks first — its chunk count may have
- *      shrunk (a long body edited down leaves trailing chunkIds orphaned).
- *   2. Upsert the doc with content_hash = NULL (the FK needs the doc row
- *      before chunks; a null hash marks the doc as "not yet whole").
- *   3. Upsert chunks, then embeddings.
- *   4. Only after all of that commits, set content_hash = the fingerprint.
- *
- * If embedding fails mid-way for a CHANGED issue we've already cleared its
- * old chunks, so leaving content_hash null (or throwing) is the only safe
- * move — a future reindex sees hash=null ≠ desired hash, treats it as
- * changed, and rebuilds it. We throw so Inngest retries the batch. For a
- * NEW issue there's nothing to corrupt, so we skip it and continue.
+ * Embedding happens BEFORE the write. If it fails for a CHANGED issue we throw
+ * so Inngest retries the batch (the old version is left intact since nothing
+ * has been written yet); for a NEW issue there's nothing to corrupt, so we
+ * skip it and continue.
  */
 async function indexBatch(args: {
   batch: readonly GithubIssue[];
@@ -222,9 +220,9 @@ async function indexBatch(args: {
   kindByDocId: ReadonlyMap<string, 'new' | 'changed'>;
   contextGenerator: ContextGenerator | undefined;
   docSummarizer: DocSummarizer | undefined;
+  corpusWriter: CorpusWriteClient;
 }): Promise<{ issues: number; chunks: number }> {
-  const { batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator, docSummarizer } = args;
-  const service = createServiceRoleClient();
+  const { batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator, docSummarizer, corpusWriter } = args;
 
   const perDoc = await mapWithConcurrency(batch, docConcurrency(), async (issue) => {
     const { doc, chunks } = chunkIssue(orgId, ownerRepo, issue);
@@ -258,104 +256,67 @@ async function indexBatch(args: {
       embeddings = await embedder.embed({ items: embedItems });
     } catch (err) {
       if (err instanceof EmbeddingRateLimitError) throw err;
-      // A changed issue hasn't been cleared yet (we clear below, after a
-      // successful embed), so skipping here leaves the old version intact.
+      // Nothing has been written yet (the atomic writeDoc runs after embed),
+      // so the old version is intact. Throw for a changed issue to force a
+      // retry; skip a new one.
       if (kind === 'changed') {
         throw new Error(`embed failed for changed issue ${doc.docId}: ${String(err)}`);
       }
       return { issues: 0, chunks: 0 };
     }
 
-    // Changed: drop stale chunks/embeddings before re-inserting. Cascade
-    // deletes the matching corpus_chunk_embeddings rows.
-    if (kind === 'changed') {
-      await clearDocChunks(service, doc.docId, orgId);
-    }
-
-    const { error: docErr } = await service.from('docs').upsert({
-      id: doc.docId,
-      org_id: orgId,
-      source_id: sourceId,
-      source: 'github',
-      type: doc.type,
-      title: doc.title,
-      body_summary: doc.bodySummary,
-      entities: doc.entities,
-      authors: doc.authors,
-      url: doc.url,
-      provenance: 'untrusted',
-      updated_at: doc.updatedAt,
-      content_hash: null, // marked whole only after chunks+embeddings commit
-    });
-    if (docErr !== null) {
-      throw new Error(`docs upsert failed for ${doc.docId}: ${docErr.message}`);
-    }
-
-    const chunkRows: Array<{
-      chunk_id: string;
-      org_id: string;
-      doc_id: string;
+    // Build the chunk rows (body chunks in order, then the optional summary
+    // chunk). embedItems is index-aligned with this list, so vectors[i]
+    // matches writeChunks[i].
+    const writeChunks: Array<{
+      chunkId: string;
       domain: string;
       text: string;
       context: string;
-      is_summary: boolean;
+      isSummary?: boolean;
       position: number;
-      source_id: string;
     }> = chunks.map((c, i) => ({
-      chunk_id: c.chunkId,
-      org_id: orgId,
-      source_id: sourceId, // U4: denormalized for the retrieval source filter
-      doc_id: c.docId,
+      chunkId: c.chunkId,
       domain: c.domain,
       text: c.text,
       context: contexts[i] ?? '',
-      is_summary: false,
       position: c.position,
     }));
     if (summary.length > 0) {
-      chunkRows.push({
-        chunk_id: `${doc.docId}::summary`,
-        org_id: orgId,
-        source_id: sourceId,
-        doc_id: doc.docId,
+      writeChunks.push({
+        chunkId: `${doc.docId}::summary`,
         domain: 'text',
         text: summary,
         context: '',
-        is_summary: true,
+        isSummary: true,
         position: chunks.length,
       });
     }
-    const { error: chunkErr } = await service
-      .from('doc_chunks')
-      .upsert(chunkRows, { onConflict: 'chunk_id' });
-    if (chunkErr !== null) {
-      throw new Error(`doc_chunks upsert failed for ${doc.docId}: ${chunkErr.message}`);
-    }
 
-    const embedRows = embedItems.map((it, i) => ({
-      chunk_id: it.id,
-      org_id: orgId,
-      source_id: sourceId, // U4: denormalized for the retrieval source filter
-      domain: it.domain, // domain-partitioned dense search
-      embedding: arrayToVectorLiteral(embeddings.vectors[i]!.vector),
-    }));
-    const { error: embErr } = await service
-      .from('corpus_chunk_embeddings')
-      .upsert(embedRows, { onConflict: 'chunk_id' });
-    if (embErr !== null) {
-      throw new Error(`embeddings upsert failed for ${doc.docId}: ${embErr.message}`);
-    }
-
-    // Now the doc is whole — stamp the fingerprint so the next reindex can
-    // skip it as unchanged.
-    const { error: hashErr } = await service
-      .from('docs')
-      .update({ content_hash: contentHash(chunks.map((c) => c.text)) })
-      .eq('id', doc.docId)
-      .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
-    if (hashErr !== null) {
-      throw new Error(`content_hash update failed for ${doc.docId}: ${hashErr.message}`);
-    }
+    // One atomic transaction via the direct-Postgres writer (bypasses the
+    // REST/Cloudflare WAF; clear-on-changed + doc + chunks + embeddings +
+    // content_hash commit together, so a crash mid-write rolls back).
+    await writeReconciledDoc(corpusWriter, {
+      docId: doc.docId,
+      kind,
+      // Body-only hash (summary chunk excluded), matching the reconcile desired map.
+      hash: contentHash(chunks.map((c) => c.text)),
+      doc: {
+        orgId,
+        sourceId,
+        source: 'github',
+        type: doc.type,
+        title: doc.title,
+        url: doc.url,
+        provenance: 'untrusted',
+        updatedAt: doc.updatedAt,
+        bodySummary: doc.bodySummary,
+        entities: doc.entities,
+        authors: doc.authors,
+      },
+      chunks: writeChunks,
+      embeddings: embedItems.map((_, i) => arrayToVectorLiteral(embeddings.vectors[i]!.vector)),
+    });
 
     return { issues: 1, chunks: chunks.length };
   });

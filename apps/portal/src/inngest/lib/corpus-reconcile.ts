@@ -206,79 +206,40 @@ export async function reconcile(db: SupabaseClient, input: ReconcileInput): Prom
 }
 
 /**
- * Transient-failure shapes from the Supabase REST path: Cloudflare/proxy
- * HTML error pages (PostgREST client surfaces the raw body when JSON
- * parsing fails), undici/network failures, and gateway/timeout statuses.
- * Genuine PostgREST errors (constraint violations, RLS denials, bad
- * payloads) deliberately do NOT match — retrying those just repeats them.
+ * Abstraction over the corpus WRITE path. Indexers used to write via the
+ * service-role REST (PostgREST) client, but that sits behind Supabase's
+ * Cloudflare WAF, which 403s chunk bodies containing HTML-like source. The
+ * production implementation (`pgCorpusWriter` in corpus-pg.ts) writes over a
+ * direct Postgres connection instead; tests inject an in-memory fake.
+ *
+ * Reads (`reconcile`/`readExisting`) deliberately stay on the REST client —
+ * they're small and never trip the WAF.
  */
-const TRANSIENT_DB_ERROR_RE =
-  /<!DOCTYPE|<html|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|terminat\w+ unexpectedly|Bad Gateway|Service Unavailable|Gateway Time-?out|statement timeout|too many connections/i;
-
-/** Backoff between write retries. Long enough to ride out a brief edge
- *  blip; Inngest's function-level retries remain the coarse outer layer. */
-const WRITE_RETRY_DELAYS_MS: readonly number[] = [1000, 5000, 15000];
-
-export interface WriteRetryOptions {
-  /** Override the retry backoff (tests). */
-  readonly retryDelaysMs?: readonly number[];
-}
-
-/**
- * Run one Supabase write, retrying transient transport failures with
- * backoff. One flaky Cloudflare burst previously killed a whole index run
- * (the write threw, the step exhausted Inngest's 3 function retries, and
- * onFailure marked the source errored mid-run).
- */
-async function dbWriteWithRetry(
-  label: string,
-  op: () => PromiseLike<{ error: { message: string } | null }>,
-  opts?: WriteRetryOptions,
-): Promise<void> {
-  const delays = opts?.retryDelaysMs ?? WRITE_RETRY_DELAYS_MS;
-  for (let attempt = 0; ; attempt += 1) {
-    let message: string;
-    try {
-      const { error } = await op();
-      if (error === null) return;
-      message = error.message;
-    } catch (err) {
-      // supabase-js usually returns {error}, but transport-level failures
-      // (undici fetch errors) throw — treat both through the same detector.
-      message = err instanceof Error ? err.message : String(err);
-    }
-    if (!TRANSIENT_DB_ERROR_RE.test(message) || attempt >= delays.length) {
-      throw new Error(`${label}: ${message}`);
-    }
-    console.warn(
-      `[corpus-reconcile] transient DB failure (attempt ${String(attempt + 1)}/${String(delays.length + 1)}), retrying ${label}`,
-    );
-    await new Promise((r) => setTimeout(r, delays[attempt]));
-  }
+export interface CorpusWriteClient {
+  /**
+   * Atomically (re)write one reconciled doc: clear stale chunks on a CHANGED
+   * doc, upsert the doc row, then its chunks and embeddings, stamping
+   * content_hash. Implementations SHOULD do this in a single transaction;
+   * must throw on failure so the Inngest step retries rather than committing
+   * a half-written doc that reads as "unchanged" forever (F5).
+   */
+  writeDoc(w: ReconciledDocWrite): Promise<void>;
+  /** Delete a doc's chunks (cascade clears embeddings), org-scoped. */
+  clearChunks(docId: string, orgId: string): Promise<void>;
 }
 
 /**
  * Clear a doc's chunks (and, via cascade, their embeddings) before a
  * changed-item re-index, so a shrunk item leaves no trailing-position
- * orphans. Callers must re-insert chunks + write `content_hash` only
- * AFTER the new chunks/embeddings commit, and must throw (not swallow)
- * an embed failure for a changed item — otherwise the doc is left
- * chunkless with a stale hash and is misread as "unchanged" forever.
+ * orphans. Org-scoped: doc ids are global text PKs, so the delete is bound
+ * to the owning org so a collided id can never clear another org's chunks.
  */
 export async function clearDocChunks(
-  db: SupabaseClient,
+  client: CorpusWriteClient,
   docId: string,
   orgId: string,
-  opts?: WriteRetryOptions,
 ): Promise<void> {
-  // org-scoped (defense-in-depth): doc ids are global text PKs, so scope the
-  // delete to the owning org so a collided id can never clear another org's
-  // chunks. forbid_org_move only guards UPDATE-of-org_id, not DELETE.
-  await dbWriteWithRetry(
-    `corpus-reconcile: clearDocChunks failed for ${docId}`,
-    () => db.from('doc_chunks').delete().eq('org_id', orgId).eq('doc_id', docId),
-    opts,
-  );
+  await client.clearChunks(docId, orgId);
 }
 
 /**
@@ -308,6 +269,11 @@ export interface ReconciledDocWrite {
     readonly url: string | null;
     readonly provenance: 'trusted' | 'untrusted';
     readonly updatedAt: string;
+    /** Optional doc-level metadata (issues/PRs set these; file/card docs leave
+     *  them at their column defaults). */
+    readonly bodySummary?: string;
+    readonly entities?: unknown;
+    readonly authors?: unknown;
   };
   readonly chunks: ReadonlyArray<{
     readonly chunkId: string;
@@ -326,93 +292,15 @@ export interface ReconciledDocWrite {
 }
 
 /**
- * Atomically (re)write one reconciled doc. The ordering is the load-bearing
- * part — get it wrong and a crash mid-write leaves a doc that reads as
- * "unchanged" forever while having stale or missing chunks (F5):
- *
- *   1. CHANGED → clear old chunks first (cascade clears embeddings). A
- *      shrunk item would otherwise leave trailing-position chunk orphans.
- *   2. Upsert the doc with content_hash = NULL — the FK needs the doc row
- *      before chunks, and a null hash marks it "not yet whole".
- *   3. Upsert chunks, then embeddings.
- *   4. Stamp content_hash LAST. Only now does a future reconcile see this
- *      doc as unchanged; a failure before this point leaves hash=null,
- *      which reconcile treats as changed and rebuilds.
- *
- * Throws on any DB error so Inngest retries rather than committing a
- * half-written doc.
+ * (Re)write one reconciled doc through the injected write client. The client
+ * is responsible for atomicity (the pg implementation wraps the whole write
+ * in a transaction): clear stale chunks on a CHANGED doc, upsert the doc row,
+ * its chunks and embeddings, and stamp content_hash. Throws on failure so the
+ * Inngest step retries rather than committing a half-written doc (F5).
  */
-export async function writeReconciledDoc(
-  db: SupabaseClient,
-  w: ReconciledDocWrite,
-  opts?: WriteRetryOptions,
-): Promise<void> {
+export async function writeReconciledDoc(client: CorpusWriteClient, w: ReconciledDocWrite): Promise<void> {
   if (w.chunks.length !== w.embeddings.length) {
     throw new Error(`writeReconciledDoc: chunk/embedding length mismatch for ${w.docId}`);
   }
-  if (w.kind === 'changed') {
-    await clearDocChunks(db, w.docId, w.doc.orgId, opts);
-  }
-
-  // Each write retries transient transport failures independently. That is
-  // safe under the F5 ordering: every step is idempotent (upserts / keyed
-  // update) and content_hash is stamped only after all of them succeed.
-  await dbWriteWithRetry(
-    `writeReconciledDoc: docs upsert failed for ${w.docId}`,
-    () =>
-      db.from('docs').upsert({
-        id: w.docId,
-        org_id: w.doc.orgId,
-        source_id: w.doc.sourceId,
-        source: w.doc.source,
-        type: w.doc.type,
-        title: w.doc.title,
-        url: w.doc.url,
-        provenance: w.doc.provenance,
-        updated_at: w.doc.updatedAt,
-        content_hash: null,
-      }),
-    opts,
-  );
-
-  const chunkRows = w.chunks.map((c) => ({
-    chunk_id: c.chunkId,
-    org_id: w.doc.orgId,
-    source_id: w.doc.sourceId, // U4: denormalized for the retrieval source filter
-    doc_id: w.docId,
-    domain: c.domain,
-    text: c.text,
-    context: c.context ?? null,
-    is_summary: c.isSummary ?? false,
-    position: c.position,
-  }));
-  await dbWriteWithRetry(
-    `writeReconciledDoc: doc_chunks upsert failed for ${w.docId}`,
-    () => db.from('doc_chunks').upsert(chunkRows, { onConflict: 'chunk_id' }),
-    opts,
-  );
-
-  const embedRows = w.chunks.map((c, i) => ({
-    chunk_id: c.chunkId,
-    org_id: w.doc.orgId,
-    source_id: w.doc.sourceId, // U4: denormalized for the retrieval source filter
-    domain: c.domain, // domain-partitioned dense search
-    embedding: w.embeddings[i]!,
-  }));
-  await dbWriteWithRetry(
-    `writeReconciledDoc: embeddings upsert failed for ${w.docId}`,
-    () => db.from('corpus_chunk_embeddings').upsert(embedRows, { onConflict: 'chunk_id' }),
-    opts,
-  );
-
-  await dbWriteWithRetry(
-    `writeReconciledDoc: content_hash stamp failed for ${w.docId}`,
-    () =>
-      db
-        .from('docs')
-        .update({ content_hash: w.hash })
-        .eq('org_id', w.doc.orgId) // org-scoped: never stamp a collided id's foreign row
-        .eq('id', w.docId),
-    opts,
-  );
+  await client.writeDoc(w);
 }

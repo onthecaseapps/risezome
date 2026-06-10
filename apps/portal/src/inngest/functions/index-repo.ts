@@ -14,7 +14,8 @@ import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
 import { orgScopedDocId } from '../../../app/_lib/doc-id';
 import { sanitizeStatusMessage } from '../lib/status-message';
 import { getInstallationOctokit } from '../../../app/_lib/github-app';
-import { reconcile, writeReconciledDoc } from '../lib/corpus-reconcile';
+import { reconcile, writeReconciledDoc, type CorpusWriteClient } from '../lib/corpus-reconcile';
+import { pgCorpusWriter } from '../lib/corpus-pg';
 
 /** Doc types this indexer owns — reconcile must never touch issue/PR docs
  *  that share this source_id (see corpus-reconcile R8). */
@@ -296,6 +297,7 @@ export const indexRepoFn = inngest.createFunction(
     });
     const contextGenerator = optionalContextGenerator();
     const docSummarizer = optionalDocSummarizer();
+    const corpusWriter = pgCorpusWriter(); // direct Postgres write (bypasses REST/WAF)
 
     let indexedFiles = recon.counts.unchanged; // unchanged already count as covered
     let chunkCount = 0;
@@ -322,6 +324,7 @@ export const indexRepoFn = inngest.createFunction(
           contextGenerator,
           docSummarizer,
           structureChunking,
+          corpusWriter,
         });
         // Counter update folded into the batch step (one step per batch keeps
         // big repos under Inngest's ~1000-step cap).
@@ -378,10 +381,10 @@ async function indexBatch(args: {
    *  desired-hash map, or stored hashes drift from desired and every run
    *  re-indexes everything (or never re-chunks). */
   structureChunking: boolean;
+  corpusWriter: CorpusWriteClient;
 }): Promise<{ files: number; chunks: number }> {
-  const { batch, orgId, sourceId, owner, repo, branch, installationId, embedder, contextGenerator, docSummarizer, structureChunking } = args;
+  const { batch, orgId, sourceId, owner, repo, branch, installationId, embedder, contextGenerator, docSummarizer, structureChunking, corpusWriter } = args;
   const octokit = await getInstallationOctokit(installationId);
-  const service = createServiceRoleClient();
 
   const perFile = await mapWithConcurrency(batch, docConcurrency(), async (entry) => {
     // Fetch file content. Octokit returns base64 for files; the `media`
@@ -471,16 +474,16 @@ async function indexBatch(args: {
       });
     }
 
-    // Atomic write protocol (F5) via writeReconciledDoc: clear-on-changed →
-    // doc upsert with content_hash NULL → chunks → embeddings → stamp the
-    // hash LAST, throwing on any DB error so Inngest retries. The previous
-    // inline version stamped the hash up front and swallowed chunk/embedding
-    // errors — one transient failure left a doc whose hash said "indexed"
-    // with zero chunks, which reconcile then classified as unchanged forever.
+    // Atomic write via the direct-Postgres corpus writer: the whole doc
+    // (clear-on-changed → doc → chunks → embeddings → content_hash) commits in
+    // one transaction, so a crash mid-write rolls back rather than leaving a
+    // doc whose hash says "indexed" with zero chunks (which reconcile would
+    // misread as unchanged forever). Direct Postgres also bypasses the
+    // REST/Cloudflare WAF that 403s HTML-like source chunks.
     // (A 'changed' file is content-addressed → a brand-new docId, so that
     // kind is effectively dead for files; handled anyway for correctness if
     // the docId scheme ever becomes path-stable.)
-    await writeReconciledDoc(service, {
+    await writeReconciledDoc(corpusWriter, {
       docId,
       kind: entry.kind,
       // content_hash = blob SHA + chunking-config fingerprint; must mirror

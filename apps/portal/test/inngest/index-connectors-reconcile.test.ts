@@ -219,6 +219,58 @@ function makeCorpusDb(seed: SeedDoc[]) {
 // Inline step runner: execute each step body immediately.
 const step = { run: (_id: string, fn: () => Promise<unknown>) => fn() };
 
+/**
+ * A CorpusWriteClient that replays writeReconciledDoc's writes through the
+ * in-memory supabase mock, so the existing corpus-state assertions
+ * (chunkUpserts / embeddingUpserts / chunkClears / docHash) keep working even
+ * though production now writes via direct Postgres. Mirrors the pre-refactor
+ * write sequence exactly.
+ */
+function supabaseBackedWriter(db: SupabaseClient): import('../../src/inngest/lib/corpus-reconcile').CorpusWriteClient {
+  return {
+    async writeDoc(w) {
+      if (w.kind === 'changed') {
+        await db.from('doc_chunks').delete().eq('org_id', w.doc.orgId).eq('doc_id', w.docId);
+      }
+      await db.from('docs').upsert({
+        id: w.docId,
+        org_id: w.doc.orgId,
+        source_id: w.doc.sourceId,
+        source: w.doc.source,
+        type: w.doc.type,
+        title: w.doc.title,
+        url: w.doc.url,
+        provenance: w.doc.provenance,
+        updated_at: w.doc.updatedAt,
+        content_hash: w.hash,
+      });
+      const chunkRows = w.chunks.map((c) => ({
+        chunk_id: c.chunkId,
+        org_id: w.doc.orgId,
+        source_id: w.doc.sourceId,
+        doc_id: w.docId,
+        domain: c.domain,
+        text: c.text,
+        context: c.context ?? null,
+        is_summary: c.isSummary ?? false,
+        position: c.position,
+      }));
+      await db.from('doc_chunks').upsert(chunkRows, { onConflict: 'chunk_id' });
+      const embedRows = w.chunks.map((c, i) => ({
+        chunk_id: c.chunkId,
+        org_id: w.doc.orgId,
+        source_id: w.doc.sourceId,
+        domain: c.domain,
+        embedding: w.embeddings[i]!,
+      }));
+      await db.from('corpus_chunk_embeddings').upsert(embedRows, { onConflict: 'chunk_id' });
+    },
+    async clearChunks(docId, orgId) {
+      await db.from('doc_chunks').delete().eq('org_id', orgId).eq('doc_id', docId);
+    },
+  };
+}
+
 interface Entity {
   id: string;
   text: string;
@@ -249,6 +301,9 @@ function config(opts: {
     reconnectMessage: 'reconnect',
     isAuthError: opts.isAuthError ?? (() => false),
     fetchEntities: opts.fetchEntities ?? (() => Promise.resolve(opts.entities)),
+    // Writes route through the same in-memory mock as reads (production uses
+    // the direct-Postgres writer, exercised in corpus-pg.test.ts).
+    corpusWriter: supabaseBackedWriter(currentDb),
     prepare: async (e: Entity): Promise<PreparedDoc | null> => ({
       docId: docIdFor(e),
       title: `Card ${e.id}`,

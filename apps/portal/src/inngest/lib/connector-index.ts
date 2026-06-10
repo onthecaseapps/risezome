@@ -13,9 +13,11 @@ import {
   reconcile,
   writeReconciledDoc,
   contentHashFromTexts,
+  type CorpusWriteClient,
   type ReconcileResult,
   type ToIndexKind,
 } from './corpus-reconcile';
+import { pgCorpusWriter } from './corpus-pg';
 
 /**
  * Shared reconcile orchestrator for the full-fetch connectors (Trello,
@@ -91,6 +93,9 @@ export interface ConnectorIndexConfig<E> {
   /** Optional per-document summarizer (U6). When set, each doc gets an
    *  is_summary chunk (embedded + searchable, excluded from content_hash). */
   readonly docSummarizer?: DocSummarizer | undefined;
+  /** Corpus write client. Defaults to the direct-Postgres writer (bypasses
+   *  the REST/Cloudflare WAF). Tests inject an in-memory fake. */
+  readonly corpusWriter?: CorpusWriteClient | undefined;
 }
 
 export interface ConnectorIndexResult {
@@ -178,11 +183,11 @@ export async function runConnectorIndex<E>(
   const kindByDocId = new Map<string, ToIndexKind>(recon.toIndex.map((t) => [t.docId, t.kind]));
   const toWrite = prepared.filter((p) => kindByDocId.has(p.docId));
   const embedder = new VoyageEmbedder({ apiKey: requireEnv('VOYAGE_API_KEY') });
+  const writer = config.corpusWriter ?? pgCorpusWriter();
 
   for (let i = 0; i < toWrite.length; i += EMBED_BATCH) {
     const batch = toWrite.slice(i, i + EMBED_BATCH);
     await step.run(`embed-${String(i)}`, async () => {
-      const db = createServiceRoleClient();
       await mapWithConcurrency(batch, docConcurrency(), async (doc) => {
         const kind = kindByDocId.get(doc.docId);
         if (kind === undefined) return;
@@ -256,7 +261,7 @@ export async function runConnectorIndex<E>(
           });
         }
 
-        await writeReconciledDoc(db, {
+        await writeReconciledDoc(writer, {
           docId: doc.docId,
           kind,
           // Body-only hash: the summary chunk must not affect change detection.

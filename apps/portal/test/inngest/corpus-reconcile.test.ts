@@ -4,7 +4,9 @@ import {
   reconcile,
   clearDocChunks,
   writeReconciledDoc,
+  type CorpusWriteClient,
   type DesiredItem,
+  type ReconciledDocWrite,
   type ReconcileMode,
 } from '../../src/inngest/lib/corpus-reconcile';
 
@@ -265,39 +267,34 @@ describe('reconcile — delete batching', () => {
   });
 });
 
+// A recording fake CorpusWriteClient (writes go through the injected client,
+// not the supabase REST mock — see corpus-pg.test.ts for the real pg writer).
+function fakeWriter() {
+  const docs: ReconciledDocWrite[] = [];
+  const cleared: Array<{ docId: string; orgId: string }> = [];
+  const client: CorpusWriteClient = {
+    async writeDoc(w) {
+      docs.push(w);
+    },
+    async clearChunks(docId, orgId) {
+      cleared.push({ docId, orgId });
+    },
+  };
+  return { client, docs, cleared };
+}
+
 describe('clearDocChunks', () => {
-  it('deletes chunks scoped to the docId', async () => {
-    const mock = makeMockDb([]);
-    await clearDocChunks(mock.db, 'gh:o/r#issue:7', 'org-1');
-    expect(mock.chunkDeletes()).toEqual(['gh:o/r#issue:7']);
+  it('delegates to the write client, org-scoped', async () => {
+    const w = fakeWriter();
+    await clearDocChunks(w.client, 'gh:o/r#issue:7', 'org-1');
+    expect(w.cleared).toEqual([{ docId: 'gh:o/r#issue:7', orgId: 'org-1' }]);
   });
 });
 
-describe('writeReconciledDoc — transient-failure retry', () => {
-  // Build a db whose docs.upsert fails `failures` times with `message`
-  // before succeeding; all other writes succeed. Records attempt counts.
-  function makeFlakyDb(failures: number, message: string) {
-    let upsertAttempts = 0;
-    const db = {
-      from(table: string) {
-        if (table === 'docs') {
-          return {
-            upsert: async () => {
-              upsertAttempts += 1;
-              return upsertAttempts <= failures ? { error: { message } } : { error: null };
-            },
-            update: () => ({ eq: () => ({ eq: async () => ({ error: null }) }) }),
-          };
-        }
-        return { upsert: async () => ({ error: null }) };
-      },
-    } as unknown as Parameters<typeof writeReconciledDoc>[0];
-    return { db, attempts: () => upsertAttempts };
-  }
-
-  const write = {
+describe('writeReconciledDoc', () => {
+  const write: ReconciledDocWrite = {
     docId: 'd1',
-    kind: 'new' as const,
+    kind: 'new',
     hash: 'h1',
     doc: {
       orgId: 'o1',
@@ -306,53 +303,25 @@ describe('writeReconciledDoc — transient-failure retry', () => {
       type: 'file',
       title: 't',
       url: null,
-      provenance: 'trusted' as const,
+      provenance: 'trusted',
       updatedAt: '2026-01-01T00:00:00.000Z',
     },
     chunks: [{ chunkId: 'd1::0', domain: 'text', text: 'x', position: 0 }],
     embeddings: ['[0.1]'],
   };
 
-  it('retries a Cloudflare HTML error page and succeeds', async () => {
-    const flaky = makeFlakyDb(2, '<!DOCTYPE html>\n<html lang="en-US">…cloudflare…');
-    await writeReconciledDoc(flaky.db, write, { retryDelaysMs: [0, 0, 0] });
-    expect(flaky.attempts()).toBe(3);
+  it('delegates the whole write to the client', async () => {
+    const w = fakeWriter();
+    await writeReconciledDoc(w.client, write);
+    expect(w.docs).toHaveLength(1);
+    expect(w.docs[0]!.docId).toBe('d1');
   });
 
-  it('retries thrown network failures (undici fetch failed)', async () => {
-    let calls = 0;
-    const db = {
-      from(table: string) {
-        if (table === 'docs') {
-          return {
-            upsert: async () => {
-              calls += 1;
-              if (calls === 1) throw new TypeError('fetch failed');
-              return { error: null };
-            },
-            update: () => ({ eq: () => ({ eq: async () => ({ error: null }) }) }),
-          };
-        }
-        return { upsert: async () => ({ error: null }) };
-      },
-    } as unknown as Parameters<typeof writeReconciledDoc>[0];
-    await writeReconciledDoc(db, write, { retryDelaysMs: [0, 0, 0] });
-    expect(calls).toBe(2);
-  });
-
-  it('does NOT retry a genuine PostgREST error (constraint violation)', async () => {
-    const flaky = makeFlakyDb(99, 'duplicate key value violates unique constraint "docs_pkey"');
+  it('rejects a chunk/embedding length mismatch before touching the client', async () => {
+    const w = fakeWriter();
     await expect(
-      writeReconciledDoc(flaky.db, write, { retryDelaysMs: [0, 0, 0] }),
-    ).rejects.toThrow(/docs upsert failed.*duplicate key/);
-    expect(flaky.attempts()).toBe(1);
-  });
-
-  it('gives up after exhausting the backoff schedule', async () => {
-    const flaky = makeFlakyDb(99, '<html>Bad Gateway</html>');
-    await expect(
-      writeReconciledDoc(flaky.db, write, { retryDelaysMs: [0, 0] }),
-    ).rejects.toThrow(/docs upsert failed/);
-    expect(flaky.attempts()).toBe(3); // 1 initial + 2 retries
+      writeReconciledDoc(w.client, { ...write, embeddings: ['[0.1]', '[0.2]'] }),
+    ).rejects.toThrow(/length mismatch/);
+    expect(w.docs).toHaveLength(0);
   });
 });
