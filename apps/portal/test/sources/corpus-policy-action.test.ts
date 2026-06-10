@@ -12,8 +12,8 @@ vi.mock('../../app/_lib/supabase-server', () => ({
 vi.mock('../../src/inngest/client', () => ({ inngest: { send: (...a: unknown[]) => inngestSend(...a) } }));
 
 import {
-  setSourceCorpusPolicyAction,
   setOrgCorpusPolicyAction,
+  setSourcesCorpusPolicyAction,
 } from '../../app/(authed)/sources/corpus-policy-action';
 
 beforeEach(() => {
@@ -22,59 +22,63 @@ beforeEach(() => {
 });
 afterEach(() => vi.clearAllMocks());
 
-describe('setSourceCorpusPolicyAction', () => {
+// Mock the sources update chain: update().in().eq().neq().select() → rows.
+function mockSourcesUpdate(rows: Array<{ id: string; kind: string | null }>, capture: (v: unknown) => void) {
+  createServiceRoleClient.mockReturnValue({
+    from: () => ({
+      update: (vals: unknown) => {
+        capture(vals);
+        return {
+          in: () => ({ eq: () => ({ neq: () => ({ select: async () => ({ data: rows, error: null }) }) }) }),
+        };
+      },
+    }),
+  });
+}
+
+describe('setSourcesCorpusPolicyAction', () => {
+  it('rejects no sources', async () => {
+    const res = await setSourcesCorpusPolicyAction([], { preset: 'recommended' });
+    expect(res).toEqual({ ok: false, error: 'missing_source' });
+  });
+
   it('rejects an invalid preset before touching the DB', async () => {
-    const res = await setSourceCorpusPolicyAction('s1', 'bogus');
+    const res = await setSourcesCorpusPolicyAction(['s1'], { preset: 'bogus' } as never);
     expect(res).toEqual({ ok: false, error: 'invalid_preset' });
     expect(createServiceRoleClient).not.toHaveBeenCalled();
   });
 
-  it('persists the override and reindexes the source', async () => {
+  it('persists a full custom policy to all sources and reindexes each', async () => {
     let written: unknown;
-    createServiceRoleClient.mockReturnValue({
-      from() {
-        return {
-          update(vals: unknown) {
-            written = vals;
-            return {
-              eq: () => ({
-                eq: () => ({
-                  neq: () => ({
-                    select: () => ({ maybeSingle: async () => ({ data: { id: 's1', kind: 'github' }, error: null }) }),
-                  }),
-                }),
-              }),
-            };
-          },
-        };
-      },
-    });
-    const res = await setSourceCorpusPolicyAction('s1', 'index_everything');
+    mockSourcesUpdate([{ id: 's1', kind: 'trello' }, { id: 's2', kind: 'trello' }], (v) => { written = v; });
+    const policy = {
+      preset: 'recommended' as const,
+      connectorRules: [{ source: 'trello' as const, field: 'list' as const, op: 'in' as const, value: ['Done'] }],
+      connectorOptions: { trello: { includeArchived: true } },
+    };
+    const res = await setSourcesCorpusPolicyAction(['s1', 's2'], policy);
+    expect(res).toEqual({ ok: true, reindexed: 2 });
+    expect((written as { corpus_policy: { connectorOptions?: unknown } }).corpus_policy.connectorOptions)
+      .toEqual({ trello: { includeArchived: true } });
+    expect(inngestSend).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the override when policy is null', async () => {
+    let written: unknown;
+    mockSourcesUpdate([{ id: 's1', kind: 'github' }], (v) => { written = v; });
+    const res = await setSourcesCorpusPolicyAction(['s1'], null);
     expect(res).toEqual({ ok: true, reindexed: 1 });
-    expect(written).toEqual({ corpus_policy: { preset: 'index_everything' } });
+    expect(written).toEqual({ corpus_policy: null });
     expect(inngestSend).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'risezome/source.index-requested', data: expect.objectContaining({ mode: 'full' }) }),
+      expect.objectContaining({ name: 'risezome/source.index-requested' }),
     );
   });
 
-  it('clears the override when preset is null', async () => {
+  it('drops malformed sub-fields but keeps a valid preset', async () => {
     let written: unknown;
-    createServiceRoleClient.mockReturnValue({
-      from: () => ({
-        update: (vals: unknown) => {
-          written = vals;
-          return {
-            eq: () => ({ eq: () => ({ neq: () => ({ select: () => ({ maybeSingle: async () => ({ data: { id: 's1', kind: 'trello' }, error: null }) }) }) }) }),
-          };
-        },
-      }),
-    });
-    const res = await setSourceCorpusPolicyAction('s1', null);
-    expect(res.ok).toBe(true);
-    expect(written).toEqual({ corpus_policy: null });
-    expect(inngestSend).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'risezome/trello.index-requested' }),
-    );
+    mockSourcesUpdate([{ id: 's1', kind: 'jira' }], (v) => { written = v; });
+    await setSourcesCorpusPolicyAction(['s1'], { preset: 'recommended', customExcludes: [1, 2] } as never);
+    expect((written as { corpus_policy: { customExcludes?: unknown } }).corpus_policy.customExcludes).toBeUndefined();
   });
 });
 

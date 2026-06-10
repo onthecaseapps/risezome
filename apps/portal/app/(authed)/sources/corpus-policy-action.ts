@@ -4,7 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '../../_lib/auth';
 import { createServiceRoleClient } from '../../_lib/supabase-server';
 import { inngest, type IndexMode } from '../../../src/inngest/client';
-import { PRESET_KEYS, type PresetKey } from '../../../src/inngest/lib/corpus-policy';
+import { PRESET_KEYS, type CorpusPolicy, type PresetKey } from '../../../src/inngest/lib/corpus-policy';
+import { coerceCorpusPolicy } from '../../../src/inngest/lib/corpus-policy-store';
 
 /**
  * Admin-gated corpus-policy edits (U6). Persists the org default or a per-source
@@ -36,33 +37,48 @@ function isValidPreset(value: unknown): value is PresetKey {
   return typeof value === 'string' && (PRESET_KEYS as readonly string[]).includes(value);
 }
 
-/** Set (or clear, when policy is null) a single source's override, then reindex it. */
-export async function setSourceCorpusPolicyAction(
-  sourceId: string,
-  preset: string | null,
+/**
+ * Validate an incoming per-source override. `null` clears the override
+ * (inherit org default). A non-null policy must carry a known preset; the
+ * remaining custom rules/patterns/options are coerced (malformed sub-fields
+ * dropped) so a bad client payload can't poison the stored policy.
+ */
+function validateOverride(policy: unknown): { ok: true; value: CorpusPolicy | null } | { ok: false } {
+  if (policy === null || policy === undefined) return { ok: true, value: null };
+  if (!isValidPreset((policy as { preset?: unknown }).preset)) return { ok: false };
+  return { ok: true, value: coerceCorpusPolicy(policy) };
+}
+
+/**
+ * Apply a per-source override (a full custom CorpusPolicy, or null to inherit)
+ * to one or more sources, then reindex each. The card-level filtering control
+ * passes all of a connection's source ids; a single-source override passes one.
+ */
+export async function setSourcesCorpusPolicyAction(
+  sourceIds: readonly string[],
+  policy: CorpusPolicy | null,
 ): Promise<ActionResult> {
-  if (typeof sourceId !== 'string' || sourceId.length === 0) return { ok: false, error: 'missing_source' };
-  if (preset !== null && !isValidPreset(preset)) return { ok: false, error: 'invalid_preset' };
+  const ids = (sourceIds ?? []).filter((s): s is string => typeof s === 'string' && s.length > 0);
+  if (ids.length === 0) return { ok: false, error: 'missing_source' };
+  const validated = validateOverride(policy);
+  if (!validated.ok) return { ok: false, error: 'invalid_preset' };
 
   const { orgId } = await requireAdmin();
   const service = createServiceRoleClient();
 
-  // null preset clears the override (inherit org default).
-  const override = preset === null ? null : { preset };
-  const { data: src, error } = await service
+  const { data: rows, error } = await service
     .from('sources')
-    .update({ corpus_policy: override })
-    .eq('id', sourceId)
+    .update({ corpus_policy: validated.value })
+    .in('id', ids)
     .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     .neq('status', 'removed') // never reindex a removed source
-    .select('id, kind, status')
-    .maybeSingle();
+    .select('id, kind');
   if (error !== null) return { ok: false, error: error.message };
-  if (src === null) return { ok: false, error: 'source_not_found' };
 
-  await reindex(orgId, sourceId, (src.kind as string | null) ?? null);
+  const updated = (rows ?? []) as Array<{ id: string; kind: string | null }>;
+  await Promise.all(updated.map((s) => reindex(orgId, s.id, s.kind)));
   revalidatePath('/sources');
-  return { ok: true, reindexed: 1 };
+  return { ok: true, reindexed: updated.length };
 }
 
 /** Set the org-default policy, then reindex every source that has no override. */
