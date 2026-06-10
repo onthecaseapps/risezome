@@ -13,6 +13,7 @@ import { ConfigTeamSelector, type ConfigTeam } from './_config-team-selector';
 import { TrelloMark, JiraMark, ConfluenceMark } from './_source-icons';
 import type { SourceItem } from './_source-item-list';
 import { buildGithubItems, type GithubSourceRow } from './_github-items';
+import { CorpusPolicyEditor } from './_corpus-policy-editor';
 
 /**
  * Sources — the per-team source editor (redesign). Pick a team to configure via
@@ -45,6 +46,8 @@ interface ConnectionSourceRow {
   status: string;
   indexed_files: number;
   total_files: number | null;
+  excluded_count?: number;
+  corpus_policy?: { preset?: string } | null;
 }
 
 export default async function SourcesPage(props: {
@@ -104,12 +107,20 @@ export default async function SourcesPage(props: {
   const { data: githubSourceRows } = installations.length
     ? await supabase
         .from('sources')
-        .select('id, repo_full_name, installation_id, status, indexed_files, total_files')
+        .select('id, repo_full_name, installation_id, status, indexed_files, total_files, excluded_count, corpus_policy')
         .eq('org_id', orgId)
         .not('installation_id', 'is', null)
         .order('repo_full_name', { ascending: true })
     : { data: [] as GithubSourceRow[] };
   const githubSources = (githubSourceRows ?? []) as GithubSourceRow[];
+
+  // Org-default corpus filtering policy (absent row ⇒ 'recommended' in code).
+  const { data: orgPolicyRow } = await supabase
+    .from('org_corpus_policy')
+    .select('preset')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  const orgPolicyPreset = (orgPolicyRow?.preset as string | undefined) ?? 'recommended';
 
   // ── Trello: connection + sources + available boards ───────────────────────
   // The token is encrypted at rest (token_enc; the plaintext `token` column was
@@ -128,7 +139,7 @@ export default async function SourcesPage(props: {
   if (trelloConnRow !== null) {
     const { data: tSrc } = await supabase
       .from('sources')
-      .select('id, display_name, external_id, status, indexed_files, total_files')
+      .select('id, display_name, external_id, status, indexed_files, total_files, excluded_count, corpus_policy')
       .eq('org_id', orgId)
       .eq('kind', 'trello')
       .neq('status', 'removed')
@@ -170,7 +181,7 @@ export default async function SourcesPage(props: {
   if (atlassianConnRow !== null) {
     const { data: aSrc } = await supabase
       .from('sources')
-      .select('id, kind, display_name, external_id, status, indexed_files, total_files')
+      .select('id, kind, display_name, external_id, status, indexed_files, total_files, excluded_count, corpus_policy')
       .eq('org_id', orgId)
       .in('kind', ['jira', 'confluence'])
       .neq('status', 'removed')
@@ -255,9 +266,12 @@ export default async function SourcesPage(props: {
             team to search.
           </p>
         </div>
-        {teams.length > 0 && selectedTeamId !== null ? (
-          <ConfigTeamSelector teams={teams} selectedTeamId={selectedTeamId} />
-        ) : null}
+        <div className="flex flex-col items-end gap-2">
+          {teams.length > 0 && selectedTeamId !== null ? (
+            <ConfigTeamSelector teams={teams} selectedTeamId={selectedTeamId} />
+          ) : null}
+          <CorpusPolicyEditor currentPreset={orgPolicyPreset} />
+        </div>
       </header>
 
       {banner !== null ? (
@@ -329,6 +343,8 @@ function buildItems(
       count: s.indexed_files,
       total: s.total_files,
       status: s.status,
+      excluded: s.excluded_count ?? 0,
+      presetKey: s.corpus_policy?.preset ?? null,
     });
   }
   for (const a of available) {

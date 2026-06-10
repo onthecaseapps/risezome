@@ -86,6 +86,14 @@ describe('ConnectionCard (U2)', () => {
     expect(screen.getByText('1 of 2 repos connected · 340 files indexed')).toBeInTheDocument();
   });
 
+  it('status line surfaces the policy-excluded count (R4 visibility)', () => {
+    const items: SourceItem[] = [
+      { key: 's1', sourceId: 's1', externalId: 'acme/web', label: 'acme/web', count: 600, total: null, status: 'idle', excluded: 202, installationId: 1 },
+    ];
+    render(<ConnectionCard teamId="t1" data={card({ items })} />);
+    expect(screen.getByText(/600 files indexed · 202 excluded by policy/)).toBeInTheDocument();
+  });
+
   it('status line uses the provider container noun (trello boards) and excludes removed counts', () => {
     const boards: SourceItem[] = [
       { key: 'b1', sourceId: 'b1', externalId: 'board1', label: 'Risezome', count: 11, total: null, status: 'idle' },

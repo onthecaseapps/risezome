@@ -34,6 +34,10 @@ export interface SourceItem {
   total: number | null;
   /** Indexer status for this item's source, if a source row exists. */
   status: string | null;
+  /** Candidates the corpus policy excluded on the last index run (R4 visibility). */
+  excluded?: number | undefined;
+  /** This source's override preset, when set; null/undefined = inherit org default. */
+  presetKey?: string | null | undefined;
   /** GitHub only: the installation this repo belongs to. */
   installationId?: number | undefined;
 }

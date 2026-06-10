@@ -250,6 +250,13 @@ function buildStatusLine(data: ConnectionCardData, selectedCount: number): strin
     parts.push(`${selectedCount} of ${total} ${container}${total === 1 ? '' : 's'} connected`);
   }
   if (indexed > 0) parts.push(`${indexed.toLocaleString()} ${noun} indexed`);
+  // Exclusion visibility (R4): never silently drop content — show how many
+  // candidates the active policy excluded so a customer can recover via the
+  // preset selector or an "Index everything" override.
+  const excluded = data.items
+    .filter((it) => it.status !== null && it.status !== 'removed')
+    .reduce((s, it) => s + (it.excluded ?? 0), 0);
+  if (excluded > 0) parts.push(`${excluded.toLocaleString()} excluded by policy`);
   return parts.length > 0 ? parts.join(' · ') : 'Connected';
 }
 

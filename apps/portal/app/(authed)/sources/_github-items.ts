@@ -2,6 +2,8 @@ import type { SourceItem } from './_source-item-list';
 
 /** The subset of a GitHub `sources` row the Sources page reads. */
 export interface GithubSourceRow {
+  excluded_count?: number;
+  corpus_policy?: { preset?: string } | null;
   id: string;
   repo_full_name: string;
   installation_id: number | null;
@@ -39,6 +41,8 @@ export function buildGithubItems(
       count: removed ? null : s.indexed_files,
       total: removed ? null : s.total_files,
       status: removed ? null : s.status,
+      excluded: removed ? 0 : (s.excluded_count ?? 0),
+      presetKey: s.corpus_policy?.preset ?? null,
       installationId,
     };
   });
