@@ -364,7 +364,12 @@ async function indexBatch(args: {
       return { files: 0, chunks: 0 };
     }
 
-    const chunkInputs = chunkFile(entry.path, content);
+    const chunkInputs = chunkFile(entry.path, content, {
+      // Heuristic declaration-boundary chunking for code. Off by default;
+      // flipping it changes content_hash for every code chunk → a full
+      // code reindex, so it rolls out behind a flag + eval A/B.
+      codeStructureAware: process.env.RISEZOME_CODE_STRUCTURE_CHUNKING === 'true',
+    });
     if (chunkInputs.length === 0) return { files: 0, chunks: 0 };
 
     // Contextual Retrieval (U3): per-chunk context from the full file,

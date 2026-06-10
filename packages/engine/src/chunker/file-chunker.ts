@@ -24,6 +24,7 @@
 //     truncating non-trivially.
 
 import type { CanonicalChunk } from '../types.js';
+import { type Dialect, dialectForExt, findUnitBoundaries } from './code-structure.js';
 
 const CODE_EXTENSIONS = new Set([
   'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs',
@@ -69,6 +70,14 @@ export interface FileChunkerOptions {
   overlapLines?: number;
   /** Skip files larger than this many bytes. Default 512 KB. */
   maxFileBytes?: number;
+  /**
+   * Cut code files on declaration boundaries (heuristic structure-aware
+   * chunking) instead of fixed line windows. Off by default: enabling it
+   * changes chunk boundaries → content_hash → a full code reindex, so it
+   * rolls out behind a flag + eval A/B. Text files are unaffected; code in
+   * a language we have no heuristics for falls back to line windowing.
+   */
+  codeStructureAware?: boolean;
 }
 
 const DEFAULTS: Required<FileChunkerOptions> = {
@@ -76,6 +85,7 @@ const DEFAULTS: Required<FileChunkerOptions> = {
   codeChunkLines: 120,
   overlapLines: 20,
   maxFileBytes: 512 * 1024,
+  codeStructureAware: false,
 };
 
 /**
@@ -138,6 +148,15 @@ export function chunkFile(
   const overlap = Math.min(opts.overlapLines, Math.max(0, linesPerChunk - 1));
   const stride = Math.max(1, linesPerChunk - overlap);
 
+  // Structure-aware path: code in a language we understand is cut on
+  // declaration seams and bin-packed, not windowed. Anything else (text,
+  // or code in an unsupported language) uses the line-window algorithm.
+  const dialect =
+    domain === 'code' && opts.codeStructureAware ? dialectForExt(extOf(baseName(path).toLowerCase()) ?? '') : null;
+  if (dialect !== null) {
+    return chunkByStructure(lines, dialect, linesPerChunk, stride);
+  }
+
   const out: Pick<CanonicalChunk, 'domain' | 'text' | 'position'>[] = [];
   let position = 0;
   for (let start = 0; start < lines.length; start += stride) {
@@ -155,6 +174,72 @@ export function chunkFile(
     // chunk that would re-emit the same trailing lines.
     if (start + linesPerChunk >= lines.length) break;
   }
+  return out;
+}
+
+/**
+ * Cut `lines` on declaration boundaries, then greedily bin-pack adjacent
+ * units up to the per-chunk budget. A single unit larger than the budget
+ * (a giant function) is line-windowed within its own span so it still
+ * degrades gracefully. Always emits `domain: 'code'`.
+ */
+function chunkByStructure(
+  lines: string[],
+  dialect: Dialect,
+  linesPerChunk: number,
+  stride: number,
+): Pick<CanonicalChunk, 'domain' | 'text' | 'position'>[] {
+  const boundaries = findUnitBoundaries(lines, dialect);
+  const out: Pick<CanonicalChunk, 'domain' | 'text' | 'position'>[] = [];
+  let position = 0;
+
+  const emit = (slice: string[]): void => {
+    const text = slice.join('\n').trim();
+    if (text.length === 0) return;
+    for (const piece of hardSplit(text, MAX_CHUNK_CHARS)) {
+      out.push({ domain: 'code', text: piece, position });
+      position += 1;
+    }
+  };
+
+  // Window a single oversized unit, reusing the line-window stride so a
+  // 600-line function becomes a few overlapping chunks rather than one
+  // hard-split blob.
+  const emitWindowed = (unit: string[]): void => {
+    for (let start = 0; start < unit.length; start += stride) {
+      emit(unit.slice(start, start + linesPerChunk));
+      if (start + linesPerChunk >= unit.length) break;
+    }
+  };
+
+  let buf: string[] = [];
+  let bufChars = 0;
+  const flush = (): void => {
+    if (buf.length > 0) emit(buf);
+    buf = [];
+    bufChars = 0;
+  };
+
+  for (let b = 0; b < boundaries.length; b += 1) {
+    const start = boundaries[b]!;
+    const end = b + 1 < boundaries.length ? boundaries[b + 1]! : lines.length;
+    const unit = lines.slice(start, end);
+    const unitChars = unit.reduce((n, l) => n + l.length + 1, 0);
+
+    // Oversized single unit: flush the buffer, then window the unit alone.
+    if (unit.length > linesPerChunk || unitChars > MAX_CHUNK_CHARS) {
+      flush();
+      emitWindowed(unit);
+      continue;
+    }
+    // Adding this unit would bust a budget → flush the current pack first.
+    if (buf.length > 0 && (buf.length + unit.length > linesPerChunk || bufChars + unitChars > MAX_CHUNK_CHARS)) {
+      flush();
+    }
+    buf.push(...unit);
+    bufChars += unitChars;
+  }
+  flush();
   return out;
 }
 

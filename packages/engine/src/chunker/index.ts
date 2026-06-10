@@ -8,6 +8,7 @@
 //     hybrid retrieval.
 
 export { chunkFile, classifyFile, type FileChunkerOptions } from './file-chunker.js';
+export { type Dialect, dialectForExt, findUnitBoundaries } from './code-structure.js';
 export {
   tokenize,
   stripStopwords,
