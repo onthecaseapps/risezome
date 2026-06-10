@@ -5,86 +5,121 @@ import { setSourcesCorpusPolicyAction } from './corpus-policy-action';
 import type { Provider } from './_source-item-list';
 
 /**
- * Per-connection corpus-filtering editor (F4), matching the Sources mockup:
- * a preset dropdown + an "EXCLUDED BY THIS PRESET" chip box, plus a Custom
- * mode that reveals connector-appropriate controls (GitHub globs; Jira status/
- * type/age; Trello completed-cards toggle + lists + age; Confluence age).
- * Applies the chosen policy to every source in the connection and reindexes.
+ * Per-connection corpus-filtering editor (F4), matching the Sources Filtering
+ * mockup: a preset dropdown + an "EXCLUDED BY THIS PRESET" chip box, and a
+ * Custom mode with editable removable chips + a dashed "Add …" input, plus
+ * connector-specific controls (Trello completed-cards / lists; age cutoffs).
+ * Applies the chosen policy to every source under the connection and reindexes.
  */
 
-const AGE_DAYS = { months: 30, years: 365 } as const;
-const JIRA_DEFAULT_STATUSES = ['Done', 'Closed', 'Resolved', 'Cancelled', "Won't Do"];
+const AGE_DAYS = { days: 1, months: 30, years: 365 } as const;
+type AgeUnit = keyof typeof AGE_DAYS;
 
+interface Opt {
+  value: string;
+  label: string;
+  desc: string;
+}
+
+// Per-connector preset menus (labels/copy from the mockup). Each value maps to
+// a backend policy in buildPolicyForOption / buildCustomPolicy.
+const OPTIONS: Record<Provider, Opt[]> = {
+  github: [
+    { value: 'recommended', label: 'Recommended', desc: 'Excludes tests, fixtures, lockfiles & build output' },
+    { value: 'code', label: 'Code only', desc: 'Only source code — skips docs, configs & data' },
+    { value: 'everything', label: 'Everything', desc: 'Indexes every file in the repository' },
+    { value: 'custom', label: 'Custom…', desc: 'Define your own exclude patterns' },
+  ],
+  trello: [
+    { value: 'active', label: 'Exclude completed & archived', desc: 'Skips archived boards and cards in Done lists' },
+    { value: 'everything', label: 'Everything', desc: 'Indexes all cards, including completed & archived' },
+    { value: 'custom', label: 'Custom…', desc: 'Exclude specific lists or stale cards' },
+  ],
+  jira: [
+    { value: 'active', label: 'Exclude done & archived', desc: 'Skips Done, Closed and Resolved issues' },
+    { value: 'everything', label: 'Everything', desc: 'Indexes every issue, including completed' },
+    { value: 'custom', label: 'Custom…', desc: 'Exclude specific statuses, types or stale issues' },
+  ],
+  confluence: [
+    { value: 'recommended', label: 'Recommended', desc: 'Indexes current pages (drafts & archived are skipped)' },
+    { value: 'custom', label: 'Custom…', desc: 'Also exclude stale pages by age' },
+  ],
+};
+
+// Representative chips shown in the "EXCLUDED BY THIS PRESET" box for the
+// non-custom options.
 const PRESET_CHIPS: Record<Provider, Record<string, string[]>> = {
   github: {
-    recommended: ['**/*.test.*', '**/*.spec.*', '**/fixtures/**', '**/__mocks__/**', 'dist/**', 'build/**', '*.lock', '**/*.min.*'],
-    code_only: ['…recommended', '**/*.md', '**/*.mdx', '**/*.rst'],
-    index_everything: [],
+    recommended: ['**/*.test.*', '**/fixtures/**', 'dist/**', 'build/**', '*.lock', '**/*.min.*'],
+    code: ['**/*.test.*', 'dist/**', '*.lock', '*.md', '*.mdx'],
+    everything: [],
   },
-  jira: {
-    recommended: JIRA_DEFAULT_STATUSES.map((s) => `status: ${s}`),
-    code_only: JIRA_DEFAULT_STATUSES.map((s) => `status: ${s}`),
-    index_everything: [],
-  },
-  trello: { recommended: ['archived cards'], code_only: ['archived cards'], index_everything: [] },
-  confluence: { recommended: ['drafts & archived (not fetched)'], code_only: ['drafts & archived (not fetched)'], index_everything: [] },
+  trello: { active: ['archived cards', 'Done-list cards'], everything: [] },
+  jira: { active: ['Done', 'Closed', 'Resolved', 'Cancelled', "Won't Do"], everything: [] },
+  confluence: { recommended: ['drafts', 'archived pages'] },
 };
 
-const PRESET_LABEL: Record<string, string> = {
-  recommended: 'Recommended',
-  index_everything: 'Index everything',
-  code_only: 'Code only',
-  custom: 'Custom',
-};
+const CHIP_LABEL_FONT_MONO: Record<Provider, boolean> = { github: true, trello: false, jira: false, confluence: false };
 
 export interface CustomState {
-  githubExcludes: string; // newline-separated globs
-  jiraStatuses: string; // comma-separated
-  jiraTypes: string;
+  patterns: string[]; // github globs / jira statuses / trello lists
+  draft: string;
+  jiraTypes: string[];
+  jiraTypeDraft: string;
   trelloIncludeArchived: boolean;
-  trelloLists: string;
-  agevalue: string; // number
-  ageUnit: 'months' | 'years';
+  ageValue: string;
+  ageUnit: AgeUnit;
 }
 
 const EMPTY_CUSTOM: CustomState = {
-  githubExcludes: '',
-  jiraStatuses: JIRA_DEFAULT_STATUSES.join(', '),
-  jiraTypes: '',
+  patterns: [],
+  draft: '',
+  jiraTypes: [],
+  jiraTypeDraft: '',
   trelloIncludeArchived: false,
-  trelloLists: '',
-  agevalue: '',
-  ageUnit: 'years',
+  ageValue: '',
+  ageUnit: 'months',
 };
 
-function splitList(v: string): string[] {
-  return v.split(/[,\n]/).map((x) => x.trim()).filter((x) => x.length > 0);
+/** A named (non-custom) option → stored CorpusPolicy (or null to inherit). */
+function buildPolicyForOption(provider: Provider, value: string): Record<string, unknown> {
+  if (value === 'everything') {
+    return provider === 'trello'
+      ? { preset: 'recommended', connectorOptions: { trello: { includeArchived: true } } }
+      : { preset: 'index_everything' };
+  }
+  if (provider === 'github' && value === 'code') return { preset: 'code_only' };
+  // recommended / active (jira & trello already drop closed/archived) → recommended.
+  return { preset: 'recommended' };
+}
+
+function ageRule(provider: Provider, c: CustomState): Record<string, unknown> | null {
+  if (c.ageValue.trim() === '') return null;
+  const days = Number(c.ageValue) * AGE_DAYS[c.ageUnit];
+  if (!Number.isFinite(days) || days <= 0) return null;
+  return { source: provider, field: 'updatedBefore', op: 'olderThanDays', value: days };
 }
 
 export function buildCustomPolicy(provider: Provider, c: CustomState): Record<string, unknown> {
   const policy: Record<string, unknown> = { preset: 'recommended' };
   const rules: Array<Record<string, unknown>> = [];
-  const ageDays = c.agevalue.trim() !== '' ? Number(c.agevalue) * AGE_DAYS[c.ageUnit] : null;
+  const age = ageRule(provider, c);
 
   if (provider === 'github') {
-    const ex = splitList(c.githubExcludes);
-    if (ex.length > 0) policy['customExcludes'] = ex;
+    if (c.patterns.length > 0) policy['customExcludes'] = c.patterns;
   }
   if (provider === 'jira') {
-    const st = splitList(c.jiraStatuses);
-    if (st.length > 0) rules.push({ source: 'jira', field: 'status', op: 'in', value: st });
-    const ty = splitList(c.jiraTypes);
-    if (ty.length > 0) rules.push({ source: 'jira', field: 'issueType', op: 'in', value: ty });
-    if (ageDays !== null) rules.push({ source: 'jira', field: 'updatedBefore', op: 'olderThanDays', value: ageDays });
+    if (c.patterns.length > 0) rules.push({ source: 'jira', field: 'status', op: 'in', value: c.patterns });
+    if (c.jiraTypes.length > 0) rules.push({ source: 'jira', field: 'issueType', op: 'in', value: c.jiraTypes });
+    if (age) rules.push(age);
   }
   if (provider === 'trello') {
     policy['connectorOptions'] = { trello: { includeArchived: c.trelloIncludeArchived } };
-    const lists = splitList(c.trelloLists);
-    if (lists.length > 0) rules.push({ source: 'trello', field: 'list', op: 'in', value: lists });
-    if (ageDays !== null) rules.push({ source: 'trello', field: 'updatedBefore', op: 'olderThanDays', value: ageDays });
+    if (c.patterns.length > 0) rules.push({ source: 'trello', field: 'list', op: 'in', value: c.patterns });
+    if (age) rules.push(age);
   }
   if (provider === 'confluence') {
-    if (ageDays !== null) rules.push({ source: 'confluence', field: 'updatedBefore', op: 'olderThanDays', value: ageDays });
+    if (age) rules.push(age);
   }
   if (rules.length > 0) policy['connectorRules'] = rules;
   return policy;
@@ -94,169 +129,222 @@ export function CardFilterEditor({
   provider,
   sourceIds,
   currentPreset,
-  orgDefaultPreset,
 }: {
   provider: Provider;
   sourceIds: string[];
-  currentPreset: string | null; // override preset, or null = inherit org default
-  orgDefaultPreset: string;
+  currentPreset: string | null;
 }): ReactElement {
-  const initialMode = currentPreset ?? 'inherit';
-  const [mode, setMode] = useState<string>(initialMode);
-  const [custom, setCustom] = useState<CustomState>(EMPTY_CUSTOM);
+  const opts = OPTIONS[provider];
+  // Map the stored preset back to a menu value for the initial selection.
+  const initial = mapPresetToOption(provider, currentPreset);
+  const [mode, setMode] = useState<string>(initial);
+  const [c, setC] = useState<CustomState>(EMPTY_CUSTOM);
   const [pending, start] = useTransition();
   const [note, setNote] = useState<string | null>(null);
 
-  const effectivePreset = mode === 'inherit' ? orgDefaultPreset : mode === 'custom' ? 'recommended' : mode;
-  const chips = PRESET_CHIPS[provider][effectivePreset] ?? [];
+  const selected = opts.find((o) => o.value === mode) ?? opts[0]!;
+  const chips = mode === 'custom' ? c.patterns : PRESET_CHIPS[provider][mode] ?? [];
+  const mono = CHIP_LABEL_FONT_MONO[provider];
+  const customNoun = provider === 'github' ? 'pattern' : provider === 'jira' ? 'status' : provider === 'trello' ? 'list' : 'item';
+  const ageNoun = provider === 'jira' ? 'issues' : provider === 'trello' ? 'cards' : 'pages';
 
-  function apply(nextPolicy: Record<string, unknown> | null): void {
+  function apply(policy: Record<string, unknown> | null): void {
     setNote(null);
     start(async () => {
-      const res = await setSourcesCorpusPolicyAction(sourceIds, nextPolicy as never);
+      const res = await setSourcesCorpusPolicyAction(sourceIds, policy as never);
       setNote(res.ok ? `Reindexing ${String(res.reindexed)} source${res.reindexed === 1 ? '' : 's'}…` : `Couldn't save: ${res.error}`);
     });
   }
 
-  function onModeChange(next: string): void {
+  function onMode(next: string): void {
     setMode(next);
     setNote(null);
-    if (next === 'inherit') apply(null);
-    else if (next !== 'custom') apply({ preset: next });
-    // custom waits for the Save button
+    if (next !== 'custom') apply(buildPolicyForOption(provider, next));
   }
 
-  if (sourceIds.length === 0) {
-    return <p className="text-xs text-muted">Connect a {provider === 'github' ? 'repo' : 'source'} to configure filtering.</p>;
-  }
+  if (sourceIds.length === 0) return <p className="text-xs text-muted">Nothing connected to filter yet.</p>;
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="font-medium text-fg">Filtering</span>
+        <span className="font-medium text-fg">{provider === 'github' ? 'File filtering' : 'Filtering'}</span>
         <select
           value={mode}
           disabled={pending}
-          onChange={(e) => onModeChange(e.target.value)}
+          onChange={(e) => onMode(e.target.value)}
           className="rounded-md border border-border bg-card px-2 py-1 text-sm text-fg disabled:opacity-50"
         >
-          <option value="inherit">Inherit ({PRESET_LABEL[orgDefaultPreset] ?? orgDefaultPreset})</option>
-          <option value="recommended">Recommended</option>
-          <option value="index_everything">Index everything</option>
-          {provider === 'github' ? <option value="code_only">Code only</option> : null}
-          <option value="custom">Custom…</option>
+          {opts.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
         </select>
-        {note !== null ? <span className="text-xs text-muted">{note}</span> : null}
+        <span className="text-xs text-muted">{selected.desc}</span>
+        {note !== null ? <span className="text-xs text-accent">{note}</span> : null}
       </div>
 
-      {mode !== 'custom' && chips.length > 0 ? (
+      {mode !== 'everything' && mode !== 'recommended-empty' ? (
         <div className="rounded-lg border border-border bg-bg p-3">
-          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Excluded by this preset</div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.08em] text-muted">
+            {mode === 'custom' ? `Exclude ${customNoun}s · editable` : 'Excluded by this preset'}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
             {chips.map((chip) => (
-              <span key={chip} className="rounded border border-border bg-card px-2 py-0.5 font-mono text-xs text-muted">
+              <span
+                key={chip}
+                className={`inline-flex items-center gap-1.5 rounded border border-border px-2 py-0.5 text-xs ${
+                  mode === 'custom' ? 'bg-card text-fg' : 'bg-card text-muted'
+                } ${mono ? 'font-mono' : ''}`}
+              >
                 {chip}
+                {mode === 'custom' ? (
+                  <button
+                    type="button"
+                    aria-label={`Remove ${chip}`}
+                    onClick={() => setC({ ...c, patterns: c.patterns.filter((p) => p !== chip) })}
+                    className="text-muted hover:text-fg"
+                  >
+                    ×
+                  </button>
+                ) : null}
               </span>
             ))}
-          </div>
-        </div>
-      ) : null}
-
-      {mode === 'custom' ? (
-        <div className="space-y-3 rounded-lg border border-border bg-bg p-3 text-sm">
-          {provider === 'github' ? (
-            <Field label="Exclude paths (gitignore globs, one per line)">
-              <textarea
-                rows={4}
-                value={custom.githubExcludes}
-                onChange={(e) => setCustom({ ...custom, githubExcludes: e.target.value })}
-                placeholder={'**/test/**\n*.lock\ndist/**'}
-                className="w-full rounded-md border border-border bg-card px-2 py-1 font-mono text-xs text-fg"
+            {mode === 'custom' ? (
+              <input
+                value={c.draft}
+                onChange={(e) => setC({ ...c, draft: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && c.draft.trim()) {
+                    e.preventDefault();
+                    setC({ ...c, patterns: [...c.patterns, c.draft.trim()], draft: '' });
+                  }
+                }}
+                placeholder={
+                  provider === 'github' ? 'Add pattern, e.g. vendor/**' : provider === 'jira' ? 'Add status, e.g. In Review' : 'Add list, e.g. Icebox'
+                }
+                className={`rounded border border-dashed border-border bg-transparent px-2 py-0.5 text-xs text-fg outline-none ${mono ? 'font-mono' : ''}`}
+                style={{ minWidth: 170 }}
               />
-            </Field>
+            ) : null}
+            {chips.length === 0 && mode !== 'custom' ? <span className="text-xs text-muted">Nothing excluded.</span> : null}
+          </div>
+
+          {mode === 'custom' && provider === 'jira' ? (
+            <ChipRow
+              label="Exclude issue types"
+              values={c.jiraTypes}
+              draft={c.jiraTypeDraft}
+              onDraft={(v) => setC({ ...c, jiraTypeDraft: v })}
+              onAdd={(v) => setC({ ...c, jiraTypes: [...c.jiraTypes, v], jiraTypeDraft: '' })}
+              onRemove={(v) => setC({ ...c, jiraTypes: c.jiraTypes.filter((t) => t !== v) })}
+              placeholder="Add type, e.g. Sub-task"
+            />
           ) : null}
 
-          {provider === 'jira' ? (
-            <>
-              <Field label="Exclude issues with status (comma-separated)">
-                <input value={custom.jiraStatuses} onChange={(e) => setCustom({ ...custom, jiraStatuses: e.target.value })} className={inputCls} placeholder="Done, Closed, Resolved" />
-              </Field>
-              <Field label="Exclude issue types (comma-separated, optional)">
-                <input value={custom.jiraTypes} onChange={(e) => setCustom({ ...custom, jiraTypes: e.target.value })} className={inputCls} placeholder="Sub-task, Epic" />
-              </Field>
-              <AgeField custom={custom} setCustom={setCustom} noun="issues" />
-            </>
+          {mode === 'custom' && provider === 'trello' ? (
+            <label className="mt-3 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={c.trelloIncludeArchived}
+                onChange={(e) => setC({ ...c, trelloIncludeArchived: e.target.checked })}
+              />
+              <span className="text-fg">Index completed / archived cards</span>
+            </label>
           ) : null}
 
-          {provider === 'trello' ? (
-            <>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={custom.trelloIncludeArchived} onChange={(e) => setCustom({ ...custom, trelloIncludeArchived: e.target.checked })} />
-                <span className="text-fg">Index completed / archived cards</span>
-              </label>
-              <Field label="Exclude lists (comma-separated, optional)">
-                <input value={custom.trelloLists} onChange={(e) => setCustom({ ...custom, trelloLists: e.target.value })} className={inputCls} placeholder="Icebox, Done" />
-              </Field>
-              <AgeField custom={custom} setCustom={setCustom} noun="cards" />
-            </>
+          {mode === 'custom' && provider !== 'github' ? (
+            <div className="mt-3">
+              <div className="mb-1.5 text-sm font-semibold text-fg">Exclude {ageNoun} not updated in</div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={c.ageValue}
+                  onChange={(e) => setC({ ...c, ageValue: e.target.value })}
+                  placeholder="12"
+                  className="w-14 rounded-md border border-border bg-card px-2 py-1.5 text-center text-sm font-semibold text-fg"
+                />
+                <select
+                  value={c.ageUnit}
+                  onChange={(e) => setC({ ...c, ageUnit: e.target.value as AgeUnit })}
+                  className="rounded-md border border-border bg-card px-2 py-1.5 text-sm text-fg"
+                >
+                  <option value="days">days</option>
+                  <option value="months">months</option>
+                  <option value="years">years</option>
+                </select>
+              </div>
+            </div>
           ) : null}
 
-          {provider === 'confluence' ? <AgeField custom={custom} setCustom={setCustom} noun="pages" /> : null}
-
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => apply(buildCustomPolicy(provider, custom))}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-          >
-            Save & reindex
-          </button>
+          {mode === 'custom' ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => apply(buildCustomPolicy(provider, c))}
+              className="mt-3 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            >
+              Save &amp; reindex
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
   );
 }
 
-const inputCls = 'w-full rounded-md border border-border bg-card px-2 py-1 text-sm text-fg';
-
-function Field({ label, children }: { label: string; children: ReactElement }): ReactElement {
-  return (
-    <div className="space-y-1">
-      <label className="block text-xs font-medium text-muted">{label}</label>
-      {children}
-    </div>
-  );
-}
-
-function AgeField({
-  custom,
-  setCustom,
-  noun,
+function ChipRow({
+  label,
+  values,
+  draft,
+  onDraft,
+  onAdd,
+  onRemove,
+  placeholder,
 }: {
-  custom: CustomState;
-  setCustom: (c: CustomState) => void;
-  noun: string;
+  label: string;
+  values: string[];
+  draft: string;
+  onDraft: (v: string) => void;
+  onAdd: (v: string) => void;
+  onRemove: (v: string) => void;
+  placeholder: string;
 }): ReactElement {
   return (
-    <Field label={`Exclude ${noun} not updated in (optional)`}>
-      <div className="flex items-center gap-2">
+    <div className="mt-3">
+      <div className="mb-1.5 text-sm font-semibold text-fg">{label}</div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {values.map((v) => (
+          <span key={v} className="inline-flex items-center gap-1.5 rounded border border-border bg-card px-2 py-0.5 text-xs text-fg">
+            {v}
+            <button type="button" aria-label={`Remove ${v}`} onClick={() => onRemove(v)} className="text-muted hover:text-fg">
+              ×
+            </button>
+          </span>
+        ))}
         <input
-          type="number"
-          min={1}
-          value={custom.agevalue}
-          onChange={(e) => setCustom({ ...custom, agevalue: e.target.value })}
-          className="w-20 rounded-md border border-border bg-card px-2 py-1 text-sm text-fg"
-          placeholder="2"
+          value={draft}
+          onChange={(e) => onDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && draft.trim()) {
+              e.preventDefault();
+              onAdd(draft.trim());
+            }
+          }}
+          placeholder={placeholder}
+          className="rounded border border-dashed border-border bg-transparent px-2 py-0.5 text-xs text-fg outline-none"
+          style={{ minWidth: 150 }}
         />
-        <select
-          value={custom.ageUnit}
-          onChange={(e) => setCustom({ ...custom, ageUnit: e.target.value as 'months' | 'years' })}
-          className="rounded-md border border-border bg-card px-2 py-1 text-sm text-fg"
-        >
-          <option value="months">months</option>
-          <option value="years">years</option>
-        </select>
       </div>
-    </Field>
+    </div>
   );
+}
+
+/** Map a stored preset key back to this connector's menu value. */
+function mapPresetToOption(provider: Provider, preset: string | null): string {
+  if (preset === 'index_everything') return 'everything';
+  if (preset === 'code_only') return provider === 'github' ? 'code' : 'active';
+  // recommended (or null) → the connector's default "active"/"recommended" option.
+  return OPTIONS[provider][0]!.value;
 }

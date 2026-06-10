@@ -251,7 +251,6 @@ export function ConnectionCard({
                 provider={data.provider}
                 sourceIds={cardSourceIds}
                 currentPreset={cardPreset}
-                orgDefaultPreset={orgDefaultPreset}
               />
             </div>
           ) : null}
