@@ -138,6 +138,9 @@ export function CardFilterEditor({
   // Map the stored preset back to a menu value for the initial selection.
   const initial = mapPresetToOption(provider, currentPreset);
   const [mode, setMode] = useState<string>(initial);
+  // The persisted selection. Editing stages changes; nothing reindexes until
+  // Save. Discard reverts to this.
+  const [savedMode, setSavedMode] = useState<string>(initial);
   const [c, setC] = useState<CustomState>(EMPTY_CUSTOM);
   const [pending, start] = useTransition();
   const [note, setNote] = useState<string | null>(null);
@@ -148,18 +151,34 @@ export function CardFilterEditor({
   const customNoun = provider === 'github' ? 'pattern' : provider === 'jira' ? 'status' : provider === 'trello' ? 'list' : 'item';
   const ageNoun = provider === 'jira' ? 'issues' : provider === 'trello' ? 'cards' : 'pages';
 
-  function apply(policy: Record<string, unknown> | null): void {
+  const customHasContent =
+    c.patterns.length > 0 || c.jiraTypes.length > 0 || c.ageValue.trim() !== '' || c.trelloIncludeArchived;
+  const dirty = mode !== savedMode || (mode === 'custom' && customHasContent);
+
+  function onMode(next: string): void {
+    // Staged only — no reindex until Save.
+    setMode(next);
+    setNote(null);
+  }
+
+  function save(): void {
+    const policy = mode === 'custom' ? buildCustomPolicy(provider, c) : buildPolicyForOption(provider, mode);
     setNote(null);
     start(async () => {
       const res = await setSourcesCorpusPolicyAction(sourceIds, policy as never);
-      setNote(res.ok ? `Reindexing ${String(res.reindexed)} source${res.reindexed === 1 ? '' : 's'}…` : `Couldn't save: ${res.error}`);
+      if (res.ok) {
+        setSavedMode(mode);
+        setNote(res.reindexed > 0 ? `Saved — reindexing ${String(res.reindexed)} source${res.reindexed === 1 ? '' : 's'}…` : 'Saved.');
+      } else {
+        setNote(`Couldn't save: ${res.error}`);
+      }
     });
   }
 
-  function onMode(next: string): void {
-    setMode(next);
+  function discard(): void {
+    setMode(savedMode);
+    setC(EMPTY_CUSTOM);
     setNote(null);
-    if (next !== 'custom') apply(buildPolicyForOption(provider, next));
   }
 
   if (sourceIds.length === 0) return <p className="text-xs text-muted">Nothing connected to filter yet.</p>;
@@ -278,16 +297,27 @@ export function CardFilterEditor({
             </div>
           ) : null}
 
-          {mode === 'custom' ? (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => apply(buildCustomPolicy(provider, c))}
-              className="mt-3 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-            >
-              Save &amp; reindex
-            </button>
-          ) : null}
+        </div>
+      ) : null}
+
+      {dirty ? (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={pending}
+            onClick={save}
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          >
+            Save &amp; reindex
+          </button>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={discard}
+            className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-fg hover:bg-bg disabled:opacity-50"
+          >
+            Discard changes
+          </button>
         </div>
       ) : null}
     </div>
