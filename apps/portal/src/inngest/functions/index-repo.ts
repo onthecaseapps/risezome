@@ -16,6 +16,8 @@ import { sanitizeStatusMessage } from '../lib/status-message';
 import { getInstallationOctokit } from '../../../app/_lib/github-app';
 import { reconcile, writeReconciledDoc, type CorpusWriteClient } from '../lib/corpus-reconcile';
 import { pgCorpusWriter } from '../lib/corpus-pg';
+import { loadEffectivePolicy } from '../lib/corpus-policy-store';
+import { makePathFilter, type EffectiveCorpusPolicy } from '../lib/corpus-policy';
 
 /** Doc types this indexer owns — reconcile must never touch issue/PR docs
  *  that share this source_id (see corpus-reconcile R8). */
@@ -100,7 +102,7 @@ export const indexRepoFn = inngest.createFunction(
       const service = createServiceRoleClient();
       const { data, error } = await service
         .from('sources')
-        .select('id, org_id, installation_id, repo_full_name, repo_id, default_branch, status')
+        .select('id, org_id, installation_id, repo_full_name, repo_id, default_branch, status, corpus_policy')
         .eq('id', sourceId)
         .eq('org_id', orgId)
         .single();
@@ -129,6 +131,7 @@ export const indexRepoFn = inngest.createFunction(
         repo_full_name: string;
         repo_id: number | null;
         default_branch: string | null;
+        corpus_policy: unknown;
       };
     });
     if (source === null) {
@@ -200,17 +203,24 @@ export const indexRepoFn = inngest.createFunction(
     // ── Step 3: filter to indexable files ────────────────────────────
     // Pre-classify here (not inside step.run) so the work counter on the
     // sources row gets a meaningful total_files immediately.
-    const targets = tree.blobs
+    const indexable = tree.blobs
       .filter((b) => isIndexableSize(b.size))
       .filter((b) => chunkFile(b.path, '').length === 0 ? classifiable(b.path) : true);
     // The above filter is a quick "would the chunker accept this extension?"
     // check; we run the real chunker below with content.
 
+    // Apply the corpus filtering policy (org default → per-source override).
+    // Files the policy excludes never enter the desired set, so any previously
+    // indexed doc for them is pruned by reconcile (R5). `excluded_count` counts
+    // ONLY policy exclusions (not extension/binary/size) for the UI.
+    const effectivePolicy = await loadEffectivePolicy(createServiceRoleClient(), orgId, source.corpus_policy);
+    const { targets, excludedByPolicy } = selectTargetsByPolicy(indexable, effectivePolicy);
+
     const totalFiles = targets.length;
     await step.run('set-total', async () => {
       await createServiceRoleClient()
         .from('sources')
-        .update({ total_files: totalFiles })
+        .update({ total_files: totalFiles, excluded_count: excludedByPolicy })
         .eq('id', sourceId)
         .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     });
@@ -524,6 +534,22 @@ function arrayToVectorLiteral(vec: Float32Array): string {
 function isIndexableSize(size: number | undefined): boolean {
   if (size === undefined) return true;
   return size > 0 && size <= 512 * 1024;
+}
+
+/**
+ * Split the size/extension-indexable blobs into those the corpus policy keeps
+ * (`targets`) and a count of those it excludes. The policy filter is the only
+ * thing that distinguishes these two — `excludedByPolicy` is reported to the
+ * UI as "K excluded by policy" and must NOT include extension/binary/size
+ * drops (those happened upstream).
+ */
+export function selectTargetsByPolicy<T extends { path: string }>(
+  indexable: readonly T[],
+  policy: EffectiveCorpusPolicy,
+): { targets: T[]; excludedByPolicy: number } {
+  const keep = makePathFilter(policy);
+  const targets = indexable.filter((b) => keep(b.path));
+  return { targets, excludedByPolicy: indexable.length - targets.length };
 }
 
 // Cheap pre-classification by extension only (no content); the real chunker
