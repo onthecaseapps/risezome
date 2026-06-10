@@ -74,6 +74,22 @@ describe('makePathFilter (recommended)', () => {
   });
 });
 
+describe('makePathFilter (allowlist / customIncludeOnly)', () => {
+  it('keeps ONLY paths matching the allowlist, still applying excludes within', () => {
+    const policy = resolveEffectivePolicy(null, { preset: 'recommended', customIncludeOnly: ['packages/api/**'] });
+    const keep = makePathFilter(policy);
+    expect(keep('packages/api/src/server.ts')).toBe(true);
+    expect(keep('packages/web/src/app.ts')).toBe(false); // not in allowlist
+    expect(keep('packages/api/src/server.test.ts')).toBe(false); // allowed but excluded (test)
+    expect(keep('README.md')).toBe(false); // outside allowlist
+  });
+
+  it('no allowlist => denylist behavior (everything kept except excludes)', () => {
+    const keep = makePathFilter(resolveEffectivePolicy(null, null));
+    expect(keep('packages/web/src/app.ts')).toBe(true);
+  });
+});
+
 describe('makePathFilter (code_only / index_everything)', () => {
   it('code_only excludes docs in addition to noise', () => {
     const keep = makePathFilter(resolveEffectivePolicy(null, { preset: 'code_only' }));

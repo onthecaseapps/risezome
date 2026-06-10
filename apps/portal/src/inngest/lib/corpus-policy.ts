@@ -43,12 +43,18 @@ export interface CorpusPolicy {
   readonly customIncludes?: readonly string[];
   readonly connectorRules?: readonly ConnectorRule[];
   readonly connectorOptions?: ConnectorOptions;
+  /** Allowlist (GitHub): when set, ONLY paths matching one of these globs are
+   *  indexed (then path excludes still apply within them). Empty/absent = no
+   *  allowlist (denylist behavior). */
+  readonly customIncludeOnly?: readonly string[];
 }
 
 /** The resolved, ready-to-apply policy. */
 export interface EffectiveCorpusPolicy {
   readonly pathExcludes: readonly string[];
   readonly pathIncludes: readonly string[];
+  /** Allowlist globs; when non-empty a path must match one to be kept. */
+  readonly pathIncludeOnly: readonly string[];
   readonly connectorRules: readonly ConnectorRule[];
   readonly connectorOptions: ConnectorOptions;
 }
@@ -99,18 +105,21 @@ const PRESETS: Record<PresetKey, EffectiveCorpusPolicy> = {
   recommended: {
     pathExcludes: RECOMMENDED_PATH_EXCLUDES,
     pathIncludes: [],
+    pathIncludeOnly: [],
     connectorRules: RECOMMENDED_CONNECTOR_RULES,
     connectorOptions: {},
   },
   index_everything: {
     pathExcludes: [],
     pathIncludes: [],
+    pathIncludeOnly: [],
     connectorRules: [],
     connectorOptions: { trello: { includeArchived: true } },
   },
   code_only: {
     pathExcludes: [...RECOMMENDED_PATH_EXCLUDES, ...DOC_PATH_EXCLUDES],
     pathIncludes: [],
+    pathIncludeOnly: [],
     connectorRules: RECOMMENDED_CONNECTOR_RULES,
     connectorOptions: {},
   },
@@ -147,6 +156,11 @@ export function resolveEffectivePolicy(
       ...(orgDefault?.customIncludes ?? []),
       ...(override?.customIncludes ?? []),
     ],
+    pathIncludeOnly: [
+      ...base.pathIncludeOnly,
+      ...(orgDefault?.customIncludeOnly ?? []),
+      ...(override?.customIncludeOnly ?? []),
+    ],
     connectorRules: [
       ...base.connectorRules,
       ...(orgDefault?.connectorRules ?? []),
@@ -179,16 +193,24 @@ export function trelloIncludeArchived(policy: EffectiveCorpusPolicy): boolean {
 // ── Matchers ────────────────────────────────────────────────────────────────
 
 /**
- * Build a keep-predicate for repo file paths. Uses gitignore semantics: a path
- * is excluded when an exclude pattern matches and no later include (`!`)
- * pattern re-opens it. Paths must be repo-relative (the GitHub tree gives us
- * those); empty paths are never kept.
+ * Build a keep-predicate for repo file paths. A path is kept iff (1) when an
+ * allowlist (`pathIncludeOnly`) is set, the path matches it, AND (2) it is not
+ * excluded (gitignore semantics: an exclude pattern matches and no later `!`
+ * include re-opens it). The allowlist is a clean "only index these" set — it
+ * does NOT use `!`-negation (which can't re-include under a broadly-excluded
+ * parent), so monorepo scoping is reliable. Paths are repo-relative; empty
+ * paths are never kept.
  */
 export function makePathFilter(policy: EffectiveCorpusPolicy): (path: string) => boolean {
   const ig = ignore();
   ig.add([...policy.pathExcludes]);
   ig.add(policy.pathIncludes.map((p) => (p.startsWith('!') ? p : `!${p}`)));
-  return (path: string): boolean => path.length > 0 && !ig.ignores(path);
+  const allow = policy.pathIncludeOnly.length > 0 ? ignore().add([...policy.pathIncludeOnly]) : null;
+  return (path: string): boolean => {
+    if (path.length === 0) return false;
+    if (allow !== null && !allow.ignores(path)) return false; // not in the allowlist
+    return !ig.ignores(path);
+  };
 }
 
 /**

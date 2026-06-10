@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useTransition, type ReactElement } from 'react';
+import { useEffect, useState, useTransition, type ReactElement } from 'react';
 import { setSourcesCorpusPolicyAction } from './corpus-policy-action';
+import { getTrelloListsAction } from './trello-lists-action';
 import type { Provider } from './_source-item-list';
 
 /**
@@ -73,8 +74,10 @@ const CUSTOM_SEED: Record<Provider, string[]> = {
 };
 
 export interface CustomState {
-  patterns: string[]; // github globs / jira statuses / trello lists
+  patterns: string[]; // github globs / jira statuses / trello lists (excluded, or include-only for github)
   draft: string;
+  /** GitHub: whether `patterns` are exclude globs or an only-index allowlist. */
+  githubMode: 'exclude' | 'include';
   jiraTypes: string[];
   jiraTypeDraft: string;
   trelloIncludeArchived: boolean;
@@ -85,6 +88,7 @@ export interface CustomState {
 const EMPTY_CUSTOM: CustomState = {
   patterns: [],
   draft: '',
+  githubMode: 'exclude',
   jiraTypes: [],
   jiraTypeDraft: '',
   trelloIncludeArchived: false,
@@ -117,7 +121,10 @@ export function buildCustomPolicy(provider: Provider, c: CustomState): Record<st
   const age = ageRule(provider, c);
 
   if (provider === 'github') {
-    if (c.patterns.length > 0) policy['customExcludes'] = c.patterns;
+    if (c.patterns.length > 0) {
+      if (c.githubMode === 'include') policy['customIncludeOnly'] = c.patterns;
+      else policy['customExcludes'] = c.patterns;
+    }
   }
   if (provider === 'jira') {
     if (c.patterns.length > 0) rules.push({ source: 'jira', field: 'status', op: 'in', value: c.patterns });
@@ -155,6 +162,21 @@ export function CardFilterEditor({
   const [c, setC] = useState<CustomState>(EMPTY_CUSTOM);
   const [pending, start] = useTransition();
   const [note, setNote] = useState<string | null>(null);
+  // Trello: lazily-fetched board list names for togglable exclusion.
+  // undefined = not loaded, null = load failed/empty (fall back to free-text).
+  const [trelloLists, setTrelloLists] = useState<string[] | null | undefined>(undefined);
+
+  useEffect(() => {
+    if (provider !== 'trello' || mode !== 'custom' || trelloLists !== undefined) return;
+    let live = true;
+    void getTrelloListsAction(sourceIds).then((res) => {
+      if (!live) return;
+      setTrelloLists(res.ok && res.lists.length > 0 ? res.lists : null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [provider, mode, trelloLists, sourceIds]);
 
   const selected = opts.find((o) => o.value === mode) ?? opts[0]!;
   const chips = mode === 'custom' ? c.patterns : PRESET_CHIPS[provider][mode] ?? [];
@@ -165,6 +187,25 @@ export function CardFilterEditor({
   const customHasContent =
     c.patterns.length > 0 || c.jiraTypes.length > 0 || c.ageValue.trim() !== '' || c.trelloIncludeArchived;
   const dirty = mode !== savedMode || (mode === 'custom' && customHasContent);
+
+  const githubInclude = provider === 'github' && c.githubMode === 'include';
+  const trelloToggleLists = provider === 'trello' && mode === 'custom' && Array.isArray(trelloLists);
+  const customHeader = githubInclude ? 'Only index these paths · editable' : `Exclude ${customNoun}s · editable`;
+  const addPlaceholder = githubInclude
+    ? 'Add a path to index and press Enter, e.g. packages/api/**'
+    : provider === 'github'
+      ? 'Add a pattern and press Enter, e.g. vendor/**'
+      : provider === 'jira'
+        ? 'Add a status and press Enter, e.g. In Review'
+        : 'Add a list and press Enter, e.g. Icebox';
+
+  function toggleList(list: string): void {
+    setC({ ...c, patterns: c.patterns.includes(list) ? c.patterns.filter((l) => l !== list) : [...c.patterns, list] });
+  }
+
+  function setGithubMode(next: 'exclude' | 'include'): void {
+    setC({ ...c, githubMode: next, patterns: next === 'exclude' ? [...CUSTOM_SEED.github] : [] });
+  }
 
   function onMode(next: string): void {
     // Staged only — no reindex until Save. Entering Custom seeds the recommended
@@ -220,51 +261,96 @@ export function CardFilterEditor({
 
       {mode !== 'everything' && mode !== 'recommended-empty' ? (
         <div className="rounded-lg border border-border bg-bg p-3">
-          <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.08em] text-muted">
-            {mode === 'custom' ? `Exclude ${customNoun}s · editable` : 'Excluded by this preset'}
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {chips.map((chip) => (
-              <span
-                key={chip}
-                className={`inline-flex items-center gap-1.5 rounded border border-border px-2 py-0.5 text-xs ${
-                  mode === 'custom' ? 'bg-card text-fg' : 'bg-card text-muted'
-                } ${mono ? 'font-mono' : ''}`}
+          {mode === 'custom' && provider === 'github' ? (
+            <div className="mb-3 inline-flex rounded-md border border-border bg-card p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setGithubMode('exclude')}
+                className={`rounded px-2 py-1 ${c.githubMode === 'exclude' ? 'bg-accent text-white' : 'text-muted'}`}
               >
-                {chip}
-                {mode === 'custom' ? (
-                  <button
-                    type="button"
-                    aria-label={`Remove ${chip}`}
-                    onClick={() => setC({ ...c, patterns: c.patterns.filter((p) => p !== chip) })}
-                    className="text-muted hover:text-fg"
-                  >
-                    ×
-                  </button>
-                ) : null}
-              </span>
-            ))}
-            {chips.length === 0 && mode !== 'custom' ? <span className="text-xs text-muted">Nothing excluded.</span> : null}
+                Exclude these paths
+              </button>
+              <button
+                type="button"
+                onClick={() => setGithubMode('include')}
+                className={`rounded px-2 py-1 ${c.githubMode === 'include' ? 'bg-accent text-white' : 'text-muted'}`}
+              >
+                Only index these paths
+              </button>
+            </div>
+          ) : null}
+
+          <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.08em] text-muted">
+            {mode === 'custom'
+              ? trelloToggleLists
+                ? 'Exclude lists · tap to toggle'
+                : customHeader
+              : 'Excluded by this preset'}
           </div>
-          {mode === 'custom' ? (
-            <input
-              value={c.draft}
-              onChange={(e) => setC({ ...c, draft: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && c.draft.trim()) {
-                  e.preventDefault();
-                  setC({ ...c, patterns: [...c.patterns, c.draft.trim()], draft: '' });
-                }
-              }}
-              placeholder={
-                provider === 'github'
-                  ? 'Add a pattern and press Enter, e.g. vendor/**'
-                  : provider === 'jira'
-                    ? 'Add a status and press Enter, e.g. In Review'
-                    : 'Add a list and press Enter, e.g. Icebox'
-              }
-              className={`mt-2 w-full rounded-md border border-dashed border-border bg-card px-3 py-2 text-sm text-fg outline-none focus:border-accent ${mono ? 'font-mono' : ''}`}
-            />
+
+          {trelloToggleLists ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(trelloLists as string[]).map((list) => {
+                const on = c.patterns.includes(list);
+                return (
+                  <button
+                    key={list}
+                    type="button"
+                    onClick={() => toggleList(list)}
+                    className={`rounded border px-2 py-0.5 text-xs ${
+                      on ? 'border-accent bg-accent/10 text-fg' : 'border-border bg-card text-muted hover:text-fg'
+                    }`}
+                  >
+                    {on ? '✕ ' : ''}
+                    {list}
+                  </button>
+                );
+              })}
+              {(trelloLists as string[]).length === 0 ? <span className="text-xs text-muted">No lists found.</span> : null}
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {chips.map((chip) => (
+                  <span
+                    key={chip}
+                    className={`inline-flex items-center gap-1.5 rounded border border-border px-2 py-0.5 text-xs ${
+                      mode === 'custom' ? 'bg-card text-fg' : 'bg-card text-muted'
+                    } ${mono ? 'font-mono' : ''}`}
+                  >
+                    {chip}
+                    {mode === 'custom' ? (
+                      <button
+                        type="button"
+                        aria-label={`Remove ${chip}`}
+                        onClick={() => setC({ ...c, patterns: c.patterns.filter((p) => p !== chip) })}
+                        className="text-muted hover:text-fg"
+                      >
+                        ×
+                      </button>
+                    ) : null}
+                  </span>
+                ))}
+                {chips.length === 0 && mode !== 'custom' ? <span className="text-xs text-muted">Nothing excluded.</span> : null}
+              </div>
+              {mode === 'custom' ? (
+                <input
+                  value={c.draft}
+                  onChange={(e) => setC({ ...c, draft: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && c.draft.trim()) {
+                      e.preventDefault();
+                      setC({ ...c, patterns: [...c.patterns, c.draft.trim()], draft: '' });
+                    }
+                  }}
+                  placeholder={addPlaceholder}
+                  className={`mt-2 w-full rounded-md border border-dashed border-border bg-card px-3 py-2 text-sm text-fg outline-none focus:border-accent ${mono ? 'font-mono' : ''}`}
+                />
+              ) : null}
+            </>
+          )}
+          {provider === 'trello' && mode === 'custom' && trelloLists === undefined ? (
+            <p className="mt-1 text-xs text-muted">Loading lists…</p>
           ) : null}
 
           {mode === 'custom' && provider === 'jira' ? (

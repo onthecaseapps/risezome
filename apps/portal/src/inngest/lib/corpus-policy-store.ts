@@ -34,6 +34,8 @@ export function coerceCorpusPolicy(value: unknown): CorpusPolicy | null {
   if (excludes !== undefined) out.customExcludes = excludes;
   const includes = strArr(v['customIncludes']);
   if (includes !== undefined) out.customIncludes = includes;
+  const includeOnly = strArr(v['customIncludeOnly']);
+  if (includeOnly !== undefined) out.customIncludeOnly = includeOnly;
   // connectorRules are validated structurally by the matcher; pass through
   // when it's an array, else omit.
   if (Array.isArray(v['connectorRules'])) {

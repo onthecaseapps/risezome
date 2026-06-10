@@ -4,6 +4,7 @@ import { buildCustomPolicy, type CustomState } from '../../app/(authed)/sources/
 const base: CustomState = {
   patterns: [],
   draft: '',
+  githubMode: 'exclude',
   jiraTypes: [],
   jiraTypeDraft: '',
   trelloIncludeArchived: false,
@@ -12,10 +13,17 @@ const base: CustomState = {
 };
 
 describe('buildCustomPolicy', () => {
-  it('github: pattern chips become customExcludes', () => {
+  it('github exclude mode: pattern chips become customExcludes', () => {
     const p = buildCustomPolicy('github', { ...base, patterns: ['**/test/**', '*.lock'] });
     expect(p).toMatchObject({ preset: 'recommended', customExcludes: ['**/test/**', '*.lock'] });
     expect(p['connectorRules']).toBeUndefined();
+    expect(p['customIncludeOnly']).toBeUndefined();
+  });
+
+  it('github include mode: pattern chips become customIncludeOnly (allowlist)', () => {
+    const p = buildCustomPolicy('github', { ...base, githubMode: 'include', patterns: ['packages/api/**'] });
+    expect(p).toMatchObject({ preset: 'recommended', customIncludeOnly: ['packages/api/**'] });
+    expect(p['customExcludes']).toBeUndefined();
   });
 
   it('jira: status chips + type chips + age become connector rules', () => {

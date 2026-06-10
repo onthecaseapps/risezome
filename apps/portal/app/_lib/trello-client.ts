@@ -147,6 +147,16 @@ export async function listBoards(opts: TrelloClientOptions): Promise<TrelloBoard
   }));
 }
 
+/** Names of a board's open (non-archived) lists, for the filtering editor. */
+export async function fetchBoardLists(boardId: string, opts: TrelloClientOptions): Promise<string[]> {
+  const raw = await trelloGet<Array<{ name: string }>>(
+    `/boards/${boardId}/lists`,
+    { filter: 'open', fields: 'name' },
+    opts,
+  );
+  return raw.map((l) => l.name).filter((n) => n.length > 0);
+}
+
 export interface FetchBoardCardsOptions {
   /**
    * Include completed/archived cards. When false (default) closed cards and
