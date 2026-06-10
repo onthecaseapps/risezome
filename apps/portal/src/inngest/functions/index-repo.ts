@@ -74,7 +74,8 @@ export const indexRepoFn = inngest.createFunction(
           .from('sources')
           .update({ status: 'errored', status_message: sanitizeStatusMessage(message) })
           .eq('id', sourceId)
-          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+          .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+          .neq('status', 'removed'); // removal is sticky (deselect↔index race)
       } else {
         // service-role-cross-org: onFailure for an event that carried no orgId
         // (older queued events) — the sources PK (id) is globally unique, so this
@@ -82,7 +83,8 @@ export const indexRepoFn = inngest.createFunction(
         await createServiceRoleClient()
           .from('sources')
           .update({ status: 'errored', status_message: sanitizeStatusMessage(message) })
-          .eq('id', sourceId);
+          .eq('id', sourceId)
+          .neq('status', 'removed'); // removal is sticky (deselect↔index race)
       }
     },
   },
@@ -97,13 +99,16 @@ export const indexRepoFn = inngest.createFunction(
       const service = createServiceRoleClient();
       const { data, error } = await service
         .from('sources')
-        .select('id, org_id, installation_id, repo_full_name, repo_id, default_branch')
+        .select('id, org_id, installation_id, repo_full_name, repo_id, default_branch, status')
         .eq('id', sourceId)
         .eq('org_id', orgId)
         .single();
       if (error !== null || data === null) {
         throw new Error(`source not found: org=${orgId} source=${sourceId} (${error?.message ?? 'no row'})`);
       }
+      // A queued index event can arrive after the repo was deselected
+      // (status='removed', awaiting purge) — skip rather than re-index it.
+      if ((data as { status: string }).status === 'removed') return null;
       await service
         .from('sources')
         .update({
@@ -114,7 +119,8 @@ export const indexRepoFn = inngest.createFunction(
           chunk_count: 0,
         })
         .eq('id', sourceId)
-        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+        .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+        .neq('status', 'removed'); // removal is sticky (deselect↔index race)
       return data as {
         id: string;
         org_id: string;
@@ -124,6 +130,9 @@ export const indexRepoFn = inngest.createFunction(
         default_branch: string | null;
       };
     });
+    if (source === null) {
+      return { sourceId, files: 0, chunks: 0, skipped: 'removed' };
+    }
 
     const [owner, repo] = source.repo_full_name.split('/');
     if (owner === undefined || repo === undefined) {
@@ -218,11 +227,18 @@ export const indexRepoFn = inngest.createFunction(
     // Type-scoped to 'file' so it never touches the issue/PR docs that
     // share this source_id.
     const fetchComplete = !tree.truncated;
+    // The blob SHA fingerprints the file CONTENT but not the chunking
+    // config — without folding the chunker mode into the hash, flipping
+    // RISEZOME_CODE_STRUCTURE_CHUNKING would never re-chunk existing files
+    // (reconcile sees an unchanged hash and skips them), so the flag would
+    // silently do nothing for an already-indexed repo.
+    const structureChunking = process.env.RISEZOME_CODE_STRUCTURE_CHUNKING === 'true';
+    const hashOf = (sha: string): string => (structureChunking ? `${sha}:cs1` : sha);
     const desired = new Map(
-      targets.map((t) => [orgScopedDocId(orgId, `github:${owner}/${repo}:${t.path}@${t.sha}`), { hash: t.sha }] as const),
+      targets.map((t) => [orgScopedDocId(orgId, `github:${owner}/${repo}:${t.path}@${t.sha}`), { hash: hashOf(t.sha) }] as const),
     );
     const recon = await step.run('reconcile', async () => {
-      return await reconcile(createServiceRoleClient(), {
+      const r = await reconcile(createServiceRoleClient(), {
         sourceId,
         ownedTypes: OWNED_TYPES,
         desired,
@@ -232,6 +248,17 @@ export const indexRepoFn = inngest.createFunction(
         // is a confirmed-empty source → safe to prune to zero.
         confirmedEmpty: targets.length === 0 && fetchComplete,
       });
+      // Progress baseline: unchanged files are already covered, so surface
+      // them now. Without this the counter sits at 0 through the whole
+      // tree-fetch/reconcile phase and then leaps to ~unchanged when the
+      // first batch lands ("0 of 803 … suddenly 600").
+      await createServiceRoleClient()
+        .from('sources')
+        .update({ indexed_files: r.counts.unchanged })
+        .eq('id', sourceId)
+        .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+        .neq('status', 'removed');
+      return r;
     });
 
     if (recon.toIndex.length === 0) {
@@ -244,7 +271,10 @@ export const indexRepoFn = inngest.createFunction(
             indexed_files: totalFiles,
           })
           .eq('id', sourceId)
-          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+          .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+          // Removal is sticky: a deselect that landed mid-run must survive
+          // this write or the purge cron never matches the source.
+          .neq('status', 'removed');
       });
       console.info(
         `[index-repo] ${source.repo_full_name} (${indexMode}): ` +
@@ -291,6 +321,7 @@ export const indexRepoFn = inngest.createFunction(
           embedder,
           contextGenerator,
           docSummarizer,
+          structureChunking,
         });
         // Counter update folded into the batch step (one step per batch keeps
         // big repos under Inngest's ~1000-step cap).
@@ -314,7 +345,10 @@ export const indexRepoFn = inngest.createFunction(
         .from('sources')
         .update({ status: 'idle', last_indexed_at: new Date().toISOString(), indexed_files: totalFiles })
         .eq('id', sourceId)
-        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+        .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+        // Removal is sticky: a deselect that landed mid-run must survive
+        // this write or the purge cron never matches the source.
+        .neq('status', 'removed');
     });
 
     console.info(
@@ -340,8 +374,12 @@ async function indexBatch(args: {
   embedder: VoyageEmbedder;
   contextGenerator: ContextGenerator | undefined;
   docSummarizer: DocSummarizer | undefined;
+  /** Caller's chunking mode — MUST be the same value used to build the
+   *  desired-hash map, or stored hashes drift from desired and every run
+   *  re-indexes everything (or never re-chunks). */
+  structureChunking: boolean;
 }): Promise<{ files: number; chunks: number }> {
-  const { batch, orgId, sourceId, owner, repo, branch, installationId, embedder, contextGenerator, docSummarizer } = args;
+  const { batch, orgId, sourceId, owner, repo, branch, installationId, embedder, contextGenerator, docSummarizer, structureChunking } = args;
   const octokit = await getInstallationOctokit(installationId);
   const service = createServiceRoleClient();
 
@@ -364,12 +402,7 @@ async function indexBatch(args: {
       return { files: 0, chunks: 0 };
     }
 
-    const chunkInputs = chunkFile(entry.path, content, {
-      // Heuristic declaration-boundary chunking for code. Off by default;
-      // flipping it changes content_hash for every code chunk → a full
-      // code reindex, so it rolls out behind a flag + eval A/B.
-      codeStructureAware: process.env.RISEZOME_CODE_STRUCTURE_CHUNKING === 'true',
-    });
+    const chunkInputs = chunkFile(entry.path, content, { codeStructureAware: structureChunking });
     if (chunkInputs.length === 0) return { files: 0, chunks: 0 };
 
     // Contextual Retrieval (U3): per-chunk context from the full file,
@@ -450,8 +483,9 @@ async function indexBatch(args: {
     await writeReconciledDoc(service, {
       docId,
       kind: entry.kind,
-      // content_hash = the git blob SHA (exact content fingerprint).
-      hash: entry.sha,
+      // content_hash = blob SHA + chunking-config fingerprint; must mirror
+      // the desired-hash map exactly (see hashOf in the handler).
+      hash: structureChunking ? `${entry.sha}:cs1` : entry.sha,
       doc: {
         orgId,
         sourceId,

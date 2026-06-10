@@ -14,5 +14,10 @@ export function sanitizeStatusMessage(raw: string): string {
   if (/cross-org id collision/i.test(raw)) {
     return 'This source shares an identifier with another workspace and could not be indexed. Contact support.';
   }
+  // Upstream proxies (Cloudflare/Supabase) return whole HTML error pages on
+  // 5xx; dumping markup into the status line is useless to the user.
+  if (/<!DOCTYPE|<html/i.test(raw)) {
+    return 'Indexing failed: the database was temporarily unavailable. Reindex to retry.';
+  }
   return raw.replace(UUID_RE, '<id>').slice(0, 500);
 }

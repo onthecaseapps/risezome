@@ -49,7 +49,8 @@ export const indexJiraFn = inngest.createFunction(
           .from('sources')
           .update({ status: 'errored', status_message: sanitizeStatusMessage(message) })
           .eq('id', sourceId)
-          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+          .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+          .neq('status', 'removed'); // removal is sticky (deselect↔index race)
       } else {
         // service-role-cross-org: onFailure for an event that carried no orgId
         // (older queued events) — the sources PK (id) is globally unique, so this
@@ -57,7 +58,8 @@ export const indexJiraFn = inngest.createFunction(
         await createServiceRoleClient()
           .from('sources')
           .update({ status: 'errored', status_message: sanitizeStatusMessage(message) })
-          .eq('id', sourceId);
+          .eq('id', sourceId)
+          .neq('status', 'removed'); // removal is sticky (deselect↔index race)
       }
     },
   },
@@ -70,20 +72,27 @@ export const indexJiraFn = inngest.createFunction(
       const service = createServiceRoleClient();
       const { data: source, error } = await service
         .from('sources')
-        .select('id, kind, external_id')
+        .select('id, kind, external_id, status')
         .eq('id', sourceId)
         .eq('org_id', orgId)
         .single();
       if (error !== null || source === null || source.kind !== 'jira' || source.external_id === null) {
         throw new Error(`source ${sourceId} is not an indexable Jira project`);
       }
+      // A queued index event can arrive after the project was deselected
+      // (status='removed', awaiting purge) — skip rather than re-index it.
+      if (source.status === 'removed') return { removed: true as const };
       await service
         .from('sources')
         .update({ status: 'indexing', status_message: null, indexed_files: 0, total_files: null })
         .eq('id', sourceId)
-        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+        .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+        .neq('status', 'removed'); // removal is sticky (deselect↔index race)
       return { projectKey: source.external_id as string };
     });
+    if ('removed' in ctx) {
+      return { sourceId, issues: 0, chunks: 0, skipped: 'removed' };
+    }
 
     // Resolve the Atlassian token outside any memoized step so the live bearer
     // token never lands in Inngest run state — Inngest persists step return
@@ -149,6 +158,7 @@ async function markErrored(
       .from('sources')
       .update({ status: 'errored', status_message: RECONNECT_MSG })
       .eq('id', sourceId)
-      .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+      .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+      .neq('status', 'removed'); // removal is sticky (deselect↔index race)
   });
 }

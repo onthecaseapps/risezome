@@ -28,6 +28,8 @@ function makeSupabase(opts: {
   /** connection row for trello/atlassian ensure-source. */
   connection?: { id: string } | null;
   inserts?: { count: number };
+  /** Records every sources-table update payload for assertions. */
+  updates?: Record<string, unknown>[];
 }): unknown {
   const existing = opts.existingSourceId ?? null;
   const connection = opts.connection ?? { id: 'conn_1' };
@@ -56,7 +58,10 @@ function makeSupabase(opts: {
             },
           }),
         }),
-        update: () => ({ eq: () => ({ eq: async () => ({ error: null }) }) }),
+        update: (vals: Record<string, unknown>) => {
+          opts.updates?.push(vals);
+          return { eq: () => ({ eq: async () => ({ error: null }) }) };
+        },
       };
     },
   };
@@ -166,6 +171,33 @@ describe('setItemForTeamAction (U4)', () => {
     // The action calls addSourceToTeam each time; the lifecycle (mocked) owns
     // dedup. Two calls, same args — no error.
     expect(addSourceToTeam).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-checking an existing row never stomps status (revive ordering regression)', async () => {
+    // ensureSourceId used to set status='pending' BEFORE addSourceToTeam ran,
+    // which blinded reviveSource's wasRemoved check — a re-selected removed
+    // board kept its removed_at tombstone and never got a reindex event.
+    // The metadata refresh must leave status (and removed_at) untouched.
+    const updates: Record<string, unknown>[] = [];
+    createServiceRoleClient.mockReturnValue(
+      makeSupabase({ existingSourceId: 'trello_src_1', updates }),
+    );
+    const res = await setItemForTeamAction({
+      teamId: 't1',
+      provider: 'trello',
+      externalId: 'board_1',
+      label: 'My Board',
+      on: true,
+    });
+    expect(res).toEqual({ ok: true });
+    expect(addSourceToTeam).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceId: 'trello_src_1' }),
+    );
+    expect(updates.length).toBeGreaterThan(0);
+    for (const u of updates) {
+      expect(u).not.toHaveProperty('status');
+      expect(u).not.toHaveProperty('removed_at');
+    }
   });
 
   it('rejects when requireAdmin throws (non-admin)', async () => {

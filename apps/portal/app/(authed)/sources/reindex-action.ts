@@ -34,13 +34,19 @@ export async function reindexSourceAction(
   const service = createServiceRoleClient();
   const { data: source, error } = await service
     .from('sources')
-    .select('id, kind')
+    .select('id, kind, status')
     .eq('id', sourceId)
     .eq('org_id', orgId)
     .maybeSingle();
 
   if (error !== null || source === null) {
     return { ok: false, error: 'source_not_found' };
+  }
+  // A removed (deselected, awaiting purge) source must not be reindexed —
+  // that would resurrect content the admin de-selected. Re-enabling goes
+  // through the team-selection lifecycle, which revives properly.
+  if (source.status === 'removed') {
+    return { ok: false, error: 'source_removed' };
   }
 
   // Mark pending immediately so the UI flips before Inngest picks it up;
@@ -49,7 +55,8 @@ export async function reindexSourceAction(
     .from('sources')
     .update({ status: 'pending', status_message: null })
     .eq('id', sourceId)
-    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+    .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+    .neq('status', 'removed'); // removal is sticky (race with a concurrent deselect)
 
   // Dispatch by kind: each connector has its own indexer + event, so a source
   // only triggers its own indexer.

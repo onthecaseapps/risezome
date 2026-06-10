@@ -75,7 +75,7 @@ export async function addSourceToTeam(args: TeamSourceArgs): Promise<{ indexed: 
   // Confirm the source belongs to this org (defense-in-depth; service-role bypasses RLS).
   const { data: source } = await service
     .from('sources')
-    .select('id, kind, status, last_indexed_at')
+    .select('id, kind, status, last_indexed_at, removed_at')
     .eq('id', sourceId)
     .eq('org_id', orgId)
     .maybeSingle();
@@ -87,7 +87,10 @@ export async function addSourceToTeam(args: TeamSourceArgs): Promise<{ indexed: 
 
   const count = await refcount(service, sourceId);
   const neverIndexed = source.last_indexed_at === null;
-  const wasRemoved = source.status === 'removed';
+  // removed_at is checked alongside status: if any caller mutated status
+  // between the deselect and this re-add (the ensureSourceId stomp bug),
+  // the removal tombstone still marks the source as needing a revive.
+  const wasRemoved = source.status === 'removed' || source.removed_at !== null;
 
   // First reference of a source that needs indexing → revive + index. A second+
   // team selecting an already-indexed source falls through as a no-op.

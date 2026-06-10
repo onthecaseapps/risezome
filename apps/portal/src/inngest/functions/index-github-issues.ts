@@ -70,13 +70,16 @@ export const indexGithubIssuesFn = inngest.createFunction(
       const service = createServiceRoleClient();
       const { data, error } = await service
         .from('sources')
-        .select('id, org_id, installation_id, repo_full_name')
+        .select('id, org_id, installation_id, repo_full_name, status')
         .eq('id', sourceId)
         .eq('org_id', orgId)
         .single();
       if (error !== null || data === null) {
         throw new Error(`source not found: org=${orgId} source=${sourceId} (${error?.message ?? 'no row'})`);
       }
+      // A queued index event can arrive after the repo was deselected
+      // (status='removed', awaiting purge) — skip rather than re-index it.
+      if ((data as { status: string }).status === 'removed') return null;
       return data as {
         id: string;
         org_id: string;
@@ -84,6 +87,9 @@ export const indexGithubIssuesFn = inngest.createFunction(
         repo_full_name: string;
       };
     });
+    if (source === null) {
+      return { sourceId, issues: 0, chunks: 0, skipped: 'removed' };
+    }
 
     const [owner, repo] = source.repo_full_name.split('/');
     if (owner === undefined || repo === undefined) {

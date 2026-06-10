@@ -50,7 +50,8 @@ export const indexTrelloFn = inngest.createFunction(
           .from('sources')
           .update({ status: 'errored', status_message: sanitizeStatusMessage(message) })
           .eq('id', sourceId)
-          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+          .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+          .neq('status', 'removed'); // removal is sticky (deselect↔index race)
       } else {
         // service-role-cross-org: onFailure for an event that carried no orgId
         // (older queued events) — the sources PK (id) is globally unique, so this
@@ -58,7 +59,8 @@ export const indexTrelloFn = inngest.createFunction(
         await createServiceRoleClient()
           .from('sources')
           .update({ status: 'errored', status_message: sanitizeStatusMessage(message) })
-          .eq('id', sourceId);
+          .eq('id', sourceId)
+          .neq('status', 'removed'); // removal is sticky (deselect↔index race)
       }
     },
   },
@@ -73,7 +75,7 @@ export const indexTrelloFn = inngest.createFunction(
       const service = createServiceRoleClient();
       const { data: source, error } = await service
         .from('sources')
-        .select('id, org_id, kind, connection_id, external_id, display_name')
+        .select('id, org_id, kind, connection_id, external_id, display_name, status')
         .eq('id', sourceId)
         .eq('org_id', orgId)
         .single();
@@ -82,6 +84,10 @@ export const indexTrelloFn = inngest.createFunction(
           `trello source not found: org=${orgId} source=${sourceId} (${error?.message ?? 'no row'})`,
         );
       }
+      // A queued index event can arrive after the source was deselected
+      // (refcount hit zero → status='removed'). Indexing it would write fresh
+      // content for a source awaiting purge — skip the run entirely.
+      if (source.status === 'removed') return { removed: true as const };
       if (
         source.kind !== 'trello' ||
         source.connection_id === null ||
@@ -93,7 +99,8 @@ export const indexTrelloFn = inngest.createFunction(
         .from('sources')
         .update({ status: 'indexing', status_message: null, indexed_files: 0, total_files: null })
         .eq('id', sourceId)
-        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+        .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+        .neq('status', 'removed'); // removal is sticky (deselect↔index race)
       // U4: do NOT return the token from this memoized step — Inngest persists
       // step return values as run state, which would put the secret at rest
       // outside our DB/redaction boundary. Return only the connection id; the
@@ -103,6 +110,9 @@ export const indexTrelloFn = inngest.createFunction(
         connectionId: source.connection_id as string,
       };
     });
+    if ('removed' in ctx) {
+      return { sourceId, cards: 0, chunks: 0, skipped: 'removed' };
+    }
 
     // Resolve the decrypted Trello token outside any memoized step so it never
     // lands in Inngest run state (U3 decrypt + U4 no-persist).

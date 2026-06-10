@@ -153,9 +153,14 @@ async function ensureSourceId(args: EnsureArgs): Promise<string | null> {
 
   const existingId = await resolveSourceId({ service, orgId, provider, externalId });
   if (existingId !== null) {
+    // Refresh metadata ONLY — do not touch status here. Stomping status to
+    // 'pending' before addSourceToTeam runs blinded reviveSource's
+    // wasRemoved check (it saw 'pending', concluded no revive was needed,
+    // and never cleared removed_at or emitted the reindex event), leaving
+    // re-selected boards stuck on stale content. The lifecycle owns status.
     const { error } = await service
       .from('sources')
-      .update({ connection_id: connectionId, display_name: label, status: 'pending', status_message: null })
+      .update({ connection_id: connectionId, display_name: label })
       .eq('id', existingId)
       .eq('org_id', orgId);
     if (error !== null) throw new Error(error.message);

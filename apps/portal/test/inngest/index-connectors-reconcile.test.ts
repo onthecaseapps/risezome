@@ -174,14 +174,21 @@ function makeCorpusDb(seed: SeedDoc[]) {
 
   function sourcesBuilder() {
     let vals: Record<string, unknown> = {};
+    const neqs: Record<string, unknown> = {};
     const b: Record<string, unknown> = {};
     b.update = (v: Record<string, unknown>) => {
       vals = v;
       return b;
     };
     b.eq = () => b;
+    b.neq = (col: string, val: unknown) => {
+      neqs[col] = val;
+      return b;
+    };
     b.then = (resolve: (v: unknown) => unknown) => {
-      sourceUpdates.push(vals);
+      // Record the neq filters alongside the payload so tests can assert
+      // the sticky-removal guard is present on status writes.
+      sourceUpdates.push({ ...vals, __neq: { ...neqs } });
       return resolve({ error: null });
     };
     return b;
@@ -394,5 +401,43 @@ describe('runConnectorIndex — auth revoked', () => {
     expect(res.error).toBe('connector_auth');
     expect(embedCalls).toHaveLength(0);
     expect(mock.sourceUpdates().some((u) => u['status'] === 'errored')).toBe(true);
+  });
+});
+
+describe('runConnectorIndex — sticky removal (deselect↔index race)', () => {
+  // Regression for the Trello 88-cards bug: a board deselected while its
+  // index run was in flight had status='removed' clobbered back to 'idle'
+  // by the finalize write, so the purge cron (which keys on
+  // status='removed') never deleted its content. Every status write the
+  // orchestrator makes must carry the .neq('status','removed') guard so
+  // an in-flight run can never resurrect a removed source.
+  it('finalize carries the sticky-removal guard', async () => {
+    const e: Entity = { id: '1', text: 'alpha' };
+    const mock = makeCorpusDb([]);
+    currentDb = mock.db;
+
+    await runConnectorIndex(config({ entities: [e], mode: 'full' }));
+
+    const statusWrites = mock.sourceUpdates().filter((u) => u['status'] !== undefined);
+    expect(statusWrites.length).toBeGreaterThan(0);
+    for (const w of statusWrites) {
+      expect(w['__neq']).toMatchObject({ status: 'removed' });
+    }
+  });
+
+  it('mark-errored carries the sticky-removal guard', async () => {
+    class AuthErr extends Error {}
+    const mock = makeCorpusDb([]);
+    currentDb = mock.db;
+    await runConnectorIndex(
+      config({
+        entities: [],
+        isAuthError: (err) => err instanceof AuthErr,
+        fetchEntities: () => Promise.reject(new AuthErr('revoked')),
+      }),
+    );
+    const errored = mock.sourceUpdates().find((u) => u['status'] === 'errored');
+    expect(errored).toBeDefined();
+    expect(errored?.['__neq']).toMatchObject({ status: 'removed' });
   });
 });

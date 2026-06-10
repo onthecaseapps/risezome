@@ -76,6 +76,9 @@ export async function selectTrelloBoardsAction(
           display_name: board.name,
           status: 'pending',
           status_message: null,
+          // Clear the removal tombstone: this action emits its own index
+          // event, so re-selecting a removed board is a full revive here.
+          removed_at: null,
         })
         .eq('id', existing.id as string)
         .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly

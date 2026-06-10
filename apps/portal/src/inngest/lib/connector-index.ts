@@ -292,7 +292,12 @@ export async function runConnectorIndex<E>(
         chunk_count: chunks,
       })
       .eq('id', sourceId)
-      .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+      .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+      // Removal is sticky: if the source was deselected while this run was in
+      // flight, 'removed' must survive (the purge cron keys on it) — without
+      // this guard the finalize write resurrected the source and its content
+      // was never purged.
+      .neq('status', 'removed');
   });
 
   console.info(
@@ -319,7 +324,8 @@ async function markErrored(
       .from('sources')
       .update({ status: 'errored', status_message: message })
       .eq('id', sourceId)
-      .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+      .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+      .neq('status', 'removed'); // removal is sticky — see finalize
   });
 }
 

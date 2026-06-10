@@ -87,6 +87,9 @@ export async function selectAtlassianResourcesAction(
           display_name: resource.name,
           status: 'pending',
           status_message: null,
+          // Clear the removal tombstone: this action emits its own index
+          // event, so re-selecting a removed project/space is a full revive.
+          removed_at: null,
         })
         .eq('id', existing.id as string)
         .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
