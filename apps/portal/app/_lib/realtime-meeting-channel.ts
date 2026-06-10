@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getBrowserClient } from './supabase-browser';
 import type { AppAction, TranscriptUtterance } from '@risezome/hud-ui';
 
@@ -55,15 +55,77 @@ export interface ChannelState {
 /** How often the live page polls meeting_events for new content (ms). */
 const CONTENT_POLL_MS = 2500;
 
+/**
+ * Bounded FIFO set of recently applied (dispatched) event_ids. Broadcasts
+ * never advance the poll cursor (a DROPPED earlier broadcast would otherwise
+ * be skipped forever), so this set is what stops the poll from re-applying a
+ * broadcast-delivered event when it catches up — and vice versa.
+ */
+export interface AppliedEventIds {
+  readonly set: Set<number>;
+  readonly fifo: number[];
+}
+
+export const APPLIED_EVENT_IDS_CAP = 500;
+
+export function createAppliedEventIds(): AppliedEventIds {
+  return { set: new Set(), fifo: [] };
+}
+
+export function markEventApplied(applied: AppliedEventIds, eventId: number): void {
+  if (applied.set.has(eventId)) return;
+  applied.set.add(eventId);
+  applied.fifo.push(eventId);
+  while (applied.fifo.length > APPLIED_EVENT_IDS_CAP) {
+    const evicted = applied.fifo.shift();
+    if (evicted !== undefined) applied.set.delete(evicted);
+  }
+}
+
 export function useRealtimeMeetingChannel(opts: UseRealtimeMeetingChannelOpts): ChannelState {
   const { meetingId, orgId, dispatch } = opts;
   const lastSeenRef = useRef<number>(opts.initialLastEventId ?? 0);
+  const appliedRef = useRef<AppliedEventIds>(createAppliedEventIds());
+  // In-flight guard shared by the on-SUBSCRIBED fetch and the interval poll:
+  // a fetch slower than the interval must not overlap the next tick (the
+  // overlapping pair would double-apply rows + race the cursor).
+  const fetchInFlightRef = useRef(false);
   const [state, setState] = useState<ChannelState>({
     status: 'idle',
     liveMeetingStatus: null,
   });
+  const terminal =
+    state.liveMeetingStatus === 'completed' || state.liveMeetingStatus === 'failed';
+
+  const runFetch = useCallback(async (): Promise<void> => {
+    if (fetchInFlightRef.current) return;
+    fetchInFlightRef.current = true;
+    try {
+      await reconnectFetch({
+        orgId,
+        meetingId,
+        afterEventId: lastSeenRef.current,
+        dispatch,
+        // The cursor is advanced ONLY here — poll rows are contiguous and
+        // server-ordered, so nothing before the cursor can have been missed.
+        getLastSeen: () => lastSeenRef.current,
+        applied: appliedRef.current,
+        onMaxEventId: (id) => {
+          if (id > lastSeenRef.current) lastSeenRef.current = id;
+        },
+        onMeetingStatus: (live) => {
+          setState((s) => (s.liveMeetingStatus === live ? s : { ...s, liveMeetingStatus: live }));
+        },
+      });
+    } finally {
+      fetchInFlightRef.current = false;
+    }
+  }, [meetingId, orgId, dispatch]);
 
   useEffect(() => {
+    // Meeting reached a terminal status: unsubscribe (previous run's cleanup)
+    // and don't re-subscribe — nothing further will be broadcast.
+    if (terminal) return;
     const supabase = getBrowserClient();
     const topic = `meeting:${orgId}:${meetingId}`;
 
@@ -98,30 +160,25 @@ export function useRealtimeMeetingChannel(opts: UseRealtimeMeetingChannelOpts): 
         const eventType = event.event;
         const payload = (event.payload ?? {}) as Record<string, unknown>;
         const eventId = typeof payload['eventId'] === 'number' ? (payload['eventId'] as number) : null;
-        if (eventId !== null && eventId > lastSeenRef.current) {
-          lastSeenRef.current = eventId;
+        // Broadcasts APPLY events but never advance lastSeenRef: delivery is
+        // lossy, so advancing the cursor past a dropped earlier broadcast
+        // would skip that event forever (the poll fetches after the cursor).
+        // The applied-ids set is what keeps the catch-up poll from
+        // re-applying this event.
+        if (eventId !== null) {
+          if (eventId <= lastSeenRef.current || appliedRef.current.set.has(eventId)) return;
+          markEventApplied(appliedRef.current, eventId);
         }
         // LIVE broadcast path — interim (partial) utterances are dispatched
         // here so the live line can morph word-by-word. Interims carry no
-        // persisted eventId, so lastSeenRef is never advanced by them above.
+        // persisted eventId, so they bypass the dedup above.
         dispatchBroadcast(eventType, payload, dispatch, setState, true);
       });
 
       channel.subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           setState((s) => ({ ...s, status: 'subscribed' }));
-          await reconnectFetch({
-            orgId,
-            meetingId,
-            afterEventId: lastSeenRef.current,
-            dispatch,
-            onMaxEventId: (id) => {
-              if (id > lastSeenRef.current) lastSeenRef.current = id;
-            },
-            onMeetingStatus: (live) => {
-              setState((s) => (s.liveMeetingStatus === live ? s : { ...s, liveMeetingStatus: live }));
-            },
-          });
+          await runFetch();
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           setState((s) => ({ ...s, status: 'errored' }));
         }
@@ -132,7 +189,7 @@ export function useRealtimeMeetingChannel(opts: UseRealtimeMeetingChannelOpts): 
       cancelled = true;
       if (channel !== null) void supabase.removeChannel(channel);
     };
-  }, [meetingId, orgId, dispatch]);
+  }, [meetingId, orgId, dispatch, runFetch, terminal]);
 
   // Content poll. Realtime broadcast delivery to the browser has proven
   // unreliable in practice: the bot-worker's sends succeed (broadcasted: true),
@@ -143,36 +200,27 @@ export function useRealtimeMeetingChannel(opts: UseRealtimeMeetingChannelOpts): 
   // the live page updates within a couple of seconds on its own. Idempotent:
   // each poll fetches only event_id > lastSeen, and the reducer is replay-safe.
   useEffect(() => {
+    // Stop polling for content once the meeting is terminal.
+    if (terminal) return;
     const interval = window.setInterval(() => {
-      void reconnectFetch({
-        orgId,
-        meetingId,
-        afterEventId: lastSeenRef.current,
-        dispatch,
-        onMaxEventId: (id) => {
-          if (id > lastSeenRef.current) lastSeenRef.current = id;
-        },
-        onMeetingStatus: (live) => {
-          setState((s) => (s.liveMeetingStatus === live ? s : { ...s, liveMeetingStatus: live }));
-        },
-      });
+      void runFetch();
     }, CONTENT_POLL_MS);
     return () => window.clearInterval(interval);
-  }, [meetingId, orgId, dispatch]);
+  }, [runFetch, terminal]);
 
   // Polling fallback for status transitions. The Realtime broadcast +
   // reconnect-fetch SHOULD be enough on its own, but live testing has
   // shown the joining-shell occasionally stays stuck even after the bot
   // started recording — root cause is suspected to be a private-channel
   // auth timing edge but isn't pinned down yet. Poll meetings.status
-  // every 3s while the page hasn't seen a live=recording status yet, so
-  // the page is guaranteed to flip out of JoiningShell within ~3s of
-  // the bot starting to record, regardless of broadcast delivery.
-  // Stops polling the moment liveMeetingStatus becomes anything (live
-  // path took over) OR we observe 'recording' (we no longer need to
-  // poll). Cheap query (~1 row, indexed lookup).
+  // every 3s so the page is guaranteed to flip out of JoiningShell
+  // within ~3s of the bot starting to record, regardless of broadcast
+  // delivery, AND to surface the terminal 'completed'/'failed' states
+  // (which let the live client redirect to the recap / render the
+  // failed UI). Polls until a terminal status is observed. Cheap query
+  // (~1 row, indexed lookup).
   useEffect(() => {
-    if (state.liveMeetingStatus !== null) return;
+    if (terminal) return;
     let cancelled = false;
     const supabase = getBrowserClient();
     const interval = window.setInterval(() => {
@@ -196,7 +244,7 @@ export function useRealtimeMeetingChannel(opts: UseRealtimeMeetingChannelOpts): 
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [meetingId, dispatch, state.liveMeetingStatus]);
+  }, [meetingId, dispatch, terminal]);
 
   return state;
 }
@@ -334,6 +382,12 @@ async function reconnectFetch(args: {
   meetingId: string;
   afterEventId: number;
   dispatch: (action: AppAction) => void;
+  /** Live cursor read at DISPATCH time — a concurrent path may have advanced
+   *  it past the captured `afterEventId` while this fetch was in flight. */
+  getLastSeen: () => number;
+  /** Recently applied event ids (broadcast OR poll); skipped here, marked on
+   *  dispatch. */
+  applied: AppliedEventIds;
   onMaxEventId: (id: number) => void;
   onMeetingStatus: (s: BroadcastedStatus) => void;
 }): Promise<void> {
@@ -359,10 +413,17 @@ async function reconnectFetch(args: {
     return;
   }
   for (const row of body.events ?? []) {
-    dispatchBroadcast(row.type, row.payload, args.dispatch, (s) => {
-      const next = typeof s === 'function' ? s({ status: 'subscribed', liveMeetingStatus: null }) : s;
-      if (next.liveMeetingStatus !== null) args.onMeetingStatus(next.liveMeetingStatus);
-    });
+    // Skip rows already applied (via broadcast or a prior poll) or at/below
+    // the LIVE cursor — read at dispatch time, not the captured `after`.
+    const alreadyApplied =
+      row.event_id <= args.getLastSeen() || args.applied.set.has(row.event_id);
+    if (!alreadyApplied) {
+      markEventApplied(args.applied, row.event_id);
+      dispatchBroadcast(row.type, row.payload, args.dispatch, (s) => {
+        const next = typeof s === 'function' ? s({ status: 'subscribed', liveMeetingStatus: null }) : s;
+        if (next.liveMeetingStatus !== null) args.onMeetingStatus(next.liveMeetingStatus);
+      });
+    }
     args.onMaxEventId(row.event_id);
   }
 }

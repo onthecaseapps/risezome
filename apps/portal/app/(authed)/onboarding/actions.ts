@@ -23,14 +23,21 @@ import { createServiceRoleClient } from '../../_lib/supabase-server';
 export async function createOrg(formData: FormData): Promise<void> {
   const user = await requireAuthedUser();
 
+  // Error redirects return to the form that submitted (a hidden `returnTo`
+  // field) — existing-org users on /orgs/new would otherwise bounce through
+  // /onboarding to /sources with the error lost. Allowlisted, not free-form,
+  // so the redirect target can't be steered by a crafted POST.
+  const returnToRaw = formData.get('returnTo');
+  const errorPath = returnToRaw === '/orgs/new' ? '/orgs/new' : '/onboarding';
+
   const raw = formData.get('name');
   const name = typeof raw === 'string' ? raw.trim() : '';
   if (name.length === 0) {
     // Form-side validation should catch this; this is defense in depth.
-    redirect('/onboarding?error=empty_name');
+    redirect(`${errorPath}?error=empty_name`);
   }
   if (name.length > 100) {
-    redirect('/onboarding?error=name_too_long');
+    redirect(`${errorPath}?error=name_too_long`);
   }
 
   const service = createServiceRoleClient();
@@ -43,7 +50,7 @@ export async function createOrg(formData: FormData): Promise<void> {
   if (orgErr !== null || orgRow === null) {
      
     console.error('[onboarding.createOrg] orgs insert failed:', orgErr);
-    redirect('/onboarding?error=create_failed');
+    redirect(`${errorPath}?error=create_failed`);
   }
 
   const orgId = orgRow.id as string;
@@ -55,7 +62,7 @@ export async function createOrg(formData: FormData): Promise<void> {
     await service.from('orgs').delete().eq('id', orgId);
 
     console.error('[onboarding.createOrg] org_members insert failed:', memberErr);
-    redirect('/onboarding?error=create_failed');
+    redirect(`${errorPath}?error=create_failed`);
   }
 
   // Seed the first team ("General") + add the creator (A-R14). The U1 default-team
@@ -75,7 +82,7 @@ export async function createOrg(formData: FormData): Promise<void> {
     await service.from('orgs').delete().eq('id', orgId);
 
     console.error('[onboarding.createOrg] teams insert failed:', teamErr);
-    redirect('/onboarding?error=create_failed');
+    redirect(`${errorPath}?error=create_failed`);
   }
 
   const { error: teamMemberErr } = await service
@@ -85,7 +92,7 @@ export async function createOrg(formData: FormData): Promise<void> {
     await service.from('orgs').delete().eq('id', orgId);
 
     console.error('[onboarding.createOrg] team_members insert failed:', teamMemberErr);
-    redirect('/onboarding?error=create_failed');
+    redirect(`${errorPath}?error=create_failed`);
   }
 
   // Provision the org's per-org KMS encryption key (security plan 003, U8).

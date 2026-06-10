@@ -286,6 +286,22 @@ describe('nearestUtteranceIndex', () => {
     expect(nearestUtteranceIndex([0, 100, 200], 200)).toBe(2);
     expect(nearestUtteranceIndex([0, 100, 200], 99999)).toBe(2);
   });
+
+  it('finds the max start at or before the moment even when the input is out of order', () => {
+    // event_id order isn't guaranteed time-ascending; the scan must not break
+    // at the first start > ms.
+    expect(nearestUtteranceIndex([300, 0, 200, 100], 250)).toBe(2);
+    expect(nearestUtteranceIndex([200, 0, 100], 150)).toBe(2);
+    expect(nearestUtteranceIndex([200, 100, 0], 99999)).toBe(0);
+  });
+
+  it('falls back to the earliest utterance (not index 0) when the moment precedes all, out of order', () => {
+    expect(nearestUtteranceIndex([300, 100, 200], 50)).toBe(1);
+  });
+
+  it('breaks ties toward the later index (matches the sorted-input behaviour)', () => {
+    expect(nearestUtteranceIndex([100, 100, 200], 150)).toBe(1);
+  });
 });
 
 describe('ReviewClient — jump-to-moment timestamps', () => {

@@ -1,3 +1,5 @@
+import { orgScopedDocId } from '../../../app/_lib/doc-id';
+
 /**
  * Pure data transformation: GitHub issue/PR → canonical doc + chunks
  * ready to upsert into the Postgres corpus.
@@ -21,8 +23,8 @@ import type { GithubIssue } from './issue-types.js';
 export const MIN_CHUNK_CHARS = 80;
 
 export interface CanonicalIssueDoc {
-  /** Stable id matching the daemon's canonicalDocId shape:
-   *  `gh:{owner/repo}#{issue|pr}:{number}`. */
+  /** Stable, org-scoped corpus id:
+   *  `{orgId}:gh:{owner/repo}#{issue|pr}:{number}` (see orgScopedDocId). */
   readonly docId: string;
   readonly type: 'issue' | 'pull-request';
   readonly title: string;
@@ -46,8 +48,8 @@ export interface ChunkedIssue {
   readonly chunks: readonly CanonicalIssueChunk[];
 }
 
-export function chunkIssue(ownerRepo: string, issue: GithubIssue): ChunkedIssue {
-  const docId = canonicalDocId(ownerRepo, issue);
+export function chunkIssue(orgId: string, ownerRepo: string, issue: GithubIssue): ChunkedIssue {
+  const docId = canonicalDocId(orgId, ownerRepo, issue);
   const isPr = issue.pull_request !== undefined;
   const body = issue.body ?? '';
 
@@ -106,9 +108,9 @@ export function chunkIssue(ownerRepo: string, issue: GithubIssue): ChunkedIssue 
   return { doc, chunks };
 }
 
-export function canonicalDocId(ownerRepo: string, issue: GithubIssue): string {
+export function canonicalDocId(orgId: string, ownerRepo: string, issue: GithubIssue): string {
   const kind = issue.pull_request !== undefined ? 'pr' : 'issue';
-  return `gh:${ownerRepo}#${kind}:${String(issue.number)}`;
+  return orgScopedDocId(orgId, `gh:${ownerRepo}#${kind}:${String(issue.number)}`);
 }
 
 /**

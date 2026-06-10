@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, type ReactElement } from 'react';
+import { useMenuBehaviors } from '../_components/overlay';
 
 /**
  * "Configuring {team}" selector for the Sources page (KTD1). The page is a
@@ -26,6 +27,7 @@ export function ConfigTeamSelector({
 }): ReactElement {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  useMenuBehaviors(open, () => setOpen(false));
   const selected = teams.find((t) => t.id === selectedTeamId) ?? teams[0] ?? null;
 
   function choose(id: string): void {
@@ -60,7 +62,7 @@ export function ConfigTeamSelector({
           />
           <ul
             role="listbox"
-            className="absolute right-0 top-11 z-20 max-h-72 w-56 overflow-y-auto rounded-xl border border-border bg-card p-1 shadow-lg"
+            className="absolute right-0 top-11 z-20 max-h-72 w-56 overflow-y-auto rounded-xl border border-border bg-card p-1 shadow-[var(--shadow-pop)]"
           >
             {teams.map((t) => (
               <li key={t.id}>

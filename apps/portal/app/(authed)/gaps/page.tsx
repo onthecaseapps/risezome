@@ -1,10 +1,11 @@
 import type { ReactElement } from 'react';
 import { requireAuthedUserWithOrg } from '../../_lib/auth';
+import { listAuthUserNames } from '../../_lib/auth-admin';
+import { isAdminRole } from '../../_lib/roles';
 import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
 import { GapsClient } from './_client';
 import type {
   GapView,
-  GapOccurrenceView,
   SectionView,
   OrgMember,
   NotificationView,
@@ -20,25 +21,66 @@ import type {
  * (createServerClient): a member sees only gaps they can view (viewer /
  * assignee / shared), a manager sees every org gap. Per-gap occurrence
  * aggregates (people / meetings / moments / phrasings) come from the
- * knowledge_gaps_stats RPC in one round trip; if that RPC isn't present yet we
- * fall back to a plain occurrences select tallied in JS, so the page degrades
- * instead of erroring (mirrors captures / capture_card_stats).
+ * knowledge_gaps_stats RPC in one round trip.
+ *
+ * PERF: the page deliberately does NOT load gap_occurrences — that was an
+ * unbounded fetch (every occurrence for every gap, growing with org age) on the
+ * page's critical path. The drawer lazy-loads one gap's occurrences on open via
+ * listGapOccurrencesAction. Independent reads are batched into two Promise.all
+ * waves (wave 2 needs the gap ids from wave 1) instead of nine serial awaits.
  *
  * Member display names are resolved via the service-role admin API (same as
  * the members page) — needed for owner avatars and the manager assignee picker.
  */
 export default async function GapsPage(): Promise<ReactElement> {
   const { orgId, user, role } = await requireAuthedUserWithOrg();
-  const isManager = role === 'manager';
+  // Admin power = manager OR super_admin (KTD2): super_admin inherits the
+  // manager surface (assign / curate / share).
+  const isManager = isAdminRole(role);
   const supabase = await createServerClient();
+  // Service-role use here is the documented U5 exception: the roster/name
+  // resolution needs every member, which a non-manager caller can't read under
+  // RLS, and the admin auth API can't run under RLS at all. Names only, own org.
+  const service = createServiceRoleClient();
 
-  const { data: gapRows } = await supabase
-    .from('knowledge_gaps')
-    .select(
-      'gap_id, section_id, title, status, assignee_id, frequency, shared_with_org, section_pinned, reopened_after_close, first_asked_at, last_asked_at, assigned_by, assigned_at, resolved_by, resolved_at, dismissed_by, dismissed_at, created_at',
-    )
-    .eq('org_id', orgId)
-    .order('frequency', { ascending: false });
+  // ── wave 1: independent reads, one round-trip wall ─────────────────────────
+  const [
+    { data: gapRows },
+    { data: sectionRows },
+    { data: memberRows },
+    authNames,
+    { data: notifRows },
+    { data: assignedRows },
+  ] = await Promise.all([
+    supabase
+      .from('knowledge_gaps')
+      .select(
+        'gap_id, section_id, title, status, assignee_id, frequency, shared_with_org, section_pinned, reopened_after_close, first_asked_at, last_asked_at, assigned_by, assigned_at, resolved_by, resolved_at, dismissed_by, dismissed_at, created_at',
+      )
+      .eq('org_id', orgId)
+      .order('frequency', { ascending: false }),
+    supabase
+      .from('knowledge_gap_sections')
+      .select('section_id, name, color, name_locked')
+      .eq('org_id', orgId)
+      .order('name', { ascending: true }),
+    service
+      .from('org_members')
+      .select('user_id, role, joined_at')
+      .eq('org_id', orgId)
+      .order('joined_at', { ascending: true }),
+    listAuthUserNames(service),
+    supabase
+      .from('notifications')
+      .select('notification_id, type, gap_id, actor_id, created_at')
+      .eq('org_id', orgId)
+      .eq('type', 'gap_assigned')
+      .is('read_at', null)
+      .order('created_at', { ascending: false }),
+    // U8 — "Assigned to you": SECURITY DEFINER RPC scoped to the caller; returns
+    // ONLY question/asker/recurrence/status. Degrades to [] on failure.
+    supabase.rpc('list_assigned_questions'),
+  ]);
 
   const gaps = (gapRows ?? []) as Array<{
     gap_id: string;
@@ -60,14 +102,8 @@ export default async function GapsPage(): Promise<ReactElement> {
     dismissed_at: string | null;
     created_at: string;
   }>;
-
   const gapIds = gaps.map((g) => g.gap_id);
 
-  const { data: sectionRows } = await supabase
-    .from('knowledge_gap_sections')
-    .select('section_id, name, color, name_locked')
-    .eq('org_id', orgId)
-    .order('name', { ascending: true });
   const sections: SectionView[] = (sectionRows ?? []).map((s) => ({
     sectionId: s.section_id as string,
     name: s.name as string,
@@ -75,58 +111,18 @@ export default async function GapsPage(): Promise<ReactElement> {
     nameLocked: s.name_locked as boolean,
   }));
 
-  // Occurrences for the visible gaps — used for the drawer (moments + merged
-  // phrasings) and meeting names. RLS scopes these to viewable gaps.
-  const occByGap = new Map<string, GapOccurrenceView[]>();
-  const meetingIds = new Set<string>();
-  if (gapIds.length > 0) {
-    const { data: occRows } = await supabase
-      .from('gap_occurrences')
-      .select(
-        'occurrence_id, gap_id, meeting_id, utterance_id, verbatim_question, asker_name, asker_user_id, asked_at',
-      )
-      .in('gap_id', gapIds)
-      .order('asked_at', { ascending: false });
-    for (const r of occRows ?? []) {
-      const gapId = r.gap_id as string;
-      const meetingId = r.meeting_id as string;
-      meetingIds.add(meetingId);
-      const list = occByGap.get(gapId) ?? [];
-      list.push({
-        occurrenceId: String(r.occurrence_id),
-        meetingId,
-        utteranceId: (r.utterance_id as string | null) ?? null,
-        verbatimQuestion: r.verbatim_question as string,
-        askerName: r.asker_name as string,
-        askerUserId: (r.asker_user_id as string | null) ?? null,
-        askedAtIso: r.asked_at as string,
-        meetingTitle: '',
-      });
-      occByGap.set(gapId, list);
-    }
-  }
-
-  // Meeting titles for the drawer's "Open moment" rows.
-  const titleByMeeting = new Map<string, string>();
-  if (meetingIds.size > 0) {
-    const { data: meetingRows } = await supabase
-      .from('meetings')
-      .select('meeting_id, title')
-      .in('meeting_id', [...meetingIds]);
-    for (const m of meetingRows ?? []) {
-      titleByMeeting.set(m.meeting_id as string, (m.title as string) ?? '');
-    }
-  }
-  for (const list of occByGap.values()) {
-    for (const o of list) o.meetingTitle = titleByMeeting.get(o.meetingId) ?? '';
-  }
-
-  // Per-gap aggregates: prefer the single-round-trip RPC, fall back to a JS
-  // tally over the occurrences we already loaded.
+  // ── wave 2: per-gap aggregates (needs gapIds) ──────────────────────────────
   const stats = new Map<
     string,
     { people: number; meetings: number; moments: number; phrasings: number; canViewContent: boolean }
   >();
+  // On a whole-RPC failure the render hint degrades OPEN (canViewContent: true
+  // with zeroed counts) — NOT closed: canViewContent is only a render hint, the
+  // authoritative gate is the gap_occurrences RLS the drawer's lazy fetch goes
+  // through (a true non-content viewer gets [] back regardless). Failing closed
+  // here showed actual meeting participants the "you weren't in the meeting"
+  // gate whenever the RPC blipped. Logged loudly — this should be rare.
+  let statsFailed = false;
   if (gapIds.length > 0) {
     const { data: statRows, error: statErr } = await supabase.rpc('knowledge_gaps_stats', {
       p_gap_ids: gapIds,
@@ -149,38 +145,16 @@ export default async function GapsPage(): Promise<ReactElement> {
         });
       }
     } else {
-      // Fallback (RPC absent): if we loaded any occurrences for a gap, RLS let us
-      // read its content, so canViewContent is true; gaps with none default false.
-      for (const [gapId, list] of occByGap.entries()) {
-        const people = new Set(list.map((o) => o.askerName)).size;
-        const meetings = new Set(list.map((o) => o.meetingId)).size;
-        const phrasings = new Set(list.map((o) => o.verbatimQuestion)).size;
-        stats.set(gapId, { people, meetings, moments: list.length, phrasings, canViewContent: true });
-      }
+      statsFailed = true;
+      console.error(
+        `[gaps] knowledge_gaps_stats failed (org=${orgId}, gaps=${String(gapIds.length)}):`,
+        statErr?.message ?? 'no rows',
+      );
     }
   }
 
-  // Resolve org-member display names (owner avatar, actor lines, assignee
-  // picker). This stays on service-role (U5 exception): the page is only
-  // requireAuthedUserWithOrg()-gated, so a non-manager caller under RLS would
-  // see only their OWN org_members row ("read own membership or all as
-  // manager"), but the roster/name resolution needs every member. The admin
-  // auth API (listUsers) can't run under RLS either. Names only, own org.
-  const service = createServiceRoleClient();
-  const { data: memberRows } = await service
-    .from('org_members')
-    .select('user_id, role, joined_at')
-    .eq('org_id', orgId)
-    .order('joined_at', { ascending: true });
   const members: OrgMember[] = [];
   const nameById = new Map<string, string>();
-  // One paged listUsers call instead of an N+1 getUserById loop over members.
-  const authNames = new Map<string, string>();
-  const { data: authList } = await service.auth.admin.listUsers({ perPage: 1000 });
-  for (const u of authList?.users ?? []) {
-    const meta = (u.user_metadata ?? {}) as Record<string, unknown>;
-    authNames.set(u.id, typeof meta['full_name'] === 'string' ? (meta['full_name'] as string) : (u.email ?? u.id));
-  }
   for (const m of memberRows ?? []) {
     const userId = m.user_id as string;
     const name = authNames.get(userId) ?? userId;
@@ -194,9 +168,10 @@ export default async function GapsPage(): Promise<ReactElement> {
       meetings: 0,
       moments: 0,
       phrasings: 0,
-      canViewContent: false,
+      // Per-gap absence with a healthy RPC = genuinely gated; whole-RPC
+      // failure = unknown, degrade open (RLS is the real gate; see above).
+      canViewContent: statsFailed,
     };
-    const occurrences = occByGap.get(g.gap_id) ?? [];
     return {
       gapId: g.gap_id,
       sectionId: g.section_id,
@@ -218,20 +193,14 @@ export default async function GapsPage(): Promise<ReactElement> {
       // "+N phrasings" pill = distinct verbatim minus the canonical title.
       extraPhrasings: Math.max(0, s.phrasings - 1),
       canViewContent: s.canViewContent,
-      occurrences,
+      // Lazy: the drawer fetches one gap's occurrences on open.
+      occurrences: [],
     };
   });
 
   // Unread gap_assigned notifications for the current user → fresh-assignment
-  // toasts (U12). RLS scopes these to the recipient. We resolve the actor name
-  // and gap title/frequency from data already loaded for the page.
-  const { data: notifRows } = await supabase
-    .from('notifications')
-    .select('notification_id, type, gap_id, actor_id, created_at')
-    .eq('org_id', orgId)
-    .eq('type', 'gap_assigned')
-    .is('read_at', null)
-    .order('created_at', { ascending: false });
+  // toasts (U12). RLS scopes these to the recipient; gap title/frequency resolve
+  // from data already loaded for the page.
   const gapById = new Map(gapViews.map((g) => [g.gapId, g]));
   const notifications: NotificationView[] = (notifRows ?? [])
     .map((n) => {
@@ -248,13 +217,6 @@ export default async function GapsPage(): Promise<ReactElement> {
     })
     .filter((n): n is NotificationView => n.gapId !== null);
 
-  // U8 — "Assigned to you" (U5's deferred metadata-only surface). The
-  // list_assigned_questions() RPC (SECURITY DEFINER, scoped to the caller)
-  // returns ONLY the question, asker_name, recurrence metrics, and status — the
-  // surface for a NON-attendee assignee who can't open the gap itself. Read
-  // through the RLS-respecting authed client; never link these rows through to
-  // the gap drawer / verbatim. Degrades to [] on any RPC failure.
-  const { data: assignedRows } = await supabase.rpc('list_assigned_questions');
   const assignedQuestions: AssignedQuestionView[] = Array.isArray(assignedRows)
     ? (assignedRows as Array<{
         gap_id: string;

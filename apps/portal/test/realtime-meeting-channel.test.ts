@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { dispatchBroadcast, type ChannelState } from '../app/_lib/realtime-meeting-channel';
+import {
+  APPLIED_EVENT_IDS_CAP,
+  createAppliedEventIds,
+  dispatchBroadcast,
+  markEventApplied,
+  type ChannelState,
+} from '../app/_lib/realtime-meeting-channel';
 import type { AppAction } from '@risezome/hud-ui';
 
 /**
@@ -103,5 +109,32 @@ describe('dispatchBroadcast — meeting status liveness (U2)', () => {
       h.setState,
     );
     expect(h.dispatched).toHaveLength(0);
+  });
+});
+
+describe('applied-event-ids set (F1/F2 — broadcast/poll dual-delivery dedup)', () => {
+  it('the same event id applied twice is deduped (second delivery is detectable)', () => {
+    const applied = createAppliedEventIds();
+    expect(applied.set.has(42)).toBe(false);
+    markEventApplied(applied, 42);
+    expect(applied.set.has(42)).toBe(true);
+    // The other path checks the set BEFORE dispatching — a second mark (e.g.
+    // a buggy double-apply) stays a single entry, never duplicating FIFO slots.
+    markEventApplied(applied, 42);
+    expect(applied.set.size).toBe(1);
+    expect(applied.fifo).toEqual([42]);
+  });
+
+  it('evicts FIFO past the cap so memory stays bounded', () => {
+    const applied = createAppliedEventIds();
+    for (let id = 1; id <= APPLIED_EVENT_IDS_CAP + 10; id++) {
+      markEventApplied(applied, id);
+    }
+    expect(applied.set.size).toBe(APPLIED_EVENT_IDS_CAP);
+    // Oldest ids evicted first; newest retained.
+    expect(applied.set.has(1)).toBe(false);
+    expect(applied.set.has(10)).toBe(false);
+    expect(applied.set.has(11)).toBe(true);
+    expect(applied.set.has(APPLIED_EVENT_IDS_CAP + 10)).toBe(true);
   });
 });

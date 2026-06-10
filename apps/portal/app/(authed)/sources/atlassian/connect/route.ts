@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { appOrigin } from '../../../../_lib/app-origin';
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServiceRoleClient } from '../../../../_lib/supabase-server';
@@ -35,7 +36,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(new URL('/sources?error=atlassian_init_failed', request.nextUrl.origin));
   }
 
-  const redirectUri = new URL('/api/atlassian/callback', request.nextUrl.origin).toString();
+  const redirectUri = new URL('/api/atlassian/callback', appOrigin(request.nextUrl.origin)).toString();
   const authorizeUrl = buildAtlassianAuthorizeUrl({ clientId, redirectUri, state: stateToken });
   return NextResponse.redirect(authorizeUrl);
 }

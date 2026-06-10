@@ -9,6 +9,7 @@ import {
   removeTeamMemberAction,
   renameTeamAction,
 } from '../team-actions';
+import { useMenuBehaviors } from '../../../_components/overlay';
 import { avatarColor, avatarInitial, teamDotColor } from './visuals';
 import type { MemberVM, TeamVM } from './teams-members-client';
 
@@ -52,7 +53,7 @@ export function TeamDetail({
 
   if (archived) {
     return (
-      <div className="rounded-2xl border border-border bg-card/30 px-6 py-16 text-center">
+      <div className="rounded-2xl border border-border bg-card/30 px-6 py-16 text-center shadow-[var(--card-shadow)]">
         <p className="text-sm text-muted">
           Team <span className="font-medium text-fg">{name}</span> was archived.
         </p>
@@ -127,7 +128,7 @@ function SourcesSummaryCard({
   sourceCount: number;
 }): ReactElement {
   return (
-    <section className="rounded-2xl border border-border bg-card/40 p-5">
+    <section className="rounded-2xl border border-border bg-card/40 p-5 shadow-[var(--card-shadow)]">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-fg">Sources · {sourceCount}</h3>
@@ -171,6 +172,7 @@ function SettingsPopover({
   onArchived: () => void;
 }): ReactElement {
   const [open, setOpen] = useState(false);
+  useMenuBehaviors(open, () => setOpen(false));
   const [draft, setDraft] = useState(name);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -224,7 +226,7 @@ function SettingsPopover({
             className="fixed inset-0 z-10 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute right-0 top-11 z-20 w-64 rounded-xl border border-border bg-card p-3 shadow-lg">
+          <div className="absolute right-0 top-11 z-20 w-64 rounded-xl border border-border bg-card p-3 shadow-[var(--shadow-pop)]">
             <label className="block text-xs font-medium text-muted">Team name</label>
             <input
               type="text"
@@ -280,7 +282,7 @@ function MembersCard({
   const [adding, setAdding] = useState(false);
 
   return (
-    <section className="rounded-2xl border border-border bg-card/40 p-5">
+    <section className="rounded-2xl border border-border bg-card/40 p-5 shadow-[var(--card-shadow)]">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-fg">Members ({onTeam.length})</h3>
         <button

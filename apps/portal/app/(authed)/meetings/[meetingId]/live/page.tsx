@@ -6,7 +6,7 @@ import { recordMasterKeyAccessIfNeeded } from '../../../../_lib/meeting-access';
 import { decryptForOrgFromBytea, EnvelopeCryptoError } from '@risezome/crypto';
 import { transcriptWithText } from '../../../../_lib/transcript';
 import { LiveMeetingClient } from './_client';
-import type { CardEvent, CardTrigger, TranscriptUtterance } from '@risezome/hud-ui';
+import type { CardRecord, CardTrigger, TranscriptUtterance } from '@risezome/hud-ui';
 import { mapSynthesisRow, type InitialSynthesis } from '../_synthesis-seed';
 
 export type { InitialSynthesis };
@@ -87,9 +87,26 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
 
   // Cards + syntheses + transcript are only relevant in the recording state.
   // Skip the fetch for joining/launching so the joining shell renders fast.
-  let initialCards: CardEvent[] = [];
+  let initialCards: CardRecord[] = [];
   let initialSyntheses: InitialSynthesis[] = [];
   let initialTranscript: TranscriptUtterance[] = [];
+
+  // F6: seed the client's poll cursor with the current max event_id so mount
+  // doesn't replay the whole event log (after=0 → KMS decrypt storm). Read it
+  // BEFORE the seed queries below: anything written after this cursor is
+  // re-fetched by the poll even if the seed also caught it (the reducer is
+  // replay-safe). Accepted tradeoff: a seeded RUNNING synthesis has its deltas
+  // below this cursor, but synthesisDone carries the full text so it
+  // self-heals at done.
+  const { data: lastEventRow } = await supabase
+    .from('meeting_events')
+    .select('event_id')
+    .eq('meeting_id', meetingId)
+    .eq('org_id', orgId)
+    .order('event_id', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const initialLastEventId = (lastEventRow?.event_id as number | undefined) ?? 0;
 
   if (status === 'recording') {
     const { data: cardRows } = await supabase
@@ -102,24 +119,27 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
     initialCards = (cardRows ?? [])
       .filter((c) => c.retracted_at === null)
       .map((c) => ({
-        cardId: c.card_id as string,
-        docId: (c.doc_id as string | null) ?? '',
-        source: c.source as string,
-        type: c.type as string,
-        title: c.title as string,
-        snippet: c.snippet as string,
-        // body is non-null in new rows; backfilled to snippet for old
-        // rows. Fall back to snippet at the type boundary too, just
-        // in case a row predates the backfill migration.
-        body: (c.body as string | null) ?? (c.snippet as string),
-        score: c.score as number,
-        rank: c.rank as number,
-        metadata: (c.metadata as Record<string, unknown>) ?? {},
-        surfacedAt: new Date(c.surfaced_at as string).getTime(),
-        triggeredBy: c.triggered_by as CardTrigger,
-        ...(c.utterance_id !== null ? { utteranceId: c.utterance_id as string } : {}),
-        traceId: c.trace_id as string,
-        ...(c.url !== null ? { url: c.url as string } : {}),
+        card: {
+          cardId: c.card_id as string,
+          docId: (c.doc_id as string | null) ?? '',
+          source: c.source as string,
+          type: c.type as string,
+          title: c.title as string,
+          snippet: c.snippet as string,
+          // body is non-null in new rows; backfilled to snippet for old
+          // rows. Fall back to snippet at the type boundary too, just
+          // in case a row predates the backfill migration.
+          body: (c.body as string | null) ?? (c.snippet as string),
+          score: c.score as number,
+          rank: c.rank as number,
+          metadata: (c.metadata as Record<string, unknown>) ?? {},
+          surfacedAt: new Date(c.surfaced_at as string).getTime(),
+          triggeredBy: c.triggered_by as CardTrigger,
+          ...(c.utterance_id !== null ? { utteranceId: c.utterance_id as string } : {}),
+          traceId: c.trace_id as string,
+          ...(c.url !== null ? { url: c.url as string } : {}),
+        },
+        pinned: (c.pinned as boolean | null) ?? false,
       }));
 
     const { data: synthRows } = await supabase
@@ -199,6 +219,7 @@ export default async function LiveMeetingPage(props: PageProps): Promise<ReactEl
       initialCards={initialCards}
       initialSyntheses={initialSyntheses}
       initialTranscript={initialTranscript}
+      initialLastEventId={initialLastEventId}
     />
   );
 }

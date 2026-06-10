@@ -71,12 +71,14 @@ export const syncCalendarFn = inngest.createFunction(
   async ({ event, step }) => {
     const { userId, orgId } = (event as unknown as SyncEventData).data;
 
-    // ── Step 1: access token ─────────────────────────────────────────
+    // ── Access token (NOT a step) ────────────────────────────────────
+    // Resolved outside any memoized step so the live bearer token never
+    // lands in Inngest run state — Inngest persists step return values as
+    // run state, which would put the secret at rest outside our
+    // DB/redaction boundary (same no-persist pattern as index-trello).
     let accessToken: string;
     try {
-      accessToken = await step.run('get-access-token', async () => {
-        return await getGoogleAccessToken(userId);
-      });
+      accessToken = await getGoogleAccessToken(userId);
     } catch (err) {
       if (err instanceof GoogleTokenMissingError || err instanceof GoogleTokenRefreshError) {
          

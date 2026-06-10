@@ -1,17 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import { GapsClient } from '../app/(authed)/gaps/_client';
 import { GapDrawer } from '../app/(authed)/gaps/_gap-drawer';
 import { GapRow } from '../app/(authed)/gaps/_gap-row';
 import type { AssignedQuestionView, GapOccurrenceView, GapView } from '../app/(authed)/gaps/_types';
 
 /**
- * U8 — "Assigned to you" (U5's deferred metadata-only assignee surface).
+ * U8 — "Assigned to you" (the caller's assigned gaps).
  *
- * The surface for a NON-attendee assignee who can't open the gap itself: it must
- * render ONLY the question (title), asker_name, recurrence (frequency /
- * last_asked), and status — and NEVER verbatim occurrences or a link through to
- * the gap drawer. Empty list ⇒ render nothing (no noisy empty state).
+ * Each row shows the question (title), asker_name, recurrence (frequency /
+ * last_asked), and status. A NON-attendee assignee can now CLICK a row to open a
+ * CONTENT-GATED drawer (title/status + resolve; never the room's verbatim) so
+ * they can act on it — see assignedToGapView. Empty list ⇒ render nothing (no
+ * noisy empty state).
  */
 
 const baseGap: GapView = {
@@ -77,13 +78,20 @@ describe('GapsClient — "Assigned to you" (U8)', () => {
     expect(scoped.getByText(/^Open$/i)).toBeInTheDocument();
   });
 
-  it('does NOT link assigned rows through to the gap drawer / verbatim', () => {
+  it('opens a CONTENT-GATED drawer when an assigned row is clicked (no verbatim)', () => {
+    // The assigned gap ('g-assigned-1') isn't in `gaps`, so the only way to open
+    // it is the synthesized content-gated view: title/status + resolve, with the
+    // "weren't in the meeting" gate instead of any verbatim.
     renderClient(assigned);
     const section = screen.getByText('Assigned to you').closest('section') as HTMLElement;
-    const scoped = within(section);
-    // No anchors and no buttons inside the read-only list — nothing to open.
-    expect(scoped.queryAllByRole('link')).toHaveLength(0);
-    expect(scoped.queryAllByRole('button')).toHaveLength(0);
+    const row = within(section).getByRole('button', { name: /What is our refund SLA\?/ });
+    fireEvent.click(row);
+
+    expect(screen.getByText(/weren’t in the original meeting/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Mark resolved/ })).toBeInTheDocument();
+    // Gated: no verbatim block, no "Open moment" deep-link.
+    expect(screen.queryByText(/Merged phrasings/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open moment/ })).not.toBeInTheDocument();
   });
 
   it('renders nothing when the assigned list is empty (no noisy empty state)', () => {
@@ -123,7 +131,7 @@ const contentGap: GapView = {
 
 describe('GapDrawer — CONTENT gate', () => {
   it('shows paraphrases + the "Open moment" link when canViewContent is true', () => {
-    render(<GapDrawer gap={contentGap} sections={[]} members={[]} isManager={false} now={Date.now()} onClose={() => {}} />);
+    render(<GapDrawer gap={contentGap} sections={[]} members={[]} isManager={false} now={Date.now()} hasPrev={false} hasNext={false} onPrev={() => {}} onNext={() => {}} onClose={() => {}} />);
     // Appears in both the merged-phrasings block and the moment row.
     expect(screen.getAllByText(/SECRET VERBATIM/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Merged phrasings/)).toBeInTheDocument();
@@ -136,7 +144,7 @@ describe('GapDrawer — CONTENT gate', () => {
     // Belt-and-suspenders: even though RLS returns no occurrences for a non-content
     // viewer, we pass one through and assert the verbatim + link still never render.
     const hidden: GapView = { ...contentGap, gapId: 'g-hidden', canViewContent: false };
-    render(<GapDrawer gap={hidden} sections={[]} members={[]} isManager={false} now={Date.now()} onClose={() => {}} />);
+    render(<GapDrawer gap={hidden} sections={[]} members={[]} isManager={false} now={Date.now()} hasPrev={false} hasNext={false} onPrev={() => {}} onNext={() => {}} onClose={() => {}} />);
     expect(screen.getByText(/weren’t in the original meeting/)).toBeInTheDocument();
     expect(screen.queryByText(/SECRET VERBATIM/)).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Open moment/ })).not.toBeInTheDocument();

@@ -13,7 +13,7 @@ vi.mock('../../app/_lib/supabase-server', () => ({
 
 import { saveBotSettingsAction } from '../../app/(authed)/settings/meeting-bot/save-action';
 
-const settings = { auto_join: true, record_transcribe: true, announce_on_join: true };
+const settings = { field: 'auto_join' as const, value: true };
 
 afterEach(() => vi.clearAllMocks());
 

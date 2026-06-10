@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useTransition, type ReactElement } from 'react';
-import type { GapView, OrgMember, SectionView } from './_types';
+import { useEffect, useState, useTransition, type ReactElement } from 'react';
+import type { GapOccurrenceView, GapView, OrgMember, SectionView } from './_types';
 import {
   Avatar,
   ChevronDown,
@@ -14,8 +14,15 @@ import {
   relativeTime,
   shortDate,
 } from './_bits';
-import { assignGapAction, dismissGapAction, resolveGapAction, shareWithOrgAction } from './gap-actions';
+import {
+  assignGapAction,
+  dismissGapAction,
+  listGapOccurrencesAction,
+  resolveGapAction,
+  shareWithOrgAction,
+} from './gap-actions';
 import { moveGapToSectionAction } from './section-actions';
+import { Drawer, useMenuBehaviors } from '../_components/overlay';
 
 /**
  * Gap detail drawer (plan U10 / mockup #8). Right-side slide-over. Optimistic
@@ -29,6 +36,10 @@ export function GapDrawer({
   members,
   isManager,
   now,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
   onClose,
 }: {
   gap: GapView;
@@ -36,6 +47,12 @@ export function GapDrawer({
   members: OrgMember[];
   isManager: boolean;
   now: number | null;
+  /** Whether a previous/next gap exists in the list the drawer was opened from
+   *  — drives the ↑/↓ header buttons (disabled at the ends). */
+  hasPrev: boolean;
+  hasNext: boolean;
+  onPrev: () => void;
+  onNext: () => void;
   onClose: () => void;
 }): ReactElement {
   const [status, setStatus] = useState(gap.status);
@@ -44,10 +61,47 @@ export function GapDrawer({
   const [sectionId, setSectionId] = useState(gap.sectionId);
   const [shared, setShared] = useState(gap.sharedWithOrg);
   const [error, setError] = useState<string | null>(null);
-  const [, start] = useTransition();
+  // `pending` dims the action row while a server action is in flight, so a
+  // slow/failing call reads as "working" instead of a silent flicker-rollback.
+  const [pending, start] = useTransition();
+
+  // Occurrences are lazy-loaded on open (the page no longer bulk-fetches them).
+  // Seed from gap.occurrences so callers that already have them (tests, future
+  // prefetch) skip the round trip. Gated viewers never fetch — the RLS-scoped
+  // action would return [] anyway; this just skips the no-op call.
+  const [occurrences, setOccurrences] = useState<GapOccurrenceView[]>(gap.occurrences);
+  const [occState, setOccState] = useState<'idle' | 'loading' | 'error'>(
+    gap.canViewContent && gap.occurrences.length === 0 ? 'loading' : 'idle',
+  );
+  useEffect(() => {
+    if (!gap.canViewContent || gap.occurrences.length > 0) return;
+    let cancelled = false;
+    // Server actions REJECT (rather than returning {ok:false}) on network
+    // failure and on deployment skew (action id changed under an open page) —
+    // without the catch the drawer showed "Loading moments…" forever.
+    listGapOccurrencesAction(gap.gapId)
+      .then((r) => {
+        if (cancelled) return;
+        if (r.ok) {
+          setOccurrences(r.occurrences);
+          setOccState('idle');
+        } else {
+          setOccState('error');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setOccState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Keyed on length (not array identity): a revalidatePath after a drawer
+    // action ships a fresh-but-still-empty occurrences prop; identity-keying
+    // would refetch data we already hold after every action.
+  }, [gap.gapId, gap.canViewContent, gap.occurrences.length]);
 
   const section = sections.find((s) => s.sectionId === sectionId) ?? null;
-  const phrasings = distinctPhrasings(gap);
+  const phrasings = distinctPhrasings(gap.title, occurrences);
 
   function onResolve(): void {
     const prev = status;
@@ -120,10 +174,24 @@ export function GapDrawer({
     });
   }
 
+  // J/K (and ArrowUp/ArrowDown outside form controls) walk the drawer's list —
+  // the keyboard mirror of the ↑/↓ header buttons. Guarded so typing in an
+  // input/select never triggers navigation, and arrows keep their native
+  // meaning inside form controls.
+  function onDrawerKeyDown(e: KeyboardEvent): void {
+    const t = e.target;
+    const inFormControl =
+      t instanceof HTMLElement && (t.closest('input, select, textarea') !== null || t.isContentEditable);
+    if (inFormControl) return;
+    if (e.key === 'j' || (e.key === 'ArrowDown' && e.altKey)) {
+      if (hasNext) onNext();
+    } else if (e.key === 'k' || (e.key === 'ArrowUp' && e.altKey)) {
+      if (hasPrev) onPrev();
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-40 flex justify-end">
-      <button type="button" aria-label="Close" className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <aside className="relative z-50 flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-border bg-bg shadow-2xl">
+    <Drawer onClose={onClose} ariaLabel={`Gap details: ${gap.title}`} onKeyDown={onDrawerKeyDown}>
         {/* header */}
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3.5">
           <div className="flex min-w-0 items-center gap-2">
@@ -139,14 +207,41 @@ export function GapDrawer({
             )}
             <StatusPill status={status} />
           </div>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-card hover:text-fg"
-          >
-            <CloseGlyph />
-          </button>
+          <div className="flex flex-none items-center gap-1.5">
+            {/* Prev/next walk the list the drawer was opened from; the slide-over
+                stays open and swaps content. Disabled at the ends. */}
+            <div className="flex items-center rounded-lg border border-border">
+              <button
+                type="button"
+                aria-label="Previous gap"
+                title="Previous gap (K)"
+                onClick={onPrev}
+                disabled={!hasPrev}
+                className="flex h-8 w-8 items-center justify-center rounded-l-lg text-muted transition-colors hover:bg-card hover:text-fg disabled:pointer-events-none disabled:opacity-30"
+              >
+                <ArrowUpGlyph />
+              </button>
+              <span className="h-5 w-px bg-border" aria-hidden="true" />
+              <button
+                type="button"
+                aria-label="Next gap"
+                title="Next gap (J)"
+                onClick={onNext}
+                disabled={!hasNext}
+                className="flex h-8 w-8 items-center justify-center rounded-r-lg text-muted transition-colors hover:bg-card hover:text-fg disabled:pointer-events-none disabled:opacity-30"
+              >
+                <ArrowDownGlyph />
+              </button>
+            </div>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted transition-colors hover:bg-card hover:text-fg"
+            >
+              <CloseGlyph />
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-col gap-6 px-5 py-5">
@@ -163,7 +258,7 @@ export function GapDrawer({
             <button
               type="button"
               onClick={onResolve}
-              disabled={status === 'resolved'}
+              disabled={pending || status === 'resolved'}
               className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/90 px-3.5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               <CheckGlyph />
@@ -172,7 +267,7 @@ export function GapDrawer({
             <button
               type="button"
               onClick={onDismiss}
-              disabled={status === 'dismissed'}
+              disabled={pending || status === 'dismissed'}
               className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3.5 py-2 text-sm font-medium text-fg transition-colors hover:border-accent/40 disabled:opacity-50"
             >
               <CloseGlyph />
@@ -182,7 +277,7 @@ export function GapDrawer({
               <button
                 type="button"
                 onClick={onShare}
-                disabled={shared}
+                disabled={pending || shared}
                 title={shared ? 'Shared with the whole org' : 'Share with the whole org'}
                 className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-card text-muted transition-colors hover:border-accent/40 hover:text-fg disabled:opacity-50"
               >
@@ -215,7 +310,7 @@ export function GapDrawer({
           {/* demand */}
           <Block label="Demand">
             <div className="flex items-center gap-2 text-sm">
-              <span className="inline-flex items-center gap-1 font-semibold text-orange-400">
+              <span className="inline-flex items-center gap-1 font-semibold text-orange-600 dark:text-orange-400">
                 <FlameGlyph />
                 {gap.frequency}×
               </span>
@@ -246,10 +341,22 @@ export function GapDrawer({
                 </Block>
               ) : null}
 
-              {/* moments */}
-              <Block label={`Where it was asked · ${String(gap.moments)} ${gap.moments === 1 ? 'moment' : 'moments'}`}>
+              {/* moments — count falls back to the fetched list when the stats
+                  RPC degraded to zeros (the list itself is RLS-authoritative). */}
+              <Block
+                label={`Where it was asked · ${String(Math.max(gap.moments, occurrences.length))} ${
+                  Math.max(gap.moments, occurrences.length) === 1 ? 'moment' : 'moments'
+                }`}
+              >
+                {occState === 'loading' ? (
+                  <p className="text-sm text-muted">Loading moments…</p>
+                ) : occState === 'error' ? (
+                  <p className="text-sm text-error">
+                    Couldn&apos;t load the moments — close and reopen the gap to retry.
+                  </p>
+                ) : (
                 <ul className="flex flex-col gap-4">
-                  {gap.occurrences.map((o) => (
+                  {occurrences.map((o) => (
                     <li key={o.occurrenceId} className="flex flex-col gap-1.5">
                       <div className="flex items-center gap-2">
                         <Avatar name={o.askerName} size={6} />
@@ -272,6 +379,7 @@ export function GapDrawer({
                     </li>
                   ))}
                 </ul>
+                )}
               </Block>
             </>
           ) : (
@@ -282,7 +390,7 @@ export function GapDrawer({
           )}
 
           {/* audit footer */}
-          <p className="border-t border-border pt-4 text-xs leading-relaxed text-muted">
+          <p className="border-t border-border pt-4 text-xs leading-relaxed text-faint">
             Captured automatically
             {gap.firstAskedAtIso !== null ? ` · first asked ${shortDate(gap.firstAskedAtIso)}` : ''}
             {assigneeId !== null && assigneeName !== null
@@ -292,8 +400,7 @@ export function GapDrawer({
               : ''}
           </p>
         </div>
-      </aside>
-    </div>
+    </Drawer>
   );
 }
 
@@ -305,10 +412,10 @@ function momentHref(meetingId: string, utteranceId: string | null): string {
   return utteranceId !== null ? `${base}#utterance-${utteranceId}` : base;
 }
 
-function distinctPhrasings(gap: GapView): string[] {
-  const seen = new Set<string>([gap.title]);
+function distinctPhrasings(title: string, occurrences: GapOccurrenceView[]): string[] {
+  const seen = new Set<string>([title]);
   const out: string[] = [];
-  for (const o of gap.occurrences) {
+  for (const o of occurrences) {
     if (!seen.has(o.verbatimQuestion)) {
       seen.add(o.verbatimQuestion);
       out.push(o.verbatimQuestion);
@@ -370,6 +477,7 @@ function AssigneePicker({
   label: string;
 }): ReactElement {
   const [open, setOpen] = useState(false);
+  useMenuBehaviors(open, () => setOpen(false));
   return (
     <div className="relative">
       <button
@@ -383,7 +491,7 @@ function AssigneePicker({
       {open ? (
         <>
           <button type="button" aria-hidden="true" tabIndex={-1} className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-8 z-20 max-h-64 w-52 overflow-auto rounded-lg border border-border bg-card py-1 shadow-lg">
+          <div className="absolute left-0 top-8 z-20 max-h-64 w-52 overflow-auto rounded-lg border border-border bg-card py-1 shadow-[var(--shadow-pop)]">
             {members.map((m) => (
               <button
                 key={m.userId}
@@ -403,6 +511,22 @@ function AssigneePicker({
         </>
       ) : null}
     </div>
+  );
+}
+
+function ArrowUpGlyph(): ReactElement {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 19V5M5 12l7-7 7 7" />
+    </svg>
+  );
+}
+
+function ArrowDownGlyph(): ReactElement {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 5v14M5 12l7 7 7-7" />
+    </svg>
   );
 }
 

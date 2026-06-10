@@ -162,7 +162,7 @@ export default async function CapturesPage(): Promise<ReactElement> {
   // on the review page instead.
   const recapByMeeting = new Map<string, string | null>();
   const recapDecryptFailed = new Set<string>();
-  await Promise.all(
+  const decryptRecaps = Promise.all(
     meetings.slice(0, RECAP_PREVIEW_LIMIT).map(async (m) => {
       try {
         // Prefer the structured overview. When recap_json_enc is present and
@@ -202,18 +202,17 @@ export default async function CapturesPage(): Promise<ReactElement> {
     .filter((id): id is string => id !== null);
 
   // Title fallback for old rows whose title wasn't denormalized at launch.
-  const titlesResult =
+  const fetchTitles = (
     calendarEventIds.length > 0
-      ? await supabase.from('calendar_events').select('id, title').in('id', calendarEventIds)
-      : { data: [] as Array<{ id: string; title: string }> };
-  const titleByEventId = new Map(
-    (titlesResult.data ?? []).map((r) => [r.id as string, (r.title as string) ?? '']),
+      ? supabase.from('calendar_events').select('id, title').in('id', calendarEventIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; title: string }> })
   );
 
   // Per-meeting aggregates. Prefer the single-round-trip RPC; on any failure
   // (e.g. migration not applied) fall back to JS tallies + no speakers.
   const stats = new Map<string, { answers: number; sources: number; speakers: string[] }>();
-  if (meetingIds.length > 0) {
+  const fetchStats = (async (): Promise<void> => {
+    if (meetingIds.length === 0) return;
     const { data: statRows, error: statErr } = await supabase.rpc('capture_card_stats', {
       p_meeting_ids: meetingIds,
     });
@@ -251,7 +250,15 @@ export default async function CapturesPage(): Promise<ReactElement> {
       tally(synths.data as Array<{ meeting_id: string }> | null, 'answers');
       tally(cards.data as Array<{ meeting_id: string }> | null, 'sources');
     }
-  }
+  })();
+
+  // The recap decrypt fan-out, the title fallback, and the stats RPC share no
+  // data dependency (titles + stats key off meetingIds, known before decryption)
+  // — run them as ONE concurrent wave instead of three serial hops.
+  const [, titlesResult] = await Promise.all([decryptRecaps, fetchTitles, fetchStats]);
+  const titleByEventId = new Map(
+    (titlesResult.data ?? []).map((r) => [r.id as string, (r.title as string) ?? '']),
+  );
 
   const captures: CaptureCard[] = meetings.map((m) => {
     const s = stats.get(m.meeting_id) ?? { answers: 0, sources: 0, speakers: [] };

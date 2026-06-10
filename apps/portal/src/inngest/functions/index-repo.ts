@@ -11,8 +11,10 @@ import { mapWithConcurrency } from '../lib/concurrency';
 import { VoyageEmbedder, EmbeddingRateLimitError } from '@risezome/engine/embed';
 import { inngest, type IndexMode } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
+import { orgScopedDocId } from '../../../app/_lib/doc-id';
+import { sanitizeStatusMessage } from '../lib/status-message';
 import { getInstallationOctokit } from '../../../app/_lib/github-app';
-import { reconcile, clearDocChunks } from '../lib/corpus-reconcile';
+import { reconcile, writeReconciledDoc } from '../lib/corpus-reconcile';
 
 /** Doc types this indexer owns — reconcile must never touch issue/PR docs
  *  that share this source_id (see corpus-reconcile R8). */
@@ -70,7 +72,7 @@ export const indexRepoFn = inngest.createFunction(
       if (typeof orgId === 'string' && orgId.length > 0) {
         await createServiceRoleClient()
           .from('sources')
-          .update({ status: 'errored', status_message: message.slice(0, 500) })
+          .update({ status: 'errored', status_message: sanitizeStatusMessage(message) })
           .eq('id', sourceId)
           .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
       } else {
@@ -79,7 +81,7 @@ export const indexRepoFn = inngest.createFunction(
         // targets exactly one row; no org_id is available to scope by.
         await createServiceRoleClient()
           .from('sources')
-          .update({ status: 'errored', status_message: message.slice(0, 500) })
+          .update({ status: 'errored', status_message: sanitizeStatusMessage(message) })
           .eq('id', sourceId);
       }
     },
@@ -206,13 +208,18 @@ export const indexRepoFn = inngest.createFunction(
     // ── Step 4: reconcile — diff the tree against the corpus ─────────
     // Desired = the current tree's files keyed by content-addressed docId
     // (the blob SHA is an exact content hash). reconcile skips unchanged
-    // files (already present), returns new/changed to index, and — in
-    // full mode on a complete (non-truncated) tree — prunes files the
-    // repo no longer has. Type-scoped to 'file' so it never touches the
-    // issue/PR docs that share this source_id.
+    // files (already present), returns new/changed to index, and — on a
+    // complete (non-truncated) tree, in BOTH delta and full mode — prunes
+    // files the repo no longer has. Delta must prune here too: an edited
+    // file gets a NEW content-addressed docId, so the previous `…@oldsha`
+    // version is only ever removed by the prune, and delta is the default
+    // mode — gating prune on full would accumulate stale file versions
+    // forever (see corpus-reconcile "Delta-prune-on-complete-fetch").
+    // Type-scoped to 'file' so it never touches the issue/PR docs that
+    // share this source_id.
     const fetchComplete = !tree.truncated;
     const desired = new Map(
-      targets.map((t) => [`github:${owner}/${repo}:${t.path}@${t.sha}`, { hash: t.sha }] as const),
+      targets.map((t) => [orgScopedDocId(orgId, `github:${owner}/${repo}:${t.path}@${t.sha}`), { hash: t.sha }] as const),
     );
     const recon = await step.run('reconcile', async () => {
       return await reconcile(createServiceRoleClient(), {
@@ -249,9 +256,11 @@ export const indexRepoFn = inngest.createFunction(
     // ── Step 5: batched embed + write (only new/changed files) ───────
     const toIndexKind = new Map(recon.toIndex.map((t) => [t.docId, t.kind]));
     const indexTargets = targets.filter((t) =>
-      toIndexKind.has(`github:${owner}/${repo}:${t.path}@${t.sha}`),
+      toIndexKind.has(orgScopedDocId(orgId, `github:${owner}/${repo}:${t.path}@${t.sha}`)),
     );
-    const BATCH_SIZE = 8; // files per Inngest step (keeps each step under ~30s)
+    // Files per Inngest step. One step per batch (counter folded in below)
+    // must keep big repos under Inngest's ~1000-step cap; 40 covers ~40k files.
+    const BATCH_SIZE = 40;
     const embedder = new VoyageEmbedder({
       apiKey: requireEnv('VOYAGE_API_KEY'),
     });
@@ -262,11 +271,16 @@ export const indexRepoFn = inngest.createFunction(
     let chunkCount = 0;
     for (let i = 0; i < indexTargets.length; i += BATCH_SIZE) {
       const batch = indexTargets.slice(i, i + BATCH_SIZE);
+      // Cumulative totals BEFORE this batch — deterministic on replay (they
+      // are rebuilt from memoized step results), so folding the counter
+      // update into the batch step is safe.
+      const filesBefore = indexedFiles;
+      const chunksBefore = chunkCount;
       const result = await step.run(`index-batch-${i}`, async () => {
-        return await indexBatch({
+        const r = await indexBatch({
           batch: batch.map((t) => ({
             ...t,
-            kind: toIndexKind.get(`github:${owner}/${repo}:${t.path}@${t.sha}`) ?? 'new',
+            kind: toIndexKind.get(orgScopedDocId(orgId, `github:${owner}/${repo}:${t.path}@${t.sha}`)) ?? 'new',
           })),
           orgId,
           sourceId,
@@ -278,17 +292,20 @@ export const indexRepoFn = inngest.createFunction(
           contextGenerator,
           docSummarizer,
         });
+        // Counter update folded into the batch step (one step per batch keeps
+        // big repos under Inngest's ~1000-step cap).
+        await createServiceRoleClient()
+          .from('sources')
+          .update({
+            indexed_files: filesBefore + r.files,
+            chunk_count: chunksBefore + r.chunks,
+          })
+          .eq('id', sourceId)
+          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+        return r;
       });
       indexedFiles += result.files;
       chunkCount += result.chunks;
-
-      await step.run(`update-counter-${i}`, async () => {
-        await createServiceRoleClient()
-          .from('sources')
-          .update({ indexed_files: indexedFiles, chunk_count: chunkCount })
-          .eq('id', sourceId)
-          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
-      });
     }
 
     // ── Step 6: mark idle ────────────────────────────────────────────
@@ -377,83 +394,72 @@ async function indexBatch(args: {
       embeddings = await embedder.embed({ items: embedItems });
     } catch (err) {
       if (err instanceof EmbeddingRateLimitError) throw err; // let Inngest retry
-      // Other embed errors: skip the file, keep going.
+      // Other embed errors on a NEW doc: skip the file, keep going —
+      // nothing has been written yet, so the doc is simply absent and the
+      // next run retries it. A CHANGED doc must throw instead (mirrors
+      // connector-index): skipping would leave the stale version pending
+      // behind a transient error with nothing forcing the re-embed.
+      if (entry.kind === 'changed') {
+        throw new Error(`github embed failed for changed ${entry.path}: ${String(err)}`);
+      }
       return { files: 0, chunks: 0 };
     }
 
-    const docId = `github:${owner}/${repo}:${entry.path}@${entry.sha}`;
-    // A 'changed' file is content-addressed → a brand-new docId, so this
-    // path is effectively dead for files (changes arrive as 'new'). Kept
-    // for correctness if the docId scheme ever becomes path-stable.
-    if (entry.kind === 'changed') {
-      await clearDocChunks(service, docId);
-    }
-    const { error: docErr } = await service.from('docs').upsert({
-      id: docId,
-      org_id: orgId,
-      source_id: sourceId,
-      source: 'github',
-      type: 'file',
-      title: entry.path,
-      url: `https://github.com/${owner}/${repo}/blob/${branch}/${entry.path}`,
-      provenance: 'trusted',
-      // content_hash = the git blob SHA (exact content fingerprint).
-      content_hash: entry.sha,
-      updated_at: new Date().toISOString(),
-    });
-    if (docErr !== null) return { files: 0, chunks: 0 };
-
-    const chunkRows: Array<{
-      chunk_id: string;
-      org_id: string;
-      source_id: string;
-      doc_id: string;
+    const docId = orgScopedDocId(orgId, `github:${owner}/${repo}:${entry.path}@${entry.sha}`);
+    // chunkRows and embedItems are in the same order (body chunks, then the
+    // optional summary), so vectors[i] aligns with writeChunks[i].
+    const writeChunks: Array<{
+      chunkId: string;
       domain: string;
       text: string;
       context: string;
-      is_summary: boolean;
+      isSummary?: boolean;
       position: number;
     }> = chunkInputs.map((c, i) => ({
-      chunk_id: `${docId}::${i}`,
-      org_id: orgId,
-      source_id: sourceId, // U4: denormalized for the retrieval source filter
-      doc_id: docId,
+      chunkId: `${docId}::${i}`,
       domain: c.domain,
       text: c.text,
       context: contexts[i] ?? '',
-      is_summary: false,
       position: i,
     }));
     if (summary.length > 0) {
-      chunkRows.push({
-        chunk_id: `${docId}::summary`,
-        org_id: orgId,
-        source_id: sourceId,
-        doc_id: docId,
+      writeChunks.push({
+        chunkId: `${docId}::summary`,
         domain: 'text',
         text: summary,
         context: '',
-        is_summary: true,
+        isSummary: true,
         position: chunkInputs.length,
       });
     }
-    const { error: chunkErr } = await service
-      .from('doc_chunks')
-      .upsert(chunkRows, { onConflict: 'chunk_id' });
-    if (chunkErr !== null) return { files: 0, chunks: 0 };
 
-    // chunkRows and embedItems are in the same order (body chunks, then the
-    // optional summary), so vectors[i] aligns with chunkRows[i].
-    const embedRows = chunkRows.map((row, i) => ({
-      chunk_id: row.chunk_id,
-      org_id: orgId,
-      source_id: row.source_id, // U4: denormalized for the retrieval source filter
-      embedding: arrayToVectorLiteral(embeddings.vectors[i]!.vector),
-    }));
-    const { error: embErr } = await service
-      .from('corpus_chunk_embeddings')
-      .upsert(embedRows, { onConflict: 'chunk_id' });
-    if (embErr !== null) return { files: 0, chunks: 0 };
+    // Atomic write protocol (F5) via writeReconciledDoc: clear-on-changed →
+    // doc upsert with content_hash NULL → chunks → embeddings → stamp the
+    // hash LAST, throwing on any DB error so Inngest retries. The previous
+    // inline version stamped the hash up front and swallowed chunk/embedding
+    // errors — one transient failure left a doc whose hash said "indexed"
+    // with zero chunks, which reconcile then classified as unchanged forever.
+    // (A 'changed' file is content-addressed → a brand-new docId, so that
+    // kind is effectively dead for files; handled anyway for correctness if
+    // the docId scheme ever becomes path-stable.)
+    await writeReconciledDoc(service, {
+      docId,
+      kind: entry.kind,
+      // content_hash = the git blob SHA (exact content fingerprint).
+      hash: entry.sha,
+      doc: {
+        orgId,
+        sourceId,
+        source: 'github',
+        type: 'file',
+        title: entry.path,
+        url: `https://github.com/${owner}/${repo}/blob/${branch}/${entry.path}`,
+        provenance: 'trusted',
+        updatedAt: new Date().toISOString(),
+      },
+      chunks: writeChunks,
+      embeddings: writeChunks.map((_, i) => arrayToVectorLiteral(embeddings.vectors[i]!.vector)),
+    });
 
     return { files: 1, chunks: chunkInputs.length };
   });

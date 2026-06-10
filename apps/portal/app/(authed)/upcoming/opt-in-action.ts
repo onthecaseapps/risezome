@@ -35,7 +35,7 @@ export async function toggleBotOptInAction(
   }
   const desired = desiredRaw === 'true';
 
-  const { user, canInviteBot } = await requireAuthedUserWithOrg();
+  const { user, orgId, canInviteBot } = await requireAuthedUserWithOrg();
 
   // R7: launching the bot requires the manager role or the can_invite_bot
   // grant (both fold into canInviteBot). Opting OUT is always allowed.
@@ -48,11 +48,16 @@ export async function toggleBotOptInAction(
   // Read the row first so we can validate platform / URL / time before
   // flipping the bit. The RLS UPDATE policy would silently no-op on a
   // mismatch; an explicit read gives us a clear error to return.
+  // org_id is filtered too: canInviteBot above was resolved from the
+  // cookie-selected org, so the event must belong to that SAME org —
+  // otherwise a member denied can_invite_bot in org A could switch the
+  // cookie to org B and toggle the bot on their org-A event.
   const { data: eventRow, error: readErr } = await supabase
     .from('calendar_events')
     .select('id, user_id, start_at, conference_url, platform, bot_optin')
     .eq('id', eventId)
     .eq('user_id', user.id)
+    .eq('org_id', orgId)
     .maybeSingle();
   if (readErr !== null) {
     return { ok: false, error: readErr.message };
@@ -77,7 +82,8 @@ export async function toggleBotOptInAction(
     .from('calendar_events')
     .update({ bot_optin: desired })
     .eq('id', eventId)
-    .eq('user_id', user.id);
+    .eq('user_id', user.id)
+    .eq('org_id', orgId);
   if (updateErr !== null) {
     return { ok: false, error: updateErr.message };
   }

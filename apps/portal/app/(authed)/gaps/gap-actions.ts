@@ -2,8 +2,10 @@
 
 import { revalidatePath } from 'next/cache';
 import { requireAuthedUserWithOrg, requireManager } from '../../_lib/auth';
-import { createServiceRoleClient } from '../../_lib/supabase-server';
+import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
+import { isAdminRole } from '../../_lib/roles';
 import { inngest } from '../../../src/inngest/client';
+import type { GapOccurrenceView } from './_types';
 
 /**
  * Gap lifecycle + assignment + sharing actions (plan U10).
@@ -47,7 +49,9 @@ async function loadGapForActor(
   if (data === null) return { ok: false, error: 'not_found' };
   return {
     ok: true,
-    ctx: { orgId, userId: user.id, isManager: role === 'manager', role },
+    // Admin power = manager OR super_admin (KTD2) — super_admin inherits all
+    // admin abilities, so it must not be locked out of resolve/dismiss/share.
+    ctx: { orgId, userId: user.id, isManager: isAdminRole(role), role },
     gap: {
       status: data.status as string,
       assignee_id: (data.assignee_id as string | null) ?? null,
@@ -213,6 +217,61 @@ export async function shareWithOrgAction(gapId: string): Promise<ActionResult> {
   if (error !== null) return { ok: false, error: error.message };
   revalidatePath('/gaps');
   return { ok: true };
+}
+
+/**
+ * Lazily load one gap's occurrences for the drawer (moments + merged phrasings).
+ *
+ * The gaps page no longer bulk-fetches every occurrence for every gap (that was
+ * an unbounded transfer that grew with org age and a big part of the page-switch
+ * latency); the drawer calls this when a gap is opened. Reads go through the
+ * RLS-scoped AUTHED client, so the can_view_gap_content gate enforces itself —
+ * a non-content viewer (outsider-assignee / org-share) gets [] back, never the
+ * room's verbatim.
+ */
+export async function listGapOccurrencesAction(
+  gapId: string,
+): Promise<{ ok: true; occurrences: GapOccurrenceView[] } | { ok: false; error: string }> {
+  await requireAuthedUserWithOrg();
+  const supabase = await createServerClient();
+  const { data: occRows, error } = await supabase
+    .from('gap_occurrences')
+    .select('occurrence_id, gap_id, meeting_id, utterance_id, verbatim_question, asker_name, asker_user_id, asked_at')
+    .eq('gap_id', gapId)
+    .order('asked_at', { ascending: false })
+    .limit(50);
+  if (error !== null) {
+    // Stable code, not the raw DB message (schema details don't belong client-side).
+    console.error(`[gaps] occurrence load failed (gap=${gapId}):`, error.message);
+    return { ok: false, error: 'occurrences_load_failed' };
+  }
+
+  const rows = occRows ?? [];
+  const meetingIds = [...new Set(rows.map((r) => r.meeting_id as string))];
+  const titleByMeeting = new Map<string, string>();
+  if (meetingIds.length > 0) {
+    const { data: meetingRows } = await supabase
+      .from('meetings')
+      .select('meeting_id, title')
+      .in('meeting_id', meetingIds);
+    for (const m of meetingRows ?? []) {
+      titleByMeeting.set(m.meeting_id as string, (m.title as string) ?? '');
+    }
+  }
+
+  return {
+    ok: true,
+    occurrences: rows.map((r) => ({
+      occurrenceId: String(r.occurrence_id),
+      meetingId: r.meeting_id as string,
+      utteranceId: (r.utterance_id as string | null) ?? null,
+      verbatimQuestion: r.verbatim_question as string,
+      askerName: r.asker_name as string,
+      askerUserId: (r.asker_user_id as string | null) ?? null,
+      askedAtIso: r.asked_at as string,
+      meetingTitle: titleByMeeting.get(r.meeting_id as string) ?? '',
+    })),
+  };
 }
 
 /**

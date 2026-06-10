@@ -3,6 +3,16 @@ import { getInstallationOctokit } from '../../../_lib/github-app';
 import { createServiceRoleClient } from '../../../_lib/supabase-server';
 
 /**
+ * How fresh a webhook-created NULL-org skeleton must be to be adoptable by a
+ * completing install flow. Matches the pending_installations 15-minute state
+ * lifetime: the install webhook fires seconds before this callback, so a
+ * legitimately in-flight skeleton is always well within this window; anything
+ * older is an abandoned skeleton (e.g. a direct-from-GitHub install) that must
+ * not be adoptable by a crafted callback. (See the claim-guard comment below.)
+ */
+const CLAIMABLE_SKELETON_MAX_AGE_MS = 15 * 60 * 1000;
+
+/**
  * Completes the GitHub App install flow. GitHub redirects here after the
  * user finishes installing (or cancels):
  *
@@ -75,6 +85,47 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // service-role-cross-org: delete keyed by the same unguessable state_token.
   await service.from('pending_installations').delete().eq('state_token', state);
 
+  // SECURITY — installation-claim guard. `installation_id` comes from the query
+  // string, i.e. the CALLER chooses it, and installation ids are small
+  // enumerable integers. There is no cryptographic binding between the state
+  // (which proves the caller's org) and the installation_id (which the caller
+  // supplies), so two abuses must be blocked:
+  //   1. Overwriting another org's installation — refused below: a row whose
+  //      org_id is already set to a different org is never re-claimed.
+  //   2. Adopting a stranger's UNCLAIMED (org_id NULL) skeleton. The webhook
+  //      creates a NULL-org skeleton on every install — including direct-from-
+  //      GitHub installs that never finish our flow — and those sit NULL
+  //      indefinitely. Without a freshness bound, an attacker could enumerate
+  //      installation ids and adopt a victim's long-abandoned skeleton, pulling
+  //      their PRIVATE repos into the attacker's org. The legitimate flow has
+  //      the webhook fire SECONDS before this callback, so a NULL skeleton is
+  //      only claimable while it is FRESH (within the pending-state window);
+  //      stale NULL skeletons are refused here and reaped by retention-sweeps.
+  const { data: claimed, error: claimErr } = await service
+    .from('github_installations')
+    .select('org_id, installed_at')
+    .eq('installation_id', installationId)
+    .maybeSingle();
+  if (claimErr !== null) {
+    console.error('[install-callback] claim lookup failed:', claimErr);
+    return NextResponse.redirect(new URL('/sources?error=install_persist_failed', url.origin));
+  }
+  if (claimed !== null && claimed.org_id !== null && claimed.org_id !== orgId) {
+    console.error(
+      `[install-callback] REFUSED cross-org installation claim: installation ${String(installationId)} belongs to another org (attempted org=${orgId})`,
+    );
+    return NextResponse.redirect(new URL('/sources?error=install_already_claimed', url.origin));
+  }
+  if (claimed !== null && claimed.org_id === null) {
+    const ageMs = Date.now() - new Date(claimed.installed_at as string).getTime();
+    if (ageMs > CLAIMABLE_SKELETON_MAX_AGE_MS) {
+      console.error(
+        `[install-callback] REFUSED stale unclaimed-skeleton adoption: installation ${String(installationId)} skeleton is ${String(Math.round(ageMs / 60000))}min old (attempted org=${orgId})`,
+      );
+      return NextResponse.redirect(new URL('/sources?error=install_already_claimed', url.origin));
+    }
+  }
+
   // Fetch installation metadata from GitHub. Authenticates as the installation
   // itself — this is what tells us the account login + type + which repos
   // the user actually granted us. @octokit/app caches the installation token
@@ -105,22 +156,39 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(new URL('/sources?error=install_github_fetch_failed', url.origin));
   }
 
-  // Upsert the installation row. If the webhook beat us here, the row exists
-  // with org_id = NULL; we set org_id + account metadata. If we beat the
-  // webhook, the row is created here outright.
-  const { error: upsertErr } = await service.from('github_installations').upsert(
+  // Persist the installation row WITHOUT ever overwriting another org's claim
+  // (closing the TOCTOU window the pre-check above leaves): insert a skeleton
+  // if missing, then a GUARDED update that only claims rows that are unclaimed
+  // (webhook-created, org_id NULL) or already ours.
+  const { error: insertErr } = await service.from('github_installations').upsert(
     {
       installation_id: installationId,
       org_id: orgId,
       account_login: accountLogin,
       account_type: accountType,
     },
-    { onConflict: 'installation_id' },
+    { onConflict: 'installation_id', ignoreDuplicates: true },
   );
-  if (upsertErr !== null) {
-     
-    console.error('[install-callback] github_installations upsert failed:', upsertErr);
+  if (insertErr !== null) {
+    console.error('[install-callback] github_installations insert failed:', insertErr);
     return NextResponse.redirect(new URL('/sources?error=install_persist_failed', url.origin));
+  }
+  const { data: claimedRows, error: updateErr } = await service
+    .from('github_installations')
+    .update({ org_id: orgId, account_login: accountLogin, account_type: accountType })
+    .eq('installation_id', installationId)
+    .or(`org_id.is.null,org_id.eq.${orgId}`)
+    .select('installation_id');
+  if (updateErr !== null) {
+    console.error('[install-callback] github_installations claim failed:', updateErr);
+    return NextResponse.redirect(new URL('/sources?error=install_persist_failed', url.origin));
+  }
+  if (claimedRows === null || claimedRows.length === 0) {
+    // Lost the race to another org's concurrent claim — same refusal as above.
+    console.error(
+      `[install-callback] REFUSED cross-org installation claim (race): installation ${String(installationId)} (attempted org=${orgId})`,
+    );
+    return NextResponse.redirect(new URL('/sources?error=install_already_claimed', url.origin));
   }
 
   // Insert one sources row per granted repo. Webhook may also try to insert

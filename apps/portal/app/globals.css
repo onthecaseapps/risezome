@@ -16,15 +16,17 @@
  * components (U5) reuse the same card/source/synthesis tokens.
  */
 :root {
-  /* Crisp Slate (light): tighter, cooler surfaces; flat by default. */
+  /* Crisp Light: tighter cool surfaces; cards sit on the page via a hairline +
+     a whisper shadow (not flat — that read as cut-outs on the gray sheet). */
   --bg: #f3f5f8;
-  --fg: #1a1a1c;
+  --fg: #141519;            /* nudged one step darker for body hierarchy */
   --muted: #6b6b73;
-  --border: #e3e7ef;
+  --border: #e3e5ec;        /* just-enough hairline (was too faint) */
   --border-strong: #d4dae6; /* hairline for interactive controls (buttons/inputs/menus) */
   --card-bg: #ffffff;
-  /* Flat by default — no ambient elevation on resting content (Crisp Slate). */
-  --card-shadow: none;
+  /* The whisper that makes light cards feel intentional. Dark stays flat (it
+     separates surfaces by stepping the slate tones, not shadows). */
+  --card-shadow: 0 1px 2px rgba(20, 23, 40, 0.05), 0 4px 12px rgba(20, 23, 40, 0.04);
   /* The one restrained elevation, reserved for floating layers (menus, popovers,
      modals, toasts). Rolled out per-component in the follow-up pass. */
   --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06);
@@ -35,6 +37,10 @@
   --accent-fg: #ffffff;
   --accent-press: #6b72f0; /* hover/press state */
   --accent-soft: #ebebfe;  /* tint for active-nav backgrounds */
+  --accent-bright: #5159e0;   /* active-nav label (= accent on light) */
+  --surface-2: #eef1f6;       /* raised / hover surface */
+  --surface-3: #e6eaf1;       /* insets, chips, search fields */
+  --text-faint: #9aa1ad;      /* faint metadata / timestamps */
   /* Source-chip palette (internal convention, not brand colors) - discriminable
      and ≥4.5:1 against the card background. Mirrors the HUD SOURCE_ACCENT map. */
   --src-github: #1f5fbf;
@@ -56,9 +62,12 @@
   --bg: #0b0e15;
   --fg: #e9edf6;
   --muted: #8d96aa;
-  --border: #242c3e;
+  --border: #222a3a;
   --border-strong: #2f3850; /* hairline for interactive controls */
   --card-bg: #131826;
+  --surface-2: #171d2d;     /* raised / hover surface */
+  --surface-3: #1b2233;     /* insets, chips, search fields */
+  --text-faint: #586074;    /* faint metadata / timestamps */
   --card-shadow: none;
   --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
   --accent-ring: rgba(124, 131, 255, 0.4);
@@ -67,7 +76,9 @@
   --accent: #7c83ff;       /* indigo-400, lifts in dark mode */
   --accent-fg: #0f1115;
   --accent-press: #6b72f0;
-  --accent-soft: #1f1f3d;  /* tint for active-nav in dark mode */
+  /* Translucent periwinkle so active-nav / chips read as accent, not dark navy. */
+  --accent-soft: rgba(124, 131, 255, 0.18);
+  --accent-bright: #aeb2ff; /* brighter active-nav label/icon on dark */
   --src-github: #6b8aff;
   --src-jira: #5cc8ff;
   --src-slack: #ff9080;
@@ -99,6 +110,10 @@
   --color-accent-fg: var(--accent-fg);
   --color-accent-press: var(--accent-press);
   --color-accent-soft: var(--accent-soft);
+  --color-accent-bright: var(--accent-bright);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-faint: var(--text-faint);
   --color-src-github: var(--src-github);
   --color-src-jira: var(--src-jira);
   --color-src-slack: var(--src-slack);
@@ -164,6 +179,28 @@ body {
 }
 
 /*
+ * Keyboard focus ring, app-wide. Most custom controls suppress the native
+ * outline (`focus:outline-none` on inputs; unstyled buttons everywhere else),
+ * which left keyboard users with NO visible focus indicator anywhere in the
+ * authed app (WCAG 2.4.7). :focus-visible scopes the ring to keyboard
+ * navigation — mouse clicks don't flash it — and `--accent-ring` was minted for
+ * exactly this. Components can still override locally where a tighter
+ * treatment fits (e.g. inputs that swap border color).
+ */
+:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
+/* Tailwind's animate-pulse (recording dot, notification dot) under
+ * prefers-reduced-motion: show the steady state instead of pulsing. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse {
+    animation: none;
+  }
+}
+
+/*
  * Transient highlight for "jump to this moment" — clicking a recap timestamp
  * scrolls the transcript to the matching utterance and adds .rz-ts-pulse for a
  * brief accent flash that fades out (the class is removed by a timer). box-
@@ -186,6 +223,34 @@ body {
 }
 @media (prefers-reduced-motion: reduce) {
   .rz-ts-pulse {
+    animation: none;
+  }
+}
+
+/*
+ * Intro stagger — list items fade up + drift in on the page's FIRST mount only
+ * (see useIntroStagger). A small upward rise + fade that walks the eye top-to-
+ * bottom; the per-item delay is supplied inline as `animation-delay`, clamped by
+ * the hook so a long list's tail still arrives promptly. `both` fill-mode holds
+ * the from-state (opacity 0) through the delay so staggered items don't flash in
+ * before their turn. Filter/sort/search re-renders drop the class → instant, no
+ * re-animation. Disabled entirely under reduced-motion (item shows at rest).
+ */
+@keyframes rz-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rz-fade-up {
+  animation: rz-fade-up 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rz-fade-up {
     animation: none;
   }
 }

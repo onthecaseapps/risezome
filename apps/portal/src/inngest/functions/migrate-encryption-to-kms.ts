@@ -471,14 +471,24 @@ export const migrateEncryptionToKmsFn = inngest.createFunction(
     retries: 3,
     triggers: [{ event: 'risezome/encryption.migrate-to-kms' }],
   },
-  async ({ event }) => {
+  async ({ event, step }) => {
     const data = (event as unknown as { data?: { orgId?: string; batchSize?: number } }).data ?? {};
     const service = createServiceRoleClient();
-    const orgIds = data.orgId !== undefined ? [data.orgId] : await allOrgIds(service);
+    const orgIds =
+      data.orgId !== undefined
+        ? [data.orgId]
+        : ((await step.run('list-orgs', () => allOrgIds(service))) as string[]);
     const opts = data.batchSize !== undefined ? { batchSize: data.batchSize } : {};
     const results: OrgMigrationResult[] = [];
     for (const orgId of orgIds) {
-      results.push(await migrateOrgEncryption(service, orgId, opts));
+      // Durable per-org checkpoint: a retry resumes after the last fully
+      // migrated org instead of restarting the whole instance from row 0
+      // (the per-row version sentinels make a re-run cheap, but not free).
+      results.push(
+        (await step.run(`migrate-org-${orgId}`, () =>
+          migrateOrgEncryption(service, orgId, opts),
+        )) as OrgMigrationResult,
+      );
     }
     return { orgs: results.length, results };
   },

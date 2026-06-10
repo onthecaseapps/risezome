@@ -99,6 +99,7 @@ function humanError(code: string): string {
     unsupported_platform: 'Bot join not available for this platform',
     no_conference_url: 'No conference link on this event',
     past_meeting: "That meeting has already started",
+    bot_invite_not_permitted: "You don't have permission to send the bot — ask an admin.",
   };
   return map[code] ?? code.slice(0, 60);
 }

@@ -12,7 +12,7 @@
  */
 
 interface SelectResult {
-  readonly data: { meeting_id: string } | null;
+  readonly data: { meeting_id: string; recap_status: string | null } | null;
 }
 
 interface RlsClient {
@@ -57,9 +57,10 @@ export async function regenerateRecap(
   meetingId: string,
 ): Promise<RegenerateRecapResult> {
   // Authorize via RLS: row visible ⇒ caller is an attendee or super-admin.
+  // recap_status is read alongside so a failed emit below can restore it.
   const { data: meeting } = await deps.rls
     .from('meetings')
-    .select('meeting_id')
+    .select('meeting_id, recap_status')
     .eq('meeting_id', meetingId)
     .eq('org_id', deps.orgId)
     .maybeSingle();
@@ -75,9 +76,26 @@ export async function regenerateRecap(
     .eq('org_id', deps.orgId);
   if (error !== null) return { ok: false, error: error.message };
 
-  await deps.send({
-    name: 'risezome/meeting.recap-requested',
-    data: { meetingId, orgId: deps.orgId },
-  });
+  try {
+    await deps.send({
+      name: 'risezome/meeting.recap-requested',
+      data: { meetingId, orgId: deps.orgId },
+    });
+  } catch (err) {
+    // The status flip succeeded but no worker will ever pick the job up —
+    // without a rollback the page wedges on "Generating…" forever (the
+    // Regenerate button disables while recap_status === 'generating').
+    // Restore the prior status so the user can retry.
+    console.error('[regenerateRecap] recap-requested emit failed:', err);
+    const { error: restoreErr } = await deps.service
+      .from('meetings')
+      .update({ recap_status: meeting.recap_status })
+      .eq('meeting_id', meetingId)
+      .eq('org_id', deps.orgId);
+    if (restoreErr !== null) {
+      console.error('[regenerateRecap] recap_status rollback failed:', restoreErr.message);
+    }
+    return { ok: false, error: 'recap_request_failed' };
+  }
   return { ok: true };
 }

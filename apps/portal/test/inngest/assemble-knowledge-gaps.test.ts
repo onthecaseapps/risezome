@@ -137,6 +137,10 @@ function makeMock(cfg: MockConfig) {
     };
     b.is = () => b;
     b.in = () => b;
+    b.order = () => b;
+    // Single-page read: the seeded data is < 1 page, so the paged reader's
+    // first range() gets everything and terminates.
+    b.range = () => b;
     b.then = (resolve: (v: unknown) => unknown) => {
       if (op === 'select') return resolve({ data: dataByTable[table] ?? [], error: null });
       if (op === 'update' && table === 'meeting_gap_misses') calls.processedMarked = true;

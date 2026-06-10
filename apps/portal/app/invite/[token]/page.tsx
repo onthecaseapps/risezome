@@ -111,6 +111,8 @@ function errorMessage(code: string): string {
       return 'This invite is no longer valid.';
     case 'join_failed':
       return 'Something went wrong joining the workspace. Try again.';
+    case 'membership_check_failed':
+      return 'We couldn’t check your membership just now. Try again.';
     default:
       return 'Something went wrong. Try again.';
   }

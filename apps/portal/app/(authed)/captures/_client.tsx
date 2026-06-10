@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState, type ReactElement } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactElement } from 'react';
+import { useIntroStagger } from '../_components/use-intro-stagger';
 
 export type CapturePlatform = 'zoom' | 'meet' | 'teams' | 'other';
 
@@ -80,6 +81,11 @@ export function CapturesClient({
 
   const groups = useMemo(() => groupByDay(filtered), [filtered]);
 
+  // Intro fade-up plays once on mount; `renderIndex` is the running position
+  // across all day-groups so the stagger walks the whole page top-to-bottom.
+  const introFor = useIntroStagger();
+  let renderIndex = 0;
+
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-8 sm:px-8">
       <header className="mb-7">
@@ -126,9 +132,18 @@ export function CapturesClient({
                 <span className="h-px flex-1 bg-border" />
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {group.items.map((c) => (
-                  <CaptureCardView key={c.meetingId} capture={c} />
-                ))}
+                {group.items.map((c) => {
+                  const intro = introFor(renderIndex);
+                  renderIndex += 1;
+                  return (
+                    <CaptureCardView
+                      key={c.meetingId}
+                      capture={c}
+                      className={intro.className}
+                      style={intro.style}
+                    />
+                  );
+                })}
               </div>
             </section>
           ))}
@@ -190,19 +205,28 @@ function FilterSelect({
   );
 }
 
-function CaptureCardView({ capture: c }: { capture: CaptureCard }): ReactElement {
+function CaptureCardView({
+  capture: c,
+  className = '',
+  style,
+}: {
+  capture: CaptureCard;
+  className?: string;
+  style?: CSSProperties | undefined;
+}): ReactElement {
   const dur = durationMin(c);
   const whenIso = c.startedAtIso ?? c.createdAtIso;
   const when = `${formatDate(whenIso)} · ${formatTime(whenIso)}`;
   return (
     <a
       href={`/meetings/${c.meetingId}/review`}
-      className="group flex flex-col rounded-2xl border border-border bg-card/50 p-5 transition-colors hover:border-accent/40 hover:bg-card"
+      style={style}
+      className={`group flex flex-col rounded-2xl border border-border bg-card/50 p-5 shadow-[var(--card-shadow)] transition-colors hover:border-accent/40 hover:bg-card ${className}`}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <PlatformIcon platform={c.platform} />
-          <span className="text-sm text-muted">{when}</span>
+          <span className="text-sm text-faint">{when}</span>
         </div>
         <div className="flex items-center gap-2">
           <span className={`text-sm font-medium ${PLATFORM_TEXT[c.platform]}`}>
@@ -298,18 +322,20 @@ function Metric({
 function StatusBadge({ status }: { status: 'completed' | 'failed' }): ReactElement | null {
   if (status !== 'failed') return null;
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-500">
+    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
       <WarnGlyph />
       Check
     </span>
   );
 }
 
+// -600 on light (the -400 shades fail contrast on white cards), -400 on dark —
+// the same split PLATFORM_TEXT below already uses.
 const PLATFORM_STYLE: Record<CapturePlatform, string> = {
-  zoom: 'bg-blue-500/15 text-blue-400',
-  meet: 'bg-emerald-500/15 text-emerald-400',
-  teams: 'bg-indigo-500/15 text-indigo-400',
-  other: 'bg-slate-500/15 text-slate-400',
+  zoom: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
+  meet: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+  teams: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400',
+  other: 'bg-slate-500/15 text-slate-600 dark:text-slate-400',
 };
 
 const PLATFORM_LABEL: Record<CapturePlatform, string> = {
@@ -385,7 +411,7 @@ function colorIndex(name: string): number {
 
 function EmptyState(): ReactElement {
   return (
-    <div className="rounded-2xl border border-dashed border-border bg-card/40 px-6 py-16 text-center">
+    <div className="rounded-2xl border border-dashed border-border bg-card/40 px-6 py-16 text-center shadow-[var(--card-shadow)]">
       <h2 className="text-lg font-semibold tracking-tight">No captures yet</h2>
       <p className="mx-auto mt-2 max-w-sm text-pretty text-sm text-muted">
         Meetings the Risezome bot attended appear here once they wrap. They form your workspace’s shared

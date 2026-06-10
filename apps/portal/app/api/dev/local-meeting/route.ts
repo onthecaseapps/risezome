@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { createServiceRoleClient } from '../../../_lib/supabase-server';
 import { inngest } from '../../../../src/inngest/client';
@@ -14,7 +15,14 @@ import { inngest } from '../../../../src/inngest/client';
  *     post-meeting jobs the Recall webhook fires (recap + knowledge-gaps), so
  *     it lands in Captures/Review with full fidelity (KTD4).
  *
- * Guarded to non-production (this is dev tooling, never a shipping surface).
+ * Guarded to non-production (this is dev tooling, never a shipping surface)
+ * AND to callers presenting the BOT_WORKER_SECRET bearer (the dev console
+ * already holds it for the bot-worker control surface). The secret gate is
+ * defense-in-depth beyond NODE_ENV: a preview/staging deploy where NODE_ENV
+ * isn't exactly "production" must not expose cross-tenant org enumeration or
+ * meeting creation to anonymous callers. Fail-closed: no secret configured →
+ * 404, same as production.
+ *
  * Service-role throughout — there is no user session; the dev org/user are
  * resolved from env (RISEZOME_DEV_ORG_ID / RISEZOME_DEV_USER_ID) or a
  * deterministic fallback (KTD8).
@@ -30,8 +38,22 @@ function notFound(): NextResponse {
   return new NextResponse('not found', { status: 404 });
 }
 
+/** Constant-time bearer check (sha256 digests so lengths always match). */
+function bearerMatches(authorization: string | null, secret: string): boolean {
+  if (authorization === null || !authorization.startsWith('Bearer ')) return false;
+  const presented = createHash('sha256').update(authorization.slice('Bearer '.length)).digest();
+  const expected = createHash('sha256').update(secret).digest();
+  return timingSafeEqual(presented, expected);
+}
+
 export async function POST(req: Request): Promise<NextResponse> {
   if (process.env.NODE_ENV === 'production') return notFound();
+  // Defense-in-depth beyond NODE_ENV (see header comment): require the shared
+  // dev-tooling secret. Unset secret → fail closed.
+  const secret = process.env.BOT_WORKER_SECRET ?? '';
+  if (secret.length === 0 || !bearerMatches(req.headers.get('authorization'), secret)) {
+    return notFound();
+  }
 
   const body = (await req.json().catch(() => ({}))) as Body;
   const service = createServiceRoleClient();

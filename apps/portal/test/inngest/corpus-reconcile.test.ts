@@ -131,15 +131,39 @@ describe('reconcile — diff', () => {
     expect(res.pruned).toBe(true);
   });
 
-  it('delta mode never prunes', async () => {
+  it('delta mode prunes when the fetch is complete (delta-prune-on-complete-fetch)', async () => {
+    // The desired set is the source's WHOLE current state (fetchComplete) —
+    // pruning its absences is as safe in delta as in full, and content-
+    // addressed docIds would otherwise accumulate stale versions forever.
     const mock = makeMockDb([
       { id: 'a', type: 'file', content_hash: 'h1' },
       { id: 'c', type: 'file', content_hash: 'h3' },
     ]);
-    const res = await run(mock, desired([['a', 'h1'], ['d', 'h4']]), { mode: 'delta' });
+    const res = await run(mock, desired([['a', 'h1'], ['d', 'h4']]), { mode: 'delta', fetchComplete: true });
+    expect(res.counts).toMatchObject({ new: 1, unchanged: 1, removed: 1 });
+    expect(mock.deletedIds()).toEqual(['c']);
+    expect(res.pruned).toBe(true);
+  });
+
+  it('delta mode with an incremental (incomplete) fetch never prunes', async () => {
+    const mock = makeMockDb([
+      { id: 'a', type: 'file', content_hash: 'h1' },
+      { id: 'c', type: 'file', content_hash: 'h3' },
+    ]);
+    const res = await run(mock, desired([['a', 'h1'], ['d', 'h4']]), { mode: 'delta', fetchComplete: false });
     expect(res.counts).toMatchObject({ new: 1, unchanged: 1, removed: 0 });
     expect(mock.deletedIds()).toEqual([]);
     expect(res.pruned).toBe(false);
+  });
+
+  it('delta mode on a complete fetch removes the superseded version of an edited file', async () => {
+    // Content-addressed docIds: an edit arrives as a NEW docId; the old
+    // version is only ever removed by the prune — which must therefore run
+    // in delta (the default mode) too.
+    const mock = makeMockDb([{ id: 'p@sha1', type: 'file', content_hash: 'p@sha1' }]);
+    const res = await run(mock, desired([['p@sha2', 'p@sha2']]), { mode: 'delta', fetchComplete: true });
+    expect(res.toIndex).toEqual([{ docId: 'p@sha2', kind: 'new' }]);
+    expect(mock.deletedIds()).toEqual(['p@sha1']);
   });
 
   it('null existing hash → changed (backfill re-index)', async () => {
@@ -243,7 +267,7 @@ describe('reconcile — delete batching', () => {
 describe('clearDocChunks', () => {
   it('deletes chunks scoped to the docId', async () => {
     const mock = makeMockDb([]);
-    await clearDocChunks(mock.db, 'gh:o/r#issue:7');
+    await clearDocChunks(mock.db, 'gh:o/r#issue:7', 'org-1');
     expect(mock.chunkDeletes()).toEqual(['gh:o/r#issue:7']);
   });
 });

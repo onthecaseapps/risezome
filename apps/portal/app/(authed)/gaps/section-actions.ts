@@ -21,6 +21,13 @@ function pickColor(): string {
   return SECTION_COLORS[Math.floor(Math.random() * SECTION_COLORS.length)] ?? 'slate';
 }
 
+/** Map a section write error to a stable client code. A 23505 is the
+ *  case-insensitive unique (org_id, lower(name)) index — surface it as a clean
+ *  'duplicate_name' instead of leaking the raw Postgres constraint message. */
+function sectionWriteError(error: { code?: string; message: string }): string {
+  return error.code === '23505' ? 'duplicate_name' : error.message;
+}
+
 /** Rename a section (sets name_locked so re-cluster never renames it). */
 export async function renameSectionAction(sectionId: string, name: string): Promise<ActionResult> {
   const trimmed = name.trim();
@@ -32,7 +39,7 @@ export async function renameSectionAction(sectionId: string, name: string): Prom
     .update({ name: trimmed, name_locked: true })
     .eq('section_id', sectionId)
     .eq('org_id', orgId);
-  if (error !== null) return { ok: false, error: error.message };
+  if (error !== null) return { ok: false, error: sectionWriteError(error) };
   revalidatePath('/gaps');
   return { ok: true };
 }
@@ -80,7 +87,7 @@ export async function splitSectionAction(name: string, gapIds: string[]): Promis
     color: pickColor(),
     name_locked: true,
   });
-  if (insErr !== null) return { ok: false, error: insErr.message };
+  if (insErr !== null) return { ok: false, error: sectionWriteError(insErr) };
   const { error: moveErr } = await service
     .from('knowledge_gaps')
     .update({ section_id: sectionId, section_pinned: true })
@@ -167,103 +174,29 @@ export async function createSectionForGapAction(name: string, gapId: string): Pr
  * (on the (meeting_id, utterance_id) unique conflict, B's duplicate occurrence
  * is dropped), unions viewers, recomputes A.frequency from its occurrences, and
  * deletes B. Irreversible. MANAGER ONLY.
+ *
+ * One advisory-locked transaction via the merge_gaps RPC — the old multi-
+ * statement PostgREST sequence could crash after the collide-delete and
+ * permanently lose occurrence rows with the merge half-applied.
  */
 export async function mergeGapsAction(targetGapId: string, sourceGapId: string): Promise<ActionResult> {
   if (targetGapId === sourceGapId) return { ok: false, error: 'same_gap' };
   const { orgId } = await requireManager();
   const service = createServiceRoleClient();
 
-  // Both gaps must belong to the manager's org.
-  const { data: pair, error: loadErr } = await service
-    .from('knowledge_gaps')
-    .select('gap_id, org_id')
-    .in('gap_id', [targetGapId, sourceGapId])
-    .eq('org_id', orgId);
-  if (loadErr !== null) return { ok: false, error: loadErr.message };
-  if ((pair ?? []).length !== 2) return { ok: false, error: 'not_found' };
-
-  // Re-point B's occurrences to A. Handle the unique (meeting_id, utterance_id)
-  // conflict by dropping B's duplicate: find A's existing (meeting,utterance)
-  // keys and delete colliding B occurrences before the bulk re-point.
-  const { data: aOcc } = await service
-    .from('gap_occurrences')
-    .select('meeting_id, utterance_id')
-    .eq('gap_id', targetGapId)
-    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
-  const aKeys = new Set((aOcc ?? []).map((o) => `${o.meeting_id as string}:${(o.utterance_id as string | null) ?? ''}`));
-
-  const { data: bOcc } = await service
-    .from('gap_occurrences')
-    .select('occurrence_id, meeting_id, utterance_id')
-    .eq('gap_id', sourceGapId)
-    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
-  const collidingIds: number[] = [];
-  for (const o of bOcc ?? []) {
-    const key = `${o.meeting_id as string}:${(o.utterance_id as string | null) ?? ''}`;
-    if (aKeys.has(key)) collidingIds.push(o.occurrence_id as number);
+  const { error } = await service.rpc('merge_gaps', {
+    p_org_id: orgId,
+    p_target_gap_id: targetGapId,
+    p_source_gap_id: sourceGapId,
+  });
+  if (error !== null) {
+    // The RPC `raise exception 'same_gap' / 'not_found'` surfaces the message
+    // verbatim. Match the whole message (not a substring) so an unrelated DB
+    // error that merely contains the word can't be mis-mapped; anything else is
+    // a stable generic code, never the raw message (schema detail).
+    const known = error.message === 'not_found' || error.message === 'same_gap';
+    return { ok: false, error: known ? error.message : 'merge_failed' };
   }
-  if (collidingIds.length > 0) {
-    const { error: dropErr } = await service
-      .from('gap_occurrences')
-      .delete()
-      .in('occurrence_id', collidingIds)
-      .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
-    if (dropErr !== null) return { ok: false, error: dropErr.message };
-  }
-  const { error: repointErr } = await service
-    .from('gap_occurrences')
-    .update({ gap_id: targetGapId })
-    .eq('gap_id', sourceGapId)
-    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
-  if (repointErr !== null) return { ok: false, error: repointErr.message };
-
-  // Union viewers from B into A (on conflict do nothing).
-  const { data: bViewers } = await service
-    .from('gap_viewers')
-    .select('user_id, org_id')
-    .eq('gap_id', sourceGapId)
-    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
-  if ((bViewers ?? []).length > 0) {
-    const rows = (bViewers ?? []).map((v) => ({
-      gap_id: targetGapId,
-      user_id: v.user_id as string,
-      org_id: v.org_id as string,
-    }));
-    const { error: viewErr } = await service
-      .from('gap_viewers')
-      .upsert(rows, { onConflict: 'gap_id,user_id', ignoreDuplicates: true });
-    if (viewErr !== null) return { ok: false, error: viewErr.message };
-  }
-
-  // Recompute A's frequency + ask-window from its (now combined) occurrences —
-  // B may have carried an earlier first ask or a later last ask.
-  const { count: freq } = await service
-    .from('gap_occurrences')
-    .select('occurrence_id', { count: 'exact', head: true })
-    .eq('gap_id', targetGapId)
-    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
-  const { data: span } = await service
-    .from('gap_occurrences')
-    .select('asked_at')
-    .eq('gap_id', targetGapId)
-    .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
-    .order('asked_at', { ascending: true });
-  const askedAts = (span ?? []).map((o) => o.asked_at as string);
-  const update: Record<string, unknown> = { frequency: freq ?? 0 };
-  if (askedAts.length > 0) {
-    update['first_asked_at'] = askedAts[0];
-    update['last_asked_at'] = askedAts[askedAts.length - 1];
-  }
-  const { error: freqErr } = await service
-    .from('knowledge_gaps')
-    .update(update)
-    .eq('gap_id', targetGapId)
-    .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
-  if (freqErr !== null) return { ok: false, error: freqErr.message };
-
-  // Delete B (its remaining occurrences were re-pointed; viewers cascade).
-  const { error: delErr } = await service.from('knowledge_gaps').delete().eq('gap_id', sourceGapId).eq('org_id', orgId);
-  if (delErr !== null) return { ok: false, error: delErr.message };
 
   revalidatePath('/gaps');
   return { ok: true };

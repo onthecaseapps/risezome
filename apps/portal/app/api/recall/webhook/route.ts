@@ -133,14 +133,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     update['ended_at'] = new Date().toISOString();
   }
 
-  const { error: updateErr } = await service
+  // Transition guard: Recall can double-fire call_ended; without the .neq an
+  // already-completed meeting re-ran the full Claude recap (re-billed AND
+  // mutated a manager-visible recap) and re-enqueued gap assembly on every
+  // duplicate. Zero rows updated ⇒ no transition happened ⇒ skip the side
+  // effects below.
+  const { data: transitioned, error: updateErr } = await service
     .from('meetings')
     .update(update)
     .eq('meeting_id', meeting.meeting_id)
-    .eq('org_id', meeting.org_id); // defense-in-depth: service-role bypasses RLS, scope by the org resolved from the bot_id lookup
+    .eq('org_id', meeting.org_id) // defense-in-depth: service-role bypasses RLS, scope by the org resolved from the bot_id lookup
+    .neq('status', newStatus)
+    .select('meeting_id');
   if (updateErr !== null) {
     console.error('[recall.webhook] meeting update failed:', updateErr);
     return new NextResponse('DB error', { status: 500 });
+  }
+  if (transitioned === null || transitioned.length === 0) {
+    return NextResponse.json({ ok: true, ignored: 'no_transition', newStatus });
   }
 
   // Best-effort broadcast so the live page swaps shells without a

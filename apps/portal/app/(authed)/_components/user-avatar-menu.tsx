@@ -70,7 +70,7 @@ export function UserAvatarMenu({
       </summary>
       <div
         role="menu"
-        className="absolute right-0 z-20 mt-1 min-w-[240px] overflow-hidden rounded-md border border-border bg-card shadow-lg"
+        className="absolute right-0 z-20 mt-1 min-w-[240px] overflow-hidden rounded-md border border-border bg-card shadow-[var(--shadow-pop)]"
       >
         <div className="flex items-center gap-2.5 border-b border-border px-3 py-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-fg">
@@ -83,9 +83,12 @@ export function UserAvatarMenu({
         </div>
 
         <ul className="py-1">
+          {/* One entry per real destination. "Notification settings" was a
+              second link to the same /settings index (no notification page
+              exists) — removed until that page ships. */}
           <li>
             <a
-              href="/settings"
+              href="/settings/profile"
               role="menuitem"
               className="block px-3 py-2 text-sm hover:bg-accent-soft/50"
             >
@@ -98,7 +101,7 @@ export function UserAvatarMenu({
               role="menuitem"
               className="block px-3 py-2 text-sm hover:bg-accent-soft/50"
             >
-              Notification settings
+              Settings
             </a>
           </li>
           <li>

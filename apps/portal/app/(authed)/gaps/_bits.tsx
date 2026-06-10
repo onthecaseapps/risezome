@@ -44,9 +44,11 @@ export function BackfillButton(): ReactElement {
 /** Tier a frequency into a colour band for the row sparkline / demand number.
  *  Purely presentational — high ≥7 orange, mid 3–6 violet, low ≤2 gray. */
 export function demandTier(frequency: number): { text: string; bar: string } {
-  if (frequency >= 7) return { text: 'text-orange-400', bar: 'bg-orange-400' };
-  if (frequency >= 3) return { text: 'text-violet-400', bar: 'bg-violet-400' };
-  return { text: 'text-slate-400', bar: 'bg-slate-400' };
+  if (frequency >= 7)
+    return { text: 'text-orange-600 dark:text-orange-400', bar: 'bg-orange-400' };
+  if (frequency >= 3)
+    return { text: 'text-violet-600 dark:text-violet-400', bar: 'bg-violet-400' };
+  return { text: 'text-slate-500 dark:text-slate-400', bar: 'bg-slate-400' };
 }
 
 /** A thin colored progress bar under the demand number (caps the fill at 10×). */
@@ -62,10 +64,12 @@ export function DemandBar({ frequency }: { frequency: number }): ReactElement {
 
 // ── status pill ─────────────────────────────────────────────────────────────
 
+// -700/-600 on light (the -400 shades fail 4.5:1 against the tinted chip on
+// white cards), -400 on dark — same split PLATFORM_TEXT on captures uses.
 const STATUS_STYLE: Record<GapStatus, string> = {
-  open: 'bg-emerald-500/15 text-emerald-400',
-  resolved: 'bg-sky-500/15 text-sky-400',
-  dismissed: 'bg-slate-500/15 text-slate-400',
+  open: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+  resolved: 'bg-sky-500/15 text-sky-700 dark:text-sky-400',
+  dismissed: 'bg-slate-500/15 text-slate-600 dark:text-slate-400',
 };
 const STATUS_LABEL: Record<GapStatus, string> = {
   open: 'Open',

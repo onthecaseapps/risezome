@@ -2,6 +2,7 @@
 
 import { useState, useTransition, type ReactElement } from 'react';
 import type { GapView, SectionView } from './_types';
+import { Modal, useMenuBehaviors } from '../_components/overlay';
 import { ChevronDown, DotsGlyph, SectionDot } from './_bits';
 import {
   deleteSectionAction,
@@ -34,6 +35,7 @@ export function SectionMenu({
   gapCount: number;
 }): ReactElement {
   const [open, setOpen] = useState(false);
+  useMenuBehaviors(open, () => setOpen(false));
   const [dialog, setDialog] = useState<'rename' | 'merge' | 'move' | 'delete' | null>(null);
 
   return (
@@ -49,7 +51,7 @@ export function SectionMenu({
       {open ? (
         <>
           <button type="button" aria-hidden="true" tabIndex={-1} className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-8 z-20 w-52 overflow-hidden rounded-lg border border-border bg-card py-1 shadow-lg">
+          <div className="absolute right-0 top-8 z-20 w-52 overflow-hidden rounded-lg border border-border bg-card py-1 shadow-[var(--shadow-pop)]">
             <MenuItem label="Rename section" onClick={() => { setOpen(false); setDialog('rename'); }} />
             <MenuItem
               label="Merge into another section…"
@@ -104,14 +106,9 @@ function MenuItem({
 }
 
 // ── dialogs ─────────────────────────────────────────────────────────────────
-
-function Modal({ children }: { children: ReactElement | ReactElement[] }): ReactElement {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md rounded-2xl border border-border bg-bg p-5 shadow-2xl">{children}</div>
-    </div>
-  );
-}
+// All dialogs render through the shared accessible <Modal> (Escape, focus trap,
+// focus return, scroll lock, role="dialog") — the old local shell had none of
+// those and not even a scrim.
 
 function useAction(): {
   pending: boolean;
@@ -135,7 +132,7 @@ function RenameSectionDialog({ section, onClose }: { section: SectionView; onClo
   const [name, setName] = useState(section.name);
   const { pending, error, run } = useAction();
   return (
-    <Modal>
+    <Modal onClose={onClose} ariaLabel="Rename section">
       <h3 className="text-base font-semibold">Rename section</h3>
       <input
         autoFocus
@@ -166,7 +163,7 @@ function MergeSectionDialog({
   const [targetId, setTargetId] = useState(targets[0]?.sectionId ?? '');
   const { pending, error, run } = useAction();
   return (
-    <Modal>
+    <Modal onClose={onClose} ariaLabel="Merge section">
       <h3 className="text-base font-semibold">Merge “{section.name}” into…</h3>
       <p className="mt-1 text-sm text-muted">Its gaps move to the target section, then “{section.name}” is deleted.</p>
       <SectionPicker targets={targets} value={targetId} onChange={setTargetId} />
@@ -194,7 +191,7 @@ function MoveAllDialog({
   const [targetId, setTargetId] = useState('');
   const { pending, error, run } = useAction();
   return (
-    <Modal>
+    <Modal onClose={onClose} ariaLabel="Move all gaps">
       <h3 className="text-base font-semibold">Move all gaps from “{section.name}”</h3>
       <SectionPicker targets={targets} value={targetId} onChange={setTargetId} allowUncategorized />
       <DialogError error={error} />
@@ -223,7 +220,7 @@ function DeleteSectionDialog({
   const { pending, error, run } = useAction();
   const hasGaps = gapCount > 0;
   return (
-    <Modal>
+    <Modal onClose={onClose} ariaLabel="Delete section">
       <h3 className="text-base font-semibold">Delete “{section.name}”?</h3>
       {hasGaps ? (
         <>
@@ -265,12 +262,12 @@ export function MoveGapDialog({
   const [mode, setMode] = useState<'existing' | 'new'>('existing');
   const { pending, error, run } = useAction();
   return (
-    <Modal>
+    <Modal onClose={onClose} ariaLabel="Move gap to a section">
       <h3 className="text-base font-semibold">Move gap to a section</h3>
       <p className="mt-1 truncate text-sm text-muted">{gap.title}</p>
       <div className="mt-4 flex gap-2 text-xs">
         <ModeTab active={mode === 'existing'} onClick={() => setMode('existing')} label="Existing section" />
-        <ModeTab active={mode === 'new'} onClick={() => setMode('new')} label="＋ New section" />
+        <ModeTab active={mode === 'new'} onClick={() => setMode('new')} label="+ New section" />
       </div>
       {mode === 'existing' ? (
         <SectionPicker
@@ -321,7 +318,7 @@ export function MergeGapDialog({
   const source = candidates.find((g) => g.gapId === sourceId) ?? null;
   const combined = gap.frequency + (source?.frequency ?? 0);
   return (
-    <Modal>
+    <Modal onClose={onClose} ariaLabel="Merge two gaps">
       <h3 className="text-base font-semibold">Merge 2 gaps?</h3>
       <p className="mt-1 text-sm text-muted">
         Their occurrences and ask-counts combine into one gap. Demand becomes {combined}×. This can&apos;t be undone.

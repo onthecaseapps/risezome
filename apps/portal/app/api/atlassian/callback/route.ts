@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { appOrigin } from '../../../_lib/app-origin';
 import { createServiceRoleClient } from '../../../_lib/supabase-server';
 import {
   exchangeAtlassianCode,
@@ -54,7 +55,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
   const orgId = pending.org_id as string;
 
-  const redirectUri = new URL('/api/atlassian/callback', url.origin).toString();
+  // MUST match the redirect_uri the connect route registered (appOrigin-pinned).
+  const redirectUri = new URL('/api/atlassian/callback', appOrigin(url.origin)).toString();
   let tokens;
   let resources;
   try {

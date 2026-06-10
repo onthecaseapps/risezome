@@ -261,6 +261,28 @@ export const generateMeetingRecapFn = inngest.createFunction(
       }
     ).data;
 
+    // Defense-in-depth vs duplicate recap-requested events (e.g. a re-delivered
+    // webhook): skip when the recap is already done. Legitimate regeneration is
+    // unaffected — both regenerate paths flip recap_status to 'generating'
+    // BEFORE emitting this event (regenerate-recap-core.ts), so they never
+    // read 'done' here.
+    const alreadyDone = await step.run('check-already-done', async () => {
+      const { data, error } = await createServiceRoleClient()
+        .from('meetings')
+        .select('recap_status')
+        .eq('meeting_id', meetingId)
+        .eq('org_id', orgId)
+        .maybeSingle();
+      if (error !== null) throw new Error(`recap status read failed: ${error.message}`);
+      return data?.recap_status === 'done';
+    });
+    if (alreadyDone) {
+      console.info(
+        `[generate-meeting-recap] meeting=${meetingId} recap already done; skipping duplicate event`,
+      );
+      return { meetingId, recap: 'skipped' as const };
+    }
+
     // Two steps so a persist-write retry never re-runs the (billed) Claude call.
     // Only the encrypted recap blob crosses the step boundary — no plaintext.
     const built = await step.run('generate-recap', async () => {

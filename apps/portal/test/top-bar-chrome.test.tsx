@@ -147,8 +147,18 @@ describe('UserAvatarMenu (U6)', () => {
   it('renders the account menu items and omits "switch workspace"', () => {
     render(<UserAvatarMenu email="jordan@acme.dev" fullName="Jordan Lee" />);
     const menu = screen.getByRole('menu');
-    expect(within(menu).getByText(/profile & account/i)).toBeInTheDocument();
-    expect(within(menu).getByText(/notification settings/i)).toBeInTheDocument();
+    // "Profile & account" deep-links to the profile page; the old duplicate
+    // "Notification settings" entry (a second link to the same /settings index,
+    // with no notification page behind it) is gone — one entry per destination.
+    expect(within(menu).getByRole('menuitem', { name: /profile & account/i })).toHaveAttribute(
+      'href',
+      '/settings/profile',
+    );
+    expect(within(menu).queryByText(/notification settings/i)).not.toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: /^settings$/i })).toHaveAttribute(
+      'href',
+      '/settings',
+    );
     // "What's new" moved here from the sidebar (it's product news, not config).
     expect(within(menu).getByRole('menuitem', { name: /what's new/i })).toHaveAttribute(
       'href',

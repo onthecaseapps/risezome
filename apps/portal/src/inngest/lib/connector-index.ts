@@ -40,7 +40,9 @@ import {
  * reflect the whole current source, not just what was re-embedded.
  */
 
-const PREPARE_BATCH = 8;
+// Entities per prepare step. One step per batch (progress counter folded in)
+// must keep big sources under Inngest's ~1000-step cap.
+const PREPARE_BATCH = 40;
 const EMBED_BATCH = 5;
 
 export interface PreparedDoc {
@@ -130,10 +132,18 @@ export async function runConnectorIndex<E>(
   let scanned = 0;
   for (let i = 0; i < entities.length; i += PREPARE_BATCH) {
     const batch = entities.slice(i, i + PREPARE_BATCH);
+    const progress = scanned + batch.length;
     let batchPrepared: PreparedDoc[];
     try {
       batchPrepared = (await step.run(`prepare-${String(i)}`, async () => {
         const results = await Promise.all(batch.map((e) => config.prepare(e)));
+        // Progress counter folded into the batch step (one step per batch
+        // keeps big sources under Inngest's ~1000-step cap).
+        await createServiceRoleClient()
+          .from('sources')
+          .update({ indexed_files: progress })
+          .eq('id', sourceId)
+          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
         return results.filter((p): p is PreparedDoc => p !== null);
       })) as PreparedDoc[];
     } catch (err) {
@@ -145,14 +155,6 @@ export async function runConnectorIndex<E>(
     }
     prepared.push(...batchPrepared);
     scanned += batch.length;
-    const progress = scanned;
-    await step.run(`prepare-counter-${String(i)}`, async () => {
-      await createServiceRoleClient()
-        .from('sources')
-        .update({ indexed_files: progress })
-        .eq('id', sourceId)
-        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
-    });
   }
 
   // ── Reconcile against the corpus ────────────────────────────────────────

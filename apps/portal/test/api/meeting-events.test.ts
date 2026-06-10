@@ -23,7 +23,8 @@ vi.mock('../../app/_lib/supabase-server', () => ({
         select: () => b,
         eq: () => b,
         gt: () => b,
-        order: () => Promise.resolve({ data: h.rows, error: h.error }),
+        order: () => b,
+        limit: () => Promise.resolve({ data: h.rows, error: h.error }),
       };
       return b;
     },

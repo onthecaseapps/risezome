@@ -10,6 +10,9 @@ const MEETING = 'meeting-1';
 function makeDeps(over: {
   authorized: boolean;
   updateError?: { message: string } | null;
+  /** Prior recap_status returned by the SELECT (restored on a failed emit). */
+  priorStatus?: string | null;
+  sendError?: Error;
 }): {
   deps: RegenerateRecapDeps;
   updates: { values: Record<string, unknown>; filters: Record<string, string> }[];
@@ -24,7 +27,11 @@ function makeDeps(over: {
         eq: () => ({
           eq: () => ({
             maybeSingle: () =>
-              Promise.resolve({ data: over.authorized ? { meeting_id: MEETING } : null }),
+              Promise.resolve({
+                data: over.authorized
+                  ? { meeting_id: MEETING, recap_status: over.priorStatus ?? 'done' }
+                  : null,
+              }),
           }),
         }),
       }),
@@ -52,6 +59,7 @@ function makeDeps(over: {
   } as unknown as RegenerateRecapDeps['service'];
 
   const send = vi.fn((event: { name: string; data: { meetingId: string; orgId: string } }) => {
+    if (over.sendError !== undefined) return Promise.reject(over.sendError);
     sent.push(event);
     return Promise.resolve(undefined);
   }) as unknown as RegenerateRecapDeps['send'];
@@ -88,5 +96,27 @@ describe('regenerateRecap (U6)', () => {
 
     expect(result).toEqual({ ok: false, error: 'db down' });
     expect(sent).toHaveLength(0);
+  });
+
+  it('restores the prior recap_status when the emit throws (no permanent "Generating…" wedge)', async () => {
+    const consoleErr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { deps, updates } = makeDeps({
+        authorized: true,
+        priorStatus: 'failed',
+        sendError: new Error('inngest unreachable'),
+      });
+      const result = await regenerateRecap(deps, MEETING);
+
+      expect(result).toEqual({ ok: false, error: 'recap_request_failed' });
+      // First write flips to generating; second write rolls back to the prior
+      // status captured from the SELECT — not left wedged on 'generating'.
+      expect(updates).toHaveLength(2);
+      expect(updates[0]?.values).toEqual({ recap_status: 'generating' });
+      expect(updates[1]?.values).toEqual({ recap_status: 'failed' });
+      expect(updates[1]?.filters).toEqual({ meeting_id: MEETING, org_id: ORG });
+    } finally {
+      consoleErr.mockRestore();
+    }
   });
 });

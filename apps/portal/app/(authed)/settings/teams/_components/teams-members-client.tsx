@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { roleLabel } from '../../../../_lib/roles';
 import { primaryButtonClass } from '../../../_components/ui';
+import { Modal, useMenuBehaviors } from '../../../_components/overlay';
 import { createInviteAction, revokeInviteAction } from '../../../members/invite-action';
 import {
   changeRoleAction,
@@ -333,7 +334,7 @@ function AllMembersView({
         </p>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-border">
+      <div className="overflow-hidden rounded-2xl border border-border shadow-[var(--card-shadow)]">
         <div className="grid grid-cols-[1fr_auto_auto_auto_36px] items-center gap-4 border-b border-border bg-card/40 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted sm:gap-6">
           <span>Member</span>
           <span className="hidden md:block">Teams</span>
@@ -520,7 +521,7 @@ function PendingInviteRow({
   const team = invite.teamId !== null ? (teamById.get(invite.teamId) ?? null) : null;
 
   return (
-    <li className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card/30 px-4 py-3">
+    <li className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card/30 px-4 py-3 shadow-[var(--card-shadow)]">
       <span className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-muted">
         <EnvelopeGlyph />
       </span>
@@ -613,18 +614,7 @@ function InviteModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
-      role="presentation"
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Invite teammates"
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl"
-      >
+    <Modal onClose={onClose} ariaLabel="Invite teammates" maxWidthClass="max-w-lg">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-fg">Invite teammates</h2>
@@ -743,8 +733,7 @@ function InviteModal({
             <p role="alert" className="text-sm text-error">{error}</p>
           ) : null}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -830,6 +819,7 @@ function toWorkspaceRole(v: string): WorkspaceRole {
 
 function ActionMenu({ onRemove, email }: { onRemove: () => void; email: string }): ReactElement {
   const [open, setOpen] = useState(false);
+  useMenuBehaviors(open, () => setOpen(false));
   return (
     <div className="relative flex justify-end">
       <button
@@ -849,7 +839,7 @@ function ActionMenu({ onRemove, email }: { onRemove: () => void; email: string }
             className="fixed inset-0 z-10 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute right-0 top-9 z-20 w-44 overflow-hidden rounded-lg border border-border bg-card py-1 shadow-lg">
+          <div className="absolute right-0 top-9 z-20 w-44 overflow-hidden rounded-lg border border-border bg-card py-1 shadow-[var(--shadow-pop)]">
             <button
               type="button"
               onClick={() => {

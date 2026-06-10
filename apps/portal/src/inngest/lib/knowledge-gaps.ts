@@ -178,12 +178,24 @@ export async function backfillMissesForMeeting(
     }
   }
 
-  // Skip utterances that already have a miss row (live capture or a prior backfill).
-  const { data: existing } = await service
-    .from('meeting_gap_misses')
-    .select('utterance_id')
-    .eq('meeting_id', meetingId);
-  const seen = new Set((existing ?? []).map((r) => r.utterance_id as string | null));
+  // Skip utterances that already produced a miss. Seed the dedup set from BOTH
+  // the staging table AND the durable gap_occurrences: retention-sweeps deletes
+  // PROCESSED miss rows after 30 days, so meeting_gap_misses alone is not a
+  // reliable "already handled" record — without the occurrences seed, a backfill
+  // re-run on a swept meeting re-inserts misses → re-assembles → can mint a
+  // zero-frequency ghost gap (the exact drift the recount trigger repairs).
+  const [{ data: existingMisses }, { data: existingOccs }] = await Promise.all([
+    service.from('meeting_gap_misses').select('utterance_id').eq('meeting_id', meetingId),
+    service
+      .from('gap_occurrences')
+      .select('utterance_id')
+      .eq('meeting_id', meetingId)
+      .eq('org_id', orgId),
+  ]);
+  const seen = new Set<string | null>([
+    ...(existingMisses ?? []).map((r) => r.utterance_id as string | null),
+    ...(existingOccs ?? []).map((r) => r.utterance_id as string | null),
+  ]);
 
   const toInsert: Array<{
     meeting_id: string;
@@ -232,13 +244,16 @@ export async function assembleKnowledgeGaps(args: {
   const misses = (missRows ?? []) as MissRow[];
   if (misses.length === 0) return { misses: 0, groups: 0, created: 0, resurfaced: 0 };
 
-  // 2. Asker resolution from the transcript.
-  const { data: events } = await service
+  // 2. Asker resolution from the transcript. A swallowed read error here would
+  // assemble gaps with every asker 'Unknown' — throw so Inngest retries before
+  // any RPC write.
+  const { data: events, error: evErr } = await service
     .from('meeting_events')
     .select('payload')
     .eq('meeting_id', meetingId)
     .eq('org_id', orgId)
     .eq('type', 'transcript.data');
+  if (evErr !== null) throw new Error(`load transcript events: ${evErr.message}`);
   const askers = resolveAskers((events ?? []) as { payload: Record<string, unknown> | null }[]);
 
   // 3. Embed + dedup.
@@ -248,11 +263,15 @@ export async function assembleKnowledgeGaps(args: {
   const embeddings = misses.map((_, i) => Array.from(embedResult.vectors[i]?.vector ?? []));
   const groups = buildGroups(misses, embeddings, askers);
 
-  // 4. Meeting participants → viewer ids.
-  const { data: parts } = await service
+  // 4. Meeting participants → viewer ids. A swallowed read error here would
+  // create gaps with EMPTY viewer ACLs (invisible to everyone forever, since
+  // misses are marked processed below) — throw so Inngest retries before any
+  // RPC write.
+  const { data: parts, error: partsErr } = await service
     .from('meeting_participants')
     .select('user_id')
     .eq('meeting_id', meetingId);
+  if (partsErr !== null) throw new Error(`load meeting participants: ${partsErr.message}`);
   const viewerIds = (parts ?? []).map((p) => p.user_id as string);
 
   // 5. Merge-or-create each group via the locked RPC.
@@ -334,26 +353,49 @@ async function reclusterSections(args: {
   if (touchedGapIds.length === 0) return;
 
   // Existing section centroids, computed from their member gaps' embeddings.
-  const { data: allGaps } = await service
-    .from('knowledge_gaps')
-    .select('gap_id, section_id, embedding, title, section_pinned')
-    .eq('org_id', orgId);
-  const gaps = (allGaps ?? []) as Array<{
+  // Paged: PostgREST caps un-ranged reads at 1000 rows, which would silently
+  // truncate the org's gap set and drift every centroid.
+  const GAPS_PAGE_SIZE = 1000;
+  const gaps: Array<{
     gap_id: string;
     section_id: string | null;
     embedding: unknown;
     title: string;
     section_pinned: boolean;
-  }>;
+  }> = [];
+  for (let from = 0; ; from += GAPS_PAGE_SIZE) {
+    const { data: page, error: gapsErr } = await service
+      .from('knowledge_gaps')
+      .select('gap_id, section_id, embedding, title, section_pinned')
+      .eq('org_id', orgId)
+      .order('gap_id', { ascending: true })
+      .range(from, from + GAPS_PAGE_SIZE - 1);
+    if (gapsErr !== null) throw new Error(`recluster load gaps: ${gapsErr.message}`);
+    const rows = (page ?? []) as typeof gaps;
+    gaps.push(...rows);
+    if (rows.length < GAPS_PAGE_SIZE) break;
+  }
 
   const bySection = new Map<string, number[][]>();
+  let unparseable = 0;
   for (const g of gaps) {
     if (g.section_id === null) continue;
     const vec = parseVector(g.embedding);
-    if (vec.length === 0) continue;
+    if (vec.length === 0) {
+      // A member whose embedding can't be parsed silently drops out of its
+      // section's centroid — repeated drops DRIFT the centroid and degrade
+      // placement over time. Surface it so the drift is observable.
+      unparseable += 1;
+      continue;
+    }
     const arr = bySection.get(g.section_id) ?? [];
     arr.push(vec);
     bySection.set(g.section_id, arr);
+  }
+  if (unparseable > 0) {
+    console.warn(
+      `[gaps] reclusterSections: ${String(unparseable)} sectioned gap embedding(s) failed to parse (org=${orgId}) — section centroids computed from a subset`,
+    );
   }
   const sectionRefs: SectionRef[] = [...bySection.entries()].map(([sectionId, vecs]) => ({
     sectionId,
@@ -370,10 +412,15 @@ async function reclusterSections(args: {
   const placements = assignSections(toPlace, sectionRefs);
   for (const p of placements) {
     if (p.sectionId !== null) {
-      await service
+      const { error: placeErr } = await service
         .from('knowledge_gaps')
         .update({ section_id: p.sectionId })
         .eq('gap_id', p.gapId);
+      if (placeErr !== null) {
+        console.error(
+          `[gaps] reclusterSections: section_id update failed (gap=${p.gapId}, section=${p.sectionId}, org=${orgId}): ${placeErr.message}`,
+        );
+      }
     }
   }
 
@@ -383,7 +430,7 @@ async function reclusterSections(args: {
   const proposed = await proposeSections(stillUncategorized, sectionNamer);
   for (let i = 0; i < proposed.length; i++) {
     const sec = proposed[i]!;
-    const sectionId = `sec_${randomUUID()}`;
+    let sectionId = `sec_${randomUUID()}`;
     const color = SECTION_COLORS[i % SECTION_COLORS.length]!;
     const { error: secErr } = await service.from('knowledge_gap_sections').insert({
       section_id: sectionId,
@@ -391,11 +438,47 @@ async function reclusterSections(args: {
       name: sec.name,
       color,
     });
-    if (secErr !== null) continue; // a racing meeting may have created an overlapping section; skip
+    if (secErr !== null) {
+      if (secErr.code === '23505') {
+        // unique (org_id, lower(name)): a racing assembly created this section
+        // first — adopt the winner's row so the gaps still get placed.
+        const { data: winner, error: winErr } = await service
+          .from('knowledge_gap_sections')
+          .select('section_id')
+          .eq('org_id', orgId)
+          .ilike('name', escapeLikePattern(sec.name))
+          .maybeSingle();
+        if (winErr !== null || winner === null) {
+          console.error(
+            `[gaps] reclusterSections: section "${sec.name}" conflicted but winner row not found (org=${orgId}): ${winErr?.message ?? 'no row'}`,
+          );
+          continue;
+        }
+        sectionId = winner.section_id as string;
+      } else {
+        console.error(
+          `[gaps] reclusterSections: section insert failed (org=${orgId}, name="${sec.name}"): ${secErr.message}`,
+        );
+        continue;
+      }
+    }
     for (const gapId of sec.gapIds) {
-      await service.from('knowledge_gaps').update({ section_id: sectionId }).eq('gap_id', gapId);
+      const { error: upErr } = await service
+        .from('knowledge_gaps')
+        .update({ section_id: sectionId })
+        .eq('gap_id', gapId);
+      if (upErr !== null) {
+        console.error(
+          `[gaps] reclusterSections: section_id update failed (gap=${gapId}, section=${sectionId}, org=${orgId}): ${upErr.message}`,
+        );
+      }
     }
   }
+}
+
+/** Escape LIKE/ILIKE wildcards so a section name matches literally (case-insensitively). */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (m) => `\\${m}`);
 }
 
 export async function createNotification(

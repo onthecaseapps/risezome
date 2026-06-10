@@ -34,11 +34,9 @@ export function SettingsForm({ initial }: { initial: InitialSettings }): ReactEl
     setError(null);
 
     startTransition(async () => {
-      const result = await saveBotSettingsAction({
-        auto_join: field === 'auto_join' ? next : autoJoin,
-        record_transcribe: field === 'record_transcribe' ? next : recordTranscribe,
-        announce_on_join: field === 'announce_on_join' ? next : announceOnJoin,
-      });
+      // Submit ONLY the flipped field — sending all three from render-time
+      // state let two stale tabs silently clobber each other's toggles.
+      const result = await saveBotSettingsAction({ field, value: next });
       if (!result.ok) {
         // Roll back
         if (field === 'auto_join') setAutoJoin(previous);
@@ -50,7 +48,7 @@ export function SettingsForm({ initial }: { initial: InitialSettings }): ReactEl
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card">
+    <div className="rounded-xl border border-border bg-card shadow-[var(--card-shadow)]">
       <SectionLabel label="Bot defaults" />
       <SettingRow
         title="Auto-join scheduled meetings"

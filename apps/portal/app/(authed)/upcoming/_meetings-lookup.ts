@@ -45,23 +45,29 @@ export async function lookupMeetingsForEvents(
   if (eventIds.length === 0) return out;
 
   const service = createServiceRoleClient();
+  // created_at ASC so a later (newer) row wins the map write when one event
+  // carries both a 'completed' row and a relaunch — without it row order is
+  // arbitrary and the status chip flickers between renders. preferMeetingRow
+  // additionally keeps an active row over a 'completed' one regardless of age.
   const { data } = await service
     .from('meetings')
     .select('meeting_id, calendar_event_id, status, error_message, started_at')
     .eq('org_id', orgId)
     .in('calendar_event_id', eventIds)
-    .neq('status', 'failed');
+    .neq('status', 'failed')
+    .order('created_at', { ascending: true });
 
   for (const row of data ?? []) {
     const eventId = row.calendar_event_id as string | null;
     if (eventId === null) continue;
-    out.set(eventId, {
+    const candidate: MeetingRow = {
       meeting_id: row.meeting_id as string,
       calendar_event_id: eventId,
       status: row.status as MeetingStatus,
       error_message: (row.error_message as string | null) ?? null,
       started_at: (row.started_at as string | null) ?? null,
-    });
+    };
+    out.set(eventId, preferMeetingRow(out.get(eventId), candidate));
   }
 
   // Surface the latest FAILED launch when no active row exists.
@@ -92,4 +98,17 @@ export async function lookupMeetingsForEvents(
   }
 
   return out;
+}
+
+/**
+ * Pick which of two non-failed rows for the SAME calendar event should drive
+ * the status chip. Active (in-flight/recording) statuses outrank 'completed' —
+ * a relaunch after a completed run must surface as live, not done. Within the
+ * same tier the candidate wins: callers iterate in created_at ASC order, so
+ * the newest row prevails. Pure + exported for unit testing.
+ */
+export function preferMeetingRow(current: MeetingRow | undefined, candidate: MeetingRow): MeetingRow {
+  if (current === undefined) return candidate;
+  const rank = (s: MeetingStatus): number => (s === 'completed' || s === 'failed' ? 0 : 1);
+  return rank(candidate.status) >= rank(current.status) ? candidate : current;
 }

@@ -51,9 +51,7 @@ export class LocalMeetingControl {
    *  The chosen org should match the browser's active org for the live page to
    *  find the meeting. */
   async orgs(): Promise<{ orgs: { id: string; name: string | null }[]; defaultOrgId: string | null }> {
-    const res = await this.#postJson(`${this.#deps.portalUrl}/api/dev/local-meeting`, {
-      action: 'orgs',
-    });
+    const res = await this.#postPortalDev({ action: 'orgs' });
     if (!res.ok) throw new Error(`portal orgs failed (${String(res.status)}): ${res.text}`);
     const body = res.body as { orgs?: { id: string; name: string | null }[]; defaultOrgId?: string | null };
     return { orgs: body.orgs ?? [], defaultOrgId: body.defaultOrgId ?? null };
@@ -73,7 +71,7 @@ export class LocalMeetingControl {
     await this.#deps.ensureSidecar();
 
     // Mint the meeting in the chosen (or default) dev org.
-    const minted = await this.#postJson(`${this.#deps.portalUrl}/api/dev/local-meeting`, {
+    const minted = await this.#postPortalDev({
       action: 'start',
       ...(orgId !== undefined && orgId.length > 0 ? { orgId } : {}),
     });
@@ -94,11 +92,7 @@ export class LocalMeetingControl {
     if (!started.ok) {
       // Don't leave a zombie 'recording' meeting — complete it best-effort.
       this.#deps.log(`Bot-worker start failed (${String(started.status)}); cleaning up the minted meeting.`);
-      await this.#postJson(`${this.#deps.portalUrl}/api/dev/local-meeting`, {
-        action: 'stop',
-        meetingId,
-        orgId: mintedOrgId,
-      }).catch(() => undefined);
+      await this.#postPortalDev({ action: 'stop', meetingId, orgId: mintedOrgId }).catch(() => undefined);
       throw new Error(`bot-worker capture start failed (${String(started.status)}): ${started.text}`);
     }
 
@@ -128,15 +122,23 @@ export class LocalMeetingControl {
       { authorization: `Bearer ${this.#deps.botWorkerSecret}` },
     ).catch((err: unknown) => this.#deps.log(`bot-worker stop error: ${String(err)}`));
 
-    await this.#postJson(`${this.#deps.portalUrl}/api/dev/local-meeting`, {
-      action: 'stop',
-      meetingId,
-      orgId,
-    }).catch((err: unknown) => this.#deps.log(`portal stop error: ${String(err)}`));
+    await this.#postPortalDev({ action: 'stop', meetingId, orgId }).catch((err: unknown) =>
+      this.#deps.log(`portal stop error: ${String(err)}`),
+    );
 
     this.#deps.log(`Local meeting stopped: ${meetingId}`);
     this.#state = { active: false };
     return this.#state;
+  }
+
+  /** POST to the portal's dev API with the shared dev-tooling bearer — the
+   *  portal route fails closed without it (defense-in-depth beyond NODE_ENV). */
+  async #postPortalDev(
+    body: unknown,
+  ): Promise<{ ok: boolean; status: number; body: unknown; text: string }> {
+    return this.#postJson(`${this.#deps.portalUrl}/api/dev/local-meeting`, body, {
+      authorization: `Bearer ${this.#deps.botWorkerSecret}`,
+    });
   }
 
   async #postJson(

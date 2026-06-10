@@ -141,7 +141,7 @@ export const indexGithubIssuesFn = inngest.createFunction(
     // new/changed subset below.
     const desired = new Map<string, { hash: string }>();
     for (const issue of allIssues) {
-      const { doc, chunks } = chunkIssue(ownerRepo, issue);
+      const { doc, chunks } = chunkIssue(orgId, ownerRepo, issue);
       if (chunks.length === 0) continue;
       desired.set(doc.docId, { hash: contentHash(chunks.map((c) => c.text)) });
     }
@@ -163,7 +163,7 @@ export const indexGithubIssuesFn = inngest.createFunction(
     // ── Step 5: embed only new/changed issues ────────────────────────
     const kindByDocId = new Map(recon.toIndex.map((t) => [t.docId, t.kind]));
     const toIndexIssues = allIssues.filter((i) => {
-      const { doc } = chunkIssue(ownerRepo, i);
+      const { doc } = chunkIssue(orgId, ownerRepo, i);
       return kindByDocId.has(doc.docId);
     });
 
@@ -221,7 +221,7 @@ async function indexBatch(args: {
   const service = createServiceRoleClient();
 
   const perDoc = await mapWithConcurrency(batch, docConcurrency(), async (issue) => {
-    const { doc, chunks } = chunkIssue(ownerRepo, issue);
+    const { doc, chunks } = chunkIssue(orgId, ownerRepo, issue);
     if (chunks.length === 0) return { issues: 0, chunks: 0 };
     const kind = kindByDocId.get(doc.docId);
     if (kind === undefined) return { issues: 0, chunks: 0 }; // unchanged — reconcile didn't select it
@@ -263,7 +263,7 @@ async function indexBatch(args: {
     // Changed: drop stale chunks/embeddings before re-inserting. Cascade
     // deletes the matching corpus_chunk_embeddings rows.
     if (kind === 'changed') {
-      await clearDocChunks(service, doc.docId);
+      await clearDocChunks(service, doc.docId, orgId);
     }
 
     const { error: docErr } = await service.from('docs').upsert({

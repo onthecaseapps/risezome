@@ -52,7 +52,7 @@ export function SidebarNavLink({
   const stateClasses = disabled
     ? 'cursor-not-allowed text-muted opacity-50'
     : isActive
-      ? "bg-accent/15 text-accent border-accent/25 before:absolute before:left-1 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:bg-accent before:content-[''] group-data-[collapsed=true]/sb:before:hidden"
+      ? "bg-accent-soft text-accent-bright border-accent/30 before:absolute before:left-1 before:top-1/2 before:h-5 before:w-[2.5px] before:-translate-y-1/2 before:rounded-full before:bg-accent before:content-[''] group-data-[collapsed=true]/sb:before:hidden"
       : 'text-fg/80 hover:bg-accent-soft/50 hover:text-fg';
 
   const inner = (

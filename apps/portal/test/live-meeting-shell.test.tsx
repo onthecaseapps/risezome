@@ -14,6 +14,11 @@ vi.mock('../app/(authed)/meetings/[meetingId]/live/synthesis-actions-server', ()
 vi.mock('../app/_lib/realtime-meeting-channel', () => ({
   useRealtimeMeetingChannel: () => ({ status: 'subscribed', liveMeetingStatus: 'recording' }),
 }));
+// RealtimeWrapper uses useRouter for the completed → recap redirect; there is
+// no Next router context under test.
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+}));
 
 import { LiveMeetingClient } from '../app/(authed)/meetings/[meetingId]/live/_client';
 import type { InitialSynthesis } from '../app/(authed)/meetings/[meetingId]/live/page';

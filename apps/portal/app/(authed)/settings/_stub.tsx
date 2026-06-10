@@ -13,7 +13,7 @@ export function SettingsStub({ title, blurb }: { title: string; blurb: string })
         <h1 className="mt-1 text-4xl font-bold tracking-tight">{title}</h1>
         <p className="mt-2 text-pretty text-muted">{blurb}</p>
       </header>
-      <div className="rounded-xl border border-dashed border-border bg-card/50 px-6 py-12 text-center">
+      <div className="rounded-xl border border-dashed border-border bg-card/50 px-6 py-12 text-center shadow-[var(--card-shadow)]">
         <p className="text-sm font-medium text-fg">Coming soon</p>
         <p className="mt-1 text-sm text-muted">This settings area isn’t available yet.</p>
       </div>

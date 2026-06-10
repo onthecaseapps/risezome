@@ -43,10 +43,22 @@ export interface OrgRotationResult {
 }
 
 /**
+ * Loose structural view of Inngest's `step.run` (see connector-index's
+ * StepLike): the Inngest wrapper passes the real step so each rotation batch
+ * becomes a durable checkpoint; direct callers (tests, scripts) default to an
+ * inline runner with identical behavior.
+ */
+export type StepRunner = (id: string, fn: () => Promise<unknown>) => Promise<unknown>;
+
+const inlineStep: StepRunner = (_id, fn) => fn();
+
+/**
  * Re-encrypt one org-scoped column whose rows are already at KMS_ESDK: read the
  * current ciphertext, decrypt under the org key, re-encrypt under a fresh data
  * key, write back. Pages by primary key so a large table rotates in bounded
- * batches. ONLY rows for this org are touched (org_id filter).
+ * batches; each page runs inside a step so a retry resumes from the last
+ * completed page instead of row 0. ONLY rows for this org are touched (org_id
+ * filter).
  */
 async function rotateColumn(
   service: SupabaseClient,
@@ -57,46 +69,67 @@ async function rotateColumn(
     encColumn: string;
     versionColumn: string;
     batchSize: number;
+    runStep: StepRunner;
   },
 ): Promise<ColumnRotationResult> {
-  const { table, pk, encColumn, versionColumn, batchSize } = opts;
+  const { table, pk, encColumn, versionColumn, batchSize, runStep } = opts;
   let rotated = 0;
   let cursor: string | number | null = null;
 
-  for (;;) {
-    let query = service
-      .from(table)
-      .select(`${pk}, ${encColumn}`)
-      .eq('org_id', orgId)
-      .eq(versionColumn, CRYPTO_VERSION.KMS_ESDK)
-      .not(encColumn, 'is', null)
-      .order(pk, { ascending: true })
-      .limit(batchSize);
-    if (cursor !== null) query = query.gt(pk, cursor);
-
-    const { data, error } = await query;
-    if (error !== null) {
-      throw new Error(`U12 rotate read ${table}.${encColumn} failed: ${error.message}`);
-    }
-    const rows = (data ?? []) as unknown as Record<string, unknown>[];
-    if (rows.length === 0) break;
-
-    for (const row of rows) {
-      const id = row[pk] as string | number;
-      const enc = row[encColumn] as string;
-      const plaintext = await decryptForOrgFromBytea(orgId, enc);
-      const reEnc = await encryptForOrgToBytea(orgId, plaintext);
-      const { error: upErr } = await service
+  for (let page = 0; ; page += 1) {
+    const pageCursor = cursor;
+    const result = (await runStep(`rotate-${table}-${encColumn}-${String(page)}`, async () => {
+      let query = service
         .from(table)
-        .update({ [encColumn]: reEnc })
-        .eq(pk, id)
-        .eq('org_id', orgId);
-      if (upErr !== null) {
-        throw new Error(`U12 rotate write ${table}.${pk}=${String(id)} failed: ${upErr.message}`);
+        .select(`${pk}, ${encColumn}`)
+        .eq('org_id', orgId)
+        .eq(versionColumn, CRYPTO_VERSION.KMS_ESDK)
+        .not(encColumn, 'is', null)
+        .order(pk, { ascending: true })
+        .limit(batchSize);
+      if (pageCursor !== null) query = query.gt(pk, pageCursor);
+
+      const { data, error } = await query;
+      if (error !== null) {
+        throw new Error(`U12 rotate read ${table}.${encColumn} failed: ${error.message}`);
       }
-      rotated += 1;
-      cursor = id;
-    }
+      const rows = (data ?? []) as unknown as Record<string, unknown>[];
+
+      let pageRotated = 0;
+      let lastId: string | number | null = pageCursor;
+      for (const row of rows) {
+        const id = row[pk] as string | number;
+        const enc = row[encColumn] as string;
+        const plaintext = await decryptForOrgFromBytea(orgId, enc);
+        const reEnc = await encryptForOrgToBytea(orgId, plaintext);
+        // Optimistic-concurrency guard (mirrors the atlassian path): only write
+        // if the ciphertext is unchanged since we read it, so a concurrent
+        // write isn't clobbered with re-encrypted STALE plaintext.
+        const { data: upData, error: upErr } = await service
+          .from(table)
+          .update({ [encColumn]: reEnc })
+          .eq(pk, id)
+          .eq('org_id', orgId)
+          .eq(encColumn, enc)
+          .select(pk);
+        if (upErr !== null) {
+          throw new Error(`U12 rotate write ${table}.${pk}=${String(id)} failed: ${upErr.message}`);
+        }
+        if (Array.isArray(upData) && upData.length > 0) {
+          pageRotated += 1;
+        } else {
+          console.warn(
+            `U12 rotate skipped ${table}.${pk}=${String(id)} (org=${orgId}): row changed concurrently; the fresher write wins`,
+          );
+        }
+        lastId = id;
+      }
+      return { rotated: pageRotated, cursor: lastId, done: rows.length < batchSize };
+    })) as { rotated: number; cursor: string | number | null; done: boolean };
+
+    rotated += result.rotated;
+    cursor = result.cursor;
+    if (result.done) break;
   }
 
   return { column: `${table}.${encColumn}`, rotated };
@@ -191,16 +224,25 @@ async function rotateGoogleTokens(
 export async function rotateOrgKey(
   service: SupabaseClient,
   orgId: string,
-  opts: { batchSize?: number } = {},
+  opts: { batchSize?: number; runStep?: StepRunner } = {},
 ): Promise<OrgRotationResult> {
   const batchSize = opts.batchSize ?? DEFAULT_BATCH_SIZE;
+  const runStep = opts.runStep ?? inlineStep;
   const columns: ColumnRotationResult[] = [];
 
   for (const col of ENCRYPTED_COLUMNS) {
-    columns.push(await rotateColumn(service, orgId, { ...col, batchSize }));
+    columns.push(await rotateColumn(service, orgId, { ...col, batchSize, runStep }));
   }
-  columns.push(await rotateAtlassian(service, orgId));
-  columns.push(await rotateGoogleTokens(service, orgId));
+  columns.push(
+    (await runStep('rotate-atlassian_connections', () =>
+      rotateAtlassian(service, orgId),
+    )) as ColumnRotationResult,
+  );
+  columns.push(
+    (await runStep('rotate-user_google_tokens', () =>
+      rotateGoogleTokens(service, orgId),
+    )) as ColumnRotationResult,
+  );
 
   return { orgId, columns };
 }
@@ -234,7 +276,7 @@ export const rotateOrgKeyFn = inngest.createFunction(
     retries: 3,
     triggers: [{ event: 'risezome/encryption.rotate-org-key' }],
   },
-  async ({ event }) => {
+  async ({ event, step }) => {
     const data =
       (
         event as unknown as {
@@ -249,7 +291,12 @@ export const rotateOrgKeyFn = inngest.createFunction(
       await disableOrgKey(service, data.orgId);
       return { orgId: data.orgId, revoked: true };
     }
-    const opts = data.batchSize !== undefined ? { batchSize: data.batchSize } : {};
-    return rotateOrgKey(service, data.orgId, opts);
+    // Each (table, column, page) batch checkpoints via step.run so a large
+    // org's rotation resumes from the last completed batch on retry.
+    const runStep: StepRunner = (id, fn) => step.run(id, fn);
+    return rotateOrgKey(service, data.orgId, {
+      runStep,
+      ...(data.batchSize !== undefined && { batchSize: data.batchSize }),
+    });
   },
 );

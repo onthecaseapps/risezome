@@ -1,6 +1,7 @@
 import { chunkFile } from '@risezome/engine/chunker';
 import { inngest, type IndexMode } from '../client';
 import { createServiceRoleClient } from '../../../app/_lib/supabase-server';
+import { sanitizeStatusMessage } from '../lib/status-message';
 import { decryptForOrgFromBytea } from '@risezome/crypto';
 import { requireTrelloApiKey, TrelloAuthError } from '../../../app/_lib/trello';
 import {
@@ -33,6 +34,33 @@ export const indexTrelloFn = inngest.createFunction(
     ],
     retries: 3,
     triggers: [{ event: 'risezome/trello.index-requested' }],
+    // Safety net: when all retries are exhausted, flip the source to
+    // `errored` instead of leaving it wedged at `indexing` (which grays
+    // out the Reindex button forever). Mirrors index-repo's onFailure.
+    onFailure: async ({ event, error }) => {
+      const original = (event as unknown as {
+        data: { event: { data: { sourceId: string; orgId?: string } } };
+      }).data.event;
+      const sourceId = original?.data?.sourceId;
+      const orgId = original?.data?.orgId;
+      if (typeof sourceId !== 'string' || sourceId.length === 0) return;
+      const message = error instanceof Error ? error.message : String(error);
+      if (typeof orgId === 'string' && orgId.length > 0) {
+        await createServiceRoleClient()
+          .from('sources')
+          .update({ status: 'errored', status_message: sanitizeStatusMessage(message) })
+          .eq('id', sourceId)
+          .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+      } else {
+        // service-role-cross-org: onFailure for an event that carried no orgId
+        // (older queued events) — the sources PK (id) is globally unique, so this
+        // targets exactly one row; no org_id is available to scope by.
+        await createServiceRoleClient()
+          .from('sources')
+          .update({ status: 'errored', status_message: sanitizeStatusMessage(message) })
+          .eq('id', sourceId);
+      }
+    },
   },
   async ({ event, step }) => {
     const { orgId, sourceId, mode } = (
@@ -115,7 +143,7 @@ export const indexTrelloFn = inngest.createFunction(
         const chunks = chunkFile('trello-card.md', text);
         if (chunks.length === 0) return null;
         return {
-          docId: trelloCardDocId(ctx.boardId, card.id),
+          docId: trelloCardDocId(orgId, ctx.boardId, card.id),
           title: card.name,
           url: card.url,
           updatedAt: card.dateLastActivity ?? new Date().toISOString(),

@@ -156,13 +156,19 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   try {
     // Decrypt concurrently — each synthesis is a separate encrypt (own data key),
     // so the decrypt cache can't collapse them; parallelizing avoids N sequential
-    // KMS round-trips on a cold cache.
-    await Promise.all(
-      rows.map(async (s) => {
-        const enc = s['accumulated_text_enc'] as string | null;
-        s['accumulated_text'] = enc !== null ? await decryptForOrgFromBytea(orgId, enc) : '';
-      }),
-    );
+    // KMS round-trips on a cold cache. Concurrency is BOUNDED (a long meeting can
+    // have 50+ done syntheses; an unbounded burst of concurrent KMS Decrypts
+    // risks throttling) — batches of 10 keep the burst flat while the page still
+    // renders every answer.
+    const DECRYPT_CONCURRENCY = 10;
+    for (let i = 0; i < rows.length; i += DECRYPT_CONCURRENCY) {
+      await Promise.all(
+        rows.slice(i, i + DECRYPT_CONCURRENCY).map(async (s) => {
+          const enc = s['accumulated_text_enc'] as string | null;
+          s['accumulated_text'] = enc !== null ? await decryptForOrgFromBytea(orgId, enc) : '';
+        }),
+      );
+    }
     initialSyntheses = rows.map((s) => mapSynthesisRow(s));
   } catch (err) {
     if (err instanceof EnvelopeCryptoError) {

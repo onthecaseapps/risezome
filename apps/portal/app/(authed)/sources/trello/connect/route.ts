@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { appOrigin } from '../../../../_lib/app-origin';
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthedUserWithOrg } from '../../../../_lib/auth';
 import { createServiceRoleClient } from '../../../../_lib/supabase-server';
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(new URL('/sources?error=trello_init_failed', request.nextUrl.origin));
   }
 
-  const returnUrl = new URL('/sources/trello/callback', request.nextUrl.origin).toString();
+  const returnUrl = new URL('/sources/trello/callback', appOrigin(request.nextUrl.origin)).toString();
   const authorizeUrl = buildTrelloAuthorizeUrl({ apiKey, returnUrl, state: stateToken });
   return NextResponse.redirect(authorizeUrl);
 }

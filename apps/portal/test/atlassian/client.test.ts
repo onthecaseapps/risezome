@@ -4,6 +4,7 @@ import {
   listConfluencePages,
   listJiraProjects,
   searchJiraIssues,
+  JiraPartialFetchError,
   type AtlassianContext,
 } from '../../app/_lib/atlassian-client';
 import { AtlassianAuthError } from '../../app/_lib/atlassian';
@@ -45,14 +46,15 @@ describe('searchJiraIssues', () => {
     expect(issues[0]?.summary).toBe('first');
   });
 
-  it('terminates on the repeating-token loop bug via the seen-keys guard', async () => {
+  it('THROWS JiraPartialFetchError on the repeating-token loop bug (must not report a partial set as complete)', async () => {
     // Always returns the same page with a nextPageToken (simulating the bug).
-    // Fresh Response per call so the body isn't read twice.
+    // The seen-keys guard stops the infinite loop, but the set is PARTIAL — the
+    // server still claims more pages exist — so it must throw rather than return
+    // a truncated list the indexer would treat as authoritative and prune to.
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       json({ issues: [{ key: 'P-1', fields: { summary: 's' } }], nextPageToken: 'same', isLast: false }),
     );
-    const issues = await searchJiraIssues('P', ctx);
-    expect(issues).toHaveLength(1); // de-duped + stopped, not an infinite loop
+    await expect(searchJiraIssues('P', ctx)).rejects.toBeInstanceOf(JiraPartialFetchError);
   });
 });
 

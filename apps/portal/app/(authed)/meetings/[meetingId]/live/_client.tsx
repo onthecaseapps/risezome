@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition, type ReactElement } from 'react';
+import { useEffect, useMemo, useState, useTransition, type ReactElement } from 'react';
 import { useRouter } from 'next/navigation';
 import { retryFailedLaunchAction } from './retry-launch-server';
 import {
@@ -18,7 +18,6 @@ import {
   useAppState,
   type AppState,
   type CardActions,
-  type CardEvent,
   type CardRecord,
   type SynthesisActions,
   type SynthesisRecord,
@@ -48,9 +47,12 @@ interface Props {
   errorCode: string | null;
   errorMessage: string | null;
   startedAtIso: string | null;
-  initialCards: CardEvent[];
+  initialCards: CardRecord[];
   initialSyntheses: InitialSynthesis[];
   initialTranscript: TranscriptUtterance[];
+  /** Max meeting_events.event_id at SSR seed time — seeds the poll cursor so
+   *  mount doesn't replay the whole event log. */
+  initialLastEventId?: number;
 }
 
 /**
@@ -95,6 +97,7 @@ export function LiveMeetingClient(props: Props): ReactElement {
         title={props.title}
         startedAtIso={props.startedAtIso}
         initialStatus={props.status}
+        initialLastEventId={props.initialLastEventId ?? 0}
       />
     </AppStateProvider>
   );
@@ -106,16 +109,27 @@ function RealtimeWrapper({
   title,
   startedAtIso,
   initialStatus,
+  initialLastEventId,
 }: {
   meetingId: string;
   orgId: string;
   title: string;
   startedAtIso: string | null;
   initialStatus: MeetingStatus;
+  initialLastEventId: number;
 }): ReactElement {
   const dispatch = useAppDispatch();
-  const channel = useRealtimeMeetingChannel({ meetingId, orgId, dispatch });
+  const router = useRouter();
+  const channel = useRealtimeMeetingChannel({ meetingId, orgId, dispatch, initialLastEventId });
   const effectiveStatus: BroadcastedStatus = channel.liveMeetingStatus ?? initialStatus;
+
+  // F5: the meeting ended — hand off to the recap. The channel hook has
+  // already stopped its polls + unsubscribed on the terminal status.
+  useEffect(() => {
+    if (effectiveStatus === 'completed') {
+      router.replace(`/meetings/${meetingId}/review`);
+    }
+  }, [effectiveStatus, meetingId, router]);
 
   // Pin/dismiss handlers. Each one optimistically dispatches a reducer
   // action FIRST (so the UI snaps immediately), then calls the server
@@ -206,21 +220,21 @@ function RealtimeWrapper({
 }
 
 function seedState(
-  cards: CardEvent[],
+  cards: CardRecord[],
   syntheses: InitialSynthesis[],
   transcript: TranscriptUtterance[],
   status: MeetingStatus,
 ): AppState {
   const cardMap = new Map<string, CardRecord>();
-  // Cards arrived from the server in surfaced_at DESC; the reducer's
-  // map is insertion-ordered and the HUD reads it as-is, so we reverse
-  // here to preserve newest-first display.
-  for (const card of cards) {
-    cardMap.set(card.cardId, { card, pinned: false });
+  for (const rec of cards) {
+    cardMap.set(rec.card.cardId, rec);
   }
 
   const synthMap = new Map<string, SynthesisRecord>();
-  for (const s of syntheses) {
+  // The server query orders created_at DESC, but the reducer's map (and the
+  // live reducer path) inserts chronologically ASC — SynthesisStream
+  // `.reverse()`s for newest-first display. Iterate reversed to match.
+  for (const s of [...syntheses].reverse()) {
     synthMap.set(s.synthesisId, {
       synthesisId: s.synthesisId,
       sourceCardIds: s.sourceCardIds,
@@ -262,8 +276,15 @@ function RecordingShell({
   startedAtIso: string | null;
   channelStatus: 'idle' | 'connecting' | 'subscribed' | 'errored';
 }): ReactElement {
+  // F11: drive the elapsed label from a timer — computed in render alone it
+  // would freeze at its mount value.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(t);
+  }, []);
   const minutesIn = startedAtIso !== null
-    ? Math.max(0, Math.round((Date.now() - new Date(startedAtIso).getTime()) / 60_000))
+    ? Math.max(0, Math.round((nowMs - new Date(startedAtIso).getTime()) / 60_000))
     : null;
   const state = useAppState();
   // U8: synthesis paused pill renders when N consecutive failures
@@ -344,6 +365,8 @@ function JoiningShell({
       ? 'Risezome is joining your meeting…'
       : status === 'waiting_room'
       ? 'Risezome is in the waiting room…'
+      : status === 'completed'
+      ? 'Meeting ended — taking you to the recap…'
       : 'Working on it…';
 
   return (

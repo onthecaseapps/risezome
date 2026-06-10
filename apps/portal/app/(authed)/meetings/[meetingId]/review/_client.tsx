@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition, type ReactElement, type ReactNode } from 'react';
+import { useMemo, useRef, useState, useTransition, type ReactElement, type ReactNode } from 'react';
 import {
   AppStateProvider,
   SynthesisActionsProvider,
@@ -134,6 +134,11 @@ export function ReviewClient(props: ReviewClientProps): ReactElement {
  */
 function ReviewSynthesisActions({ children }: { children: ReactNode }): ReactElement {
   const dispatch = useAppDispatch();
+  const state = useAppState();
+  // The actions memo only depends on dispatch, so read the latest state through
+  // a ref — a closure over `state` would capture the first render's snapshot.
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const actions = useMemo<SynthesisActions>(
     () => ({
       pin: async (synthesisId: string) => {
@@ -145,6 +150,9 @@ function ReviewSynthesisActions({ children }: { children: ReactNode }): ReactEle
         }
       },
       unpin: async (synthesisId: string) => {
+        // Capture the record's actual pinnedAt BEFORE the optimistic clear so a
+        // failed server unpin restores the real timestamp, not a fabricated one.
+        const priorPinnedAt = stateRef.current.syntheses.get(synthesisId)?.pinnedAt ?? null;
         dispatch({ type: 'synthesisPinned', synthesisId, pinned: false, pinnedAt: null });
         const result = await pinSynthesisAction(synthesisId, false);
         if (!result.ok) {
@@ -152,7 +160,7 @@ function ReviewSynthesisActions({ children }: { children: ReactNode }): ReactEle
             type: 'synthesisPinned',
             synthesisId,
             pinned: true,
-            pinnedAt: new Date().toISOString(),
+            pinnedAt: priorPinnedAt,
           });
           throw new Error(result.error);
         }
@@ -171,17 +179,24 @@ function ReviewSplit({
   transcript: TranscriptUtterance[];
 }): ReactElement {
   const anchored = useMemo(() => new Set(Object.keys(anchorMap)), [anchorMap]);
+  // The raw transcript arrives in event_id order, which is NOT guaranteed to be
+  // time order. Sort once and use the SAME array for both the surfaced ordering
+  // and TranscriptPanel, so DOM order == time order (jump-to-moment and the
+  // SURFACED pager both assume it).
+  const sortedTranscript = useMemo(
+    () => [...transcript].sort((a, b) => a.startMs - b.startMs),
+    [transcript],
+  );
   // Surfaced answers in transcript order — one entry per anchored question.
   // Drives the SURFACED pagination and links it to the transcript highlight.
   const ordered = useMemo(() => {
-    const sorted = [...transcript].sort((a, b) => a.startMs - b.startMs);
     const list: { utteranceId: string; synthesisId: string }[] = [];
-    for (const u of sorted) {
+    for (const u of sortedTranscript) {
       const sid = anchorMap[u.utteranceId];
       if (sid !== undefined) list.push({ utteranceId: u.utteranceId, synthesisId: sid });
     }
     return list;
-  }, [transcript, anchorMap]);
+  }, [sortedTranscript, anchorMap]);
 
   const count = ordered.length;
   const [activeIndex, setActiveIndex] = useState(0);
@@ -199,7 +214,7 @@ function ReviewSplit({
           <p className="text-sm text-muted">No transcript was captured for this meeting.</p>
         ) : (
           <TranscriptPanel
-            utterances={transcript}
+            utterances={sortedTranscript}
             anchoredUtteranceIds={anchored}
             onAnchorClick={(utteranceId) => {
               const idx = ordered.findIndex((o) => o.utteranceId === utteranceId);
@@ -417,20 +432,32 @@ function categoryColor(cat: string): string {
 }
 
 /**
- * Index of the transcript utterance "playing" at `ms`: the last one whose start
- * is at or before the moment (the utterances are in ascending start order). Falls
- * back to the first when the moment precedes all of them. -1 for an empty list.
+ * Index of the transcript utterance "playing" at `ms`: the one with the MAX
+ * start at or before the moment. Scans every entry (no early break) so it is
+ * correct even if the input isn't time-ascending — DOM/data order is event_id
+ * order, which isn't guaranteed to be time order. Ties go to the later index
+ * (matches the previous sorted-input behaviour). Falls back to the earliest
+ * utterance when the moment precedes all of them. -1 for an empty list.
  * Pure + exported for unit testing.
  */
-export function nearestUtteranceIndex(startMsAsc: readonly number[], ms: number): number {
-  if (startMsAsc.length === 0) return -1;
-  let idx = 0;
-  for (let i = 0; i < startMsAsc.length; i += 1) {
-    const s = startMsAsc[i]!;
-    if (s <= ms) idx = i;
-    else break;
+export function nearestUtteranceIndex(startMs: readonly number[], ms: number): number {
+  if (startMs.length === 0) return -1;
+  let idx = -1;
+  let best = -Infinity;
+  let earliestIdx = 0;
+  let earliest = Infinity;
+  for (let i = 0; i < startMs.length; i += 1) {
+    const s = startMs[i]!;
+    if (s < earliest) {
+      earliest = s;
+      earliestIdx = i;
+    }
+    if (s <= ms && s >= best) {
+      best = s;
+      idx = i;
+    }
   }
-  return idx;
+  return idx >= 0 ? idx : earliestIdx;
 }
 
 /**
@@ -450,7 +477,11 @@ function scrollToMoment(ms: number): void {
   if (nodes.length === 0) return;
   const starts = nodes.map((n) => Number(n.dataset['startMs']));
   const finite = starts.filter((s) => Number.isFinite(s));
-  const baseline = finite.length > 0 ? Math.min(...finite) : 0;
+  // Utterances with a missing startMs default to 0; when other utterances carry
+  // real (positive, epoch-style) values, a defaulted 0 would drag the baseline
+  // to 0 and break the relative mapping — exclude them from the baseline.
+  const real = finite.filter((s) => s > 0);
+  const baseline = real.length > 0 ? Math.min(...real) : finite.length > 0 ? Math.min(...finite) : 0;
   const relative = starts.map((s) => (Number.isFinite(s) ? s - baseline : 0));
   const idx = nearestUtteranceIndex(relative, ms);
   const target = nodes[idx];
@@ -597,7 +628,7 @@ function StructuredRecapView({
           {stats.map((s) => (
             <div
               key={s.testid}
-              className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3"
+              className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-[var(--card-shadow)]"
             >
               <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
                 <Icon path={STAT_ICONS[s.testid]} size={17} />
@@ -614,7 +645,7 @@ function StructuredRecapView({
 
         {/* AI summary lead */}
         <section id="sec-overview" className="mb-7">
-          <div className="rounded-2xl border border-border bg-card px-5 py-4">
+          <div className="rounded-2xl border border-border bg-card px-5 py-4 shadow-[var(--card-shadow)]">
             <div className="mb-3 flex items-center gap-2">
               <span
                 className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium text-accent"
@@ -666,7 +697,7 @@ function StructuredRecapView({
               {recap.decisions.map((d, i) => (
                 <div
                   key={i}
-                  className="flex flex-col gap-2.5 rounded-xl border border-border bg-card px-4 py-3.5"
+                  className="flex flex-col gap-2.5 rounded-xl border border-border bg-card px-4 py-3.5 shadow-[var(--card-shadow)]"
                 >
                   <div className="flex items-center gap-2">
                     <span
@@ -692,7 +723,7 @@ function StructuredRecapView({
               {recap.action_items.map((a, i) => {
                 const ts = mmss(a.timestampMs);
                 return (
-                  <div key={i} className="rounded-xl border border-border bg-card px-4 py-3.5">
+                  <div key={i} className="rounded-xl border border-border bg-card px-4 py-3.5 shadow-[var(--card-shadow)]">
                     <div className="text-sm leading-snug text-fg">{a.text}</div>
                     {a.assignee !== null || ts !== null ? (
                       <div className="mt-2.5 flex items-center gap-2">
@@ -738,7 +769,7 @@ function RecapRail({
 }): ReactElement {
   return (
     <aside className="flex flex-col gap-3.5 lg:sticky lg:top-6">
-      <nav className="rounded-xl border border-border bg-card p-2">
+      <nav className="rounded-xl border border-border bg-card p-2 shadow-[var(--card-shadow)]">
         {NAV_ITEMS.map((n) => (
           <a
             key={n.id}
@@ -752,7 +783,7 @@ function RecapRail({
       </nav>
 
       {participants.length > 0 ? (
-        <div className="rounded-xl border border-border bg-card px-3.5 py-3">
+        <div className="rounded-xl border border-border bg-card px-3.5 py-3 shadow-[var(--card-shadow)]">
           <div className="mb-3 text-[10.5px] font-bold uppercase tracking-[0.1em] text-muted">Participants</div>
           <ul className="flex flex-col gap-2.5" data-testid="participant-list">
             {participants.map((p) => (
@@ -765,7 +796,7 @@ function RecapRail({
         </div>
       ) : null}
 
-      <div className="rounded-xl border border-border bg-card px-3.5 py-3">
+      <div className="rounded-xl border border-border bg-card px-3.5 py-3 shadow-[var(--card-shadow)]">
         <p className="text-xs leading-relaxed text-muted">
           Recap generated by Risezome from the meeting transcript.
         </p>

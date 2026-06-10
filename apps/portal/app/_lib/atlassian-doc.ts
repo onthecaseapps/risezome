@@ -1,21 +1,31 @@
 import { adfToText, storageToText } from './atlassian-text';
 import type { JiraComment, JiraIssue, ConfluencePage } from './atlassian-client';
+import { orgScopedDocId } from './doc-id';
 
-/** Stable corpus ids (immutable issue key / page id, namespaced by cloudId). */
-export function jiraIssueDocId(cloudId: string, issueKey: string): string {
-  return `jira:${cloudId}:${issueKey}`;
+/** Stable corpus ids (immutable issue key / page id, namespaced by cloudId),
+ *  org-scoped so two orgs on the same Atlassian site don't collide on the PK. */
+export function jiraIssueDocId(orgId: string, cloudId: string, issueKey: string): string {
+  return orgScopedDocId(orgId, `jira:${cloudId}:${issueKey}`);
 }
-export function confluencePageDocId(cloudId: string, pageId: string): string {
-  return `confluence:${cloudId}:${pageId}`;
+export function confluencePageDocId(orgId: string, cloudId: string, pageId: string): string {
+  return orgScopedDocId(orgId, `confluence:${cloudId}:${pageId}`);
 }
 
 /**
- * Indexable text for a Jira issue: summary, then the ADF-extracted description,
- * then the comment thread (`author: text`). Blank sections are omitted so empty
- * descriptions / comment-less issues don't add noise.
+ * Indexable text for a Jira issue: summary, a status/type/assignee phrase
+ * line (mirrors the GitHub issue chunks' "Status: open." contract so the
+ * lexical leg can match status queries), then the ADF-extracted description,
+ * then the comment thread (`author: text`). Blank sections are omitted so
+ * empty descriptions / comment-less issues don't add noise.
  */
 export function buildIssueDocText(issue: JiraIssue, comments: readonly JiraComment[]): string {
   const parts: string[] = [issue.summary.trim()];
+
+  const meta: string[] = [];
+  if (typeof issue.status === 'string' && issue.status.length > 0) meta.push(`Status: ${issue.status}.`);
+  if (typeof issue.issueType === 'string' && issue.issueType.length > 0) meta.push(`Type: ${issue.issueType}.`);
+  if (typeof issue.assignee === 'string' && issue.assignee.length > 0) meta.push(`Assignee: ${issue.assignee}.`);
+  if (meta.length > 0) parts.push(meta.join(' '));
 
   const desc = adfToText(issue.description).trim();
   if (desc.length > 0) parts.push(desc);

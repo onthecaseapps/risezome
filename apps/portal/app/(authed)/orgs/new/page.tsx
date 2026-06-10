@@ -34,6 +34,8 @@ export default async function NewOrgPage({
       )}
 
       <form action={createOrg} className="space-y-4">
+        {/* createOrg redirects errors back to the originating form. */}
+        <input type="hidden" name="returnTo" value="/orgs/new" />
         <label className="block text-sm">
           <span className="mb-1.5 block font-medium">Workspace name</span>
           <input

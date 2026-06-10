@@ -37,12 +37,16 @@ function makeService(opts: {
   existingMember: boolean;
   /** When set, the teams lookup returns this live team; null ⇒ team gone/archived. */
   liveTeam?: { team_id: string } | null;
+  /** When set, the org_members membership read fails with this error. */
+  memberReadError?: { message: string };
 }) {
   const inserted: Array<Record<string, unknown>> = [];
+  const insertOptions: Array<Record<string, unknown> | undefined> = [];
   const teamUpserts: Array<Record<string, unknown>> = [];
   const deletedTokens: string[] = [];
   const service = {
     inserted,
+    insertOptions,
     teamUpserts,
     deletedTokens,
     from(table: string) {
@@ -85,14 +89,18 @@ function makeService(opts: {
           eq: () => ({
             eq: () => ({
               maybeSingle: async () => ({
-                data: opts.existingMember ? { user_id: 'user_1' } : null,
-                error: null,
+                data:
+                  opts.memberReadError === undefined && opts.existingMember
+                    ? { user_id: 'user_1' }
+                    : null,
+                error: opts.memberReadError ?? null,
               }),
             }),
           }),
         }),
-        insert: async (row: Record<string, unknown>) => {
+        upsert: async (row: Record<string, unknown>, options?: Record<string, unknown>) => {
           inserted.push(row);
+          insertOptions.push(options);
           return { error: null };
         },
       };
@@ -174,6 +182,34 @@ describe('acceptInviteAction', () => {
     const service = makeService({ invite: null, existingMember: false });
     createServiceRoleClient.mockReturnValue(service);
     await expect(acceptInviteAction(form('tok_1'))).rejects.toThrow('REDIRECT:/invite/tok_1?error=invalid');
+  });
+
+  it('writes membership as an idempotent upsert (double-submit cannot surface join_failed)', async () => {
+    const service = makeService({ invite: futureInvite(), existingMember: false });
+    createServiceRoleClient.mockReturnValue(service);
+
+    await expect(acceptInviteAction(form('tok_1'))).rejects.toThrow('REDIRECT:/upcoming');
+    expect(service.insertOptions).toEqual([{ onConflict: 'org_id,user_id', ignoreDuplicates: true }]);
+  });
+
+  it('propagates a failed membership read as retryable instead of falling into the insert path', async () => {
+    const consoleErr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const service = makeService({
+        invite: futureInvite(),
+        existingMember: true,
+        memberReadError: { message: 'db down' },
+      });
+      createServiceRoleClient.mockReturnValue(service);
+
+      await expect(acceptInviteAction(form('tok_1'))).rejects.toThrow(
+        'REDIRECT:/invite/tok_1?error=membership_check_failed',
+      );
+      expect(service.inserted).toHaveLength(0); // no clobber of the existing member
+      expect(service.deletedTokens).toHaveLength(0); // token kept for the retry
+    } finally {
+      consoleErr.mockRestore();
+    }
   });
 
   it('assigns the new member to the invite team when it carries a live team_id', async () => {

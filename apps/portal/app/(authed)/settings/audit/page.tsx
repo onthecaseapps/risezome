@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 import { requireSuperAdmin } from '../../../_lib/auth';
+import { listAuthUserNames } from '../../../_lib/auth-admin';
 import { createServerClient, createServiceRoleClient } from '../../../_lib/supabase-server';
 import { roleLabel } from '../../../_lib/roles';
 import { AuditLogClient, type AuditEntry, type Category } from './_audit-log-client';
@@ -81,62 +82,39 @@ export default async function AuditLogPage(): Promise<ReactElement> {
     createdAt: r.created_at as string,
   }));
 
-  // ── Resolve user display names (actors + every target user referenced) ──────
-  // detail.user_id appears on role_change + team_membership_change; detail
-  // .assignee_id on gap_assignment. Dedupe actor + target ids into ONE batch
-  // against the admin auth API (cannot run under RLS).
-  const userIds = new Set<string>();
-  for (const r of rows) {
-    userIds.add(r.actorId);
-    const uid = stringField(r.detail, 'user_id');
-    if (uid !== null) userIds.add(uid);
-    const aid = stringField(r.detail, 'assignee_id');
-    if (aid !== null) userIds.add(aid);
-  }
-  const userName = new Map<string, string>();
-  await Promise.all(
-    Array.from(userIds).map(async (id) => {
-      const { data: u } = await service.auth.admin.getUserById(id);
-      const email = u?.user?.email ?? id;
-      const meta = (u?.user?.user_metadata ?? {}) as Record<string, unknown>;
-      const name = typeof meta['full_name'] === 'string' ? (meta['full_name'] as string) : null;
-      userName.set(id, name ?? email);
-    }),
-  );
-
-  // ── Resolve target meeting titles (service-role, org-scoped) ────────────────
+  // ── Enrichment lookups (user names / meeting titles / team names) ───────────
+  // All three are independent of each other once `rows` is built, so they run as
+  // ONE concurrent wave. User names come from a single paged listUsers call (the
+  // admin auth API can't run under RLS) instead of a getUserById-per-user N+1 —
+  // 200 audit rows referencing 30 users used to mean 30 admin HTTP calls.
   const meetingIds = Array.from(
     new Set(rows.map((r) => r.targetMeetingId).filter((id): id is string => id !== null)),
   );
-  const meetingTitle = new Map<string, string>();
-  if (meetingIds.length > 0) {
-    const { data: mRows } = await service
-      .from('meetings')
-      .select('meeting_id, title')
-      .eq('org_id', orgId)
-      .in('meeting_id', meetingIds);
-    for (const m of mRows ?? []) {
-      const t = (m.title as string | null) ?? '';
-      meetingTitle.set(m.meeting_id as string, t.length > 0 ? t : 'Untitled meeting');
-    }
-  }
-
-  // ── Resolve team names (service-role, org-scoped) ───────────────────────────
   const teamIds = new Set<string>();
   for (const r of rows) {
     const tid = stringField(r.detail, 'team_id');
     if (tid !== null) teamIds.add(tid);
   }
+
+  const [userName, { data: mRows }, { data: tRows }] = await Promise.all([
+    listAuthUserNames(service),
+    meetingIds.length > 0
+      ? service.from('meetings').select('meeting_id, title').eq('org_id', orgId).in('meeting_id', meetingIds)
+      : Promise.resolve({ data: [] as Array<{ meeting_id: string; title: string | null }> }),
+    teamIds.size > 0
+      ? service.from('teams').select('team_id, name').eq('org_id', orgId).in('team_id', Array.from(teamIds))
+      : Promise.resolve({ data: [] as Array<{ team_id: string; name: string | null }> }),
+  ]);
+
+  const meetingTitle = new Map<string, string>();
+  for (const m of mRows ?? []) {
+    const t = (m.title as string | null) ?? '';
+    meetingTitle.set(m.meeting_id as string, t.length > 0 ? t : 'Untitled meeting');
+  }
+
   const teamName = new Map<string, string>();
-  if (teamIds.size > 0) {
-    const { data: tRows } = await service
-      .from('teams')
-      .select('team_id, name')
-      .eq('org_id', orgId)
-      .in('team_id', Array.from(teamIds));
-    for (const t of tRows ?? []) {
-      teamName.set(t.team_id as string, (t.name as string | null) ?? 'a team');
-    }
+  for (const t of tRows ?? []) {
+    teamName.set(t.team_id as string, (t.name as string | null) ?? 'a team');
   }
 
   // ── Build fully-enriched, serializable entries ──────────────────────────────

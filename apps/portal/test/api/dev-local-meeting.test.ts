@@ -60,10 +60,13 @@ vi.mock('../../app/_lib/supabase-server', () => ({
 
 import { POST } from '../../app/api/dev/local-meeting/route';
 
-function post(body: unknown): Request {
+function post(body: unknown, auth: string | null = 'Bearer test-secret'): Request {
   return new Request('http://localhost/api/dev/local-meeting', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      ...(auth !== null ? { authorization: auth } : {}),
+    },
     body: JSON.stringify(body),
   });
 }
@@ -75,6 +78,7 @@ describe('dev local-meeting API', () => {
     h.responses.captured.update = null;
     h.responses.captured.participant = null;
     vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('BOT_WORKER_SECRET', 'test-secret');
     vi.stubEnv('RISEZOME_DEV_ORG_ID', 'org_env');
     vi.stubEnv('RISEZOME_DEV_USER_ID', 'user_env');
   });
@@ -132,6 +136,22 @@ describe('dev local-meeting API', () => {
   it('is 404 in production (dev-only, KTD6)', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     const res = await POST(post({ action: 'start' }));
+    expect(res.status).toBe(404);
+  });
+
+  it('is 404 without the dev-tooling bearer (defense-in-depth beyond NODE_ENV)', async () => {
+    const res = await POST(post({ action: 'orgs' }, null));
+    expect(res.status).toBe(404);
+  });
+
+  it('is 404 with a WRONG bearer', async () => {
+    const res = await POST(post({ action: 'orgs' }, 'Bearer wrong-secret'));
+    expect(res.status).toBe(404);
+  });
+
+  it('is 404 when no secret is configured (fail closed)', async () => {
+    vi.stubEnv('BOT_WORKER_SECRET', '');
+    const res = await POST(post({ action: 'orgs' }));
     expect(res.status).toBe(404);
   });
 

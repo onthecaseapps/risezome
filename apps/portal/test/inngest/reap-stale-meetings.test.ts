@@ -10,7 +10,7 @@ import {
  * chains resolve, in order, to the supplied results. Each chain ends in
  * `.select('meeting_id')`. Records the `update()` payloads for assertions.
  */
-function makeService(results: { data: { meeting_id: string }[] | null; error: { message: string } | null }[]): {
+function makeService(results: { data: { meeting_id: string; org_id: string }[] | null; error: { message: string } | null }[]): {
   service: ReaperDb;
   updates: Record<string, unknown>[];
 } {
@@ -64,17 +64,21 @@ describe('recordingReapAfterMs', () => {
 describe('reapStaleMeetings', () => {
   it('completes stale recordings, fails stuck pre-recording, and notifies the bot-worker per reaped recording', async () => {
     const { service, updates } = makeService([
-      { data: [{ meeting_id: 'm1' }, { meeting_id: 'm2' }], error: null }, // by started_at
-      { data: [{ meeting_id: 'm3' }], error: null }, // by created_at (null started_at)
-      { data: [{ meeting_id: 'm4' }], error: null }, // pre-recording → failed
+      { data: [{ meeting_id: 'm1', org_id: 'o1' }, { meeting_id: 'm2', org_id: 'o1' }], error: null }, // by started_at
+      { data: [{ meeting_id: 'm3', org_id: 'o2' }], error: null }, // by created_at (null started_at)
+      { data: [{ meeting_id: 'm4', org_id: 'o1' }], error: null }, // pre-recording → failed
     ]);
     const notified: string[] = [];
+    const enqueued: { meetingId: string; orgId: string }[] = [];
 
     const result = await reapStaleMeetings(service, {
       nowMs: Date.UTC(2026, 4, 31, 12, 0, 0),
       recordingReapAfterMs: 75 * 60 * 1000,
       notify: async (id) => {
         notified.push(id);
+      },
+      enqueue: async (meetingId, orgId) => {
+        enqueued.push({ meetingId, orgId });
       },
     });
 
@@ -85,6 +89,13 @@ describe('reapStaleMeetings', () => {
     expect(updates[2]).toMatchObject({ status: 'failed', error_code: 'launch_timeout' });
     // bot-worker notified for the 3 reaped recordings, not the failed one.
     expect(notified.sort()).toEqual(['m1', 'm2', 'm3']);
+    // Post-meeting jobs (recap + gaps) enqueued for the 3 reaped recordings,
+    // with the org resolved from the reaped row.
+    expect(enqueued.sort((a, b) => a.meetingId.localeCompare(b.meetingId))).toEqual([
+      { meetingId: 'm1', orgId: 'o1' },
+      { meetingId: 'm2', orgId: 'o1' },
+      { meetingId: 'm3', orgId: 'o2' },
+    ]);
   });
 
   it('no-ops cleanly when nothing is stuck', async () => {
@@ -99,6 +110,9 @@ describe('reapStaleMeetings', () => {
       notify: async () => {
         throw new Error('should not notify when nothing reaped');
       },
+      enqueue: async () => {
+        throw new Error('should not enqueue when nothing reaped');
+      },
     });
     expect(result).toEqual({ completed: 0, failedPrelaunch: 0 });
   });
@@ -110,6 +124,7 @@ describe('reapStaleMeetings', () => {
         nowMs: Date.now(),
         recordingReapAfterMs: 75 * 60 * 1000,
         notify: async () => undefined,
+        enqueue: async () => undefined,
       }),
     ).rejects.toThrow(/db down/);
   });

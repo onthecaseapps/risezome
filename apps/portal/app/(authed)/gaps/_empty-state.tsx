@@ -9,7 +9,7 @@ import { BackfillButton } from './_bits';
  */
 export function GapsEmptyState({ isManager = false }: { isManager?: boolean }): ReactElement {
   return (
-    <div className="mx-auto mt-6 flex max-w-md flex-col items-center rounded-2xl border border-dashed border-border bg-card/40 px-6 py-16 text-center">
+    <div className="mx-auto mt-6 flex max-w-md flex-col items-center rounded-2xl border border-dashed border-border bg-card/40 px-6 py-16 text-center shadow-[var(--card-shadow)]">
       <span className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-accent-soft text-accent">
         <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />

@@ -188,21 +188,40 @@ export const launchBotFn = inngest.createFunction(
       const service = createServiceRoleClient();
       const userIds = new Set<string>([eventRow.user_id]);
       if (meetingRow.created) {
-        const attendees = await service
-          .from('calendar_events')
-          .select('user_id, conference_url')
-          .eq('org_id', eventRow.org_id);
-        for (const row of attendees.data ?? []) {
-          const cu = row.conference_url as string | null;
-          if (cu !== null && normalizeConferenceUrl(cu) === conferenceUrl) {
-            userIds.add(row.user_id as string);
+        // Paged: PostgREST caps un-ranged reads at 1000 rows, which would
+        // silently drop attendees in a large org's calendar sweep.
+        const PAGE_SIZE = 1000;
+        for (let from = 0; ; from += PAGE_SIZE) {
+          const attendees = await service
+            .from('calendar_events')
+            .select('user_id, conference_url')
+            .eq('org_id', eventRow.org_id)
+            .order('id', { ascending: true })
+            .range(from, from + PAGE_SIZE - 1);
+          if (attendees.error !== null) {
+            throw new Error(`attendee sweep failed: ${attendees.error.message}`);
           }
+          const rows = attendees.data ?? [];
+          for (const row of rows) {
+            const cu = row.conference_url as string | null;
+            if (cu !== null && normalizeConferenceUrl(cu) === conferenceUrl) {
+              userIds.add(row.user_id as string);
+            }
+          }
+          if (rows.length < PAGE_SIZE) break;
         }
       }
       const rows = [...userIds].map((uid) => ({ meeting_id: meetingId, user_id: uid }));
-      await service
+      const { error: partErr } = await service
         .from('meeting_participants')
         .upsert(rows, { onConflict: 'meeting_id,user_id', ignoreDuplicates: true });
+      if (partErr !== null) {
+        // meeting_participants IS the attendee ACL (can_access_meeting); a
+        // dropped upsert permanently locks every non-owner attendee out of the
+        // meeting. THROW so Inngest retries — the upsert is idempotent
+        // (ignoreDuplicates), so a retry is safe.
+        throw new Error(`meeting_participants upsert failed for meeting=${meetingId}: ${partErr.message}`);
+      }
     });
 
     // Joined an existing live meeting — a bot is already serving it.

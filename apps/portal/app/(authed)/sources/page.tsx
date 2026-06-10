@@ -368,7 +368,7 @@ function buildAtlassianCard(
 
 function NoTeamsState(): ReactElement {
   return (
-    <div className="rounded-xl border border-border bg-card p-10 text-center">
+    <div className="rounded-xl border border-border bg-card p-10 text-center shadow-[var(--card-shadow)]">
       <h2 className="text-lg font-semibold tracking-tight">No teams yet</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted">
         Sources are configured per team. Create a team first on the{' '}
@@ -381,7 +381,7 @@ function NoTeamsState(): ReactElement {
 
 function EmptyConnectState(): ReactElement {
   return (
-    <div className="rounded-xl border border-border bg-card p-10 text-center">
+    <div className="rounded-xl border border-border bg-card p-10 text-center shadow-[var(--card-shadow)]">
       <h2 className="text-lg font-semibold tracking-tight">No connections yet</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted">
         Connect GitHub, Jira, Confluence or Trello to start indexing, then choose which repos,

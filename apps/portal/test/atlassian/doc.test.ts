@@ -14,8 +14,8 @@ const adf = (text: string): unknown => ({
 
 describe('doc ids', () => {
   it('namespace immutable ids by cloudId', () => {
-    expect(jiraIssueDocId('cloud', 'P-1')).toBe('jira:cloud:P-1');
-    expect(confluencePageDocId('cloud', 'pg9')).toBe('confluence:cloud:pg9');
+    expect(jiraIssueDocId('org-1', 'cloud', 'P-1')).toBe('org-1:jira:cloud:P-1');
+    expect(confluencePageDocId('org-1', 'cloud', 'pg9')).toBe('org-1:confluence:cloud:pg9');
   });
 });
 
@@ -35,6 +35,25 @@ describe('buildIssueDocText', () => {
   it('omits an empty (null) description and the comments section when none', () => {
     const issue: JiraIssue = { key: 'P-2', summary: 'No desc', description: null };
     expect(buildIssueDocText(issue, [])).toBe('No desc');
+  });
+
+  it('includes a Status/Type/Assignee line when the fields are present', () => {
+    const issue: JiraIssue = {
+      key: 'P-3',
+      summary: 'Auth migration',
+      description: null,
+      status: 'In Progress',
+      issueType: 'Bug',
+      assignee: 'Priya Patel',
+    };
+    expect(buildIssueDocText(issue, [])).toBe(
+      'Auth migration\n\nStatus: In Progress. Type: Bug. Assignee: Priya Patel.',
+    );
+  });
+
+  it('includes only the present meta fields (no empty placeholders)', () => {
+    const issue: JiraIssue = { key: 'P-4', summary: 'No assignee', description: null, status: 'To Do', assignee: null };
+    expect(buildIssueDocText(issue, [])).toBe('No assignee\n\nStatus: To Do.');
   });
 });
 

@@ -14,6 +14,20 @@ import { ATLASSIAN_API_BASE, AtlassianAuthError } from './atlassian';
 const MAX_RETRIES = 4;
 const MAX_ISSUE_PAGES = 1000; // hard safeguard against the /search/jql loop bug
 
+/**
+ * Thrown when issue pagination terminates WITHOUT a clean server-confirmed end
+ * (repeating-token loop bug, or the page cap). It signals "this set is partial"
+ * so the connector index fails + retries rather than treating a truncated set
+ * as authoritative and pruning the issues it never reached. NOT an auth error,
+ * so runConnectorIndex re-throws it (→ Inngest retry → onFailure if persistent).
+ */
+export class JiraPartialFetchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'JiraPartialFetchError';
+  }
+}
+
 export type Sleep = (ms: number) => Promise<void>;
 const realSleep: Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -34,6 +48,14 @@ export interface JiraIssue {
   readonly summary: string;
   /** ADF description (or null). */
   readonly description: unknown;
+  /** Status name (e.g. "In Progress"), when returned. */
+  readonly status?: string | null;
+  /** Issue type name (e.g. "Bug"), when returned. */
+  readonly issueType?: string | null;
+  /** Assignee display name, when returned. */
+  readonly assignee?: string | null;
+  /** The issue's `fields.updated` timestamp, when returned. */
+  readonly updated?: string | null;
 }
 
 export interface JiraComment {
@@ -54,6 +76,8 @@ export interface ConfluencePage {
   readonly title: string;
   /** Storage-format body. */
   readonly bodyStorage: string;
+  /** Last-modified timestamp from the page's version, when returned. */
+  readonly updatedAt?: string | null;
 }
 
 /** Authenticated GET against a fully-formed `api.atlassian.com/ex/...` path. */
@@ -113,12 +137,24 @@ export async function searchJiraIssues(projectKey: string, ctx: AtlassianContext
   const seen = new Set<string>();
   let nextPageToken: string | undefined;
   const jql = encodeURIComponent(`project = "${projectKey}" ORDER BY updated DESC`);
-  const fields = 'summary,description,status,issuetype,assignee,key';
+  const fields = 'summary,description,status,issuetype,assignee,key,updated';
 
   for (let pages = 0; pages < MAX_ISSUE_PAGES; pages += 1) {
-    const q = `jql=${jql}&fields=${fields}&maxResults=50${nextPageToken !== undefined ? `&nextPageToken=${nextPageToken}` : ''}`;
+    // nextPageToken is server-issued and may contain URL-active characters —
+    // encode it so it survives the query string intact.
+    const q = `jql=${jql}&fields=${fields}&maxResults=50${nextPageToken !== undefined ? `&nextPageToken=${encodeURIComponent(nextPageToken)}` : ''}`;
     const page = await atlassianGet<{
-      issues: Array<{ key: string; fields: { summary?: string; description?: unknown } }>;
+      issues: Array<{
+        key: string;
+        fields: {
+          summary?: string;
+          description?: unknown;
+          status?: { name?: string } | null;
+          issuetype?: { name?: string } | null;
+          assignee?: { displayName?: string } | null;
+          updated?: string | null;
+        };
+      }>;
       nextPageToken?: string;
       isLast?: boolean;
     }>(jiraPath(ctx.cloudId, `/rest/api/3/search/jql?${q}`), ctx);
@@ -131,13 +167,34 @@ export async function searchJiraIssues(projectKey: string, ctx: AtlassianContext
         key: issue.key,
         summary: issue.fields.summary ?? '',
         description: issue.fields.description ?? null,
+        status: issue.fields.status?.name ?? null,
+        issueType: issue.fields.issuetype?.name ?? null,
+        assignee: issue.fields.assignee?.displayName ?? null,
+        updated: issue.fields.updated ?? null,
       });
       added += 1;
     }
-    if (page.isLast === true || page.nextPageToken === undefined || added === 0) break;
+    // Clean completion: the server says this is the last page (or offers no
+    // continuation). Return the full set.
+    if (page.isLast === true || page.nextPageToken === undefined) return out;
+    // PARTIAL termination. `added === 0` while a nextPageToken is still offered
+    // is the known repeating-token loop bug: the server keeps handing us a
+    // continuation token that returns already-seen content, so we CANNOT
+    // conclude we've seen every issue. Returning the partial set here is what
+    // let the indexer's delta prune DELETE every issue we simply failed to page
+    // to (fetchEntities is contracted to THROW on partial, and the reconcile
+    // prune trusts that). Throw so the run fails + retries instead of pruning.
+    if (added === 0) {
+      throw new JiraPartialFetchError(
+        `searchJiraIssues(${projectKey}): pagination loop (token repeats, ${String(out.length)} collected) — refusing to report a partial set as complete`,
+      );
+    }
     nextPageToken = page.nextPageToken;
   }
-  return out;
+  // Exhausted the hard page cap without a clean end → also partial.
+  throw new JiraPartialFetchError(
+    `searchJiraIssues(${projectKey}): exceeded ${String(MAX_ISSUE_PAGES)} pages (${String(out.length)} collected) — partial set, refusing to prune`,
+  );
 }
 
 /** All comments on an issue (startAt pagination). */
@@ -181,7 +238,13 @@ export async function listConfluencePages(spaceId: string, ctx: AtlassianContext
   );
   while (path !== undefined) {
     const page: {
-      results: Array<{ id: string; title: string; body?: { storage?: { value?: string } } }>;
+      results: Array<{
+        id: string;
+        title: string;
+        body?: { storage?: { value?: string } };
+        // v2 returns `version.createdAt`; `when` covers any v1-shaped payloads.
+        version?: { createdAt?: string; when?: string } | null;
+      }>;
       _links?: { next?: string };
     } = await atlassianGet(path, ctx);
     out.push(
@@ -189,6 +252,7 @@ export async function listConfluencePages(spaceId: string, ctx: AtlassianContext
         id: p.id,
         title: p.title,
         bodyStorage: p.body?.storage?.value ?? '',
+        updatedAt: p.version?.createdAt ?? p.version?.when ?? null,
       })),
     );
     path = nextLink(page._links?.next, ctx.cloudId, 'confluence');

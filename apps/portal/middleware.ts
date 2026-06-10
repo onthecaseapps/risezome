@@ -45,5 +45,10 @@ export const config = {
   // Skip Next.js internals, image optimization, and favicon. Auth probe runs
   // on the routes that actually need a session: marketing pages allow public
   // access but middleware harmlessly no-ops when no session is present.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  // The signed-webhook endpoints (Recall + GitHub webhooks, Inngest) are also
+  // excluded — they authenticate via signatures, never cookies, so the session
+  // probe was a wasted auth round-trip on hot unauthenticated paths.
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|api/recall/webhook|api/github/webhook|api/inngest).*)',
+  ],
 };

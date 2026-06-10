@@ -61,10 +61,14 @@ describe('fetchBoardCards', () => {
         ],
       },
       {
+        match: '/members',
+        responses: [json([{ id: 'm1', fullName: 'Priya Patel' }])],
+      },
+      {
         match: '/cards',
         responses: [
           json([
-            { id: 'c1', name: 'Live card', desc: 'd1', idList: 'L_open', url: 'u1', shortUrl: 's1', dateLastActivity: null, closed: false },
+            { id: 'c1', name: 'Live card', desc: 'd1', idList: 'L_open', idMembers: ['m1'], url: 'u1', shortUrl: 's1', dateLastActivity: null, closed: false },
             { id: 'c2', name: 'Closed card', desc: '', idList: 'L_open', url: 'u2', shortUrl: 's2', dateLastActivity: null, closed: true },
             { id: 'c3', name: 'On archived list', desc: '', idList: 'L_arch', url: 'u3', shortUrl: 's3', dateLastActivity: null, closed: false },
           ]),
@@ -73,21 +77,33 @@ describe('fetchBoardCards', () => {
     ]);
     const cards = await fetchBoardCards('b1', opts);
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toMatchObject({ id: 'c1', name: 'Live card', desc: 'd1', listId: 'L_open', listName: 'Doing', url: 's1' });
+    expect(cards[0]).toMatchObject({
+      id: 'c1',
+      name: 'Live card',
+      desc: 'd1',
+      listId: 'L_open',
+      listName: 'Doing',
+      members: ['Priya Patel'],
+      url: 's1',
+    });
   });
 
-  it('paginates with the before cursor until a short page returns', async () => {
+  it('paginates with the minimum-id before cursor until a short page returns', async () => {
+    // Page comes back in NON-descending id order on purpose: the cursor must
+    // be the MINIMUM id in the page (correct under either ordering), not the
+    // last element — pages are only last-element-correct when id-descending.
     const fullPage = Array.from({ length: 1000 }, (_, i) => ({
-      id: `c${i}`, name: `Card ${i}`, desc: '', idList: 'L', url: '', shortUrl: `s${i}`, dateLastActivity: null, closed: false,
+      id: `id${String(i).padStart(4, '0')}`, name: `Card ${i}`, desc: '', idList: 'L', url: '', shortUrl: `s${i}`, dateLastActivity: null, closed: false,
     }));
     const shortPage = [
-      { id: 'cLast', name: 'Last', desc: '', idList: 'L', url: '', shortUrl: 'sLast', dateLastActivity: null, closed: false },
+      { id: 'id9999', name: 'Last', desc: '', idList: 'L', url: '', shortUrl: 'sLast', dateLastActivity: null, closed: false },
     ];
     let secondCardCallUrl = '';
     const cursors = new Map<string, number>();
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = typeof input === 'string' ? input : (input as Request).url;
       if (url.includes('/lists')) return json([{ id: 'L', name: 'List', closed: false }]);
+      if (url.includes('/members')) return json([]);
       // cards endpoint, paginated
       const i = cursors.get('cards') ?? 0;
       cursors.set('cards', i + 1);
@@ -98,8 +114,8 @@ describe('fetchBoardCards', () => {
 
     const cards = await fetchBoardCards('b1', opts);
     expect(cards).toHaveLength(1001);
-    // The 2nd cards request carries the last id of page 1 as the before cursor.
-    expect(secondCardCallUrl).toContain('before=c999');
+    // The 2nd cards request carries the MIN id of page 1 as the before cursor.
+    expect(secondCardCallUrl).toContain('before=id0000');
   });
 });
 

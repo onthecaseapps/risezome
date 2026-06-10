@@ -35,6 +35,8 @@ export interface TrelloCard {
   readonly desc: string;
   readonly listId: string;
   readonly listName: string;
+  /** Member display names (fullName, falling back to username). */
+  readonly members: readonly string[];
   readonly url: string;
   readonly dateLastActivity: string | null;
 }
@@ -93,7 +95,7 @@ async function trelloGet<T>(
   throw new Error('Trello GET exhausted retries');
 }
 
-/** Page through a list endpoint using the `before=<lastId>` cursor. */
+/** Page through a list endpoint using the `before=<minId>` cursor. */
 async function paginate<T extends { id: string }>(
   path: string,
   query: Record<string, string>,
@@ -109,9 +111,17 @@ async function paginate<T extends { id: string }>(
     );
     all.push(...page);
     if (page.length < PAGE_LIMIT) break;
-    const last = page[page.length - 1];
-    if (last === undefined) break;
-    before = last.id;
+    // Cursor = the MINIMUM id in the page, not the last element. Trello ids
+    // are monotonically increasing fixed-length hex, so the min is the page's
+    // oldest item; using the last element is only correct when pages come
+    // back id-descending — if they don't, the newest cards silently fall
+    // outside every subsequent `before` window and are dropped.
+    const minId = page.reduce<string | undefined>(
+      (min, item) => (min === undefined || item.id < min ? item.id : min),
+      undefined,
+    );
+    if (minId === undefined) break;
+    before = minId;
   }
   return all;
 }
@@ -139,26 +149,35 @@ export async function listBoards(opts: TrelloClientOptions): Promise<TrelloBoard
  * cards and cards on archived (closed) lists — the documented `filter` gotcha.
  */
 export async function fetchBoardCards(boardId: string, opts: TrelloClientOptions): Promise<TrelloCard[]> {
-  const lists = await trelloGet<Array<{ id: string; name: string; closed: boolean }>>(
-    `/boards/${boardId}/lists`,
-    { filter: 'all', fields: 'name,closed' },
-    opts,
-  );
+  const [lists, boardMembers] = await Promise.all([
+    trelloGet<Array<{ id: string; name: string; closed: boolean }>>(
+      `/boards/${boardId}/lists`,
+      { filter: 'all', fields: 'name,closed' },
+      opts,
+    ),
+    trelloGet<Array<{ id: string; fullName?: string; username?: string }>>(
+      `/boards/${boardId}/members`,
+      { fields: 'fullName,username' },
+      opts,
+    ),
+  ]);
   const listById = new Map(lists.map((l) => [l.id, l]));
   const archivedListIds = new Set(lists.filter((l) => l.closed).map((l) => l.id));
+  const memberById = new Map(boardMembers.map((m) => [m.id, m.fullName ?? m.username ?? m.id]));
 
   const rawCards = await paginate<{
     id: string;
     name: string;
     desc: string;
     idList: string;
+    idMembers?: readonly string[];
     url: string;
     shortUrl: string;
     dateLastActivity: string | null;
     closed: boolean;
   }>(
     `/boards/${boardId}/cards`,
-    { filter: 'visible', fields: 'name,desc,idList,url,shortUrl,dateLastActivity,closed' },
+    { filter: 'visible', fields: 'name,desc,idList,idMembers,url,shortUrl,dateLastActivity,closed' },
     opts,
   );
 
@@ -170,6 +189,7 @@ export async function fetchBoardCards(boardId: string, opts: TrelloClientOptions
       desc: c.desc ?? '',
       listId: c.idList,
       listName: listById.get(c.idList)?.name ?? '',
+      members: (c.idMembers ?? []).map((id) => memberById.get(id) ?? id),
       url: c.shortUrl ?? c.url,
       dateLastActivity: c.dateLastActivity ?? null,
     }));

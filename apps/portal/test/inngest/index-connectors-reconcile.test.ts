@@ -308,19 +308,24 @@ describe('runConnectorIndex — removed item', () => {
     expect(mock.docIds()).toEqual([docIdFor(present)]);
   });
 
-  it('delta mode keeps the removed doc', async () => {
+  it('delta mode prunes too — these connectors fetch the complete set every run', async () => {
+    // runConnectorIndex always passes fetchComplete: true (fetchEntities
+    // contracts to return the WHOLE entity set or throw), and the prune is
+    // gated on fetch completeness, not mode (delta-prune-on-complete-fetch)
+    // — otherwise a removed card/issue/page would linger until someone
+    // manually ran a full reindex.
     const mock = makeCorpusDb(seed());
     currentDb = mock.db;
     await runConnectorIndex(config({ entities: [present], mode: 'delta' }));
-    expect(mock.pruned()).toEqual([]);
-    expect(mock.docIds()).toEqual(['doc:gone', docIdFor(present)].sort());
+    expect(mock.pruned()).toEqual(['doc:gone']);
+    expect(mock.docIds()).toEqual([docIdFor(present)]);
   });
 
-  it('missing mode defaults to delta (no prune)', async () => {
+  it('missing mode defaults to delta and still prunes on the complete fetch', async () => {
     const mock = makeCorpusDb(seed());
     currentDb = mock.db;
     await runConnectorIndex(config({ entities: [present] }));
-    expect(mock.pruned()).toEqual([]);
+    expect(mock.pruned()).toEqual(['doc:gone']);
   });
 });
 

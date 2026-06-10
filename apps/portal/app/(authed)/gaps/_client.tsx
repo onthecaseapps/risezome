@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useIntroStagger } from '../_components/use-intro-stagger';
 import type { AssignedQuestionView, GapView, NotificationView, OrgMember, SectionView } from './_types';
 import { ChevronDown, FlameGlyph, SectionDot, StatusPill, Avatar, shortDate } from './_bits';
 import { GapsEmptyState } from './_empty-state';
@@ -41,8 +42,18 @@ export function GapsClient({
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [openGapId, setOpenGapId] = useState<string | null>(null);
+  // Ordered gapIds the drawer's ↑/↓ buttons walk — set to whichever list the
+  // drawer was opened from (the main grouped list, or "Assigned to you").
+  const [navIds, setNavIds] = useState<string[]>([]);
   const [moveGapId, setMoveGapId] = useState<string | null>(null);
   const [mergeGapId, setMergeGapId] = useState<string | null>(null);
+
+  // Open (or switch, if already open) the drawer to a gap, remembering the list
+  // it came from so prev/next navigation stays within that context.
+  function openGapWith(gapId: string, ids: string[]): void {
+    setNavIds(ids);
+    setOpenGapId(gapId);
+  }
 
   // Clock is null through SSR + first paint so relative-time labels can't cause
   // a hydration mismatch; refines after mount.
@@ -80,8 +91,10 @@ export function GapsClient({
     const q = query.trim().toLowerCase();
     const matches = gaps.filter((g) => {
       if (q.length > 0) {
-        const hay = [g.title, ...g.occurrences.map((o) => o.verbatimQuestion)].join(' ').toLowerCase();
-        if (!hay.includes(q)) return false;
+        // Title-only search: occurrences (verbatim phrasings) are lazy-loaded in
+        // the drawer now, so they're not available to the list filter. The title
+        // is the canonical merged question, which covers the common case.
+        if (!g.title.toLowerCase().includes(q)) return false;
       }
       if (statusFilter !== 'all' && g.status !== statusFilter) return false;
       if (sectionFilter !== 'all') {
@@ -113,7 +126,40 @@ export function GapsClient({
   // ── group by section ───────────────────────────────────────────────────────
   const groups = useMemo(() => groupBySection(filtered, sections), [filtered, sections]);
 
-  const openGap = openGapId !== null ? (gapById.get(openGapId) ?? null) : null;
+  // Intro fade-up for the section cards — plays once on mount, off thereafter so
+  // filter/sort/search re-renders are instant.
+  const introFor = useIntroStagger();
+
+  // A non-attendee assignee's gap isn't in `gaps` (it never passes the row RLS
+  // beyond the assignee branch), so we can't look it up there. Synthesize a
+  // CONTENT-GATED GapView from the assigned-question metadata so the drawer can
+  // open on title/status + resolve, and render the "you weren't in the meeting"
+  // gate instead of any verbatim. Skip ones already present in `gaps` (a
+  // participant-assignee) — those open the full view.
+  const currentUserName = useMemo(
+    () => members.find((m) => m.userId === currentUserId)?.name ?? null,
+    [members, currentUserId],
+  );
+  const assignedGapViews = useMemo(() => {
+    const map = new Map<string, GapView>();
+    for (const q of assignedQuestions) {
+      if (gapById.has(q.gapId)) continue;
+      map.set(q.gapId, assignedToGapView(q, currentUserId, currentUserName));
+    }
+    return map;
+  }, [assignedQuestions, gapById, currentUserId, currentUserName]);
+
+  // Flattened display order of the visible list — the nav context for rows.
+  const flatGapIds = useMemo(() => groups.flatMap((g) => g.gaps.map((x) => x.gapId)), [groups]);
+  const assignedIds = useMemo(() => assignedQuestions.map((q) => q.gapId), [assignedQuestions]);
+
+  const openGap = openGapId !== null ? (gapById.get(openGapId) ?? assignedGapViews.get(openGapId) ?? null) : null;
+
+  // Prev/next within the active nav context (−1 when the open gap isn't in it,
+  // e.g. opened from a toast for a gap filtered out of the list → buttons off).
+  const navIndex = openGapId !== null ? navIds.indexOf(openGapId) : -1;
+  const prevGapId = navIndex > 0 ? navIds[navIndex - 1]! : null;
+  const nextGapId = navIndex >= 0 && navIndex < navIds.length - 1 ? navIds[navIndex + 1]! : null;
   const moveGap = moveGapId !== null ? (gapById.get(moveGapId) ?? null) : null;
   const mergeGap = mergeGapId !== null ? (gapById.get(mergeGapId) ?? null) : null;
 
@@ -155,13 +201,12 @@ export function GapsClient({
         </div>
       ) : null}
 
-      {/* Assigned to you — METADATA-ONLY (U8 / U5 deferred). Surfaces the
-          caller's assigned questions for a NON-attendee assignee who can't open
-          the gap itself, so it is a PLAIN read-only list: question, asker,
-          recurrence, status — and deliberately NO link through to the gap drawer
-          or verbatim. Empty → render nothing (no noisy empty state). */}
+      {/* Assigned to you — gaps assigned to the caller. A non-attendee assignee
+          opens a CONTENT-GATED drawer (title/status + resolve; no verbatim — see
+          assignedToGapView); a participant-assignee opens the full view. Empty →
+          render nothing (no noisy empty state). */}
       {assignedQuestions.length > 0 ? (
-        <section className="mb-6 overflow-hidden rounded-2xl border border-border">
+        <section className="mb-6 overflow-hidden rounded-2xl border border-border shadow-[var(--card-shadow)]">
           <div className="flex items-center gap-2 bg-card/40 px-4 py-2.5">
             <span className="text-sm font-semibold text-fg">Assigned to you</span>
             <span className="flex-none rounded-full bg-border/60 px-2 py-0.5 text-[11px] font-medium text-muted">
@@ -170,23 +215,26 @@ export function GapsClient({
           </div>
           <ul>
             {assignedQuestions.map((q) => (
-              <li
-                key={q.gapId}
-                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-border px-4 py-3"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-fg">{q.title}</p>
-                  <p className="mt-0.5 text-xs text-muted">
-                    {q.askerName !== null ? `Asked by ${q.askerName}` : 'Asked in a meeting'}
-                    {' · '}
-                    <span className="inline-flex items-center gap-1">
-                      <FlameGlyph className="text-orange-400" />
-                      {q.frequency}× asked
-                    </span>
-                    {q.lastAskedAtIso !== null ? ` · last ${shortDate(q.lastAskedAtIso)}` : ''}
-                  </p>
-                </div>
-                <StatusPill status={q.status} />
+              <li key={q.gapId}>
+                <button
+                  type="button"
+                  onClick={() => openGapWith(q.gapId, assignedIds)}
+                  className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-border px-4 py-3 text-left transition-colors hover:bg-card/40"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-fg" title={q.title}>{q.title}</p>
+                    <p className="mt-0.5 text-xs text-muted">
+                      {q.askerName !== null ? `Asked by ${q.askerName}` : 'Asked in a meeting'}
+                      {' · '}
+                      <span className="inline-flex items-center gap-1">
+                        <FlameGlyph className="text-orange-600 dark:text-orange-400" />
+                        {q.frequency}× asked
+                      </span>
+                      {q.lastAskedAtIso !== null ? ` · last ${shortDate(q.lastAskedAtIso)}` : ''}
+                    </p>
+                  </div>
+                  <StatusPill status={q.status} />
+                </button>
               </li>
             ))}
           </ul>
@@ -195,7 +243,7 @@ export function GapsClient({
 
       {/* hero */}
       {hero !== null ? (
-        <HeroBanner gap={hero} section={hero.sectionId !== null ? (sectionById.get(hero.sectionId) ?? null) : null} onOpen={() => setOpenGapId(hero.gapId)} />
+        <HeroBanner gap={hero} section={hero.sectionId !== null ? (sectionById.get(hero.sectionId) ?? null) : null} onOpen={() => openGapWith(hero.gapId, flatGapIds)} />
       ) : null}
 
       {/* toolbar */}
@@ -270,12 +318,17 @@ export function GapsClient({
         </p>
       ) : (
         <div className="flex flex-col gap-6">
-          {groups.map((group) => {
+          {groups.map((group, groupIndex) => {
             const isCollapsed = collapsed.has(group.key);
             const section = group.sectionId !== null ? (sectionById.get(group.sectionId) ?? null) : null;
             const otherSections = sections.filter((s) => s.sectionId !== group.sectionId);
+            const intro = introFor(groupIndex);
             return (
-              <section key={group.key} className="rounded-2xl border border-border">
+              <section
+                key={group.key}
+                style={intro.style}
+                className={`rounded-2xl border border-border shadow-[var(--card-shadow)] ${intro.className}`}
+              >
                 {/* No overflow-hidden on the section — it would clip a row's kebab
                     dropdown (which opens below the row). Round the header + last
                     row directly so corners stay clean in both states. */}
@@ -309,7 +362,7 @@ export function GapsClient({
                         members={members}
                         isManager={isManager}
                         now={now}
-                        onOpen={() => setOpenGapId(g.gapId)}
+                        onOpen={() => openGapWith(g.gapId, flatGapIds)}
                         onAssign={(userId) => {
                           void assignGapAction(g.gapId, userId);
                         }}
@@ -328,11 +381,23 @@ export function GapsClient({
       {/* drawer */}
       {openGap !== null ? (
         <GapDrawer
+          // Remount on gapId change so the drawer's optimistic state (status,
+          // assignee, …) re-seeds from the new gap when ↑/↓ or a click switches
+          // it in place — the slide-over stays open, just swaps content.
+          key={openGap.gapId}
           gap={openGap}
           sections={sections}
           members={members}
           isManager={isManager}
           now={now}
+          hasPrev={prevGapId !== null}
+          hasNext={nextGapId !== null}
+          onPrev={() => {
+            if (prevGapId !== null) setOpenGapId(prevGapId);
+          }}
+          onNext={() => {
+            if (nextGapId !== null) setOpenGapId(nextGapId);
+          }}
           onClose={() => setOpenGapId(null)}
         />
       ) : null}
@@ -350,7 +415,7 @@ export function GapsClient({
       ) : null}
 
       {/* assignment toasts */}
-      <GapToasts notifications={notifications} onView={(gapId) => setOpenGapId(gapId)} />
+      <GapToasts notifications={notifications} onView={(gapId) => openGapWith(gapId, flatGapIds)} />
     </div>
   );
 }
@@ -372,13 +437,13 @@ function HeroBanner({
       onClick={onOpen}
       className="mb-6 flex w-full items-center gap-5 rounded-2xl border border-orange-400/30 bg-orange-400/5 px-5 py-4 text-left transition-colors hover:border-orange-400/50"
     >
-      <span className="flex h-12 w-12 flex-none items-center justify-center rounded-xl bg-orange-400/15 text-orange-400">
+      <span className="flex h-12 w-12 flex-none items-center justify-center rounded-xl bg-orange-400/15 text-orange-600 dark:text-orange-400">
         <FlameGlyph className="h-6 w-6" />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-orange-400">Most-asked gap this month</p>
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-orange-600 dark:text-orange-400">Most-asked gap this month</p>
         <p className="mt-0.5 flex items-center gap-2">
-          <span className="text-2xl font-bold tabular-nums text-orange-400">{gap.frequency}×</span>
+          <span className="text-2xl font-bold tabular-nums text-orange-600 dark:text-orange-400">{gap.frequency}×</span>
           <span className="truncate text-base font-semibold text-fg">{gap.title}</span>
         </p>
         <p className="mt-0.5 text-xs text-muted">
@@ -439,6 +504,43 @@ function Select({
 
 function time(g: GapView): number {
   return new Date(g.lastAskedAtIso ?? g.firstAskedAtIso ?? 0).getTime();
+}
+
+/**
+ * Build a CONTENT-GATED GapView from an assigned-question projection, for a
+ * non-attendee assignee whose gap never appears in the main `gaps` list. Carries
+ * only what the metadata RPC exposes (title/status/recurrence + that it's
+ * assigned to the caller); content fields are zeroed and `canViewContent` is
+ * false, so the drawer renders the "you weren't in the meeting" gate rather than
+ * any verbatim. occurrences stay empty (defense-in-depth; RLS returns none too).
+ */
+function assignedToGapView(
+  q: AssignedQuestionView,
+  assigneeId: string,
+  assigneeName: string | null,
+): GapView {
+  return {
+    gapId: q.gapId,
+    sectionId: null,
+    title: q.title,
+    status: q.status,
+    assigneeId,
+    assigneeName,
+    frequency: q.frequency,
+    sharedWithOrg: false,
+    sectionPinned: false,
+    reopenedAfterClose: false,
+    firstAskedAtIso: null,
+    lastAskedAtIso: q.lastAskedAtIso,
+    assignedByName: null,
+    assignedAtIso: null,
+    people: 0,
+    meetings: 0,
+    moments: 0,
+    extraPhrasings: 0,
+    canViewContent: false,
+    occurrences: [],
+  };
 }
 
 interface SectionGroup {

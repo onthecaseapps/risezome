@@ -58,7 +58,7 @@ export function recordingReapAfterMs(
 }
 
 interface ReaperRows {
-  data: { meeting_id: string }[] | null;
+  data: { meeting_id: string; org_id: string }[] | null;
   error: { message: string } | null;
 }
 
@@ -87,7 +87,7 @@ export interface ReapResult {
 
 /**
  * Core reaper logic, separated from the Inngest wrapper so it's directly
- * testable. `notify` is best-effort and awaited in parallel.
+ * testable. `notify` and `enqueue` are best-effort and awaited in parallel.
  */
 export async function reapStaleMeetings(
   service: ReaperDb,
@@ -95,13 +95,15 @@ export async function reapStaleMeetings(
     nowMs: number;
     recordingReapAfterMs: number;
     notify: (meetingId: string) => Promise<void>;
+    /** Fire the post-meeting jobs (recap + gap assembly) for a reaped meeting. */
+    enqueue: (meetingId: string, orgId: string) => Promise<void>;
   },
 ): Promise<ReapResult> {
   const recordingCutoff = new Date(opts.nowMs - opts.recordingReapAfterMs).toISOString();
   const prelaunchCutoff = new Date(opts.nowMs - PRELAUNCH_GRACE_S * 1000).toISOString();
   const completedAt = new Date(opts.nowMs).toISOString();
 
-  const reapedIds: string[] = [];
+  const reaped: { meetingId: string; orgId: string }[] = [];
 
   // 1. Recording meetings whose bot is guaranteed gone (started_at known).
   // service-role-cross-org: instance-wide reaper cron — sweeps stale meetings
@@ -112,10 +114,10 @@ export async function reapStaleMeetings(
     .eq('status', 'recording')
     .not('started_at', 'is', null)
     .lt('started_at', recordingCutoff)
-    .select('meeting_id');
+    .select('meeting_id, org_id');
   if (byStart.error !== null)
     throw new Error(`reap recording (started_at): ${byStart.error.message}`);
-  for (const row of byStart.data ?? []) reapedIds.push(row.meeting_id);
+  for (const row of byStart.data ?? []) reaped.push({ meetingId: row.meeting_id, orgId: row.org_id });
 
   // 2. Recording meetings the webhook flipped before any utterance set
   //    started_at — fall back to created_at for the cutoff.
@@ -126,10 +128,10 @@ export async function reapStaleMeetings(
     .eq('status', 'recording')
     .is('started_at', null)
     .lt('created_at', recordingCutoff)
-    .select('meeting_id');
+    .select('meeting_id, org_id');
   if (byCreated.error !== null)
     throw new Error(`reap recording (created_at): ${byCreated.error.message}`);
-  for (const row of byCreated.data ?? []) reapedIds.push(row.meeting_id);
+  for (const row of byCreated.data ?? []) reaped.push({ meetingId: row.meeting_id, orgId: row.org_id });
 
   // 3. Pre-recording states that never started recording in time → failed.
   // service-role-cross-org: instance-wide reaper cron (see above).
@@ -143,14 +145,19 @@ export async function reapStaleMeetings(
     })
     .in('status', PRE_RECORDING_STATUSES as unknown as string[])
     .lt('created_at', prelaunchCutoff)
-    .select('meeting_id');
+    .select('meeting_id, org_id');
   if (prelaunch.error !== null) throw new Error(`reap pre-recording: ${prelaunch.error.message}`);
 
   // Best-effort: drop the bot-worker's in-memory runtime for each reaped
   // recording. The DB row is already the source of truth.
-  await Promise.all(reapedIds.map((id) => opts.notify(id)));
+  await Promise.all(reaped.map((r) => opts.notify(r.meetingId)));
 
-  return { completed: reapedIds.length, failedPrelaunch: (prelaunch.data ?? []).length };
+  // The reaper replaces the missed bot.call_ended webhook, so the webhook's
+  // post-meeting jobs (recap + gap assembly) must still fire — otherwise a
+  // reaped meeting never gets a recap or its knowledge gaps. Best-effort.
+  await Promise.all(reaped.map((r) => opts.enqueue(r.meetingId, r.orgId)));
+
+  return { completed: reaped.length, failedPrelaunch: (prelaunch.data ?? []).length };
 }
 
 async function notifyBotWorker(meetingId: string): Promise<void> {
@@ -171,6 +178,21 @@ async function notifyBotWorker(meetingId: string): Promise<void> {
   }
 }
 
+/** Mirror the Recall webhook's completion side effects ({ meetingId, orgId }). */
+async function enqueuePostMeetingJobs(meetingId: string, orgId: string): Promise<void> {
+  try {
+    await inngest.send([
+      { name: 'risezome/meeting.recap-requested', data: { meetingId, orgId } },
+      { name: 'risezome/meeting.gaps-requested', data: { meetingId, orgId } },
+    ]);
+  } catch (err) {
+    console.error(
+      `[reap-stale-meetings] post-meeting enqueue failed for meeting=${meetingId}:`,
+      err,
+    );
+  }
+}
+
 export const reapStaleMeetingsCron = inngest.createFunction(
   {
     id: 'reap-stale-meetings-cron',
@@ -184,6 +206,7 @@ export const reapStaleMeetingsCron = inngest.createFunction(
       nowMs: Date.now(),
       recordingReapAfterMs: recordingReapAfterMs(),
       notify: notifyBotWorker,
+      enqueue: enqueuePostMeetingJobs,
     });
   },
 );

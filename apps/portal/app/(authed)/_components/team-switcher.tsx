@@ -85,7 +85,7 @@ export function TeamSwitcher({
           </summary>
           <div
             role="menu"
-            className="absolute left-0 z-20 mt-1 min-w-[220px] overflow-hidden rounded-md border border-border bg-card shadow-lg"
+            className="absolute left-0 z-20 mt-1 min-w-[220px] overflow-hidden rounded-md border border-border bg-card shadow-[var(--shadow-pop)]"
           >
             <ul className="max-h-72 overflow-y-auto py-1">
               <li>
@@ -100,9 +100,7 @@ export function TeamSwitcher({
                   >
                     <span className="truncate">My meetings</span>
                     {currentTeamId === null && (
-                      <span aria-hidden="true" className="text-xs text-accent">
-                        ✓
-                      </span>
+                      <CheckGlyph />
                     )}
                   </button>
                 </form>
@@ -124,9 +122,7 @@ export function TeamSwitcher({
                         {team.slug}
                       </span>
                       {team.id === currentTeamId && (
-                        <span aria-hidden="true" className="text-xs text-accent">
-                          ✓
-                        </span>
+                        <CheckGlyph />
                       )}
                     </button>
                   </form>
@@ -201,6 +197,25 @@ function ChevronDown(): ReactElement {
       className="shrink-0 opacity-60"
     >
       <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function CheckGlyph(): ReactElement {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="flex-none text-accent"
+      aria-hidden="true"
+    >
+      <path d="M5 12l4.5 4.5L19 7" />
     </svg>
   );
 }

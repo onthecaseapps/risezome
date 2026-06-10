@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type ReactElement } from 'react';
+import { useMenuBehaviors } from '../_components/overlay';
 import type { GapView, OrgMember } from './_types';
 import {
   Avatar,
@@ -56,7 +57,7 @@ export function GapRow({
       {/* center */}
       <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
         <div className="flex items-center gap-2">
-          <span className="truncate font-medium text-fg">{gap.title}</span>
+          <span className="truncate font-medium text-fg" title={gap.title}>{gap.title}</span>
           {/* "+N phrasings" is content-derived (reads 0 for non-content viewers
               under the tightened gap_occurrences RLS) — hide it for them. */}
           {gap.canViewContent && gap.extraPhrasings > 0 ? (
@@ -65,7 +66,7 @@ export function GapRow({
             </span>
           ) : null}
           {gap.reopenedAfterClose && gap.status === 'open' ? (
-            <span className="flex-none rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-400">
+            <span className="flex-none rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
               Re-asked
             </span>
           ) : null}
@@ -145,6 +146,7 @@ function AssignButton({
   onAssign: (assigneeUserId: string) => void;
 }): ReactElement {
   const [open, setOpen] = useState(false);
+  useMenuBehaviors(open, () => setOpen(false));
   return (
     <div className="relative">
       <button
@@ -158,7 +160,7 @@ function AssignButton({
       {open ? (
         <>
           <button type="button" aria-hidden="true" tabIndex={-1} className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-8 z-20 max-h-64 w-52 overflow-auto rounded-lg border border-border bg-card py-1 shadow-lg">
+          <div className="absolute right-0 top-8 z-20 max-h-64 w-52 overflow-auto rounded-lg border border-border bg-card py-1 shadow-[var(--shadow-pop)]">
             {members.map((m) => (
               <button
                 key={m.userId}
@@ -193,6 +195,7 @@ function OverflowMenu({
   onMoveSection: () => void;
 }): ReactElement {
   const [open, setOpen] = useState(false);
+  useMenuBehaviors(open, () => setOpen(false));
   return (
     <div className="relative flex justify-end">
       <button
@@ -206,7 +209,7 @@ function OverflowMenu({
       {open ? (
         <>
           <button type="button" aria-hidden="true" tabIndex={-1} className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-9 z-20 w-48 overflow-hidden rounded-lg border border-border bg-card py-1 shadow-lg">
+          <div className="absolute right-0 top-9 z-20 w-48 overflow-hidden rounded-lg border border-border bg-card py-1 shadow-[var(--shadow-pop)]">
             <button
               type="button"
               onClick={() => {

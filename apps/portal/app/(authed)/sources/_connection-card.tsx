@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, useTransition, type ReactElement } from 'react';
+import { useMenuBehaviors } from '../_components/overlay';
 import { setItemForTeamAction } from './team-source-toggle-action';
 import { reindexSourceAction } from './reindex-action';
 import { SourceItemList, type Provider, type SourceItem } from './_source-item-list';
@@ -41,6 +42,7 @@ export function ConnectionCard({
 }): ReactElement {
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  useMenuBehaviors(menuOpen, () => setMenuOpen(false));
   const [selected, setSelected] = useState<Set<string>>(() => new Set(data.selectedExternalIds));
   const [bulkPending, startBulk] = useTransition();
   const [reindexPending, startReindex] = useTransition();
@@ -112,7 +114,7 @@ export function ConnectionCard({
   const statusLine = useMemo(() => buildStatusLine(data, selected.size), [data, selected.size]);
 
   return (
-    <div className={`rounded-xl border bg-card ${data.suspended === true ? 'border-amber-500/40' : 'border-border'}`}>
+    <div className={`rounded-xl border bg-card shadow-[var(--card-shadow)] ${data.suspended === true ? 'border-amber-500/40' : 'border-border'}`}>
       <div className="flex items-center gap-4 p-4">
         <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-bg">
           {data.icon}
@@ -157,7 +159,7 @@ export function ConnectionCard({
                 onClick={() => setMenuOpen(false)}
                 className="fixed inset-0 z-10 cursor-default"
               />
-              <div role="menu" className="absolute right-0 top-full z-20 mt-1 w-52 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+              <div role="menu" className="absolute right-0 top-full z-20 mt-1 w-52 overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow-pop)]">
                 {reindexableSourceIds.length > 0 ? (
                   <>
                     <button

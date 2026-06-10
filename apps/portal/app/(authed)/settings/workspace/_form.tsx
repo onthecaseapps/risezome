@@ -44,7 +44,7 @@ export function WorkspaceNameForm({ initialName }: { initialName: string }): Rea
   }
 
   return (
-    <form onSubmit={onSubmit} className="rounded-xl border border-border bg-card p-5">
+    <form onSubmit={onSubmit} className="rounded-xl border border-border bg-card p-5 shadow-[var(--card-shadow)]">
       <label htmlFor="workspace-name" className="block text-sm font-medium text-fg">
         Workspace name
       </label>
@@ -74,8 +74,8 @@ export function WorkspaceNameForm({ initialName }: { initialName: string }): Rea
           {pending ? 'Saving…' : 'Save'}
         </button>
       </div>
-      {error !== null && <p className="mt-2 text-sm text-rose-500">{error}</p>}
-      {saved && error === null && <p className="mt-2 text-sm text-emerald-600">Saved.</p>}
+      {error !== null && <p className="mt-2 text-sm text-error">{error}</p>}
+      {saved && error === null && <p className="mt-2 text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>}
     </form>
   );
 }

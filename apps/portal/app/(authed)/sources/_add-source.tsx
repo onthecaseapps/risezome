@@ -109,7 +109,7 @@ function AddRow({
   action: ReactElement;
 }): ReactElement {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-3">
+    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-3 shadow-[var(--card-shadow)]">
       <div className="flex min-w-0 items-center gap-3">
         <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-bg">{icon}</span>
         <div className="min-w-0">

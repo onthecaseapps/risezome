@@ -39,12 +39,15 @@ export default async function LiveMeetingsListPage(): Promise<ReactElement> {
   const supabase = await createServerClient();
 
   const freshnessCutoff = new Date(Date.now() - STALE_AFTER_MS).toISOString();
+  // NULL started_at rows must stay visible: a recording row whose start
+  // timestamp never landed is exactly the stuck case the card's "starting…"
+  // branch and the End button exist for — a bare .gte() would filter them out.
   const { data: meetingRows } = await supabase
     .from('meetings')
     .select('meeting_id, started_at, calendar_event_id, title')
     .eq('org_id', orgId)
     .eq('status', 'recording')
-    .gte('started_at', freshnessCutoff)
+    .or(`started_at.gte.${freshnessCutoff},started_at.is.null`)
     .order('started_at', { ascending: false });
 
   const meetings = (meetingRows ?? []) as Array<{
@@ -115,7 +118,7 @@ export default async function LiveMeetingsListPage(): Promise<ReactElement> {
 
 function EmptyState(): ReactElement {
   return (
-    <div className="rounded-xl border border-dashed border-border bg-card/40 px-6 py-14 text-center">
+    <div className="rounded-xl border border-dashed border-border bg-card/40 px-6 py-14 text-center shadow-[var(--card-shadow)]">
       <h2 className="text-lg font-semibold tracking-tight">No live meetings</h2>
       <p className="mx-auto mt-2 max-w-sm text-sm text-muted">
         Toggle the bot on for a meeting on the{' '}
@@ -138,7 +141,7 @@ function LiveMeetingCard({
   title: string;
 }): ReactElement {
   return (
-    <div className="group flex items-center gap-4 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-accent-soft/40">
+    <div className="group flex items-center gap-4 rounded-xl border border-border bg-card p-4 shadow-[var(--card-shadow)] transition-colors hover:bg-accent-soft/40">
       <div className="flex w-20 flex-shrink-0 flex-col items-end whitespace-nowrap text-xs text-muted">
         {startedAt !== null ? (
           <>

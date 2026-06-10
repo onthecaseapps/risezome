@@ -12,6 +12,12 @@ interface AdfNode {
   readonly type?: string;
   readonly text?: string;
   readonly content?: readonly AdfNode[];
+  /** Inline-node payloads: mention/status text, emoji shortName, inlineCard url. */
+  readonly attrs?: {
+    readonly text?: string;
+    readonly shortName?: string;
+    readonly url?: string;
+  };
 }
 
 // ADF block nodes that should end with a line break so text doesn't run together.
@@ -45,6 +51,26 @@ export function adfToText(doc: unknown): string {
       out.push('\n');
       return;
     }
+    // Inline leaf nodes that carry their text in attrs, not in `text`
+    // children — dropping them loses mentions ("@Jane"), status lozenges,
+    // emoji, and smart links from the indexed text.
+    if (node.type === 'mention' && typeof node.attrs?.text === 'string') {
+      out.push(node.attrs.text);
+      return;
+    }
+    if (node.type === 'status' && typeof node.attrs?.text === 'string') {
+      out.push(node.attrs.text);
+      return;
+    }
+    if (node.type === 'emoji') {
+      const emoji = node.attrs?.text ?? node.attrs?.shortName;
+      if (typeof emoji === 'string') out.push(emoji);
+      return;
+    }
+    if (node.type === 'inlineCard' && typeof node.attrs?.url === 'string') {
+      out.push(node.attrs.url);
+      return;
+    }
     if (Array.isArray(node.content)) {
       for (const child of node.content) walk(child);
     }
@@ -66,12 +92,25 @@ export function storageToText(storage: unknown): string {
       .replace(/<\/(p|div|h[1-6]|li|tr|td|th|blockquote)>/gi, '\n')
       .replace(/<[^>]+>/g, '')
       .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
       .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'"),
+      // Numeric character references, decimal (&#39;) and hex (&#x27;).
+      .replace(/&#(\d+);/g, (_m, d: string) => safeFromCodePoint(Number.parseInt(d, 10)))
+      .replace(/&#x([0-9a-f]+);/gi, (_m, h: string) => safeFromCodePoint(Number.parseInt(h, 16)))
+      // &amp; LAST: decoding it earlier double-decodes escaped entities
+      // (literal "&amp;lt;" in a doc means "&lt;", not "<").
+      .replace(/&amp;/g, '&'),
   );
+}
+
+function safeFromCodePoint(cp: number): string {
+  if (!Number.isFinite(cp) || cp < 0 || cp > 0x10ffff) return '';
+  try {
+    return String.fromCodePoint(cp);
+  } catch {
+    return '';
+  }
 }
 
 /** Collapse whitespace, trim each line, cap consecutive blank lines. */

@@ -198,7 +198,7 @@ export function AuditLogClient({
       ) : filtered.length === 0 ? (
         <EmptyCard>No events match your filters.</EmptyCard>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-border">
+        <div className="overflow-hidden rounded-xl border border-border shadow-[var(--card-shadow)]">
           <div className="grid grid-cols-[minmax(140px,1fr)_minmax(160px,1fr)_3fr_auto] gap-4 border-b border-border bg-card/40 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted">
             <span>When</span>
             <span>Actor</span>
@@ -252,7 +252,7 @@ function Row({
           <div className="text-fg" title={entry.createdAt}>
             {formatAbsolute(entry.createdAt)}
           </div>
-          <div className="text-xs text-muted">{relativeTime(entry.createdAt)}</div>
+          <div className="text-xs text-faint">{relativeTime(entry.createdAt)}</div>
         </div>
 
         <div className="flex min-w-0 items-center gap-2">
@@ -365,7 +365,7 @@ function Pill({
 
 function EmptyCard({ children }: { children: React.ReactNode }): ReactElement {
   return (
-    <div className="rounded-xl border border-dashed border-border bg-card/40 px-6 py-12 text-center text-sm text-muted">
+    <div className="rounded-xl border border-dashed border-border bg-card/40 px-6 py-12 text-center text-sm text-muted shadow-[var(--card-shadow)]">
       {children}
     </div>
   );

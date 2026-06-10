@@ -6,23 +6,33 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  *
  * Given a source's desired item set (docId → content fingerprint), diffs
  * it against what the corpus currently holds for that source and the
- * indexer's owned doc types, and returns which items to (re)index. In
- * full mode — and only on a provably complete fetch — it deletes docs
- * the source no longer has. The FK cascade
- * (docs → doc_chunks → corpus_chunk_embeddings, both `on delete cascade`)
- * cleans chunks + embeddings when a doc row is deleted.
+ * indexer's owned doc types, and returns which items to (re)index. On a
+ * provably complete fetch it deletes docs the source no longer has. The
+ * FK cascade (docs → doc_chunks → corpus_chunk_embeddings, both
+ * `on delete cascade`) cleans chunks + embeddings when a doc row is deleted.
  *
  * Correctness invariants:
  *  - **Type-scoped (R8):** the existing set is read with
  *    `type = ANY(ownedTypes)`, never `source_id` alone. The GitHub repo
  *    and issue indexers share one `source_id`; without the type filter a
  *    file reindex would delete the issue corpus (and vice versa).
- *  - **Prune-gated (R9):** removals are deleted only when
- *    `mode === 'full'` AND `fetchComplete` is true (the desired set is
- *    the complete current source state) AND it isn't a blind
- *    prune-to-zero. A truncated/partial/errored fetch must never prune.
- *  - **Default delta:** an unset mode defaults to `delta` so a missed
- *    caller can only fail toward "doesn't prune," never "wrongly deletes."
+ *  - **Prune-gated (R9):** removals are deleted only when `fetchComplete`
+ *    is true (the desired set is the complete current source state) AND
+ *    it isn't a blind prune-to-zero. A truncated/partial/errored fetch
+ *    must never prune.
+ *  - **Delta-prune-on-complete-fetch:** the prune is gated on
+ *    `fetchComplete`, not on `mode === 'full'`. Content-addressed docIds
+ *    (e.g. the repo indexer's `…{path}@{sha}`) mean an edited file
+ *    arrives as a NEW docId; if delta mode never pruned, the old
+ *    version would accumulate forever (full reindex is not the default
+ *    path). When the fetch is complete the desired set IS the source's
+ *    whole current state, so pruning its absences is exactly as safe in
+ *    delta as in full. Incremental fetchers (e.g. the issues indexer's
+ *    `since` cursor) pass `fetchComplete: false` in delta and are
+ *    therefore still never pruned on a partial view.
+ *  - **Default delta:** an unset mode defaults to `delta`; combined with
+ *    the fetchComplete gate a missed caller can only fail toward
+ *    "doesn't prune," never "wrongly deletes."
  */
 
 export type ReconcileMode = 'delta' | 'full';
@@ -38,6 +48,10 @@ export interface ReconcileInput {
   readonly ownedTypes: readonly string[];
   /** docId → desired item. */
   readonly desired: ReadonlyMap<string, DesiredItem>;
+  /**
+   * Caller intent (kept for telemetry/log parity). The prune is gated on
+   * `fetchComplete`, not on mode — see "Delta-prune-on-complete-fetch".
+   */
   readonly mode?: ReconcileMode;
   /**
    * True only when `desired` is the COMPLETE current source state. False
@@ -67,7 +81,7 @@ export interface ReconcileResult {
     readonly unchanged: number;
     readonly removed: number;
   };
-  /** Whether the prune actually ran (mode=full, complete fetch, not blind-zero). */
+  /** Whether the prune actually ran (complete fetch, not blind-zero). */
   readonly pruned: boolean;
 }
 
@@ -111,7 +125,6 @@ async function readExisting(
 }
 
 export async function reconcile(db: SupabaseClient, input: ReconcileInput): Promise<ReconcileResult> {
-  const mode: ReconcileMode = input.mode ?? 'delta';
   const existing = await readExisting(db, input.sourceId, input.ownedTypes);
 
   const toIndex: { docId: string; kind: ToIndexKind }[] = [];
@@ -132,18 +145,44 @@ export async function reconcile(db: SupabaseClient, input: ReconcileInput): Prom
     if (!input.desired.has(id)) toDelete.push(id);
   }
 
-  // Prune gate (R9): full mode, complete fetch, and not a blind
-  // prune-to-zero (an errored fetch returning nothing must not wipe the
-  // corpus unless the emptiness is explicitly confirmed).
+  // Prune gate (R9): complete fetch, and not a blind prune-to-zero (an
+  // errored fetch returning nothing must not wipe the corpus unless the
+  // emptiness is explicitly confirmed). Deliberately NOT gated on
+  // mode==='full' — see "Delta-prune-on-complete-fetch" above: a complete
+  // desired set makes pruning safe in delta too, and content-addressed
+  // docIds rot (stale file versions accumulate) if delta never prunes.
   const blindZero = input.desired.size === 0 && existing.size > 0 && input.confirmedEmpty !== true;
-  const prune = mode === 'full' && input.fetchComplete && !blindZero;
+  // Sanity backstop: in DELTA mode, refuse a prune that would wipe most of the
+  // corpus. A complete fetch SHOULD prune stale docs, but a fetch that silently
+  // lost the bulk of its entities (a connector bug the throw-on-partial contract
+  // doesn't catch) would look like a giant legitimate deletion. A genuine mass
+  // removal still prunes via an explicit `full` reindex. `confirmedEmpty` (the
+  // source really is empty) bypasses the backstop.
+  const PRUNE_RUNAWAY_MIN = 20;
+  const PRUNE_RUNAWAY_FRACTION = 0.5;
+  const runawayPrune =
+    input.mode === 'delta' &&
+    input.confirmedEmpty !== true &&
+    existing.size > 0 &&
+    toDelete.length >= PRUNE_RUNAWAY_MIN &&
+    toDelete.length / existing.size > PRUNE_RUNAWAY_FRACTION;
+  const prune = input.fetchComplete && !blindZero && !runawayPrune;
+  if (runawayPrune) {
+    console.error(
+      `[corpus-reconcile] SKIPPED runaway delta prune for source ${input.sourceId}: would delete ${String(toDelete.length)}/${String(existing.size)} docs — run a full reindex to prune this many`,
+    );
+  }
 
   let removed = 0;
   if (prune && toDelete.length > 0) {
     const batchSize = input.deleteBatchSize ?? DEFAULT_DELETE_BATCH;
     for (let i = 0; i < toDelete.length; i += batchSize) {
       const batch = toDelete.slice(i, i + batchSize);
-      const { error } = await db.from('docs').delete().in('id', batch);
+      // Scope the delete to this source (defense-in-depth): doc ids are global
+      // text PKs, so without the source filter a future caller / id collision
+      // could delete another source's — or another org's — row. The ids come
+      // from a source_id-scoped read, so this only ever NARROWS to the same set.
+      const { error } = await db.from('docs').delete().eq('source_id', input.sourceId).in('id', batch);
       if (error !== null) {
         // Throw so Inngest retries rather than leaving the corpus
         // half-reconciled with stale rows.
@@ -174,8 +213,11 @@ export async function reconcile(db: SupabaseClient, input: ReconcileInput): Prom
  * an embed failure for a changed item — otherwise the doc is left
  * chunkless with a stale hash and is misread as "unchanged" forever.
  */
-export async function clearDocChunks(db: SupabaseClient, docId: string): Promise<void> {
-  const { error } = await db.from('doc_chunks').delete().eq('doc_id', docId);
+export async function clearDocChunks(db: SupabaseClient, docId: string, orgId: string): Promise<void> {
+  // org-scoped (defense-in-depth): doc ids are global text PKs, so scope the
+  // delete to the owning org so a collided id can never clear another org's
+  // chunks. forbid_org_move only guards UPDATE-of-org_id, not DELETE.
+  const { error } = await db.from('doc_chunks').delete().eq('org_id', orgId).eq('doc_id', docId);
   if (error !== null) {
     throw new Error(`corpus-reconcile: clearDocChunks failed for ${docId}: ${error.message}`);
   }
@@ -247,7 +289,7 @@ export async function writeReconciledDoc(db: SupabaseClient, w: ReconciledDocWri
     throw new Error(`writeReconciledDoc: chunk/embedding length mismatch for ${w.docId}`);
   }
   if (w.kind === 'changed') {
-    await clearDocChunks(db, w.docId);
+    await clearDocChunks(db, w.docId, w.doc.orgId);
   }
 
   const { error: docErr } = await db.from('docs').upsert({
@@ -298,6 +340,7 @@ export async function writeReconciledDoc(db: SupabaseClient, w: ReconciledDocWri
   const { error: hashErr } = await db
     .from('docs')
     .update({ content_hash: w.hash })
+    .eq('org_id', w.doc.orgId) // org-scoped: never stamp a collided id's foreign row
     .eq('id', w.docId);
   if (hashErr !== null) {
     throw new Error(`writeReconciledDoc: content_hash stamp failed for ${w.docId}: ${hashErr.message}`);

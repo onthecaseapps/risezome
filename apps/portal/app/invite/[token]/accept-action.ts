@@ -45,20 +45,34 @@ export async function acceptInviteAction(formData: FormData): Promise<void> {
   const role = invite.role as string;
 
   // No-op when already a member: do not clobber the existing role/grant.
-  const { data: existing } = await service
+  // A read FAILURE is retryable and must not fall through to the insert path —
+  // treating it as "not a member" could clobber an existing member's role.
+  const { data: existing, error: memberReadErr } = await service
     .from('org_members')
     .select('user_id')
     .eq('org_id', orgId)
     .eq('user_id', user.id)
     .maybeSingle();
+  if (memberReadErr !== null) {
+    console.error('[accept-invite] membership read failed:', memberReadErr.message);
+    redirect(`/invite/${token}?error=membership_check_failed`);
+  }
 
   if (existing === null) {
-    const { error: insertErr } = await service.from('org_members').insert({
-      org_id: orgId,
-      user_id: user.id,
-      role,
-      can_invite_bot: invite.can_invite_bot as boolean,
-    });
+    // Upsert with ignoreDuplicates so two rapid submits are idempotent: both
+    // pass the existing-membership check above, and the loser's PK conflict
+    // must not surface 'join_failed' to a user who IS now a member (it also
+    // skipped the token delete below). ignoreDuplicates leaves the winner's
+    // role/grant untouched.
+    const { error: insertErr } = await service.from('org_members').upsert(
+      {
+        org_id: orgId,
+        user_id: user.id,
+        role,
+        can_invite_bot: invite.can_invite_bot as boolean,
+      },
+      { onConflict: 'org_id,user_id', ignoreDuplicates: true },
+    );
     if (insertErr !== null) redirect(`/invite/${token}?error=join_failed`);
 
     // Pre-assign the new member to the invite's team, if it carries one. Defensive:
