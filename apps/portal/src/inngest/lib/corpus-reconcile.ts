@@ -206,6 +206,58 @@ export async function reconcile(db: SupabaseClient, input: ReconcileInput): Prom
 }
 
 /**
+ * Transient-failure shapes from the Supabase REST path: Cloudflare/proxy
+ * HTML error pages (PostgREST client surfaces the raw body when JSON
+ * parsing fails), undici/network failures, and gateway/timeout statuses.
+ * Genuine PostgREST errors (constraint violations, RLS denials, bad
+ * payloads) deliberately do NOT match — retrying those just repeats them.
+ */
+const TRANSIENT_DB_ERROR_RE =
+  /<!DOCTYPE|<html|fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|terminat\w+ unexpectedly|Bad Gateway|Service Unavailable|Gateway Time-?out|statement timeout|too many connections/i;
+
+/** Backoff between write retries. Long enough to ride out a brief edge
+ *  blip; Inngest's function-level retries remain the coarse outer layer. */
+const WRITE_RETRY_DELAYS_MS: readonly number[] = [1000, 5000, 15000];
+
+export interface WriteRetryOptions {
+  /** Override the retry backoff (tests). */
+  readonly retryDelaysMs?: readonly number[];
+}
+
+/**
+ * Run one Supabase write, retrying transient transport failures with
+ * backoff. One flaky Cloudflare burst previously killed a whole index run
+ * (the write threw, the step exhausted Inngest's 3 function retries, and
+ * onFailure marked the source errored mid-run).
+ */
+async function dbWriteWithRetry(
+  label: string,
+  op: () => PromiseLike<{ error: { message: string } | null }>,
+  opts?: WriteRetryOptions,
+): Promise<void> {
+  const delays = opts?.retryDelaysMs ?? WRITE_RETRY_DELAYS_MS;
+  for (let attempt = 0; ; attempt += 1) {
+    let message: string;
+    try {
+      const { error } = await op();
+      if (error === null) return;
+      message = error.message;
+    } catch (err) {
+      // supabase-js usually returns {error}, but transport-level failures
+      // (undici fetch errors) throw — treat both through the same detector.
+      message = err instanceof Error ? err.message : String(err);
+    }
+    if (!TRANSIENT_DB_ERROR_RE.test(message) || attempt >= delays.length) {
+      throw new Error(`${label}: ${message}`);
+    }
+    console.warn(
+      `[corpus-reconcile] transient DB failure (attempt ${String(attempt + 1)}/${String(delays.length + 1)}), retrying ${label}`,
+    );
+    await new Promise((r) => setTimeout(r, delays[attempt]));
+  }
+}
+
+/**
  * Clear a doc's chunks (and, via cascade, their embeddings) before a
  * changed-item re-index, so a shrunk item leaves no trailing-position
  * orphans. Callers must re-insert chunks + write `content_hash` only
@@ -213,14 +265,20 @@ export async function reconcile(db: SupabaseClient, input: ReconcileInput): Prom
  * an embed failure for a changed item — otherwise the doc is left
  * chunkless with a stale hash and is misread as "unchanged" forever.
  */
-export async function clearDocChunks(db: SupabaseClient, docId: string, orgId: string): Promise<void> {
+export async function clearDocChunks(
+  db: SupabaseClient,
+  docId: string,
+  orgId: string,
+  opts?: WriteRetryOptions,
+): Promise<void> {
   // org-scoped (defense-in-depth): doc ids are global text PKs, so scope the
   // delete to the owning org so a collided id can never clear another org's
   // chunks. forbid_org_move only guards UPDATE-of-org_id, not DELETE.
-  const { error } = await db.from('doc_chunks').delete().eq('org_id', orgId).eq('doc_id', docId);
-  if (error !== null) {
-    throw new Error(`corpus-reconcile: clearDocChunks failed for ${docId}: ${error.message}`);
-  }
+  await dbWriteWithRetry(
+    `corpus-reconcile: clearDocChunks failed for ${docId}`,
+    () => db.from('doc_chunks').delete().eq('org_id', orgId).eq('doc_id', docId),
+    opts,
+  );
 }
 
 /**
@@ -284,29 +342,38 @@ export interface ReconciledDocWrite {
  * Throws on any DB error so Inngest retries rather than committing a
  * half-written doc.
  */
-export async function writeReconciledDoc(db: SupabaseClient, w: ReconciledDocWrite): Promise<void> {
+export async function writeReconciledDoc(
+  db: SupabaseClient,
+  w: ReconciledDocWrite,
+  opts?: WriteRetryOptions,
+): Promise<void> {
   if (w.chunks.length !== w.embeddings.length) {
     throw new Error(`writeReconciledDoc: chunk/embedding length mismatch for ${w.docId}`);
   }
   if (w.kind === 'changed') {
-    await clearDocChunks(db, w.docId, w.doc.orgId);
+    await clearDocChunks(db, w.docId, w.doc.orgId, opts);
   }
 
-  const { error: docErr } = await db.from('docs').upsert({
-    id: w.docId,
-    org_id: w.doc.orgId,
-    source_id: w.doc.sourceId,
-    source: w.doc.source,
-    type: w.doc.type,
-    title: w.doc.title,
-    url: w.doc.url,
-    provenance: w.doc.provenance,
-    updated_at: w.doc.updatedAt,
-    content_hash: null,
-  });
-  if (docErr !== null) {
-    throw new Error(`writeReconciledDoc: docs upsert failed for ${w.docId}: ${docErr.message}`);
-  }
+  // Each write retries transient transport failures independently. That is
+  // safe under the F5 ordering: every step is idempotent (upserts / keyed
+  // update) and content_hash is stamped only after all of them succeed.
+  await dbWriteWithRetry(
+    `writeReconciledDoc: docs upsert failed for ${w.docId}`,
+    () =>
+      db.from('docs').upsert({
+        id: w.docId,
+        org_id: w.doc.orgId,
+        source_id: w.doc.sourceId,
+        source: w.doc.source,
+        type: w.doc.type,
+        title: w.doc.title,
+        url: w.doc.url,
+        provenance: w.doc.provenance,
+        updated_at: w.doc.updatedAt,
+        content_hash: null,
+      }),
+    opts,
+  );
 
   const chunkRows = w.chunks.map((c) => ({
     chunk_id: c.chunkId,
@@ -319,10 +386,11 @@ export async function writeReconciledDoc(db: SupabaseClient, w: ReconciledDocWri
     is_summary: c.isSummary ?? false,
     position: c.position,
   }));
-  const { error: chunkErr } = await db.from('doc_chunks').upsert(chunkRows, { onConflict: 'chunk_id' });
-  if (chunkErr !== null) {
-    throw new Error(`writeReconciledDoc: doc_chunks upsert failed for ${w.docId}: ${chunkErr.message}`);
-  }
+  await dbWriteWithRetry(
+    `writeReconciledDoc: doc_chunks upsert failed for ${w.docId}`,
+    () => db.from('doc_chunks').upsert(chunkRows, { onConflict: 'chunk_id' }),
+    opts,
+  );
 
   const embedRows = w.chunks.map((c, i) => ({
     chunk_id: c.chunkId,
@@ -331,19 +399,20 @@ export async function writeReconciledDoc(db: SupabaseClient, w: ReconciledDocWri
     domain: c.domain, // domain-partitioned dense search
     embedding: w.embeddings[i]!,
   }));
-  const { error: embErr } = await db
-    .from('corpus_chunk_embeddings')
-    .upsert(embedRows, { onConflict: 'chunk_id' });
-  if (embErr !== null) {
-    throw new Error(`writeReconciledDoc: embeddings upsert failed for ${w.docId}: ${embErr.message}`);
-  }
+  await dbWriteWithRetry(
+    `writeReconciledDoc: embeddings upsert failed for ${w.docId}`,
+    () => db.from('corpus_chunk_embeddings').upsert(embedRows, { onConflict: 'chunk_id' }),
+    opts,
+  );
 
-  const { error: hashErr } = await db
-    .from('docs')
-    .update({ content_hash: w.hash })
-    .eq('org_id', w.doc.orgId) // org-scoped: never stamp a collided id's foreign row
-    .eq('id', w.docId);
-  if (hashErr !== null) {
-    throw new Error(`writeReconciledDoc: content_hash stamp failed for ${w.docId}: ${hashErr.message}`);
-  }
+  await dbWriteWithRetry(
+    `writeReconciledDoc: content_hash stamp failed for ${w.docId}`,
+    () =>
+      db
+        .from('docs')
+        .update({ content_hash: w.hash })
+        .eq('org_id', w.doc.orgId) // org-scoped: never stamp a collided id's foreign row
+        .eq('id', w.docId),
+    opts,
+  );
 }
