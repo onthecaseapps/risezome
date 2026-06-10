@@ -48,7 +48,9 @@ derived in-process) would not change that posture.
   minted on demand, so no long-lived GitHub token is stored.
 - **Key rotation & revocation** are per-org: KMS rotates the wrapping key, a
   per-org re-encryption job rotates data keys without forcing re-auth, and
-  disabling an org's CMK revokes access to that org's data instantly. See
+  disabling an org's CMK revokes access to that org's data immediately at the
+  KMS layer (warm processes may serve cached data keys for up to the 15-minute
+  decrypt-cache `maxAge` — see the grace-window note in the runbook). See
   [`docs/runbooks/encryption-key-rotation.md`](docs/runbooks/encryption-key-rotation.md).
   The one-time migration from the legacy global key is documented in
   [`docs/runbooks/encryption-kms-migration.md`](docs/runbooks/encryption-kms-migration.md).
