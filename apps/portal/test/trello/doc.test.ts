@@ -12,6 +12,7 @@ function card(overrides: Partial<TrelloCard> = {}): TrelloCard {
     members: [],
     url: 'https://trello.com/c/c1',
     dateLastActivity: null,
+    archived: false,
     ...overrides,
   };
 }

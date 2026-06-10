@@ -39,6 +39,9 @@ export interface TrelloCard {
   readonly members: readonly string[];
   readonly url: string;
   readonly dateLastActivity: string | null;
+  /** True when the card is closed (archived) or sits on an archived list.
+   *  Always false unless fetched with `includeArchived`. */
+  readonly archived: boolean;
 }
 
 export interface TrelloComment {
@@ -144,11 +147,28 @@ export async function listBoards(opts: TrelloClientOptions): Promise<TrelloBoard
   }));
 }
 
+export interface FetchBoardCardsOptions {
+  /**
+   * Include completed/archived cards. When false (default) closed cards and
+   * cards on archived (closed) lists are dropped at fetch — the documented
+   * `filter` gotcha. When true, ALL cards are fetched and each carries an
+   * `archived` flag so the caller (corpus policy) can decide. Set by a
+   * per-source Trello override ("Index completed cards").
+   */
+  readonly includeArchived?: boolean;
+}
+
 /**
- * Non-archived cards on a board, with their list name resolved. Excludes closed
- * cards and cards on archived (closed) lists — the documented `filter` gotcha.
+ * Cards on a board, with their list name resolved. By default excludes closed
+ * cards and cards on archived (closed) lists; `includeArchived` fetches them
+ * too, flagged via `archived`.
  */
-export async function fetchBoardCards(boardId: string, opts: TrelloClientOptions): Promise<TrelloCard[]> {
+export async function fetchBoardCards(
+  boardId: string,
+  opts: TrelloClientOptions,
+  cardOpts: FetchBoardCardsOptions = {},
+): Promise<TrelloCard[]> {
+  const includeArchived = cardOpts.includeArchived === true;
   const [lists, boardMembers] = await Promise.all([
     trelloGet<Array<{ id: string; name: string; closed: boolean }>>(
       `/boards/${boardId}/lists`,
@@ -177,12 +197,14 @@ export async function fetchBoardCards(boardId: string, opts: TrelloClientOptions
     closed: boolean;
   }>(
     `/boards/${boardId}/cards`,
-    { filter: 'visible', fields: 'name,desc,idList,idMembers,url,shortUrl,dateLastActivity,closed' },
+    // `all` returns closed cards too; `visible` omits them. Lists are always
+    // fetched with filter=all so we can still tag (or drop) archived-list cards.
+    { filter: includeArchived ? 'all' : 'visible', fields: 'name,desc,idList,idMembers,url,shortUrl,dateLastActivity,closed' },
     opts,
   );
 
   return rawCards
-    .filter((c) => !c.closed && !archivedListIds.has(c.idList))
+    .filter((c) => includeArchived || (!c.closed && !archivedListIds.has(c.idList)))
     .map((c) => ({
       id: c.id,
       name: c.name,
@@ -192,6 +214,7 @@ export async function fetchBoardCards(boardId: string, opts: TrelloClientOptions
       members: (c.idMembers ?? []).map((id) => memberById.get(id) ?? id),
       url: c.shortUrl ?? c.url,
       dateLastActivity: c.dateLastActivity ?? null,
+      archived: c.closed || archivedListIds.has(c.idList),
     }));
 }
 

@@ -13,6 +13,7 @@ import {
 import { buildCardDocText, trelloCardDocId } from '../../../app/_lib/trello-doc';
 import { runConnectorIndex, type PreparedDoc } from '../lib/connector-index';
 import { loadEffectivePolicy } from '../lib/corpus-policy-store';
+import { trelloIncludeArchived } from '../lib/corpus-policy';
 import { optionalContextGenerator, optionalDocSummarizer } from '../lib/contextualizer';
 
 const RECONNECT_MSG = 'Trello access was revoked. Reconnect Trello to re-index.';
@@ -151,7 +152,7 @@ export const indexTrelloFn = inngest.createFunction(
       contextGenerator: optionalContextGenerator(),
       docSummarizer: optionalDocSummarizer(),
       isAuthError: (err) => err instanceof TrelloAuthError,
-      fetchEntities: () => fetchBoardCards(ctx.boardId, trello),
+      fetchEntities: () => fetchBoardCards(ctx.boardId, trello, { includeArchived: trelloIncludeArchived(corpusPolicy) }),
       prepare: async (card): Promise<PreparedDoc | null> => {
         const comments = await fetchCardComments(card.id, trello);
         const text = buildCardDocText(card, comments);

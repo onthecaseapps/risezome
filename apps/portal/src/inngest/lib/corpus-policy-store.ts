@@ -8,6 +8,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   resolveEffectivePolicy,
+  type ConnectorOptions,
   type ConnectorRule,
   type CorpusPolicy,
   type EffectiveCorpusPolicy,
@@ -37,6 +38,15 @@ export function coerceCorpusPolicy(value: unknown): CorpusPolicy | null {
   // when it's an array, else omit.
   if (Array.isArray(v['connectorRules'])) {
     out.connectorRules = v['connectorRules'] as readonly ConnectorRule[];
+  }
+  // connectorOptions: only the typed Trello toggle is read.
+  const opts = v['connectorOptions'];
+  if (opts !== null && typeof opts === 'object') {
+    const trello = (opts as Record<string, unknown>)['trello'];
+    if (trello !== null && typeof trello === 'object') {
+      const inc = (trello as Record<string, unknown>)['includeArchived'];
+      if (typeof inc === 'boolean') out.connectorOptions = { trello: { includeArchived: inc } } as ConnectorOptions;
+    }
   }
   return out as CorpusPolicy;
 }

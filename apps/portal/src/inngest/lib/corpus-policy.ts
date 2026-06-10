@@ -29,6 +29,12 @@ export interface ConnectorRule {
   readonly value: readonly string[] | number;
 }
 
+/** Fetch-time connector options that aren't post-fetch filters. Today: whether
+ *  the Trello indexer fetches completed/archived cards at all. */
+export interface ConnectorOptions {
+  readonly trello?: { readonly includeArchived?: boolean };
+}
+
 /** The stored policy shape (org_corpus_policy row, or sources.corpus_policy). */
 export interface CorpusPolicy {
   readonly preset: PresetKey;
@@ -36,6 +42,7 @@ export interface CorpusPolicy {
   /** Re-include patterns (gitignore negations); `!` prefix optional. */
   readonly customIncludes?: readonly string[];
   readonly connectorRules?: readonly ConnectorRule[];
+  readonly connectorOptions?: ConnectorOptions;
 }
 
 /** The resolved, ready-to-apply policy. */
@@ -43,6 +50,7 @@ export interface EffectiveCorpusPolicy {
   readonly pathExcludes: readonly string[];
   readonly pathIncludes: readonly string[];
   readonly connectorRules: readonly ConnectorRule[];
+  readonly connectorOptions: ConnectorOptions;
 }
 
 /** Normalized connector attributes the matchers read; each indexer maps its
@@ -92,16 +100,19 @@ const PRESETS: Record<PresetKey, EffectiveCorpusPolicy> = {
     pathExcludes: RECOMMENDED_PATH_EXCLUDES,
     pathIncludes: [],
     connectorRules: RECOMMENDED_CONNECTOR_RULES,
+    connectorOptions: {},
   },
   index_everything: {
     pathExcludes: [],
     pathIncludes: [],
     connectorRules: [],
+    connectorOptions: { trello: { includeArchived: true } },
   },
   code_only: {
     pathExcludes: [...RECOMMENDED_PATH_EXCLUDES, ...DOC_PATH_EXCLUDES],
     pathIncludes: [],
     connectorRules: RECOMMENDED_CONNECTOR_RULES,
+    connectorOptions: {},
   },
 };
 
@@ -141,7 +152,28 @@ export function resolveEffectivePolicy(
       ...(orgDefault?.connectorRules ?? []),
       ...(override?.connectorRules ?? []),
     ],
+    // Options merge by key with override winning, then org, then preset base.
+    connectorOptions: mergeConnectorOptions(
+      base.connectorOptions,
+      orgDefault?.connectorOptions,
+      override?.connectorOptions,
+    ),
   };
+}
+
+function mergeConnectorOptions(...layers: Array<ConnectorOptions | undefined>): ConnectorOptions {
+  const out: { trello?: { includeArchived?: boolean } } = {};
+  for (const layer of layers) {
+    if (layer?.trello?.includeArchived !== undefined) {
+      out.trello = { includeArchived: layer.trello.includeArchived };
+    }
+  }
+  return out;
+}
+
+/** Whether the Trello indexer should fetch completed/archived cards. */
+export function trelloIncludeArchived(policy: EffectiveCorpusPolicy): boolean {
+  return policy.connectorOptions.trello?.includeArchived === true;
 }
 
 // ── Matchers ────────────────────────────────────────────────────────────────

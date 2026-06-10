@@ -3,6 +3,7 @@ import {
   resolveEffectivePolicy,
   makePathFilter,
   makeEntityFilter,
+  trelloIncludeArchived,
   PRESET_KEYS,
   type CorpusPolicy,
   type EntityAttrs,
@@ -122,6 +123,27 @@ describe('makeEntityFilter', () => {
     expect(keepC({ updatedAt: '2020-01-01T00:00:00Z' })).toBe(false); // >365d old
     expect(keepC({ updatedAt: '2026-06-01T00:00:00Z' })).toBe(true); // recent
     expect(keepC({ updatedAt: null })).toBe(true); // unknown age → keep
+  });
+});
+
+describe('connectorOptions / trelloIncludeArchived', () => {
+  it('recommended does NOT index archived Trello cards; index_everything does', () => {
+    expect(trelloIncludeArchived(resolveEffectivePolicy(null, null))).toBe(false);
+    expect(trelloIncludeArchived(resolveEffectivePolicy(null, { preset: 'index_everything' }))).toBe(true);
+  });
+
+  it('a per-source override can opt into archived cards on top of recommended', () => {
+    const eff = resolveEffectivePolicy(null, {
+      preset: 'recommended',
+      connectorOptions: { trello: { includeArchived: true } },
+    });
+    expect(trelloIncludeArchived(eff)).toBe(true);
+  });
+
+  it('override wins over org default for the toggle', () => {
+    const org: CorpusPolicy = { preset: 'recommended', connectorOptions: { trello: { includeArchived: true } } };
+    const override: CorpusPolicy = { preset: 'recommended', connectorOptions: { trello: { includeArchived: false } } };
+    expect(trelloIncludeArchived(resolveEffectivePolicy(org, override))).toBe(false);
   });
 });
 
