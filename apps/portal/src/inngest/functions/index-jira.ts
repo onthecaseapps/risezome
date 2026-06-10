@@ -12,6 +12,7 @@ import {
 } from '../../../app/_lib/atlassian-client';
 import { buildIssueDocText, jiraIssueDocId } from '../../../app/_lib/atlassian-doc';
 import { runConnectorIndex, type PreparedDoc } from '../lib/connector-index';
+import { loadEffectivePolicy } from '../lib/corpus-policy-store';
 import { optionalContextGenerator, optionalDocSummarizer } from '../lib/contextualizer';
 
 const RECONNECT_MSG = 'Atlassian access was revoked or expired. Reconnect Atlassian to re-index.';
@@ -72,7 +73,7 @@ export const indexJiraFn = inngest.createFunction(
       const service = createServiceRoleClient();
       const { data: source, error } = await service
         .from('sources')
-        .select('id, kind, external_id, status')
+        .select('id, kind, external_id, status, corpus_policy')
         .eq('id', sourceId)
         .eq('org_id', orgId)
         .single();
@@ -88,7 +89,7 @@ export const indexJiraFn = inngest.createFunction(
         .eq('id', sourceId)
         .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
         .neq('status', 'removed'); // removal is sticky (deselect↔index race)
-      return { projectKey: source.external_id as string };
+      return { projectKey: source.external_id as string, corpusPolicy: source.corpus_policy as unknown };
     });
     if ('removed' in ctx) {
       return { sourceId, issues: 0, chunks: 0, skipped: 'removed' };
@@ -113,12 +114,16 @@ export const indexJiraFn = inngest.createFunction(
     const cloudId = token.cloudId;
     const siteUrl = token.siteUrl ?? '';
 
+    const corpusPolicy = await loadEffectivePolicy(createServiceRoleClient(), orgId, ctx.corpusPolicy);
+
     const result = await runConnectorIndex<JiraIssue>({
       step,
       orgId,
       sourceId,
       mode,
       source: 'jira',
+      corpusPolicy,
+      entityAttrs: (issue) => ({ status: issue.status ?? null, issueType: issue.issueType ?? null, updatedAt: issue.updated ?? null }),
       docType: 'issue',
       provenance: 'trusted',
       reconnectMessage: RECONNECT_MSG,

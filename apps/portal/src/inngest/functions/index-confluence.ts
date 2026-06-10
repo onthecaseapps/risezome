@@ -7,6 +7,7 @@ import { getValidAtlassianToken } from '../../../app/_lib/atlassian-token';
 import { listConfluencePages, type AtlassianContext, type ConfluencePage } from '../../../app/_lib/atlassian-client';
 import { buildPageDocText, confluencePageDocId } from '../../../app/_lib/atlassian-doc';
 import { runConnectorIndex, type PreparedDoc } from '../lib/connector-index';
+import { loadEffectivePolicy } from '../lib/corpus-policy-store';
 import { optionalContextGenerator, optionalDocSummarizer } from '../lib/contextualizer';
 
 const RECONNECT_MSG = 'Atlassian access was revoked or expired. Reconnect Atlassian to re-index.';
@@ -66,7 +67,7 @@ export const indexConfluenceFn = inngest.createFunction(
       const service = createServiceRoleClient();
       const { data: source, error } = await service
         .from('sources')
-        .select('id, kind, external_id, status')
+        .select('id, kind, external_id, status, corpus_policy')
         .eq('id', sourceId)
         .eq('org_id', orgId)
         .single();
@@ -82,7 +83,7 @@ export const indexConfluenceFn = inngest.createFunction(
         .eq('id', sourceId)
         .eq('org_id', orgId) // defense-in-depth: service-role bypasses RLS, scope by org explicitly
         .neq('status', 'removed'); // removal is sticky (deselect↔index race)
-      return { spaceId: source.external_id as string };
+      return { spaceId: source.external_id as string, corpusPolicy: source.corpus_policy as unknown };
     });
     if ('removed' in ctx) {
       return { sourceId, pages: 0, chunks: 0, skipped: 'removed' };
@@ -107,12 +108,16 @@ export const indexConfluenceFn = inngest.createFunction(
     const cloudId = token.cloudId;
     const siteUrl = token.siteUrl ?? '';
 
+    const corpusPolicy = await loadEffectivePolicy(createServiceRoleClient(), orgId, ctx.corpusPolicy);
+
     const result = await runConnectorIndex<ConfluencePage>({
       step,
       orgId,
       sourceId,
       mode,
       source: 'confluence',
+      corpusPolicy,
+      entityAttrs: (page) => ({ updatedAt: page.updatedAt ?? null }),
       docType: 'page',
       provenance: 'trusted',
       reconnectMessage: RECONNECT_MSG,

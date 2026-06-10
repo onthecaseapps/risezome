@@ -12,6 +12,7 @@ import {
 } from '../../../app/_lib/trello-client';
 import { buildCardDocText, trelloCardDocId } from '../../../app/_lib/trello-doc';
 import { runConnectorIndex, type PreparedDoc } from '../lib/connector-index';
+import { loadEffectivePolicy } from '../lib/corpus-policy-store';
 import { optionalContextGenerator, optionalDocSummarizer } from '../lib/contextualizer';
 
 const RECONNECT_MSG = 'Trello access was revoked. Reconnect Trello to re-index.';
@@ -75,7 +76,7 @@ export const indexTrelloFn = inngest.createFunction(
       const service = createServiceRoleClient();
       const { data: source, error } = await service
         .from('sources')
-        .select('id, org_id, kind, connection_id, external_id, display_name, status')
+        .select('id, org_id, kind, connection_id, external_id, display_name, status, corpus_policy')
         .eq('id', sourceId)
         .eq('org_id', orgId)
         .single();
@@ -108,6 +109,7 @@ export const indexTrelloFn = inngest.createFunction(
       return {
         boardId: source.external_id as string,
         connectionId: source.connection_id as string,
+        corpusPolicy: source.corpus_policy as unknown,
       };
     });
     if ('removed' in ctx) {
@@ -133,12 +135,16 @@ export const indexTrelloFn = inngest.createFunction(
 
     const trello: TrelloClientOptions = { token: trelloToken, apiKey: requireTrelloApiKey() };
 
+    const corpusPolicy = await loadEffectivePolicy(createServiceRoleClient(), orgId, ctx.corpusPolicy);
+
     const result = await runConnectorIndex<TrelloCard>({
       step,
       orgId,
       sourceId,
       mode,
       source: 'trello',
+      corpusPolicy,
+      entityAttrs: (card) => ({ list: card.listName ?? null, updatedAt: card.dateLastActivity ?? null }),
       docType: 'card',
       provenance: 'trusted',
       reconnectMessage: RECONNECT_MSG,

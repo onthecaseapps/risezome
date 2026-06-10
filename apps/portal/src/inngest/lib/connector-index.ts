@@ -18,6 +18,12 @@ import {
   type ToIndexKind,
 } from './corpus-reconcile';
 import { pgCorpusWriter } from './corpus-pg';
+import {
+  makeEntityFilter,
+  type ConnectorKind,
+  type EffectiveCorpusPolicy,
+  type EntityAttrs,
+} from './corpus-policy';
 
 /**
  * Shared reconcile orchestrator for the full-fetch connectors (Trello,
@@ -96,6 +102,13 @@ export interface ConnectorIndexConfig<E> {
   /** Corpus write client. Defaults to the direct-Postgres writer (bypasses
    *  the REST/Cloudflare WAF). Tests inject an in-memory fake. */
   readonly corpusWriter?: CorpusWriteClient | undefined;
+  /** Resolved corpus policy for this source. When set together with
+   *  `entityAttrs`, entities the policy excludes are dropped before prepare
+   *  (and pruned by reconcile). Omitted ⇒ no entity filtering. */
+  readonly corpusPolicy?: EffectiveCorpusPolicy | undefined;
+  /** Maps one entity to the normalized attributes the policy matcher reads
+   *  (status/list/updatedAt). Required for entity filtering. */
+  readonly entityAttrs?: ((entity: E) => EntityAttrs) | undefined;
 }
 
 export interface ConnectorIndexResult {
@@ -112,9 +125,9 @@ export async function runConnectorIndex<E>(
   const indexMode: IndexMode = config.mode === 'full' ? 'full' : 'delta';
 
   // ── Fetch the full entity set (auth-revoked → mark errored, no retry) ──
-  let entities: readonly E[];
+  let fetched: readonly E[];
   try {
-    entities = (await step.run('fetch-entities', () => config.fetchEntities() as Promise<unknown>)) as readonly E[];
+    fetched = (await step.run('fetch-entities', () => config.fetchEntities() as Promise<unknown>)) as readonly E[];
   } catch (err) {
     if (config.isAuthError(err)) {
       await markErrored(step, orgId, sourceId, config.reconnectMessage);
@@ -123,10 +136,16 @@ export async function runConnectorIndex<E>(
     throw err;
   }
 
+  // Apply the corpus policy's connector rules. Excluded entities never enter
+  // the desired set, so reconcile prunes any previously-indexed doc for them
+  // (R5). `excludedByPolicy` drives the UI's "K excluded by policy".
+  const entities = filterEntitiesByPolicy(fetched, source, config.corpusPolicy, config.entityAttrs);
+  const excludedByPolicy = fetched.length - entities.length;
+
   await step.run('set-total', async () => {
     await createServiceRoleClient()
       .from('sources')
-      .update({ total_files: entities.length })
+      .update({ total_files: entities.length, excluded_count: excludedByPolicy })
       .eq('id', sourceId)
       .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
   });
@@ -316,6 +335,26 @@ export async function runConnectorIndex<E>(
 
 function totalChunks(prepared: readonly PreparedDoc[]): number {
   return prepared.reduce((sum, p) => sum + p.chunks.length, 0);
+}
+
+const CONNECTOR_KINDS: ReadonlySet<string> = new Set(['jira', 'trello', 'confluence']);
+
+/**
+ * Drop entities the corpus policy excludes. No-op unless both a policy and an
+ * attribute extractor are supplied and `source` is a known connector kind.
+ * Exported for testing.
+ */
+export function filterEntitiesByPolicy<E>(
+  fetched: readonly E[],
+  source: string,
+  policy: EffectiveCorpusPolicy | undefined,
+  entityAttrs: ((entity: E) => EntityAttrs) | undefined,
+): E[] {
+  if (policy === undefined || entityAttrs === undefined || !CONNECTOR_KINDS.has(source)) {
+    return [...fetched];
+  }
+  const keep = makeEntityFilter(policy, source as ConnectorKind);
+  return fetched.filter((e) => keep(entityAttrs(e)));
 }
 
 async function markErrored(
