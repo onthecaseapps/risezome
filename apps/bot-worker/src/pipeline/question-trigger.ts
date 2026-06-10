@@ -61,7 +61,7 @@ export async function embedQuestion(
   logger: { warn: (obj: object, msg?: string) => void },
 ): Promise<number[] | undefined> {
   try {
-    const result = await embedder.embed({ items: [{ text, domain: 'text' }] });
+    const result = await embedder.embed({ items: [{ text, domain: 'text' }], purpose: 'query' });
     const vec = result.vectors[0]?.vector;
     return vec === undefined ? undefined : Array.from(vec);
   } catch (err) {

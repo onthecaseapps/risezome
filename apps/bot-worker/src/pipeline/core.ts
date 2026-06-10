@@ -24,7 +24,7 @@ import { classifyRelevanceHeuristic } from '@risezome/engine/relevance';
 import type { RelevanceResult } from '@risezome/engine/relevance';
 import { shouldRecordMiss } from '@risezome/engine/gaps';
 import { augmentQuery } from '@risezome/engine/query-expand';
-import { shouldExpandOnMiss } from '@risezome/engine/query-route';
+import { shouldExpandOnMiss, classifyQueryComplexity } from '@risezome/engine/query-route';
 import { isToolShaped, ClassifierProviderError } from '@risezome/engine/router';
 import {
   type Skill,
@@ -68,11 +68,16 @@ const RELEVANCE_TIMEOUT_MS = (() => {
 // fired and clear skill-intent questions silently fell back to RAG
 // (`classifier_timeout`). Give the router its own, generous budget.
 const ROUTER_TIMEOUT_MS = 10000;
-// 300, not 150: the prompt mandates [N: "4-15 word verbatim quote"] markup on
-// every factual sentence — a 3-sentence answer with quotes easily exceeds 150
-// output tokens, and a max_tokens truncation chops the trailing citation,
-// which then fails verification and RETRACTS a correct answer as "ungrounded".
-const SYNTHESIS_MAX_TOKENS = 300;
+// 420: the prompt mandates [N: "4-15 word verbatim quote"] markup on every
+// factual sentence, so a multi-source answer (3+ citations, each carrying a
+// verbatim quote) blows past a tighter cap — and a max_tokens truncation chops
+// the trailing citation, which then fails verification and RETRACTS a correct
+// answer as "ungrounded". Watch the `truncated_max_tokens` warn; raise further
+// if it still fires on legitimate 3+ source answers. Env-overridable.
+const SYNTHESIS_MAX_TOKENS = (() => {
+  const parsed = Number.parseInt(process.env.RISEZOME_SYNTHESIS_MAX_TOKENS ?? '420', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 420;
+})();
 
 /** Outcome of one `runPipeline` call (the same `{ emitted, skipped? }` the
  *  prod adapter's caller already consumes). */
@@ -320,57 +325,119 @@ export async function runPipeline(
   }
 
   // ── Stage: embed ──────────────────────────────────────────────────────
+  // The query is embedded in BOTH spaces (voyage-3-large for text, voyage-code-3
+  // for code) so the partitioned dense search compares each within its own
+  // model's space. The text vector may be reused from the question-lane dedup
+  // embed (latency U1); the code vector is always embedded fresh. The two voyage
+  // calls run concurrently. The code leg is best-effort — on its failure
+  // retrieval degrades to text + FTS, never hard-fails.
+  // Proactive MULTI-QUERY for scattered/overview questions: fire the term
+  // expander CONCURRENTLY with the primary embed (it overlaps, so it doesn't
+  // add the serial CRAG round-trip), then union the augmented query's candidate
+  // pool into the SAME rerank. Bounded to scattered questions to cap the extra
+  // LLM call + searches; the primary rerank against the original question keeps
+  // precision while the extra query broadens recall.
+  const expander = deps.optionalQueryExpander();
+  const speculativeScattered = expander !== undefined && classifyQueryComplexity(queryText) === 'scattered';
+  const expansionTermsPromise: Promise<string[]> | null = speculativeScattered
+    ? expander!(queryText).catch((err: unknown) => {
+        deps.logger.warn({ err, meetingId: input.meetingId }, 'pipeline.multiquery.expand.failed');
+        return [] as string[];
+      })
+    : null;
+
   const embedStart = Date.now();
   let queryEmbedding: Float32Array;
-  if (input.queryVector !== undefined) {
-    // Latency U1: the question lane already embedded the query text (for
-    // near-duplicate suppression) and threaded the vector here, so skip a
-    // redundant second embed. The question lane applies no key_terms boost, so
-    // this vector equals what we would have produced from `queryText`.
-    queryEmbedding = Float32Array.from(input.queryVector);
-    if (trace !== null) {
-      trace.push(
-        stageRecord('embed', 'ran', embedStart, {
-          decision: 'reused',
-          data: { dims: queryEmbedding.length, reused: true },
+  let codeQueryEmbedding: Float32Array | undefined;
+  const embedQueryText = input.queryVector !== undefined ? queryText : queryText + keyTermsBoost(input);
+  try {
+    const [textVec, codeVec] = await Promise.all([
+      input.queryVector !== undefined
+        ? Promise.resolve(Float32Array.from(input.queryVector))
+        : deps.embedder
+            .embed({ items: [{ text: embedQueryText, domain: 'text' }], purpose: 'query' })
+            .then((r) => r.vectors[0]?.vector),
+      deps.embedder
+        .embed({ items: [{ text: queryText, domain: 'code' }], purpose: 'query' })
+        .then((r) => r.vectors[0]?.vector)
+        .catch((err: unknown) => {
+          deps.logger.warn({ err, meetingId: input.meetingId }, 'pipeline.embed.code.failed');
+          return undefined;
         }),
-      );
-    }
-  } else {
-    const embedQueryText = queryText + keyTermsBoost(input);
-    try {
-      const result = await deps.embedder.embed({ items: [{ text: embedQueryText, domain: 'text' }] });
-      const vec = result.vectors[0]?.vector;
-      if (vec === undefined) {
-        if (trace !== null) {
-          trace.push(
-            stageRecord('embed', 'short_circuited', embedStart, { reason: 'no_vector' }),
-          );
-          emitTrace();
-        }
-        return { emitted: 0, skipped: 'embed_no_vector' };
-      }
-      queryEmbedding = vec;
-    } catch (err) {
-      deps.logger.warn({ err, meetingId: input.meetingId }, 'pipeline.embed.failed');
+    ]);
+    if (textVec === undefined) {
       if (trace !== null) {
-        trace.push(stageRecord('embed', 'short_circuited', embedStart, { reason: 'embed_failed' }));
+        trace.push(stageRecord('embed', 'short_circuited', embedStart, { reason: 'no_vector' }));
         emitTrace();
       }
-      return { emitted: 0, skipped: 'embed_failed' };
+      return { emitted: 0, skipped: 'embed_no_vector' };
     }
+    queryEmbedding = textVec;
+    codeQueryEmbedding = codeVec;
+  } catch (err) {
+    deps.logger.warn({ err, meetingId: input.meetingId }, 'pipeline.embed.failed');
     if (trace !== null) {
-      trace.push(stageRecord('embed', 'ran', embedStart, { data: { dims: queryEmbedding.length } }));
+      trace.push(stageRecord('embed', 'short_circuited', embedStart, { reason: 'embed_failed' }));
+      emitTrace();
+    }
+    return { emitted: 0, skipped: 'embed_failed' };
+  }
+  if (trace !== null) {
+    trace.push(
+      stageRecord('embed', 'ran', embedStart, {
+        decision: input.queryVector !== undefined ? 'reused' : 'embedded',
+        data: { dims: queryEmbedding.length, reused: input.queryVector !== undefined, code: codeQueryEmbedding !== undefined },
+      }),
+    );
+  }
+
+  // Build the expansion query (scattered questions only): await the expander
+  // terms that have been resolving since before the embed, then embed the
+  // augmented query in both spaces. The augmented embeds run concurrently.
+  let expansionQueries:
+    | Array<{ queryVectorLiteral: string; codeQueryVectorLiteral?: string; queryText: string }>
+    | undefined;
+  let speculativeExpanded = false;
+  if (expansionTermsPromise !== null) {
+    const terms = await expansionTermsPromise;
+    const augmented = augmentQuery(queryText, terms);
+    if (augmented !== queryText) {
+      const [augTextVec, augCodeVec] = await Promise.all([
+        deps.embedder
+          .embed({ items: [{ text: augmented, domain: 'text' }], purpose: 'query' })
+          .then((r) => r.vectors[0]?.vector)
+          .catch(() => undefined),
+        deps.embedder
+          .embed({ items: [{ text: augmented, domain: 'code' }], purpose: 'query' })
+          .then((r) => r.vectors[0]?.vector)
+          .catch(() => undefined),
+      ]);
+      if (augTextVec !== undefined) {
+        speculativeExpanded = true;
+        expansionQueries = [
+          {
+            queryVectorLiteral: `[${Array.from(augTextVec).join(',')}]`,
+            ...(augCodeVec !== undefined
+              ? { codeQueryVectorLiteral: `[${Array.from(augCodeVec).join(',')}]` }
+              : {}),
+            queryText: augmented,
+          },
+        ];
+      }
     }
   }
 
   // ── Stage: hybrid search ──────────────────────────────────────────────
   const searchStart = Date.now();
   const queryLiteral = `[${Array.from(queryEmbedding).join(',')}]`;
+  const codeQueryLiteral =
+    codeQueryEmbedding !== undefined ? `[${Array.from(codeQueryEmbedding).join(',')}]` : undefined;
   const reranker = deps.optionalReranker();
   let hits = await deps.hybridSearch({
     orgId: input.orgId,
     queryVectorLiteral: queryLiteral,
+    ...(codeQueryLiteral !== undefined ? { codeQueryVectorLiteral: codeQueryLiteral } : {}),
+    ...(expansionQueries !== undefined ? { expansionQueries } : {}),
     queryText,
     limit: topK,
     reranker,
@@ -435,8 +502,9 @@ export async function runPipeline(
   const weak = !missed && deps.isLowConfidenceHits(hits);
   let cragRan = false;
   let cragAdopted = false;
-  if (missed || weak) {
-    const expander = deps.optionalQueryExpander();
+  // Skip reactive CRAG when speculative multi-query already expanded this
+  // (scattered) question — re-running the same expander would just repeat it.
+  if ((missed || weak) && !speculativeExpanded) {
     // QUESTION lane: a detected substantive question is by definition worth one
     // expansion retry — `shouldExpandOnMiss`'s word-count floor was built for
     // ambient windows and excluded exactly the short, high-value questions
@@ -449,14 +517,24 @@ export async function runPipeline(
         const terms = await expander(queryText);
         const augmented = augmentQuery(queryText, terms);
         if (augmented !== queryText) {
-          const expandedEmbed = await deps.embedder.embed({
-            items: [{ text: augmented, domain: 'text' }],
-          });
-          const expandedVec = expandedEmbed.vectors[0]?.vector;
+          // Embed the augmented query in both spaces (same partitioning as the
+          // primary search) so the expansion re-search doesn't reintroduce the
+          // text-query-vs-code-doc mismatch. Code leg best-effort.
+          const [expandedTextEmbed, expandedCodeVec] = await Promise.all([
+            deps.embedder.embed({ items: [{ text: augmented, domain: 'text' }], purpose: 'query' }),
+            deps.embedder
+              .embed({ items: [{ text: augmented, domain: 'code' }], purpose: 'query' })
+              .then((r) => r.vectors[0]?.vector)
+              .catch(() => undefined),
+          ]);
+          const expandedVec = expandedTextEmbed.vectors[0]?.vector;
           if (expandedVec !== undefined) {
+            const expandedCodeLiteral =
+              expandedCodeVec !== undefined ? `[${Array.from(expandedCodeVec).join(',')}]` : undefined;
             const expandedHits = await deps.hybridSearch({
               orgId: input.orgId,
               queryVectorLiteral: `[${Array.from(expandedVec).join(',')}]`,
+              ...(expandedCodeLiteral !== undefined ? { codeQueryVectorLiteral: expandedCodeLiteral } : {}),
               queryText: augmented,
               limit: topK,
               reranker,

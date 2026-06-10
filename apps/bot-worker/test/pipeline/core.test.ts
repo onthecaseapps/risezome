@@ -234,22 +234,59 @@ function input(over: Partial<PipelineInput> = {}): PipelineInput {
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 describe('runPipeline — query embedding (U1: single embed)', () => {
-  it('reuses a provided queryVector and does NOT re-embed', async () => {
+  it('reuses a provided TEXT queryVector and embeds ONLY the code-space query', async () => {
     const { deps, search, embedder } = makeDeps();
     const sink = new RecordingSink();
     const vec = Array.from({ length: 3 }, (_, i) => (i === 1 ? 1 : 0));
     await runPipeline(input({ lane: 'question', queryVector: vec }), deps, sink);
-    // The question lane already embedded the query text; the core must not embed again.
-    expect(embedder.embed).not.toHaveBeenCalled();
+    // The text vector is reused (no text re-embed); the code-space query is
+    // always embedded fresh for the partitioned dense search → exactly 1 call,
+    // and it's the code domain.
+    expect(embedder.embed).toHaveBeenCalledTimes(1);
+    const calls = (embedder.embed as ReturnType<typeof vi.fn>).mock.calls;
+    expect((calls[0]![0] as { items: { domain: string }[] }).items[0]!.domain).toBe('code');
     // Retrieval still ran, using the reused vector.
     expect(search).toHaveBeenCalled();
   });
 
-  it('embeds the query text when no queryVector is provided (ambient/legacy)', async () => {
+  it('embeds both text + code spaces when no queryVector is provided (ambient/legacy)', async () => {
     const { deps, embedder } = makeDeps();
     const sink = new RecordingSink();
     await runPipeline(input(), deps, sink);
-    expect(embedder.embed).toHaveBeenCalledTimes(1);
+    // One text embed + one code embed (the two voyage calls run concurrently).
+    expect(embedder.embed).toHaveBeenCalledTimes(2);
+    const domains = (embedder.embed as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => (c[0] as { items: { domain: string }[] }).items[0]!.domain)
+      .sort();
+    expect(domains).toEqual(['code', 'text']);
+  });
+});
+
+describe('runPipeline — proactive multi-query (scattered questions)', () => {
+  it('a SCATTERED question fires the expander and passes expansionQueries to search', async () => {
+    const expander = vi.fn(async () => ['Clerk', 'NextAuth', 'OAuth']);
+    const { deps, search } = makeDeps({ optionalQueryExpander: () => expander });
+    await runPipeline(
+      input({ queryText: 'which services use the auth library across the codebase' }),
+      deps,
+      new RecordingSink(),
+    );
+    expect(expander).toHaveBeenCalledTimes(1);
+    const params = search.mock.calls[0]![0] as {
+      expansionQueries?: { queryText: string }[];
+    };
+    expect(params.expansionQueries).toHaveLength(1);
+    // The expansion query is the augmented (term-broadened) variant.
+    expect(params.expansionQueries![0]!.queryText).toContain('Clerk');
+  });
+
+  it('a SIMPLE lookup does NOT fire the expander or add expansionQueries', async () => {
+    const expander = vi.fn(async () => ['x']);
+    const { deps, search } = makeDeps({ optionalQueryExpander: () => expander });
+    await runPipeline(input({ queryText: 'what time is standup' }), deps, new RecordingSink());
+    expect(expander).not.toHaveBeenCalled();
+    const params = search.mock.calls[0]![0] as { expansionQueries?: unknown };
+    expect(params.expansionQueries).toBeUndefined();
   });
 });
 

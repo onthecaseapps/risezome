@@ -112,6 +112,25 @@ export function fuseRrf(
   fts: readonly FtsCandidate[],
   opts: FuseOptions,
 ): HybridHit[] {
+  return fuseRrfMulti([vector], fts, opts);
+}
+
+/**
+ * RRF fusion over MULTIPLE independently-ranked vector lists + FTS list(s).
+ * Each list contributes `1/(k + rank_within_that_list)` — critical because (a)
+ * the domain-partitioned text-space (voyage-3-large) and code-space
+ * (voyage-code-3) lists have NON-comparable distances and each must keep its own
+ * rank, and (b) MULTI-QUERY retrieval adds one list per sub-query and each
+ * sub-query's ranking is independent. A chunk can appear in several lists (e.g.
+ * surfaced by both the primary and an expansion query) and accumulates each
+ * contribution. The floor uses whichever vector distance the candidate carries
+ * (FTS-only always passes). Accepts either a single FTS list or several.
+ */
+export function fuseRrfMulti(
+  vectorLists: readonly (readonly VectorCandidate[])[],
+  fts: readonly FtsCandidate[] | readonly (readonly FtsCandidate[])[],
+  opts: FuseOptions,
+): HybridHit[] {
   const k = opts.rrfK ?? DEFAULT_RRF_K;
   const floor = opts.vectorDistanceFloor ?? envFloor();
 
@@ -125,16 +144,25 @@ export function fuseRrf(
     return e;
   };
 
-  vector.forEach((row, i) => {
-    const e = get(row.chunk_id);
-    e.distance = row.distance;
-    e.score += 1 / (k + i + 1);
-  });
-  fts.forEach((row, i) => {
-    const e = get(row.chunk_id);
-    e.ftsMatched = true;
-    e.score += 1 / (k + i + 1);
-  });
+  for (const vector of vectorLists) {
+    vector.forEach((row, i) => {
+      const e = get(row.chunk_id);
+      e.distance = row.distance;
+      e.score += 1 / (k + i + 1);
+    });
+  }
+  // Normalize fts to a list-of-lists (a single list is wrapped once).
+  const ftsLists: readonly (readonly FtsCandidate[])[] =
+    fts.length > 0 && Array.isArray((fts as readonly unknown[])[0])
+      ? (fts as readonly (readonly FtsCandidate[])[])
+      : [fts as readonly FtsCandidate[]];
+  for (const list of ftsLists) {
+    list.forEach((row, i) => {
+      const e = get(row.chunk_id);
+      e.ftsMatched = true;
+      e.score += 1 / (k + i + 1);
+    });
+  }
 
   return (
     [...byId.entries()]
@@ -153,8 +181,14 @@ export function fuseRrf(
 
 export interface HybridSearchParams {
   readonly orgId: string;
-  /** pgvector literal: `[0.1,0.2,...]`. */
+  /** pgvector literal of the TEXT-space query (voyage-3-large): `[0.1,0.2,...]`. */
   readonly queryVectorLiteral: string;
+  /** pgvector literal of the CODE-space query (voyage-code-3). When set, the
+   *  dense leg is PARTITIONED: text chunks are searched with `queryVectorLiteral`
+   *  and code chunks with this, each within its own model's space (the two
+   *  spaces aren't distance-comparable). When omitted, the legacy single-vector
+   *  search runs over all chunks (back-compat for eval/debug callers). */
+  readonly codeQueryVectorLiteral?: string;
   /** Natural-ish text for websearch_to_tsquery (the rolling window). */
   readonly queryText: string;
   /** Focused query for the cross-encoder reranker. The FTS `queryText` can be
@@ -174,6 +208,17 @@ export interface HybridSearchParams {
    *  pool is reranked by query-document relevance and truncated to `limit`;
    *  on any rerank error the RRF order is kept (graceful degrade). */
   readonly reranker?: Reranker | undefined;
+  /** MULTI-QUERY retrieval (proactive, for scattered/overview questions): extra
+   *  query variants whose candidate pools are UNIONED with the primary BEFORE a
+   *  single rerank against `rerankQuery`. Each adds its own independently-ranked
+   *  vector list(s) + FTS list to the fusion (broader recall), and the rerank
+   *  against the original question restores precision. Empty/omitted ⇒ the
+   *  single-query path. */
+  readonly expansionQueries?: ReadonlyArray<{
+    readonly queryVectorLiteral: string;
+    readonly codeQueryVectorLiteral?: string;
+    readonly queryText: string;
+  }>;
   readonly logger?: { warn: (obj: object, msg?: string) => void };
 }
 
@@ -200,39 +245,74 @@ export async function hybridSearch(
   // `null` p_source_ids ⇒ the RPC skips the source filter (whole-org corpus).
   const pSourceIds = params.sourceIds === undefined ? null : [...params.sourceIds];
 
-  const [vecRaw, ftsRaw] = await Promise.all([
+  const vectorRpc = (queryVectorLiteral: string, pDomain: string | null) =>
     db.rpc('search_corpus_vector', {
       p_org_id: params.orgId,
-      p_query_vector: params.queryVectorLiteral,
+      p_query_vector: queryVectorLiteral,
       p_limit: candidateLimit,
       p_source_ids: pSourceIds,
-    }),
+      p_domain: pDomain,
+    }) as unknown as Promise<{ data: VectorCandidate[] | null; error: { message: string } | null }>;
+  const ftsRpc = (queryText: string) =>
     db.rpc('search_corpus_fts', {
       p_org_id: params.orgId,
-      p_query: params.queryText,
+      p_query: queryText,
       p_limit: candidateLimit,
       p_source_ids: pSourceIds,
-    }),
-  ]);
-  const vecRes = vecRaw as unknown as {
-    data: VectorCandidate[] | null;
-    error: { message: string } | null;
-  };
-  const ftsRes = ftsRaw as unknown as {
-    data: FtsCandidate[] | null;
-    error: { message: string } | null;
+    }) as unknown as Promise<{ data: FtsCandidate[] | null; error: { message: string } | null }>;
+
+  // One query variant → its vector list(s) [text(+code) partition] + its FTS
+  // list. Partitioned dense search runs only when a code-space vector is given.
+  const runQuery = async (q: {
+    queryVectorLiteral: string;
+    codeQueryVectorLiteral?: string;
+    queryText: string;
+  }): Promise<{ vectorLists: VectorCandidate[][]; fts: FtsCandidate[]; vectorFailed: boolean }> => {
+    const partitioned = q.codeQueryVectorLiteral !== undefined;
+    const [textVecRes, codeVecRes, ftsRes] = await Promise.all([
+      vectorRpc(q.queryVectorLiteral, partitioned ? 'text' : null),
+      partitioned
+        ? vectorRpc(q.codeQueryVectorLiteral!, 'code')
+        : Promise.resolve({ data: [] as VectorCandidate[], error: null }),
+      ftsRpc(q.queryText),
+    ]);
+    if (textVecRes.error !== null) {
+      params.logger?.warn({ err: textVecRes.error }, 'corpus-search.vector.failed');
+      return { vectorLists: [], fts: [], vectorFailed: true };
+    }
+    if (codeVecRes.error !== null) {
+      params.logger?.warn({ err: codeVecRes.error }, 'corpus-search.vector.code.failed');
+    }
+    if (ftsRes.error !== null) {
+      params.logger?.warn({ err: ftsRes.error }, 'corpus-search.fts.failed');
+    }
+    const vectorLists: VectorCandidate[][] = [textVecRes.data ?? []];
+    if (codeVecRes.error === null && (codeVecRes.data?.length ?? 0) > 0) {
+      vectorLists.push(codeVecRes.data ?? []);
+    }
+    return { vectorLists, fts: ftsRes.error === null ? (ftsRes.data ?? []) : [], vectorFailed: false };
   };
 
-  if (vecRes.error !== null) {
-    params.logger?.warn({ err: vecRes.error }, 'corpus-search.vector.failed');
-    return [];
-  }
-  if (ftsRes.error !== null) {
-    // Lexical leg is best-effort; fall back to vector-only.
-    params.logger?.warn({ err: ftsRes.error }, 'corpus-search.fts.failed');
-  }
+  // Run the primary query + any expansion variants concurrently; union their
+  // candidate pools (each list keeps its own RRF rank) before a single rerank.
+  const queries = [
+    {
+      queryVectorLiteral: params.queryVectorLiteral,
+      ...(params.codeQueryVectorLiteral !== undefined
+        ? { codeQueryVectorLiteral: params.codeQueryVectorLiteral }
+        : {}),
+      queryText: params.queryText,
+    },
+    ...(params.expansionQueries ?? []),
+  ];
+  const results = await Promise.all(queries.map(runQuery));
+  // The PRIMARY query's dense leg failing hard-fails (matches prior behavior);
+  // an expansion's failure just contributes nothing.
+  if (results[0]!.vectorFailed) return [];
+  const allVectorLists = results.flatMap((r) => r.vectorLists);
+  const allFtsLists = results.map((r) => r.fts);
 
-  const fused = fuseRrf(vecRes.data ?? [], ftsRes.error === null ? (ftsRes.data ?? []) : [], {
+  const fused = fuseRrfMulti(allVectorLists, allFtsLists, {
     // With a reranker, fuse to a larger pool and let the cross-encoder pick
     // the final top-`limit`; otherwise fuse straight to `limit`.
     limit: params.reranker !== undefined ? RERANK_POOL : params.limit,

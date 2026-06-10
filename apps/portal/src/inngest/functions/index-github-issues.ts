@@ -330,6 +330,7 @@ async function indexBatch(args: {
       chunk_id: it.id,
       org_id: orgId,
       source_id: sourceId, // U4: denormalized for the retrieval source filter
+      domain: it.domain, // domain-partitioned dense search
       embedding: arrayToVectorLiteral(embeddings.vectors[i]!.vector),
     }));
     const { error: embErr } = await service

@@ -4,6 +4,7 @@ import {
   type EmbedVector,
   type Embedder,
   type EmbeddingDomain,
+  type EmbedPurpose,
   EmbeddingProviderError,
   EmbeddingRateLimitError,
 } from './contract.js';
@@ -73,9 +74,13 @@ export class VoyageEmbedder implements Embedder {
     const vectors: EmbedVector[] = new Array<EmbedVector>(req.items.length);
     const byDomain = new Map<EmbeddingDomain, number[]>();
     let cacheHits = 0;
+    // 'document' default: indexing is the bulk caller. The cache key includes
+    // purpose so a query embed and a document embed of identical text (different
+    // input_type → different vectors) never serve each other's vector.
+    const purpose = req.purpose ?? 'document';
 
     req.items.forEach((item, index) => {
-      const key = contentHash(item.text, item.domain);
+      const key = contentHash(item.text, `${item.domain}:${purpose}`);
       const cached = this.#cache.get(key);
       if (cached !== null) {
         vectors[index] = { index, vector: cached, cached: true };
@@ -97,7 +102,7 @@ export class VoyageEmbedder implements Embedder {
       for (let offset = 0; offset < indices.length; offset += MAX_INPUTS_PER_REQUEST) {
         const batchIndices = indices.slice(offset, offset + MAX_INPUTS_PER_REQUEST);
         const texts = batchIndices.map((i) => req.items[i]!.text);
-        const batch = await this.#callVoyage(texts, model);
+        const batch = await this.#callVoyage(texts, model, purpose);
         inputTokens += batch.usage?.total_tokens ?? 0;
         this.#options.onUsage?.({
           model,
@@ -115,7 +120,7 @@ export class VoyageEmbedder implements Embedder {
             );
           }
           const item = req.items[targetIdx]!;
-          const key = contentHash(item.text, item.domain);
+          const key = contentHash(item.text, `${item.domain}:${purpose}`);
           this.#cache.set(key, vec);
           vectors[targetIdx] = { index: targetIdx, vector: vec, cached: false };
         }
@@ -134,7 +139,7 @@ export class VoyageEmbedder implements Embedder {
     return domain === 'code' ? this.#codeModel : this.#textModel;
   }
 
-  async #callVoyage(texts: string[], model: string): Promise<VoyageBatchResponse> {
+  async #callVoyage(texts: string[], model: string, purpose: EmbedPurpose): Promise<VoyageBatchResponse> {
     const maxRetries = this.#options.maxRetries ?? DEFAULT_MAX_RETRIES;
     const batchDelayMs = this.#options.batchDelayMs ?? 0;
 
@@ -151,7 +156,7 @@ export class VoyageEmbedder implements Embedder {
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        const result = await this.#makeRequest(texts, model);
+        const result = await this.#makeRequest(texts, model, purpose);
         this.#lastCallEndTime = Date.now();
         return result;
       } catch (err) {
@@ -184,7 +189,7 @@ export class VoyageEmbedder implements Embedder {
     throw new EmbeddingProviderError('Unknown Voyage error');
   }
 
-  async #makeRequest(texts: string[], model: string): Promise<VoyageBatchResponse> {
+  async #makeRequest(texts: string[], model: string, purpose: EmbedPurpose): Promise<VoyageBatchResponse> {
     const baseUrl = this.#options.baseUrl ?? DEFAULT_VOYAGE_BASE;
     const url = new URL('embeddings', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
     const res = await this.#fetch(url, {
@@ -197,7 +202,9 @@ export class VoyageEmbedder implements Embedder {
       body: JSON.stringify({
         model,
         input: texts,
-        input_type: model.includes('code') ? 'document' : 'document',
+        // Asymmetric encoding: 'query' for searches, 'document' for corpus
+        // content. (Previously hardcoded 'document' for everything.)
+        input_type: purpose,
       }),
     });
     if (res.status === 429) {

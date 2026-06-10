@@ -2,18 +2,18 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { expandToParent, type ParentExpandOptions } from '@risezome/engine/parent-doc';
 
 /**
- * Parent-document (small-to-big) retrieval (U8), gated by
- * RISEZOME_PARENT_DOC_ENABLED. When on, a winning child chunk is expanded to
- * surrounding parent context for the synthesizer (whole doc if it fits under
- * the char cap, else a window of neighbouring chunks). Citations still point
- * at the precise child. Off by default so it can be A/B'd against the eval.
+ * Parent-document (small-to-big) retrieval (U8). When on, a winning child chunk
+ * is expanded to surrounding parent context for the synthesizer (whole doc if it
+ * fits under the char cap, else a window of neighbouring chunks). Citations
+ * still point at the precise child. ON BY DEFAULT (gives synthesis fuller
+ * grounding context); set RISEZOME_PARENT_DOC_ENABLED=false to opt out.
  */
 
 const DEFAULT_CAP_CHARS = 6000;
 const DEFAULT_WINDOW_RADIUS = 1;
 
 export function parentDocEnabled(): boolean {
-  return process.env.RISEZOME_PARENT_DOC_ENABLED === 'true';
+  return process.env.RISEZOME_PARENT_DOC_ENABLED !== 'false';
 }
 
 /**

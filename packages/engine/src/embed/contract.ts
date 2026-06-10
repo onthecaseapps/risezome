@@ -2,6 +2,12 @@ import { RisezomeError } from '@risezome/shared-types';
 
 export type EmbeddingDomain = 'text' | 'code';
 
+/** Voyage encodes queries and documents ASYMMETRICALLY (input_type) — using the
+ *  document encoding for a search query measurably costs recall. Indexing embeds
+ *  documents; retrieval embeds queries. Defaults to 'document' (the indexing
+ *  path is the bulk caller and predates this field). */
+export type EmbedPurpose = 'query' | 'document';
+
 export interface EmbedItem {
   readonly text: string;
   readonly domain: EmbeddingDomain;
@@ -9,6 +15,8 @@ export interface EmbedItem {
 
 export interface EmbedRequest {
   readonly items: readonly EmbedItem[];
+  /** 'query' for a search query, 'document' (default) for corpus content. */
+  readonly purpose?: EmbedPurpose;
 }
 
 export interface EmbedVector {

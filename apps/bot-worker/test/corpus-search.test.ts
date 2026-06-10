@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   fuseRrf,
+  fuseRrfMulti,
   hybridSearch,
   isLowConfidenceHits,
   type HybridHit,
@@ -135,6 +136,37 @@ describe('fuseRrf — reciprocal rank fusion + relevance floor', () => {
   });
 });
 
+describe('fuseRrfMulti — domain-partitioned vector lists', () => {
+  it('ranks each vector list INDEPENDENTLY (a top hit in list 2 is not penalized by list 1 length)', () => {
+    // Text-space list ranks T0,T1,T2; code-space list ranks C0. C0 is rank-0 in
+    // its OWN list, so it must score like T0 (1/(k+1)), NOT like a 4th-place
+    // concatenated item — that's the whole point of independent RRF per space.
+    const textList = [
+      { chunk_id: 'T0', distance: 0.1 },
+      { chunk_id: 'T1', distance: 0.2 },
+      { chunk_id: 'T2', distance: 0.3 },
+    ];
+    const codeList = [{ chunk_id: 'C0', distance: 0.15 }];
+    const out = fuseRrfMulti([textList, codeList], [], { limit: 4, rrfK: 60 });
+    const score = (id: string) => out.find((h) => h.chunk_id === id)!.score;
+    // C0 (rank 0 in its list) ties T0 (rank 0 in its list).
+    expect(score('C0')).toBeCloseTo(score('T0'), 10);
+    // And beats T1/T2 (ranks 1,2).
+    expect(score('C0')).toBeGreaterThan(score('T1'));
+  });
+
+  it('a chunk appearing in both a vector list and FTS accumulates both contributions', () => {
+    const out = fuseRrfMulti(
+      [[{ chunk_id: 'X', distance: 0.1 }]],
+      [{ chunk_id: 'X', rank: 0.9 }],
+      { limit: 3, rrfK: 60 },
+    );
+    expect(out[0]!.chunk_id).toBe('X');
+    expect(out[0]!.ftsMatched).toBe(true);
+    expect(out[0]!.score).toBeCloseTo(2 / 61, 10);
+  });
+});
+
 function mockDb(
   vector: { chunk_id: string; distance: number }[],
   fts: { chunk_id: string; rank: number }[],
@@ -208,6 +240,59 @@ describe('hybridSearch — reranker integration', () => {
       limit: 2,
     });
     expect(out.map((h) => h.chunk_id)).toEqual(['A', 'B']);
+  });
+});
+
+describe('hybridSearch — domain-partitioned dense search (#2b)', () => {
+  // Domain-aware mock: returns DIFFERENT vector hits per p_domain so we can
+  // prove the code-space query reaches code chunks the text query never sees.
+  function domainDb(byDomain: Record<string, { chunk_id: string; distance: number }[]>): SupabaseClient {
+    const calls: { domain: string | null; vector: string }[] = [];
+    const db = {
+      rpc: (name: string, args: { p_domain?: string | null; p_query_vector?: string }) => {
+        if (name === 'search_corpus_fts') return Promise.resolve({ data: [], error: null });
+        const domain = args.p_domain ?? null;
+        calls.push({ domain, vector: args.p_query_vector ?? '' });
+        return Promise.resolve({ data: byDomain[domain ?? 'null'] ?? [], error: null });
+      },
+    } as unknown as SupabaseClient & { __calls: typeof calls };
+    (db as unknown as { __calls: typeof calls }).__calls = calls;
+    return db;
+  }
+
+  it('searches text + code spaces with their OWN query vectors and fuses both', async () => {
+    const db = domainDb({
+      text: [{ chunk_id: 'DOC', distance: 0.2 }],
+      code: [{ chunk_id: 'SRC', distance: 0.15 }],
+    });
+    const out = await hybridSearch(db, {
+      orgId: 'o',
+      queryVectorLiteral: '[TEXTVEC]',
+      codeQueryVectorLiteral: '[CODEVEC]',
+      queryText: 'how does auth work',
+      limit: 5,
+    });
+    // Both the text-space doc AND the code-space source chunk survive — the code
+    // chunk is only reachable because the code query vector searched the code
+    // partition (a text-only search would have missed it).
+    expect(out.map((h) => h.chunk_id).sort()).toEqual(['DOC', 'SRC']);
+    const calls = (db as unknown as { __calls: { domain: string | null; vector: string }[] }).__calls;
+    expect(calls).toContainEqual({ domain: 'text', vector: '[TEXTVEC]' });
+    expect(calls).toContainEqual({ domain: 'code', vector: '[CODEVEC]' });
+  });
+
+  it('falls back to a single whole-corpus search when no code vector is given (back-compat)', async () => {
+    const db = domainDb({ null: [{ chunk_id: 'X', distance: 0.2 }] });
+    const out = await hybridSearch(db, {
+      orgId: 'o',
+      queryVectorLiteral: '[V]',
+      queryText: 'q',
+      limit: 5,
+    });
+    expect(out.map((h) => h.chunk_id)).toEqual(['X']);
+    const calls = (db as unknown as { __calls: { domain: string | null }[] }).__calls;
+    // Exactly one vector search, with NO domain filter.
+    expect(calls).toEqual([{ domain: null, vector: '[V]' }]);
   });
 });
 

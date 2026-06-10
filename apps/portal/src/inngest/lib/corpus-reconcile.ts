@@ -328,6 +328,7 @@ export async function writeReconciledDoc(db: SupabaseClient, w: ReconciledDocWri
     chunk_id: c.chunkId,
     org_id: w.doc.orgId,
     source_id: w.doc.sourceId, // U4: denormalized for the retrieval source filter
+    domain: c.domain, // domain-partitioned dense search
     embedding: w.embeddings[i]!,
   }));
   const { error: embErr } = await db
