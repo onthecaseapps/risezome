@@ -61,6 +61,17 @@ const PRESET_CHIPS: Record<Provider, Record<string, string[]>> = {
 
 const CHIP_LABEL_FONT_MONO: Record<Provider, boolean> = { github: true, trello: false, jira: false, confluence: false };
 
+// Entering Custom seeds the chips from the recommended defaults so the user
+// starts from a working example and tweaks. Only for connectors whose chips
+// are literal rule values (paths, statuses); Trello/Confluence preset chips are
+// descriptive, not literal, so they seed empty.
+const CUSTOM_SEED: Record<Provider, string[]> = {
+  github: ['**/*.test.*', '**/fixtures/**', 'dist/**', 'build/**', '*.lock', '**/*.min.*'],
+  jira: ['Done', 'Closed', 'Resolved', 'Cancelled', "Won't Do"],
+  trello: [],
+  confluence: [],
+};
+
 export interface CustomState {
   patterns: string[]; // github globs / jira statuses / trello lists
   draft: string;
@@ -156,7 +167,11 @@ export function CardFilterEditor({
   const dirty = mode !== savedMode || (mode === 'custom' && customHasContent);
 
   function onMode(next: string): void {
-    // Staged only — no reindex until Save.
+    // Staged only — no reindex until Save. Entering Custom seeds the recommended
+    // defaults as a starting example (unless the user already has chips).
+    if (next === 'custom' && c.patterns.length === 0) {
+      setC({ ...c, patterns: [...CUSTOM_SEED[provider]] });
+    }
     setMode(next);
     setNote(null);
   }
@@ -229,25 +244,28 @@ export function CardFilterEditor({
                 ) : null}
               </span>
             ))}
-            {mode === 'custom' ? (
-              <input
-                value={c.draft}
-                onChange={(e) => setC({ ...c, draft: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && c.draft.trim()) {
-                    e.preventDefault();
-                    setC({ ...c, patterns: [...c.patterns, c.draft.trim()], draft: '' });
-                  }
-                }}
-                placeholder={
-                  provider === 'github' ? 'Add pattern, e.g. vendor/**' : provider === 'jira' ? 'Add status, e.g. In Review' : 'Add list, e.g. Icebox'
-                }
-                className={`rounded border border-dashed border-border bg-transparent px-2 py-0.5 text-xs text-fg outline-none ${mono ? 'font-mono' : ''}`}
-                style={{ minWidth: 170 }}
-              />
-            ) : null}
             {chips.length === 0 && mode !== 'custom' ? <span className="text-xs text-muted">Nothing excluded.</span> : null}
           </div>
+          {mode === 'custom' ? (
+            <input
+              value={c.draft}
+              onChange={(e) => setC({ ...c, draft: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && c.draft.trim()) {
+                  e.preventDefault();
+                  setC({ ...c, patterns: [...c.patterns, c.draft.trim()], draft: '' });
+                }
+              }}
+              placeholder={
+                provider === 'github'
+                  ? 'Add a pattern and press Enter, e.g. vendor/**'
+                  : provider === 'jira'
+                    ? 'Add a status and press Enter, e.g. In Review'
+                    : 'Add a list and press Enter, e.g. Icebox'
+              }
+              className={`mt-2 w-full rounded-md border border-dashed border-border bg-card px-3 py-2 text-sm text-fg outline-none focus:border-accent ${mono ? 'font-mono' : ''}`}
+            />
+          ) : null}
 
           {mode === 'custom' && provider === 'jira' ? (
             <ChipRow
