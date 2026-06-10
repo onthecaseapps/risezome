@@ -13,7 +13,6 @@ import { ConfigTeamSelector, type ConfigTeam } from './_config-team-selector';
 import { TrelloMark, JiraMark, ConfluenceMark } from './_source-icons';
 import type { SourceItem } from './_source-item-list';
 import { buildGithubItems, type GithubSourceRow } from './_github-items';
-import { CorpusPolicyEditor } from './_corpus-policy-editor';
 
 /**
  * Sources — the per-team source editor (redesign). Pick a team to configure via
@@ -270,12 +269,9 @@ export default async function SourcesPage(props: {
             team to search.
           </p>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          {teams.length > 0 && selectedTeamId !== null ? (
-            <ConfigTeamSelector teams={teams} selectedTeamId={selectedTeamId} />
-          ) : null}
-          <CorpusPolicyEditor currentPreset={orgPolicyPreset} />
-        </div>
+        {teams.length > 0 && selectedTeamId !== null ? (
+          <ConfigTeamSelector teams={teams} selectedTeamId={selectedTeamId} />
+        ) : null}
       </header>
 
       {banner !== null ? (
