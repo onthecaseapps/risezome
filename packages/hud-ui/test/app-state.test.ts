@@ -309,6 +309,145 @@ describe('appStateReducer', () => {
     expect(s.syntheses.has('syn1')).toBe(false);
   });
 
+  describe('retraction tombstones (F3 — order-independent under dual delivery)', () => {
+    it('a synthesisStart replayed AFTER its retraction does NOT resurrect the record', () => {
+      const start: SynthesisStartEvent = { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' };
+      let s = appStateReducer(initialAppState, { type: 'synthesisStart', start });
+      s = appStateReducer(s, {
+        type: 'synthesisRetracted',
+        retracted: { synthesisId: 'syn1', reason: 'source-retracted' },
+      });
+      expect(s.syntheses.has('syn1')).toBe(false);
+      const replayed = appStateReducer(s, { type: 'synthesisStart', start });
+      expect(replayed.syntheses.has('syn1')).toBe(false);
+      // And a follow-up delta for the tombstoned id stays a no-op too.
+      const afterDelta = appStateReducer(replayed, {
+        type: 'synthesisDelta',
+        delta: { synthesisId: 'syn1', delta: 'zombie' },
+      });
+      expect(afterDelta.syntheses.has('syn1')).toBe(false);
+    });
+
+    it('a retraction arriving BEFORE the start (unordered delivery) tombstones the unknown id', () => {
+      let s = appStateReducer(initialAppState, {
+        type: 'synthesisRetracted',
+        retracted: { synthesisId: 'syn1', reason: 'source-retracted' },
+      });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' },
+      });
+      expect(s.syntheses.has('syn1')).toBe(false);
+    });
+
+    it('a synthesisError also tombstones — a later start cannot resurrect it', () => {
+      let s = appStateReducer(initialAppState, {
+        type: 'synthesisError',
+        error: { synthesisId: 'syn1', code: 'rate-limited' },
+      });
+      s = appStateReducer(s, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' },
+      });
+      expect(s.syntheses.has('syn1')).toBe(false);
+    });
+
+    it('a card replayed AFTER its retraction does NOT resurrect it', () => {
+      let s = appStateReducer(initialAppState, { type: 'card', card: mkCard() });
+      s = appStateReducer(s, {
+        type: 'cardRetracted',
+        retracted: { cardId: 'c1', reason: 'verifier-downgraded' },
+      });
+      expect(s.cards.has('c1')).toBe(false);
+      const replayed = appStateReducer(s, { type: 'card', card: mkCard() });
+      expect(replayed.cards.has('c1')).toBe(false);
+    });
+
+    it('a cardRetracted for an unknown card still tombstones it', () => {
+      let s = appStateReducer(initialAppState, {
+        type: 'cardRetracted',
+        retracted: { cardId: 'c1', reason: 'verifier-downgraded' },
+      });
+      s = appStateReducer(s, { type: 'card', card: mkCard() });
+      expect(s.cards.has('c1')).toBe(false);
+    });
+  });
+
+  describe('synthesisDone carries the final text (F4b self-healing)', () => {
+    it('done.text REPLACES the delta-accumulated text (heals a dropped delta)', () => {
+      let s = appStateReducer(initialAppState, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' },
+      });
+      // Simulate a lost delta: only a prefix accumulated.
+      s = appStateReducer(s, { type: 'synthesisDelta', delta: { synthesisId: 'syn1', delta: 'The ans' } });
+      s = appStateReducer(s, {
+        type: 'synthesisDone',
+        done: {
+          synthesisId: 'syn1',
+          stopReason: 'end_turn',
+          citations: [],
+          usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+          ttftMs: 0,
+          latencyMs: 0,
+          text: 'The answer in full.',
+        },
+      });
+      expect(s.syntheses.get('syn1')?.accumulatedText).toBe('The answer in full.');
+      expect(s.lastSynthesisAnnounce).toBe('The answer in full.');
+    });
+
+    it('done without text keeps the accumulated text (back-compat)', () => {
+      let s = appStateReducer(initialAppState, {
+        type: 'synthesisStart',
+        start: { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' },
+      });
+      s = appStateReducer(s, { type: 'synthesisDelta', delta: { synthesisId: 'syn1', delta: 'Accumulated.' } });
+      s = appStateReducer(s, {
+        type: 'synthesisDone',
+        done: {
+          synthesisId: 'syn1',
+          stopReason: 'end_turn',
+          citations: [],
+          usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+          ttftMs: 0,
+          latencyMs: 0,
+        },
+      });
+      expect(s.syntheses.get('syn1')?.accumulatedText).toBe('Accumulated.');
+    });
+  });
+
+  describe('failure streak on unknown ids (F5-pill — refusals never start)', () => {
+    it('synthesisRetracted for an UNKNOWN id still increments the streak', () => {
+      const s = appStateReducer(initialAppState, {
+        type: 'synthesisRetracted',
+        retracted: { synthesisId: 'never-started', reason: 'source-retracted' },
+      });
+      expect(s.synthesisFailureStreak).toBe(1);
+    });
+
+    it('synthesisError for an UNKNOWN id still increments the streak', () => {
+      const s = appStateReducer(initialAppState, {
+        type: 'synthesisError',
+        error: { synthesisId: 'never-started', code: 'refused' },
+      });
+      expect(s.synthesisFailureStreak).toBe(1);
+    });
+
+    it('sustained refusals (no starts at all) reach the paused threshold', async () => {
+      const { SYNTHESIS_PAUSED_THRESHOLD } = await import('../src/state/app-state.js');
+      let s = initialAppState;
+      for (let i = 0; i < SYNTHESIS_PAUSED_THRESHOLD; i++) {
+        s = appStateReducer(s, {
+          type: 'synthesisRetracted',
+          retracted: { synthesisId: `refusal-${String(i)}`, reason: 'source-retracted' },
+        });
+      }
+      expect(s.synthesisFailureStreak).toBe(SYNTHESIS_PAUSED_THRESHOLD);
+    });
+  });
+
   it('integration: start → 3 deltas → done is idempotent in shape', () => {
     let s = appStateReducer(initialAppState, {
       type: 'synthesisStart',

@@ -80,6 +80,12 @@ export interface AppState {
    *  pill on the live page (plan U8 / S3). Incremented on
    *  synthesisError + synthesisRetracted; reset to 0 on synthesisDone. */
   readonly synthesisFailureStreak: number;
+  /** Tombstones: ids retracted/errored this session. Dual delivery
+   *  (broadcast + poll) can replay a synthesisStart/card AFTER its
+   *  retraction was applied; tombstoned ids no-op so retraction is
+   *  order-independent. Unbounded within one meeting view — acceptable. */
+  readonly retractedSynthesisIds: ReadonlySet<string>;
+  readonly retractedCardIds: ReadonlySet<string>;
 }
 
 /**
@@ -98,6 +104,8 @@ export const initialAppState: AppState = {
   transcript: new Map(),
   lastSynthesisAnnounce: null,
   synthesisFailureStreak: 0,
+  retractedSynthesisIds: new Set(),
+  retractedCardIds: new Set(),
 };
 
 export type AppAction =
@@ -133,6 +141,9 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
       return { ...state, status: action.status };
 
     case 'card': {
+      // Tombstoned (already retracted) — a replayed card event must not
+      // resurrect it.
+      if (state.retractedCardIds.has(action.card.cardId)) return state;
       const cards = cloneMap(state.cards);
       const existing = cards.get(action.card.cardId);
       cards.set(action.card.cardId, { card: action.card, pinned: existing?.pinned ?? false });
@@ -163,7 +174,12 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
     }
 
     case 'cardRetracted': {
-      if (!state.cards.has(action.retracted.cardId)) return state;
+      // Tombstone even when the card is unknown, so a replayed `card` event
+      // arriving after its retraction (dual delivery is unordered) can't
+      // resurrect it.
+      const retractedCardIds = new Set(state.retractedCardIds);
+      retractedCardIds.add(action.retracted.cardId);
+      if (!state.cards.has(action.retracted.cardId)) return { ...state, retractedCardIds };
       // Cascade: drop only STILL-STREAMING, unpinned syntheses citing the
       // retracted card. A streaming answer that loses a source mid-generation
       // is stale and should go; a COMPLETED answer must survive — it was
@@ -205,7 +221,7 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
         next.delete(action.retracted.cardId);
         cards = next;
       }
-      return { ...state, cards, syntheses: cascaded ? syntheses : state.syntheses };
+      return { ...state, cards, syntheses: cascaded ? syntheses : state.syntheses, retractedCardIds };
     }
 
     case 'meetingStarted':
@@ -229,6 +245,9 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
       // wipe in-flight or completed synthesis text every time the
       // socket flapped.
       if (state.syntheses.has(action.start.synthesisId)) return state;
+      // Tombstoned (retracted/errored earlier) — a replayed start must not
+      // resurrect it (dual delivery is unordered).
+      if (state.retractedSynthesisIds.has(action.start.synthesisId)) return state;
       const syntheses = cloneMap(state.syntheses);
       const rec: SynthesisRecord = {
         synthesisId: action.start.synthesisId,
@@ -274,6 +293,9 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
       const updated: SynthesisRecord = {
         ...existing,
         streaming: false,
+        // F4b self-healing: done carries the full final text; replace the
+        // delta-accumulated text so a dropped delta can't truncate the answer.
+        accumulatedText: action.done.text ?? existing.accumulatedText,
         citations: action.done.citations,
         stopReason: action.done.stopReason,
         ttftMs: action.done.ttftMs,
@@ -290,25 +312,41 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
     }
 
     case 'synthesisError': {
-      if (!state.syntheses.has(action.error.synthesisId)) return state;
-      const syntheses = cloneMap(state.syntheses);
-      syntheses.delete(action.error.synthesisId);
+      // Tombstone + count the failure even for an UNKNOWN id: refusals never
+      // emit synthesisStart, so the paused-pill streak must still trip; skip
+      // only the map deletion.
+      const retractedSynthesisIds = new Set(state.retractedSynthesisIds);
+      retractedSynthesisIds.add(action.error.synthesisId);
+      let syntheses = state.syntheses;
+      if (state.syntheses.has(action.error.synthesisId)) {
+        const next = cloneMap(state.syntheses);
+        next.delete(action.error.synthesisId);
+        syntheses = next;
+      }
       // U8: count toward the paused-pill threshold.
       return {
         ...state,
         syntheses,
+        retractedSynthesisIds,
         synthesisFailureStreak: state.synthesisFailureStreak + 1,
       };
     }
 
     case 'synthesisRetracted': {
-      if (!state.syntheses.has(action.retracted.synthesisId)) return state;
-      const syntheses = cloneMap(state.syntheses);
-      syntheses.delete(action.retracted.synthesisId);
+      // Same unknown-id handling as synthesisError above.
+      const retractedSynthesisIds = new Set(state.retractedSynthesisIds);
+      retractedSynthesisIds.add(action.retracted.synthesisId);
+      let syntheses = state.syntheses;
+      if (state.syntheses.has(action.retracted.synthesisId)) {
+        const next = cloneMap(state.syntheses);
+        next.delete(action.retracted.synthesisId);
+        syntheses = next;
+      }
       // U8: refusals also count toward the paused-pill threshold.
       return {
         ...state,
         syntheses,
+        retractedSynthesisIds,
         synthesisFailureStreak: state.synthesisFailureStreak + 1,
       };
     }

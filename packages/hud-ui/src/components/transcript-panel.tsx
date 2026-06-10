@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useRef, type ReactElement } from 'react';
+import { Fragment, useEffect, useMemo, useRef, type ReactElement } from 'react';
 import { useAppState } from '../state/app-state';
 import type { TranscriptUtterance } from '../types';
 
@@ -111,12 +111,15 @@ export function TranscriptPanel({
   // Stick to bottom only while the user is already near the bottom, so reading
   // back through history isn't yanked forward by new speech.
   const pinnedRef = useRef(true);
-  // The utteranceId currently occupying the live-line row. Tracks the in-flight
-  // partial so when it finalizes we keep it in the SAME row for one more render
-  // (morph in place, Rule 3) before it commits to a speaker block. Seeded finals
-  // that were never interim never enter the live row, so they keep their speaker
-  // heading.
-  const liveIdRef = useRef<string | null>(null);
+  // The utteranceId of the LAST utterance seen as an in-flight partial. An
+  // utterance that finalizes keeps occupying the live-line row (morph in
+  // place, Rule 3) until a NEWER utterance supersedes it as most recent;
+  // seeded finals that were never interim never enter the live row, so they
+  // keep their speaker heading. Written only in the effect below (never
+  // during render) so StrictMode double-render / concurrent rendering can't
+  // observe a half-updated value — the old render-time mutation made the
+  // interim → final morph never play in dev.
+  const lastPartialIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!autoScroll) return;
@@ -124,6 +127,57 @@ export function TranscriptPanel({
     if (el === null || !pinnedRef.current) return;
     el.scrollTop = el.scrollHeight;
   }, [utterances, autoScroll]);
+
+  // Only the live page (autoScroll) reserves a live-line row and morphs interim
+  // → final in place. The static review transcript has no in-flight edge: it
+  // renders every utterance as a committed final (so jump-to-moment anchors
+  // stay in DOM order and nothing shows a caret).
+  //
+  // The live-line row holds the most recent utterance ONLY while it is an
+  // in-flight partial, OR after that same partial settles to final until a
+  // newer utterance arrives (so the partial → final morph animates on the same
+  // element rather than jumping up into a committed block). A final that was
+  // never the live partial — e.g. a seeded prior transcript — stays a committed
+  // block with its speaker heading. Committed blocks NEVER include the live-row
+  // utterance, so the morph happens in place (Rule 3) with no duplicate line.
+  let live: TranscriptUtterance | null = null;
+  if (autoScroll) {
+    const recent = mostRecent(utterances);
+    if (recent !== null) {
+      const wasLive = lastPartialIdRef.current === recent.utteranceId;
+      if (!recent.isFinal || wasLive) live = recent;
+    }
+  }
+  const liveId = live?.utteranceId ?? null;
+
+  // Bookkeeping after commit (render-safe): remember the in-flight partial's
+  // id. Intentionally NOT cleared when it finalizes — see the comment on the
+  // ref. Runs every render; the write is idempotent.
+  useEffect(() => {
+    if (live !== null && !live.isFinal) lastPartialIdRef.current = live.utteranceId;
+  });
+
+  // Memoize the committed-finals grouping so per-interim updates (live-row
+  // text morphs) don't re-sort/re-group every settled block. Keyed on the
+  // finals fingerprint + list length + the live id: a committed block only
+  // changes when a final lands/replaces or the live row hands an utterance
+  // back. `utterances` is rebuilt every render by the caller, so its identity
+  // can't be the key.
+  let finalsCount = 0;
+  let finalsRevisionSum = 0;
+  let lastFinalId: string | null = null;
+  for (const u of utterances) {
+    if (u.isFinal) {
+      finalsCount += 1;
+      finalsRevisionSum += u.revision;
+      lastFinalId = u.utteranceId;
+    }
+  }
+  const groups = useMemo(
+    () => groupBySpeaker(utterances.filter((u) => u.utteranceId !== liveId)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fingerprint deps stand in for `utterances` (rebuilt each render)
+    [finalsCount, finalsRevisionSum, lastFinalId, liveId, utterances.length],
+  );
 
   function onScroll(): void {
     const el = scrollRef.current;
@@ -139,33 +193,6 @@ export function TranscriptPanel({
     );
   }
 
-  // Only the live page (autoScroll) reserves a live-line row and morphs interim
-  // → final in place. The static review transcript has no in-flight edge: it
-  // renders every utterance as a committed final (so jump-to-moment anchors
-  // stay in DOM order and nothing shows a caret).
-  //
-  // The live-line row holds the most recent utterance ONLY while it is an
-  // in-flight partial, OR for the single render in which that same partial
-  // settles to final (so the partial → final morph animates on the same element
-  // rather than jumping up into a committed block). A final that was never the
-  // live partial — e.g. a seeded prior transcript — stays a committed block with
-  // its speaker heading. Committed blocks NEVER include the live-row utterance,
-  // so the morph happens in place (Rule 3) with no duplicate line.
-  let live: TranscriptUtterance | null = null;
-  if (autoScroll) {
-    const recent = mostRecent(utterances);
-    if (recent !== null) {
-      const wasLive = liveIdRef.current === recent.utteranceId;
-      if (!recent.isFinal || wasLive) live = recent;
-    }
-  }
-  // Remember the live id for the next render: keep it pinned while still
-  // in-flight; once it has settled (final + was the live line) release it so the
-  // next render commits it to a speaker block.
-  liveIdRef.current = live !== null && !live.isFinal ? live.utteranceId : null;
-  const committed = utterances.filter((u) => u.utteranceId !== live?.utteranceId);
-  const groups = groupBySpeaker(committed);
-
   return (
     <div
       className="transcript"
@@ -173,9 +200,14 @@ export function TranscriptPanel({
       onScroll={autoScroll ? onScroll : undefined}
       aria-label="Meeting transcript"
     >
-      {/* Rule 1: committed finals as immutable keyed blocks. */}
+      {/* Rule 1: committed finals as immutable keyed blocks. Keyed by the
+          group's first utterance id (stable as groups shift position when the
+          live row commits), falling back to position for empty groups. */}
       {groups.map((group, i) => (
-        <div className="transcript-group" key={`${group.speaker ?? 'unknown'}-${String(i)}`}>
+        <div
+          className="transcript-group"
+          key={group.paragraphs[0]?.[0]?.utteranceId ?? `${group.speaker ?? 'unknown'}-${String(i)}`}
+        >
           <div className="transcript-speaker">{group.speaker ?? 'Unknown speaker'}</div>
           {group.paragraphs.map((para, pi) => (
             <p className="transcript-lines" key={pi}>

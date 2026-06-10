@@ -104,6 +104,10 @@ export interface SynthesisDoneEvent {
   readonly usage: SynthesisUsageStats;
   readonly ttftMs: number;
   readonly latencyMs: number;
+  /** Full final answer text. When present the reducer REPLACES the
+   *  delta-accumulated text with it, so a dropped synthesisDelta
+   *  self-heals at done. Absent on events from before this field. */
+  readonly text?: string;
 }
 
 export interface SynthesisErrorEvent {
