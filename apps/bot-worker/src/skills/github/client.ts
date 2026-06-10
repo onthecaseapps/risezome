@@ -29,7 +29,12 @@ export class GithubClient {
     this.#logger = options.logger;
   }
 
-  async get(auth: AuthResult, path: string, query?: Record<string, string>): Promise<Response> {
+  async get(
+    auth: AuthResult,
+    path: string,
+    query?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<Response> {
     const url = new URL(path, this.#baseUrl);
     if (query !== undefined) {
       for (const [k, v] of Object.entries(query)) {
@@ -50,10 +55,14 @@ export class GithubClient {
       headers: redactHeaders(headers),
     });
 
-    const res = await this.#fetch(url, { method: 'GET', headers });
+    // The signal is the per-skill deadline from SkillContext — passing it
+    // through means an aborted skill stops its in-flight GitHub I/O instead
+    // of running to completion after the pipeline has moved on.
+    const res = await this.#fetch(url, { method: 'GET', headers, signal: signal ?? null });
 
     if (res.status === 401 || res.status === 403) {
       const remaining = Number(res.headers.get('x-ratelimit-remaining') ?? '-1');
+      // Primary rate limit: 403/429 with the remaining quota at zero.
       if (remaining === 0) {
         const reset = Number(res.headers.get('x-ratelimit-reset') ?? '0');
         const retryAfterMs = Math.max(0, reset * 1000 - Date.now());
@@ -63,6 +72,22 @@ export class GithubClient {
         );
       }
       const errorBody = await safeReadText(res);
+      // Secondary rate limit: 403 + Retry-After with NON-zero remaining (or
+      // "secondary rate limit" in the body). It's retryable throttling, not
+      // an auth failure — misclassifying it as auth turns a transient burst
+      // into a scary "GitHub auth failed" instead of a degrade-to-RAG.
+      if (res.status === 403) {
+        const retryAfterHeader = res.headers.get('retry-after');
+        if (retryAfterHeader !== null || /secondary rate limit/i.test(errorBody)) {
+          const retryAfterSec = Number(retryAfterHeader ?? '');
+          const retryAfterMs =
+            Number.isFinite(retryAfterSec) && retryAfterSec >= 0 ? retryAfterSec * 1000 : 60_000;
+          throw new RateLimitedError(
+            `GitHub secondary rate limit (403). Retry after ${String(Math.ceil(retryAfterMs / 1000))}s.`,
+            retryAfterMs,
+          );
+        }
+      }
       throw new ConnectorAuthError(
         `GitHub auth failed (${String(res.status)}): ${redactString(errorBody, [token])}`,
         [],
@@ -91,8 +116,13 @@ export class GithubClient {
     return res;
   }
 
-  async getJson<T>(auth: AuthResult, path: string, query?: Record<string, string>): Promise<T> {
-    const res = await this.get(auth, path, query);
+  async getJson<T>(
+    auth: AuthResult,
+    path: string,
+    query?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const res = await this.get(auth, path, query, signal);
     return (await res.json()) as T;
   }
 

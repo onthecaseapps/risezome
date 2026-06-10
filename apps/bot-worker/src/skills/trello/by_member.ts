@@ -4,7 +4,7 @@ import { mapTrelloError } from './error.js';
 import { formatCardList, clampLimit } from './list.js';
 import {
   collectFilterHealed,
-  NO_TRELLO_SOURCE_SUMMARY,
+  NO_TRELLO_SOURCE_RESULT,
   type TrelloFilter,
 } from './filter.js';
 
@@ -41,12 +41,13 @@ export function buildTrelloByMemberSkill(ctx: TrelloLiveContext): Skill {
       const now = skillCtx.now?.() ?? Date.now();
       try {
         const access = await ctx.resolve(skillCtx.orgId);
-        if (access === null) return { kind: 'detail', summary: NO_TRELLO_SOURCE_SUMMARY };
+        if (access === null) return NO_TRELLO_SOURCE_RESULT;
         const { matched, recovery: healed } = await collectFilterHealed(
           ctx.client,
           access,
           filter,
           now,
+          skillCtx.signal,
         );
         // by_member is fundamentally about the member; if the member itself was
         // neutralized the answer can't be about them, so force 'unresolved'

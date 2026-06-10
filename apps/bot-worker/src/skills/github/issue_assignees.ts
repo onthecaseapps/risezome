@@ -2,7 +2,7 @@ import type { Skill, SkillContext, SkillResult } from '@risezome/engine/skills';
 import type { GithubIssue } from './types.js';
 import type { LiveSkillContext } from './live-context.js';
 import { mapGithubError } from './error.js';
-import { authForToken, firstRepo, NO_GITHUB_SOURCE_SUMMARY } from './live-helpers.js';
+import { authForToken, firstRepo, NO_GITHUB_SOURCE_RESULT } from './live-helpers.js';
 
 const NAME = 'github_issue_assignees';
 
@@ -37,11 +37,13 @@ export function buildIssueAssigneesSkill(ctx: LiveSkillContext): Skill {
         const access = await ctx.resolve(skillCtx.orgId);
         const repo = access === null ? null : firstRepo(access);
         if (repo === null) {
-          return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+          return NO_GITHUB_SOURCE_RESULT;
         }
         const issue = await ctx.client.getJson<GithubIssue>(
           authForToken(repo.token),
           `/repos/${repo.owner}/${repo.name}/issues/${String(issueNumber)}`,
+          undefined,
+          skillCtx.signal,
         );
         return formatResult(issue);
       } catch (err) {

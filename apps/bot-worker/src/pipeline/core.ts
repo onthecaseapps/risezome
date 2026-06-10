@@ -51,14 +51,28 @@ import type {
  *  `deps.topK`. */
 const DEFAULT_TOP_K = 5;
 const DEFAULT_RELEVANCE_SKIP_THRESHOLD = 0.7;
-const RELEVANCE_TIMEOUT_MS = 3000;
+// The relevance judge runs CONCURRENTLY with embed + search (U2), so its budget
+// adds wall-clock only when it outlasts retrieval. The old 3s budget was below
+// the judge's routine latency (the router observation at ROUTER_TIMEOUT_MS
+// applies to the same Haiku classify path), so under load the gate
+// systematically timed out and FAILED OPEN — every ambiguous utterance
+// proceeded to embed/search/synthesis precisely when capacity was scarcest.
+// 6s covers the observed latency; env-overridable for tuning.
+const RELEVANCE_TIMEOUT_MS = (() => {
+  const parsed = Number.parseInt(process.env.RISEZOME_RELEVANCE_TIMEOUT_MS ?? '6000', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 6000;
+})();
 // The router classifier is awaited AFTER cards emit, so its latency never delays
 // surfacing — only the (optional) skill answer. The 3s relevance-gate budget was
 // far too tight for it: real classify calls routinely take >3s, so the abort
 // fired and clear skill-intent questions silently fell back to RAG
 // (`classifier_timeout`). Give the router its own, generous budget.
 const ROUTER_TIMEOUT_MS = 10000;
-const SYNTHESIS_MAX_TOKENS = 150;
+// 300, not 150: the prompt mandates [N: "4-15 word verbatim quote"] markup on
+// every factual sentence — a 3-sentence answer with quotes easily exceeds 150
+// output tokens, and a max_tokens truncation chops the trailing citation,
+// which then fails verification and RETRACTS a correct answer as "ungrounded".
+const SYNTHESIS_MAX_TOKENS = 300;
 
 /** Outcome of one `runPipeline` call (the same `{ emitted, skipped? }` the
  *  prod adapter's caller already consumes). */
@@ -248,12 +262,13 @@ export async function runPipeline(
     deps.skillRegistry.size() > 0 &&
     isToolShaped(input.utteranceText);
   let classifierController: AbortController | null = null;
+  let classifierTimer: ReturnType<typeof setTimeout> | null = null;
   let classifierPromise: ReturnType<
     NonNullable<PipelineDeps['routerClassifier']>['classify']
   > | null = null;
   if (routerEligible && deps.routerClassifier !== undefined && deps.skillRegistry !== undefined) {
     classifierController = new AbortController();
-    setTimeout(() => classifierController?.abort(), ROUTER_TIMEOUT_MS);
+    classifierTimer = setTimeout(() => classifierController?.abort(), ROUTER_TIMEOUT_MS);
     const summary = input.lastSummary;
     const hasSummaryContext =
       summary !== undefined &&
@@ -422,7 +437,13 @@ export async function runPipeline(
   let cragAdopted = false;
   if (missed || weak) {
     const expander = deps.optionalQueryExpander();
-    if (expander !== undefined && shouldExpandOnMiss(queryText)) {
+    // QUESTION lane: a detected substantive question is by definition worth one
+    // expansion retry — `shouldExpandOnMiss`'s word-count floor was built for
+    // ambient windows and excluded exactly the short, high-value questions
+    // ("what do we use for payments") where a vocabulary mismatch causes the
+    // miss. Ambient keeps the heuristic gate.
+    const expandEligible = input.lane === 'question' || shouldExpandOnMiss(queryText);
+    if (expander !== undefined && expandEligible) {
       cragRan = true;
       try {
         const terms = await expander(queryText);
@@ -441,9 +462,14 @@ export async function runPipeline(
               reranker,
               logger: deps.logger,
             });
-            const adopt = missed
-              ? expandedHits.length > 0
-              : !deps.isLowConfidenceHits(expandedHits);
+            // Adopt only a CONFIDENT expanded set — on a miss too. The expander
+            // is invited to guess entity names, so the augmented query can be
+            // anchored on hallucinated terms; "any non-empty result" was the
+            // weakest possible adoption bar at exactly the moment the query was
+            // least trustworthy (an off-topic doc that merely contains a guessed
+            // word would ground a confidently-wrong answer). A weak expanded set
+            // on a miss now stays a miss (knowledge gap) instead.
+            const adopt = !deps.isLowConfidenceHits(expandedHits);
             if (adopt) {
               hits = expandedHits;
               cragAdopted = true;
@@ -678,9 +704,10 @@ export async function runPipeline(
     deps,
     sink,
     traceId,
-    classifierController,
+    classifierTimer,
     classifierPromise,
     trace,
+    synthesisSources.length,
   );
 
   // ── Stage: synthesis (grounded-or-nothing) ───────────────────────────
@@ -806,14 +833,20 @@ async function enrichHits(
 /** Await the parallel router classifier, execute the chosen skill, and return
  *  the tool source (or null). Mirrors retrieval.ts's router-collection block,
  *  kept sink-agnostic. */
+const SKILL_TIMEOUT_MS = (() => {
+  const parsed = Number.parseInt(process.env.RISEZOME_SKILL_TIMEOUT_MS ?? '15000', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15_000;
+})();
+
 async function collectToolSource(
   input: PipelineInput,
   deps: PipelineDeps,
   sink: PipelineSink,
   traceId: string,
-  controller: AbortController | null,
+  classifierTimer: ReturnType<typeof setTimeout> | null,
   classifierPromise: ReturnType<NonNullable<PipelineDeps['routerClassifier']>['classify']> | null,
   trace: TraceBuilder | null,
+  ragCount: number,
 ): Promise<SynthesisSource | null> {
   const skillStart = Date.now();
   const pushSkill = (decision: string, reason: string, data?: Record<string, unknown>): void => {
@@ -833,6 +866,9 @@ async function collectToolSource(
   }
   try {
     const result = await classifierPromise;
+    // The router timer's only job was bounding the CLASSIFIER. Clear it now so
+    // it can't fire mid-skill-execution; the skill gets its own deadline below.
+    if (classifierTimer !== null) clearTimeout(classifierTimer);
     if (result.intent !== 'tool') {
       // KTD6: the router classifier chose RAG over any skill. This is the exact
       // skill-vs-RAG decision the replay harness needs — record the intent so a
@@ -858,11 +894,17 @@ async function collectToolSource(
       });
       return null;
     }
+    // Bound skill EXECUTION with its own deadline. The router timer (just
+    // cleared) only bounded classification; without this a slow connector
+    // (paginated GitHub search, Trello 429 backoff) stalled synthesis
+    // unboundedly. Handlers thread this signal into their fetches.
+    const skillController = new AbortController();
+    const skillTimer = setTimeout(() => skillController.abort(), SKILL_TIMEOUT_MS);
     try {
       const skillContext: SkillContext = {
         db: deps.db,
         orgId: input.orgId,
-        ...(controller !== null ? { signal: controller.signal } : {}),
+        signal: skillController.signal,
       };
       const skillResult = await skill.handler(result.args, skillContext);
       // Surface the raw structured answer as a standalone signal (the dev page
@@ -880,7 +922,8 @@ async function collectToolSource(
         summary: skillResult.summary,
         items: skillResult.items ?? [],
       });
-      const decision = decideToolSource(skillResult);
+      clearTimeout(skillTimer);
+      const decision = decideToolSource(skillResult, { ragCount });
       if (decision.keep) {
         pushSkill('kept', `${result.skillName} → source[0]`, {
           intent: 'tool',
@@ -896,6 +939,7 @@ async function collectToolSource(
       });
       return null;
     } catch (err) {
+      clearTimeout(skillTimer);
       const code = err instanceof SkillExecutionError ? err.executionCode : 'execution-error';
       deps.logger.warn(
         {
@@ -911,6 +955,7 @@ async function collectToolSource(
       return null;
     }
   } catch (err) {
+    if (classifierTimer !== null) clearTimeout(classifierTimer);
     if (err instanceof ClassifierProviderError) {
       deps.logger.warn(
         { meetingId: input.meetingId, code: err.kind, message: err.message },
@@ -1063,6 +1108,15 @@ async function runSynthesis(args: {
         // gate.status === 'no_relevant_context' or !complete → keep buffering.
       } else if (chunk.type === 'done') {
         const latencyMs = Date.now() - synthStart;
+        if (chunk.stopReason === 'max_tokens') {
+          // Truncation chops trailing citations, which verification then drops
+          // — a retract caused by the BUDGET must be diagnosable as such
+          // rather than reading as model ungroundedness.
+          deps.logger.warn(
+            { meetingId: input.meetingId, synthesisId, chars: accumulated.length },
+            'pipeline.synthesis.truncated_max_tokens',
+          );
+        }
         const parsed = parseSynthesisOutput(accumulated, sources.length);
         // S14 — the model produced output.
         if (trace !== null) {

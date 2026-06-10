@@ -3,7 +3,7 @@ import type { LiveSkillContext } from './live-context.js';
 import type { GithubFilter } from './filter.js';
 import { summarizeCount } from './count-summary.js';
 import { mapGithubError } from './error.js';
-import { searchIssuesCount, NO_GITHUB_SOURCE_SUMMARY, anyToken } from './live-helpers.js';
+import { searchIssuesCount, NO_GITHUB_SOURCE_RESULT, anyToken, accountLogins } from './live-helpers.js';
 import { ConnectorAuthError, RateLimitedError } from './connector-errors.js';
 import { resolvePerson, type ResolvedPerson } from './person.js';
 import {
@@ -64,7 +64,7 @@ export function buildSearchCountSkill(ctx: LiveSkillContext): Skill {
       try {
         const access = await ctx.resolve(skillCtx.orgId);
         if (access === null) {
-          return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+          return NO_GITHUB_SOURCE_RESULT;
         }
 
         // Self-heal free-text args against the live domain (plan U2). Only
@@ -75,7 +75,11 @@ export function buildSearchCountSkill(ctx: LiveSkillContext): Skill {
 
         if (filter.labels?.some((l) => l.length > 0) === true) {
           try {
-            const { labels: union, complete } = await collectRepoLabelUnion(ctx.client, access);
+            const { labels: union, complete } = await collectRepoLabelUnion(
+              ctx.client,
+              access,
+              skillCtx.signal,
+            );
             // Only neutralize against a COMPLETE domain. If a repo's label set
             // was truncated at the page cap, an unmatched label might be real,
             // so leave the filter as-is rather than confidently dropping it.
@@ -113,7 +117,13 @@ export function buildSearchCountSkill(ctx: LiveSkillContext): Skill {
           const token = anyToken(access);
           let resolved: ResolvedPerson | null = null;
           try {
-            resolved = token !== null ? await resolvePerson(ctx.client, token, filter.author) : null;
+            resolved =
+              token !== null
+                ? await resolvePerson(ctx.client, token, filter.author, {
+                    orgs: accountLogins(access),
+                    signal: skillCtx.signal,
+                  })
+                : null;
           } catch (err) {
             // Genuine auth/rate-limit propagate; a transient resolve failure
             // just neutralizes the author (drop it, keep any label heals)
@@ -134,7 +144,7 @@ export function buildSearchCountSkill(ctx: LiveSkillContext): Skill {
         }
 
         const qualifiers = buildSearchQualifiers(cleaned);
-        const count = await searchIssuesCount(ctx.client, access, qualifiers);
+        const count = await searchIssuesCount(ctx.client, access, qualifiers, skillCtx.signal);
 
         if (neutralized.length === 0) {
           return { kind: 'count', summary: summarizeCount(count, cleaned), raw: { count, qualifiers } };
@@ -176,7 +186,14 @@ export function buildSearchQualifiers(filter: GithubFilter): string {
   if (filter.labels !== undefined) {
     for (const label of filter.labels) {
       if (label.length === 0) continue;
-      parts.push(`label:"${label}"`);
+      // Strip double-quotes before interpolating into the quoted qualifier:
+      // a label value carrying `"` would close the quote early and inject
+      // arbitrary search qualifiers (label values come from meeting speech
+      // via the classifier — untrusted). GitHub labels can't contain `"`
+      // anyway, so nothing legitimate is lost.
+      const safe = label.replace(/"/g, '');
+      if (safe.length === 0) continue;
+      parts.push(`label:"${safe}"`);
     }
   }
   if (typeof filter.author === 'string' && filter.author.length > 0) {

@@ -298,7 +298,7 @@ describe('Mechanism A — void already-answered transcript spans', () => {
     h.sinkArgs.length = 0;
   });
 
-  it('an answered final is excluded from the NEXT question’s recentContext while the new question stays', async () => {
+  it('OLDER answered spans are excluded from the NEXT question’s recentContext; the immediate prior final is retained (anaphora carve-out)', async () => {
     const rt = newRetrievalRuntime();
     // First (ambient-ish) statement establishes a transcript span, then a
     // question is asked and grounds — that span produced the answer.
@@ -310,43 +310,51 @@ describe('Mechanism A — void already-answered transcript spans', () => {
     expect(rt.consumedFinals).toContain('css question about flexbox alignment');
     expect(rt.consumedFinals).toContain('how do i center a div');
 
-    // A NEW question fires. Its recentContext must NOT carry the consumed spans,
-    // but the new utterance itself is the query (never voided).
+    // A NEW question fires. Its recentContext must NOT carry the OLDER consumed
+    // span, but the immediately-prior final is retained even though consumed —
+    // the anaphora carve-out (a follow-up needs its antecedent). The new
+    // utterance itself is the query (never voided).
     const res = await maybeRetrieveAndEmit(baseArgs(rt, 'what database do we use'));
     expect(res.skipped).toBeUndefined();
     const ctx = lastInput().recentContext ?? [];
-    expect(ctx).not.toContain('css question about flexbox alignment');
-    expect(ctx).not.toContain('how do i center a div');
+    expect(ctx).not.toContain('css question about flexbox alignment'); // older span voided
+    expect(ctx).toContain('how do i center a div'); // immediate prior retained
     expect(lastInput().queryText).toBe('what database do we use');
   });
 
-  it('the router classifier window (routerRecentFinals) RETAINS an answered antecedent the synthesizer window voids', async () => {
+  it('the synthesizer window retains ONLY the immediate antecedent; the router window retains the whole raw span', async () => {
     const rt = newRetrievalRuntime();
-    // A github question is asked and grounds — its span is voided (Mechanism A).
-    rt.recentFinals = ['are there any open github issues'];
+    // An older span + the question both ground — the whole span is consumed.
+    rt.recentFinals = ['we should check the github backlog'];
     await maybeRetrieveAndEmit(baseArgs(rt, 'are there any open github issues'));
     fireGroundedAnswer(['doc-gh']);
+    expect(rt.consumedFinals).toContain('we should check the github backlog');
     expect(rt.consumedFinals).toContain('are there any open github issues');
 
-    // The anaphoric follow-up fires. The synthesizer window (recentContext) must
-    // NOT carry the voided antecedent, but the classifier window MUST — that's the
-    // whole point: the two windows diverge so the pronoun stays resolvable.
+    // The anaphoric follow-up fires. The synthesizer window (recentContext)
+    // keeps the immediately-prior final (the antecedent "these issues" needs)
+    // but voids the older consumed span; the router window keeps everything.
     const res = await maybeRetrieveAndEmit(baseArgs(rt, 'how many of these issues are there'));
     expect(res.skipped).toBeUndefined();
     const ctx = lastInput().recentContext ?? [];
     const routerFinals = lastInput().routerRecentFinals ?? [];
-    expect(ctx).not.toContain('are there any open github issues'); // voided for synthesis
-    expect(routerFinals).toContain('are there any open github issues'); // retained for routing
+    expect(ctx).toContain('are there any open github issues'); // antecedent retained for synthesis
+    expect(ctx).not.toContain('we should check the github backlog'); // older span voided
+    expect(routerFinals).toContain('we should check the github backlog'); // raw window for routing
+    expect(routerFinals).toContain('are there any open github issues');
   });
 
-  it('an answered prior final is dropped from a follow-up question’s built query (buildQuestionQuery view)', async () => {
+  it('a follow-up question’s built query keeps the RAW prior final as its antecedent (even when consumed)', async () => {
     const rt = newRetrievalRuntime();
     rt.recentFinals = ['the css alignment topic'];
     await maybeRetrieveAndEmit(baseArgs(rt, 'how do i center a div'));
     fireGroundedAnswer(['doc-css']);
 
-    // A fragment follow-up would normally pull in the immediately-prior final as
-    // its referent — but that prior final is now consumed, so it must NOT leak.
+    // A fragment follow-up pulls in the immediately-prior RAW final as its
+    // referent — even though that final is consumed. Voiding it left the
+    // follow-up query with either NO antecedent or (worse) an older unrelated
+    // one from the effective window; the dedup protection is the near-duplicate
+    // check over the BUILT query, not antecedent starvation.
     const args = {
       ...baseArgs(rt, 'what about it'),
       lastSummary: { summary: '', current_topic: 'databases', open_questions: [], key_terms: [] },
@@ -355,8 +363,26 @@ describe('Mechanism A — void already-answered transcript spans', () => {
     expect(res.skipped).toBeUndefined();
     const q = lastInput().queryText;
     expect(q).toContain('what about it');
-    expect(q).not.toContain('how do i center a div'); // consumed prior final voided
+    expect(q).toContain('how do i center a div'); // raw antecedent retained
     expect(q).toContain('databases'); // summary topic still feeds it
+  });
+
+  it('a follow-up never picks an OLDER unconsumed utterance as its antecedent', async () => {
+    const rt = newRetrievalRuntime();
+    // Older unrelated chatter that was never consumed, then a question that
+    // grounds (its span is voided).
+    rt.recentFinals = ['unrelated lunch plans chatter'];
+    await maybeRetrieveAndEmit(baseArgs(rt, 'are there any open github issues'));
+    fireGroundedAnswer(['doc-gh']);
+
+    // Pre-fix: the effective window was [unrelated, follow-up], so the
+    // follow-up's antecedent slot held the unrelated chatter. The raw prior
+    // final (the github question) is the true referent.
+    const res = await maybeRetrieveAndEmit(baseArgs(rt, 'how many closed'));
+    expect(res.skipped).toBeUndefined();
+    const q = lastInput().queryText;
+    expect(q).toContain('are there any open github issues');
+    expect(q).not.toContain('unrelated lunch plans chatter');
   });
 
   it('the current utterance is never voided even if its exact text was previously consumed', async () => {
@@ -376,13 +402,37 @@ describe('Mechanism B — skip a synthesis grounding on an already-answered sour
     h.sinkArgs.length = 0;
   });
 
-  it('a question whose source set was already answered is flagged duplicate; a new docId is not', async () => {
+  /** Bucket of the fake embedder's one-hot vector for `text`. */
+  function bucketOf(text: string): number {
+    return [...text].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % 16;
+  }
+
+  /**
+   * A vector at cosine distance 0.25 from the fake embedding of `text`:
+   * strictly between the STRICT dedup distance (0.15 — so the pre-retrieval
+   * near-dup check does NOT suppress the call) and the LOOSE confirm distance
+   * (0.30 — so Mechanism B's rephrase confirmation DOES match). Simulates "the
+   * answered question was a moderate rephrase of this one".
+   */
+  function looseRephraseOf(text: string): number[] {
+    const k = bucketOf(text);
+    const v = new Array<number>(16).fill(0);
+    v[k] = 3;
+    v[(k + 1) % 16] = Math.sqrt(7); // cos = 3/4 → distance 0.25
+    return v;
+  }
+
+  it('a REPHRASED question (loose similarity) whose source set was already answered is flagged duplicate; a new docId is not', async () => {
     const rt = newRetrievalRuntime();
     await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
     fireGroundedAnswer(['doc-a', 'doc-b']); // records answeredSourceSets
 
-    // Next question: the predicate the adapter injected should report a duplicate
-    // for the SAME (or a subset) source set, and NOT for one with a new docId.
+    // The confirmation signal: a recently-ANSWERED question moderately similar
+    // to the upcoming re-ask (the one-hot fake can't express "moderate", so the
+    // ledger entry is crafted at distance 0.25 — past the strict 0.15 check,
+    // within the 0.30 confirm bound).
+    rt.answeredQuestions.push({ embedding: looseRephraseOf('remind me which ai models'), at: Date.now() });
+
     await maybeRetrieveAndEmit(baseArgs(rt, 'remind me which ai models'));
     const pred = lastDeps().isDuplicateAnswerSources;
     expect(pred).toBeDefined();
@@ -393,10 +443,40 @@ describe('Mechanism B — skip a synthesis grounding on an already-answered sour
     expect(pred!([])).toBe(false); // empty candidate never dedups
   });
 
+  it('a genuinely DIFFERENT question retrieving the same sources is NOT suppressed (rephrase confirmation required)', async () => {
+    const rt = newRetrievalRuntime();
+    // Q1 answered, grounding on {doc-a, doc-b}.
+    await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    fireGroundedAnswer(['doc-a', 'doc-b']);
+
+    // Q2 is a DIFFERENT question (fake-embed distance 1 from Q1) that happens to
+    // retrieve the SAME two docs — e.g. "what's the status of X" then "who owns
+    // X". Pre-fix this was suppressed outright (the user saw nothing); now the
+    // source-set overlap alone is not enough without a rephrase-similar answered
+    // question to confirm.
+    const res = await maybeRetrieveAndEmit(baseArgs(rt, 'who is assigned to the auth refactor'));
+    expect(res.skipped).toBeUndefined(); // fired (not a near-duplicate question)
+    expect(lastDeps().isDuplicateAnswerSources!(['doc-a', 'doc-b'])).toBe(false);
+    expect(lastDeps().isDuplicateAnswerSources!(['doc-a'])).toBe(false);
+  });
+
+  it('the AMBIENT lane keeps the source-set-only veto (no question vector to confirm with)', async () => {
+    const rt = newRetrievalRuntime();
+    await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
+    fireGroundedAnswer(['doc-a']);
+    // An ambient fire after the cooldown: its predicate has no question vector,
+    // so the source-set overlap alone still suppresses (the ambient lane's only
+    // dedup).
+    rt.lastRetrievalAt = Date.now() - 11_000;
+    await maybeRetrieveAndEmit(baseArgs(rt, 'so the build is green now'));
+    expect(lastDeps().isDuplicateAnswerSources!(['doc-a'])).toBe(true);
+  });
+
   it('the answered source set expires after the recency window', async () => {
     const rt = newRetrievalRuntime();
     await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
     fireGroundedAnswer(['doc-a']);
+    rt.answeredQuestions.push({ embedding: looseRephraseOf('remind me which ai models'), at: Date.now() });
     // Age the recorded set past the 5-minute window.
     rt.answeredSourceSets[0]!.at = Date.now() - 6 * 60_000;
     await maybeRetrieveAndEmit(baseArgs(rt, 'remind me which ai models'));
@@ -408,6 +488,16 @@ describe('Mechanism B — skip a synthesis grounding on an already-answered sour
     await maybeRetrieveAndEmit(baseArgs(rt, 'what ai models do we use'));
     fireGroundedAnswer([]); // grounded but no source docs
     expect(rt.answeredSourceSets).toHaveLength(0);
+  });
+
+  it('an AMBIENT grounded answer records into answeredQuestions (lane-flip dedup)', async () => {
+    const rt = newRetrievalRuntime();
+    await maybeRetrieveAndEmit(baseArgs(rt, 'so the build is green now')); // ambient
+    fireGroundedAnswer(['doc-x']);
+    // The record is a fire-and-forget embed — let the microtask settle.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(rt.answeredQuestions).toHaveLength(1);
+    expect(rt.answeredSourceSets).toHaveLength(1);
   });
 });
 

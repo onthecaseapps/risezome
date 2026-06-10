@@ -77,8 +77,8 @@ export function trelloFetch(boards: readonly BoardFixture[]): typeof fetch {
 export function trelloCtx(boards: readonly BoardFixture[], accessBoards?: TrelloAccess['boards']): TrelloLiveContext {
   const client = new TrelloClient({ apiKey: 'test-key', fetchImpl: trelloFetch(boards) });
   const access: TrelloAccess = {
-    token: 'test-token',
-    boards: accessBoards ?? boards.map((b) => ({ id: b.id, name: b.name })),
+    // Tokens are per-board (multi-connection orgs); the fixtures share one.
+    boards: accessBoards ?? boards.map((b) => ({ id: b.id, name: b.name, token: 'test-token' })),
   };
   return { client, resolve: async () => access };
 }

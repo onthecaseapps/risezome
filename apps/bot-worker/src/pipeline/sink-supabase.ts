@@ -97,6 +97,19 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
     args.onSynthesisRequested?.();
   };
 
+  // F4: serialize all fire-and-forget persist+broadcast work through one
+  // promise chain. Independent `void (async () => ...)()` chains let event_id
+  // order invert semantic order (e.g. a delta row persisted BEFORE its start
+  // row — replay would then drop the text forever, since deltas for an
+  // unknown synthesis are no-ops). The .catch keeps the chain alive after a
+  // failure; each work fn keeps its own granular error handling.
+  let tail: Promise<void> = Promise.resolve();
+  const enqueue = (label: string, work: () => Promise<void>): void => {
+    tail = tail.then(work).catch((err: unknown) => {
+      logger.warn({ err }, label);
+    });
+  };
+
   return {
     async emitCard(card: PipelineCard): Promise<EmittedCard | null> {
       // Persist the card row (RLS-scoped by org_id; insert via service role)
@@ -175,7 +188,7 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
       // can rebuild from the DB. The core only calls synthesisStart once the
       // answer GROUNDED (flash-fix), so by the time we insert + broadcast the
       // answer is decided — no optimistic-then-retracted flash on the live page.
-      void (async () => {
+      enqueue('synthesis.start.persist.failed', async () => {
         const insertResult = await db.from('syntheses').insert({
           synthesis_id: info.synthesisId,
           meeting_id: meetingId,
@@ -203,20 +216,22 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
             },
           },
         });
-      })();
+      });
     },
 
     synthesisDelta(synthesisId: string, delta: string): void {
-      void persistAndBroadcast(db, {
-        meetingId,
-        orgId,
-        type: 'synthesisDelta',
-        payload: { delta: { synthesisId, delta } },
+      enqueue('synthesis.delta.persist.failed', async () => {
+        await persistAndBroadcast(db, {
+          meetingId,
+          orgId,
+          type: 'synthesisDelta',
+          payload: { delta: { synthesisId, delta } },
+        });
       });
     },
 
     synthesisDone(info: SynthesisDoneInfo): void {
-      void (async () => {
+      enqueue('synthesis.done.persist.failed', async () => {
         // U9: encrypt the grounded body under the org's per-org KMS key.
         let encrypted: string;
         try {
@@ -249,6 +264,12 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
               citations: info.citations,
               ttftMs: 0, // not measured at this layer
               latencyMs: info.latencyMs,
+              // F4b: carry the full final text so the live page self-heals a
+              // dropped delta. No new plaintext exposure: synthesisDelta
+              // events already persist the same text plaintext in
+              // meeting_events (only transcript.data is stripped/encrypted
+              // there); the encrypted-at-rest copy remains the syntheses row.
+              text: info.text,
             },
           },
         });
@@ -269,7 +290,7 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
 
         startedCardIds.delete(info.synthesisId);
         startedTraceIds.delete(info.synthesisId);
-      })();
+      });
     },
 
     synthesisRefusal(info: SynthesisRefusalInfo): void {
@@ -278,7 +299,7 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
       // synthesisStart, so there is no `running` row to update — insert the
       // synthesis directly as `retracted` so reconnect-fetch sees the terminal
       // state and the right panel collapses gracefully.
-      void (async () => {
+      enqueue('synthesis.refusal.persist.failed', async () => {
         const insertResult = await db.from('syntheses').insert({
           synthesis_id: info.synthesisId,
           meeting_id: meetingId,
@@ -306,7 +327,7 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
           { synthesisId: info.synthesisId, meetingId, reason: info.reason, latencyMs: info.latencyMs },
           info.reason === 'refusal' ? 'synthesis.refusal' : 'synthesis.ungrounded',
         );
-      })();
+      });
     },
 
     synthesisRetract(info: SynthesisRetractInfo): void {
@@ -317,7 +338,7 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
       // streamed prose. This is the rare "STATUS_ANSWER that failed citation
       // verification" path; a STATUS_NO_CONTEXT refusal never streams and goes
       // through synthesisRefusal instead.
-      void (async () => {
+      enqueue('synthesis.retract.persist.failed', async () => {
         const updateResult = await db
           .from('syntheses')
           .update({
@@ -347,7 +368,7 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
         );
         startedCardIds.delete(info.synthesisId);
         startedTraceIds.delete(info.synthesisId);
-      })();
+      });
     },
 
     recordMiss(miss: MissRecord): void {

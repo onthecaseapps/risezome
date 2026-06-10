@@ -157,9 +157,15 @@ async function main(): Promise<void> {
   // is never logged, and maxParamLength for the long :jwt param). See
   // server-options.ts for the security rationale.
   const fastify = Fastify(fastifyServerOptions());
-  await fastify.register(websocket);
+  // maxPayload: the ws default (~100MiB) let a holder of a valid meeting JWT
+  // stream oversized frames straight into Buffer+JSON.parse — transcript
+  // messages are tiny; 1MiB is generous headroom.
+  await fastify.register(websocket, { options: { maxPayload: 1024 * 1024 } });
 
-  fastify.get('/health', () => ({ ok: true, runtimes: runtimes.size }));
+  // Unauthenticated health: liveness only. The active-meeting count is
+  // deliberately NOT exposed here (information disclosure over the public
+  // tunnel).
+  fastify.get('/health', () => ({ ok: true }));
 
   // POST /meetings/:id/end — called by the portal's status webhook
   // (U10) on bot.call_ended. Flushes in-memory state and removes the

@@ -47,6 +47,7 @@ interface GithubLabel {
 export async function collectRepoLabelUnion(
   client: GithubClient,
   access: GithubAccess,
+  signal?: AbortSignal,
 ): Promise<{ readonly labels: Set<string>; readonly complete: boolean }> {
   const union = new Set<string>();
   let complete = true;
@@ -59,6 +60,7 @@ export async function collectRepoLabelUnion(
           auth,
           `/repos/${repo.owner}/${repo.name}/labels`,
           { per_page: String(LABEL_PAGE_SIZE), page: String(page) },
+          signal,
         );
         if (!Array.isArray(labels)) {
           repoComplete = true;

@@ -33,6 +33,14 @@ export interface TrelloFilter {
 export const NO_TRELLO_SOURCE_SUMMARY =
   'No Trello board is connected for this workspace yet. Connect a board on the Sources page to get live Trello answers.';
 
+/** The full not-connected result; `notConnected` lets the safety-net drop the
+ *  CTA when real RAG sources exist. */
+export const NO_TRELLO_SOURCE_RESULT = {
+  kind: 'detail' as const,
+  summary: NO_TRELLO_SOURCE_SUMMARY,
+  notConnected: true,
+};
+
 /** A card tagged with the board it came from. */
 export interface CollectedCard {
   readonly card: EnrichedCard;
@@ -80,11 +88,13 @@ async function collectCards(
   client: TrelloClient,
   access: TrelloAccess,
   filter: Pick<TrelloFilter, 'board'>,
+  signal?: AbortSignal,
 ): Promise<CollectedCard[]> {
   const boards = access.boards.filter((b) => matchesText(b.name, filter.board));
   const out: CollectedCard[] = [];
   for (const board of boards) {
-    const cards = await client.fetchEnrichedCards(board.id, access.token);
+    // Each board reads with ITS connection's token (multi-connection orgs).
+    const cards = await client.fetchEnrichedCards(board.id, board.token, signal);
     for (const card of cards) out.push({ card, boardName: board.name });
   }
   return out;
@@ -167,6 +177,7 @@ export async function collectFilterHealed(
   access: TrelloAccess,
   filter: TrelloFilter,
   now: number,
+  signal?: AbortSignal,
 ): Promise<HealedFilterResult> {
   const neutralized: NeutralizedArg[] = [];
   let cleaned: TrelloFilter = filter;
@@ -179,7 +190,7 @@ export async function collectFilterHealed(
     }
   }
 
-  const collected = await collectCards(client, access, cleaned);
+  const collected = await collectCards(client, access, cleaned, signal);
 
   if (
     cleaned.list !== undefined &&

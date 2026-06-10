@@ -249,26 +249,50 @@ async function subscribeChannel(
   // Private to match the live page's `channel(name, { config: { private: true } })`.
   // A non-private send does NOT reach private subscribers, so both ends must agree.
   const channel = client.channel(name, { config: { private: true } });
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      reject(new Error(`subscribe timeout for ${name}`));
-    }, 5000);
-    channel.subscribe((status: string, err) => {
-      if (settled) return;
-      if (status === 'SUBSCRIBED') {
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timeout = setTimeout(() => {
+        if (settled) return;
         settled = true;
-        clearTimeout(timeout);
-        resolve();
-      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        settled = true;
-        clearTimeout(timeout);
-        reject(new Error(`subscribe ${status}${err !== undefined ? `: ${String(err)}` : ''}`));
-      }
+        reject(new Error(`subscribe timeout for ${name}`));
+      }, 5000);
+      channel.subscribe((status: string, err) => {
+        if (settled) {
+          // A pooled channel went bad AFTER subscribing: evict it so the next
+          // send re-subscribes fresh instead of sending into a dead channel.
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            if (channelPool.get(name) === channel) {
+              channelPool.delete(name);
+              console.warn(`[bot-worker.db] pooled channel ${name} reported ${status}; evicted`);
+              void client.removeChannel(channel).catch(() => {
+                // best-effort
+              });
+            }
+          }
+          return;
+        }
+        if (status === 'SUBSCRIBED') {
+          settled = true;
+          clearTimeout(timeout);
+          resolve();
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          settled = true;
+          clearTimeout(timeout);
+          reject(new Error(`subscribe ${status}${err !== undefined ? `: ${String(err)}` : ''}`));
+        }
+      });
     });
-  });
+  } catch (err) {
+    // Remove the failed instance before rethrowing — otherwise the dead
+    // channel lingers on the socket and the retry path leaks instances.
+    try {
+      await client.removeChannel(channel);
+    } catch {
+      // best-effort
+    }
+    throw err;
+  }
   return channel;
 }
 

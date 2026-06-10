@@ -1,7 +1,7 @@
 import type { Skill, SkillContext, SkillResult, SkillResultItem } from '@risezome/engine/skills';
 import type { TrelloLiveContext } from './live-context.js';
 import { mapTrelloError } from './error.js';
-import { NO_TRELLO_SOURCE_SUMMARY } from './filter.js';
+import { NO_TRELLO_SOURCE_RESULT } from './filter.js';
 
 const NAME = 'trello_board_breakdown';
 
@@ -26,7 +26,7 @@ export function buildTrelloBoardBreakdownSkill(ctx: TrelloLiveContext): Skill {
       const filter = args as { board?: string };
       try {
         const access = await ctx.resolve(skillCtx.orgId);
-        if (access === null) return { kind: 'detail', summary: NO_TRELLO_SOURCE_SUMMARY };
+        if (access === null) return NO_TRELLO_SOURCE_RESULT;
 
         const boards = access.boards.filter(
           (b) => filter.board === undefined || b.name.toLowerCase().includes(filter.board.toLowerCase()),
@@ -39,7 +39,8 @@ export function buildTrelloBoardBreakdownSkill(ctx: TrelloLiveContext): Skill {
         const items: SkillResultItem[] = [];
         const boardSummaries: string[] = [];
         for (const board of boards) {
-          const counts = await ctx.client.fetchBoardListCounts(board.id, access.token);
+          // Each board reads with ITS connection's token (multi-connection orgs).
+          const counts = await ctx.client.fetchBoardListCounts(board.id, board.token, skillCtx.signal);
           const total = counts.reduce((n, c) => n + c.count, 0);
           if (counts.length === 0) {
             boardSummaries.push(`${board.name} has no active columns`);

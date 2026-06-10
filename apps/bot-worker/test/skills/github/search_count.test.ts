@@ -35,6 +35,14 @@ describe('buildSearchQualifiers', () => {
     expect(buildSearchQualifiers({ author: 'jamie' })).toBe('author:jamie');
   });
 
+  it('strips double-quotes from label values (qualifier injection)', () => {
+    expect(buildSearchQualifiers({ labels: ['bug" org:victim label:"x'] })).toBe(
+      'label:"bug org:victim label:x"',
+    );
+    // A label that is nothing but quotes is dropped, not emitted empty.
+    expect(buildSearchQualifiers({ labels: ['""'] })).toBe('');
+  });
+
   it('composes all qualifiers in order', () => {
     expect(
       buildSearchQualifiers({ type: 'issue', state: 'open', labels: ['bug'], author: 'jamie' }),

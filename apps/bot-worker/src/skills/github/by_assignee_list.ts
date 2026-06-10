@@ -5,7 +5,8 @@ import { resolvePerson } from './person.js';
 import {
   searchIssuesList,
   anyToken,
-  NO_GITHUB_SOURCE_SUMMARY,
+  accountLogins,
+  NO_GITHUB_SOURCE_RESULT,
   type GithubSearchItem,
 } from './live-helpers.js';
 
@@ -40,26 +41,30 @@ export function buildByAssigneeListSkill(ctx: LiveSkillContext): Skill {
       try {
         const access = await ctx.resolve(skillCtx.orgId);
         if (access === null) {
-          return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+          return NO_GITHUB_SOURCE_RESULT;
         }
         const token = anyToken(access);
         if (token === null) {
-          return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+          return NO_GITHUB_SOURCE_RESULT;
         }
-        const resolved = await resolvePerson(ctx.client, token, person);
+        const resolved = await resolvePerson(ctx.client, token, person, {
+          orgs: accountLogins(access),
+          signal: skillCtx.signal,
+        });
         if (resolved === null) {
           return {
             kind: 'detail',
             summary: `Couldn't find a GitHub user matching "${person}".`,
           };
         }
-        const items = await searchIssuesList(
+        const { items, totalCount } = await searchIssuesList(
           ctx.client,
           access,
           `type:issue state:open assignee:${resolved.login}`,
           LIMIT,
+          skillCtx.signal,
         );
-        return formatResult(person, resolved.login, resolved.resolved, items);
+        return formatResult(person, resolved.login, resolved.resolved, items, totalCount);
       } catch (err) {
         throw mapGithubError(err, NAME);
       }
@@ -72,11 +77,12 @@ function formatResult(
   login: string,
   via: 'literal' | 'search',
   issues: readonly GithubSearchItem[],
+  totalCount: number,
 ): SkillResult {
   const resolutionNote =
     via === 'search' && spoken !== login ? `Resolved "${spoken}" → "${login}". ` : '';
-  const count = issues.length;
-  if (count === 0) {
+  const shown = issues.length;
+  if (shown === 0) {
     return {
       kind: 'list',
       summary: `${resolutionNote}${login} has 0 open issues.`,
@@ -87,11 +93,14 @@ function formatResult(
     url: issue.html_url,
     subtitle: `#${String(issue.number)} · ${issue.state}`,
   }));
-  // The Search API caps results; if we hit the limit there may be more.
-  const truncationNote = count === LIMIT ? ` (showing first ${String(LIMIT)})` : '';
+  // When page-capped, state the Search API's real total ("60 open issues
+  // (showing first 25)") — the page length reads as the whole population.
+  const total = Math.max(totalCount, shown);
+  const truncationNote =
+    total > shown || shown === LIMIT ? ` (showing first ${String(shown)})` : '';
   return {
     kind: 'list',
-    summary: `${resolutionNote}${login} has ${String(count)} open issues${truncationNote}:`,
+    summary: `${resolutionNote}${login} has ${String(total)} open issues${truncationNote}:`,
     items,
   };
 }

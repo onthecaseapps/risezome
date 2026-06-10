@@ -24,27 +24,54 @@ describe('resolvePerson', () => {
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
-  it('literal 404 then search hit returns {login, resolved: search}', async () => {
+  it('literal 404 then org-scoped search hit returns {login, resolved: search}', async () => {
     let call = 0;
-    const fetchImpl = vi.fn(() => {
+    let searchUrl = '';
+    const fetchImpl = vi.fn((input: string | URL | Request) => {
       call += 1;
       if (call === 1) return Promise.resolve(new Response('not found', { status: 404 }));
+      searchUrl = typeof input === 'string' ? input : input.toString();
       return Promise.resolve(jsonResponse({ items: [{ login: 'Nath5' }] }));
     }) as unknown as typeof fetch;
-    const result = await resolvePerson(clientWith(fetchImpl), TOKEN, 'nathan');
+    const result = await resolvePerson(clientWith(fetchImpl), TOKEN, 'nathan', { orgs: ['acme'] });
     expect(result).toEqual({ login: 'Nath5', resolved: 'search' });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+    // The fallback search is scoped to the installation's account, never global.
+    expect(decodeURIComponent(searchUrl).replace(/\+/g, ' ')).toContain('org:acme');
   });
 
-  it('literal 404 + search empty returns null', async () => {
+  it('literal 404 + scoped search empty returns null', async () => {
     let call = 0;
     const fetchImpl = vi.fn(() => {
       call += 1;
       if (call === 1) return Promise.resolve(new Response('not found', { status: 404 }));
       return Promise.resolve(jsonResponse({ items: [] }));
     }) as unknown as typeof fetch;
-    const result = await resolvePerson(clientWith(fetchImpl), TOKEN, 'ghost');
+    const result = await resolvePerson(clientWith(fetchImpl), TOKEN, 'ghost', { orgs: ['acme'] });
     expect(result).toBeNull();
+  });
+
+  it('literal 404 with NO org scope skips the global search entirely (returns null)', async () => {
+    // An unscoped /search/users would resolve a spoken name to a global
+    // stranger — wrong-person answers are worse than no resolution.
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(new Response('not found', { status: 404 })),
+    ) as unknown as typeof fetch;
+    expect(await resolvePerson(clientWith(fetchImpl), TOKEN, 'nathan')).toBeNull();
+    expect(await resolvePerson(clientWith(fetchImpl), TOKEN, 'nathan', { orgs: [] })).toBeNull();
+    // Only the literal lookups fired — no /search/users call.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops org values that fail the login charset gate instead of interpolating them', async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(new Response('not found', { status: 404 })),
+    ) as unknown as typeof fetch;
+    const result = await resolvePerson(clientWith(fetchImpl), TOKEN, 'nathan', {
+      orgs: ['bad org:injection'],
+    });
+    expect(result).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1); // literal only; no search with a bogus qualifier
   });
 
   it('rejects tokens containing slashes WITHOUT making any API call', async () => {
@@ -103,6 +130,8 @@ describe('resolvePerson', () => {
       if (call === 1) return Promise.resolve(new Response('not found', { status: 404 }));
       return Promise.resolve(new Response('', { status: 429, headers: { 'retry-after': '60' } }));
     }) as unknown as typeof fetch;
-    await expect(resolvePerson(clientWith(fetchImpl), TOKEN, 'nathan')).rejects.toBeInstanceOf(RateLimitedError);
+    await expect(
+      resolvePerson(clientWith(fetchImpl), TOKEN, 'nathan', { orgs: ['acme'] }),
+    ).rejects.toBeInstanceOf(RateLimitedError);
   });
 });

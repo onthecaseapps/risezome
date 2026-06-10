@@ -5,7 +5,7 @@ import { cardSubtitle } from './format.js';
 import { clampLimit } from './list.js';
 import {
   collectFilterHealed,
-  NO_TRELLO_SOURCE_SUMMARY,
+  NO_TRELLO_SOURCE_RESULT,
   type TrelloFilter,
   type CollectedCard,
 } from './filter.js';
@@ -38,12 +38,13 @@ export function buildTrelloRecentlyActiveSkill(ctx: TrelloLiveContext): Skill {
       const now = skillCtx.now?.() ?? Date.now();
       try {
         const access = await ctx.resolve(skillCtx.orgId);
-        if (access === null) return { kind: 'detail', summary: NO_TRELLO_SOURCE_SUMMARY };
+        if (access === null) return NO_TRELLO_SOURCE_RESULT;
         const { matched, cleaned, recovery } = await collectFilterHealed(
           ctx.client,
           access,
           filter,
           now,
+          skillCtx.signal,
         );
         if (matched.length === 0) {
           return { kind: 'list', summary: 'No matching Trello cards.', ...(recovery !== undefined && { recovery }) };

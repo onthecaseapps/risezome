@@ -16,11 +16,17 @@ import { decryptForOrgFromBytea } from '@risezome/crypto';
 export interface TrelloBoardRef {
   readonly id: string;
   readonly name: string;
+  /**
+   * Read-scoped Trello user token of the connection that authorizes THIS
+   * board. Tokens are per-board (resolved via the source row's
+   * connection_id) because an org can hold several Trello connections —
+   * a single org-level token read with `.limit(1)` picked an arbitrary
+   * connection and broke reads for boards on the other one.
+   */
+  readonly token: string;
 }
 
 export interface TrelloAccess {
-  /** Read-scoped Trello user token for this org's connection. */
-  readonly token: string;
   readonly boards: readonly TrelloBoardRef[];
 }
 
@@ -49,35 +55,52 @@ export function buildTrelloSourceResolver(deps: { db: SupabaseClient }): TrelloS
     }
 
     const rows = (sourceData ?? []) as SourceRow[];
-    const boards: TrelloBoardRef[] = [];
+    const boardRows: { id: string; name: string; connectionId: string }[] = [];
     const connectionIds = new Set<string>();
     for (const row of rows) {
       if (typeof row.external_id !== 'string' || row.external_id.length === 0) continue;
       if (typeof row.connection_id !== 'string' || row.connection_id.length === 0) continue;
-      boards.push({ id: row.external_id, name: row.display_name ?? row.external_id });
+      boardRows.push({
+        id: row.external_id,
+        name: row.display_name ?? row.external_id,
+        connectionId: row.connection_id,
+      });
       connectionIds.add(row.connection_id);
     }
-    if (boards.length === 0) return null;
+    if (boardRows.length === 0) return null;
 
-    // Resolve the read token via the board's connection (trello_connections is
-    // unique per org, so the connected boards share one connection today). Fetch
-    // the token by connection id — the indexer's exact join — rather than by org.
+    // Resolve EVERY referenced connection's token (an org may hold more than
+    // one Trello connection) and attach each board its own connection's
+    // token — the indexer's exact join, per board. Picking one connection
+    // with `.limit(1)` read an arbitrary token and broke reads for boards
+    // authorized by the other connection.
     const { data: connData, error: connError } = await deps.db
       .from('trello_connections')
-      .select('token_enc')
-      .in('id', Array.from(connectionIds))
-      .limit(1)
-      .maybeSingle();
+      .select('id, token_enc')
+      .in('id', Array.from(connectionIds));
     if (connError !== null) {
       throw new Error(`trello_connections lookup failed for org ${orgId}: ${connError.message}`);
     }
-    const tokenEnc: unknown = connData?.token_enc;
-    if (typeof tokenEnc !== 'string' || tokenEnc.length === 0) return null;
-    // U10: token decrypted app-side under the org's per-org KMS key (the bytea
-    // column comes back as a `\x<hex>` string → decode → decrypt).
-    const token = await decryptForOrgFromBytea(orgId, tokenEnc);
-    if (token.length === 0) return null;
+    const connRows = (connData ?? []) as { id: string; token_enc: unknown }[];
+    const tokenByConnection = new Map<string, string>();
+    for (const conn of connRows) {
+      const tokenEnc: unknown = conn.token_enc;
+      if (typeof tokenEnc !== 'string' || tokenEnc.length === 0) continue;
+      // U10: token decrypted app-side under the org's per-org KMS key (the
+      // bytea column comes back as a `\x<hex>` string → decode → decrypt).
+      const token = await decryptForOrgFromBytea(orgId, tokenEnc);
+      if (token.length === 0) continue;
+      tokenByConnection.set(conn.id, token);
+    }
 
-    return { token, boards };
+    const boards: TrelloBoardRef[] = [];
+    for (const board of boardRows) {
+      const token = tokenByConnection.get(board.connectionId);
+      if (token === undefined) continue; // connection missing/undecryptable → skip its boards
+      boards.push({ id: board.id, name: board.name, token });
+    }
+    if (boards.length === 0) return null;
+
+    return { boards };
   };
 }

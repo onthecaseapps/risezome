@@ -21,8 +21,17 @@ describe('isLowConfidenceHits — CRAG escalation trigger', () => {
     expect(isLowConfidenceHits([])).toBe(true);
   });
 
-  it('is confident when any hit is lexically grounded (FTS-matched)', () => {
-    expect(isLowConfidenceHits([hit({ ftsMatched: true, distance: null })])).toBe(false);
+  it('is confident when a hit is lexically grounded AND semantically in-range (FTS + distance within the floor)', () => {
+    expect(isLowConfidenceHits([hit({ ftsMatched: true, distance: 0.4 })])).toBe(false);
+  });
+
+  it('an FTS match ALONE no longer suppresses escalation (keyword-only junk)', () => {
+    // A chunk sharing one common token with the question ("issue", "status")
+    // is FTS-matched while vectorally distant (or not a vector candidate at
+    // all). One such hit used to mark the set confident and suppress CRAG
+    // exactly when retrieval was weakest.
+    expect(isLowConfidenceHits([hit({ ftsMatched: true, distance: null })])).toBe(true);
+    expect(isLowConfidenceHits([hit({ ftsMatched: true, distance: 0.6 })])).toBe(true);
   });
 
   it('is confident when any hit is a close vector match (<= strong distance)', () => {

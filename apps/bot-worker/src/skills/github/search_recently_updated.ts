@@ -3,7 +3,7 @@ import type { LiveSkillContext } from './live-context.js';
 import { mapGithubError } from './error.js';
 import {
   searchIssuesList,
-  NO_GITHUB_SOURCE_SUMMARY,
+  NO_GITHUB_SOURCE_RESULT,
   type GithubSearchItem,
 } from './live-helpers.js';
 
@@ -44,13 +44,13 @@ export function buildSearchRecentlyUpdatedSkill(ctx: LiveSkillContext): Skill {
       const limit = clampLimit(a.limit);
       try {
         const access = await ctx.resolve(skillCtx.orgId);
-        if (access === null) return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+        if (access === null) return NO_GITHUB_SOURCE_RESULT;
         const nowMs = skillCtx.now?.() ?? Date.now();
         const cutoff = new Date(nowMs - days * DAY_MS).toISOString().slice(0, 10);
         const parts = [`updated:>=${cutoff}`];
         if (a.type === 'issue') parts.push('type:issue');
         else if (a.type === 'pull-request') parts.push('type:pr');
-        const items = await searchIssuesList(ctx.client, access, parts.join(' '), limit);
+        const { items } = await searchIssuesList(ctx.client, access, parts.join(' '), limit, skillCtx.signal);
         return formatRecent(items, days, limit);
       } catch (err) {
         throw mapGithubError(err, NAME);

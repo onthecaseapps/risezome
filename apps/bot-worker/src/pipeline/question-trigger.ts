@@ -40,6 +40,21 @@ export const QUESTION_DUP_DISTANCE = (() => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.15;
 })();
 
+/**
+ * LOOSER similarity bound used to CONFIRM the same-source-set suppression
+ * (Mechanism B). A question that passed the strict near-duplicate check
+ * (distance > QUESTION_DUP_DISTANCE) but retrieves an already-answered source
+ * set is suppressed ONLY if it's at least loosely similar (≤ this distance) to
+ * a recently-answered question — i.e. it reads as a REPHRASE the strict check
+ * missed. A genuinely different question (> this distance) about the same docs
+ * goes through: suppressing it was the false-silence bug (a NEW question about
+ * the same two documents produced nothing).
+ */
+export const QUESTION_DUP_CONFIRM_DISTANCE = (() => {
+  const parsed = Number.parseFloat(process.env.RISEZOME_QUESTION_DUP_CONFIRM_DISTANCE ?? '0.30');
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.3;
+})();
+
 export async function embedQuestion(
   embedder: VoyageEmbedder,
   text: string,
@@ -61,9 +76,12 @@ export function isNearDuplicateQuestion(
   vec: readonly number[],
   history: readonly { embedding: number[]; at: number }[],
   now: number,
+  /** Similarity bound; defaults to the strict dedup distance. Mechanism B's
+   *  confirmation pass calls this with QUESTION_DUP_CONFIRM_DISTANCE. */
+  maxDistance: number = QUESTION_DUP_DISTANCE,
 ): boolean {
   return history.some(
-    (e) => now - e.at < QUESTION_DUP_WINDOW_MS && cosineDistance(vec, e.embedding) <= QUESTION_DUP_DISTANCE,
+    (e) => now - e.at < QUESTION_DUP_WINDOW_MS && cosineDistance(vec, e.embedding) <= maxDistance,
   );
 }
 

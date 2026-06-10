@@ -5,7 +5,7 @@ import { cardItem } from './format.js';
 import {
   collectFilterHealed,
   describeFilter,
-  NO_TRELLO_SOURCE_SUMMARY,
+  NO_TRELLO_SOURCE_RESULT,
   DUE_STATUSES,
   type TrelloFilter,
   type CollectedCard,
@@ -43,12 +43,13 @@ export function buildTrelloListSkill(ctx: TrelloLiveContext): Skill {
       const now = skillCtx.now?.() ?? Date.now();
       try {
         const access = await ctx.resolve(skillCtx.orgId);
-        if (access === null) return { kind: 'detail', summary: NO_TRELLO_SOURCE_SUMMARY };
+        if (access === null) return NO_TRELLO_SOURCE_RESULT;
         const { matched, cleaned, recovery } = await collectFilterHealed(
           ctx.client,
           access,
           filter,
           now,
+          skillCtx.signal,
         );
         const desc = describeFilter(cleaned);
         return formatCardList(

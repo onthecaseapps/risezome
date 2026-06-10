@@ -4,7 +4,7 @@ import { mapTrelloError } from './error.js';
 import {
   collectFilterHealed,
   describeFilter,
-  NO_TRELLO_SOURCE_SUMMARY,
+  NO_TRELLO_SOURCE_RESULT,
   DUE_STATUSES,
   type TrelloFilter,
 } from './filter.js';
@@ -38,12 +38,13 @@ export function buildTrelloCountSkill(ctx: TrelloLiveContext): Skill {
       const now = skillCtx.now?.() ?? Date.now();
       try {
         const access = await ctx.resolve(skillCtx.orgId);
-        if (access === null) return { kind: 'detail', summary: NO_TRELLO_SOURCE_SUMMARY };
+        if (access === null) return NO_TRELLO_SOURCE_RESULT;
         const { matched, cleaned, recovery } = await collectFilterHealed(
           ctx.client,
           access,
           filter,
           now,
+          skillCtx.signal,
         );
         const n = matched.length;
         return {

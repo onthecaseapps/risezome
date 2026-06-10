@@ -12,7 +12,8 @@
  *     archived lists. We fetch lists with `filter=all`, then drop cards whose
  *     `idList` is archived (and any `closed` card).
  *   - Stable id: cards are keyed by the immutable `id`, never `idShort`.
- *   - Pagination: Trello caps at 1000 with no total; page via `before=<lastId>`.
+ *   - Pagination: Trello caps at 1000 with no total; page via `before=<minId>`
+ *     (the page's minimum id — correct under either response ordering).
  *   - Rate limits: 100 req/10s per token; on 429 back off honoring the
  *     `x-rate-limit-api-token-interval-ms` header, then retry.
  *   - Auth: a 401 raises ConnectorAuthError(status:401) — never retried.
@@ -100,12 +101,14 @@ export class TrelloClient {
   /**
    * All non-archived cards on a board, enriched with list/member/label names.
    * Four reads per board: lists, members, labels, then the paged card list.
+   * `signal` is the per-skill deadline (SkillContext.signal) — threaded into
+   * every fetch and the 429 backoff so an aborted skill stops promptly.
    */
-  async fetchEnrichedCards(boardId: string, token: string): Promise<EnrichedCard[]> {
+  async fetchEnrichedCards(boardId: string, token: string, signal?: AbortSignal): Promise<EnrichedCard[]> {
     const [lists, members, labels] = await Promise.all([
-      this.#get<RawList[]>(`/boards/${boardId}/lists`, { filter: 'all', fields: 'name,closed' }, token),
-      this.#get<RawMember[]>(`/boards/${boardId}/members`, { fields: 'fullName,username' }, token),
-      this.#get<RawLabel[]>(`/boards/${boardId}/labels`, { fields: 'name', limit: '1000' }, token),
+      this.#get<RawList[]>(`/boards/${boardId}/lists`, { filter: 'all', fields: 'name,closed' }, token, signal),
+      this.#get<RawMember[]>(`/boards/${boardId}/members`, { fields: 'fullName,username' }, token, signal),
+      this.#get<RawLabel[]>(`/boards/${boardId}/labels`, { fields: 'name', limit: '1000' }, token, signal),
     ]);
 
     const listById = new Map(lists.map((l) => [l.id, l]));
@@ -120,6 +123,7 @@ export class TrelloClient {
         fields: 'name,desc,idList,idMembers,idLabels,due,dueComplete,url,shortUrl,dateLastActivity,closed',
       },
       token,
+      signal,
     );
 
     return cards
@@ -147,11 +151,15 @@ export class TrelloClient {
    * board's current state); cards that are closed or sit on an archived list
    * are excluded. Powers the board-breakdown skill ("state of the board").
    */
-  async fetchBoardListCounts(boardId: string, token: string): Promise<{ listName: string; count: number }[]> {
+  async fetchBoardListCounts(
+    boardId: string,
+    token: string,
+    signal?: AbortSignal,
+  ): Promise<{ listName: string; count: number }[]> {
     const [lists, cards] = await Promise.all([
       // filter=open returns active columns in position order.
-      this.#get<RawList[]>(`/boards/${boardId}/lists`, { filter: 'open', fields: 'name' }, token),
-      this.#paginate<RawCard>(`/boards/${boardId}/cards`, { filter: 'visible', fields: 'idList,closed' }, token),
+      this.#get<RawList[]>(`/boards/${boardId}/lists`, { filter: 'open', fields: 'name' }, token, signal),
+      this.#paginate<RawCard>(`/boards/${boardId}/cards`, { filter: 'visible', fields: 'idList,closed' }, token, signal),
     ]);
     const counts = new Map<string, number>(lists.map((l) => [l.id, 0]));
     for (const c of cards) {
@@ -163,12 +171,12 @@ export class TrelloClient {
   }
 
   /** Single authenticated GET with 401 → auth error and 429 → backoff+retry. */
-  async #get<T>(path: string, query: Record<string, string>, token: string): Promise<T> {
+  async #get<T>(path: string, query: Record<string, string>, token: string, signal?: AbortSignal): Promise<T> {
     const params = new URLSearchParams({ ...query, key: this.#apiKey, token });
     const url = `${TRELLO_API_BASE}${path}?${params.toString()}`;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-      const res = await this.#fetch(url);
+      const res = await this.#fetch(url, { signal: signal ?? null });
       if (res.status === 401) {
         // Never include the URL (it carries key+token) — path + status only.
         throw new ConnectorAuthError(`Trello auth failed for ${path}`, [], { status: 401 });
@@ -179,7 +187,9 @@ export class TrelloClient {
         }
         const intervalMs = Number.parseInt(res.headers.get('x-rate-limit-api-token-interval-ms') ?? '', 10);
         const waitMs = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 1000 * (attempt + 1);
-        await this.#sleep(waitMs);
+        // Abort-aware backoff: the per-skill deadline must cut through a
+        // multi-second 429 sleep, not just the fetches around it.
+        await sleepUnlessAborted(this.#sleep, waitMs, signal);
         continue;
       }
       if (!res.ok) {
@@ -194,11 +204,12 @@ export class TrelloClient {
     throw new RateLimitedError(`Trello GET ${path} exhausted retries`);
   }
 
-  /** Page a list endpoint via the `before=<lastId>` cursor until a short page. */
+  /** Page a list endpoint via the `before=<minId>` cursor until a short page. */
   async #paginate<T extends { id: string }>(
     path: string,
     query: Record<string, string>,
     token: string,
+    signal?: AbortSignal,
   ): Promise<T[]> {
     const all: T[] = [];
     let before: string | undefined;
@@ -207,15 +218,61 @@ export class TrelloClient {
         path,
         { ...query, limit: String(PAGE_LIMIT), ...(before !== undefined ? { before } : {}) },
         token,
+        signal,
       );
       all.push(...page);
       if (page.length < PAGE_LIMIT) break;
-      const last = page[page.length - 1];
-      if (last === undefined) break;
-      before = last.id;
+      // Cursor = the MINIMUM id in the page, not the last element. Trello ids
+      // are monotonically increasing fixed-length hex, so the min is the
+      // page's oldest item; the last element is only correct when pages come
+      // back id-descending — if they don't, the newest cards silently fall
+      // outside every subsequent `before` window and are dropped.
+      const minId = page.reduce<string | undefined>(
+        (min, item) => (min === undefined || item.id < min ? item.id : min),
+        undefined,
+      );
+      if (minId === undefined) break;
+      before = minId;
     }
     return all;
   }
+}
+
+/**
+ * Race a backoff sleep against the abort signal: abort → throw immediately
+ * (with the signal's reason) instead of finishing the wait and retrying.
+ */
+async function sleepUnlessAborted(sleep: Sleep, ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal === undefined) {
+    await sleep(ms);
+    return;
+  }
+  throwIfAborted(signal);
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = (): void => {
+      reject(abortReason(signal));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    sleep(ms).then(
+      () => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      },
+      (err: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+  });
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw abortReason(signal);
+}
+
+function abortReason(signal: AbortSignal): Error {
+  const reason: unknown = signal.reason;
+  return reason instanceof Error ? reason : new Error('Trello request aborted');
 }
 
 async function safeReadText(res: Response): Promise<string> {

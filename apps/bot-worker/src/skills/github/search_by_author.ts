@@ -7,7 +7,8 @@ import { buildSearchQualifiers } from './search_count.js';
 import {
   searchIssuesList,
   anyToken,
-  NO_GITHUB_SOURCE_SUMMARY,
+  accountLogins,
+  NO_GITHUB_SOURCE_RESULT,
   type GithubSearchItem,
 } from './live-helpers.js';
 
@@ -49,15 +50,18 @@ export function buildSearchByAuthorSkill(ctx: LiveSkillContext): Skill {
       const limit = clampLimit(a.limit);
       try {
         const access = await ctx.resolve(skillCtx.orgId);
-        if (access === null) return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+        if (access === null) return NO_GITHUB_SOURCE_RESULT;
         const token = anyToken(access);
-        if (token === null) return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
-        const resolved = await resolvePerson(ctx.client, token, spoken);
+        if (token === null) return NO_GITHUB_SOURCE_RESULT;
+        const resolved = await resolvePerson(ctx.client, token, spoken, {
+          orgs: accountLogins(access),
+          signal: skillCtx.signal,
+        });
         if (resolved === null) {
           return { kind: 'detail', summary: `Couldn't find a GitHub user matching "${spoken}".` };
         }
         const qualifiers = buildSearchQualifiers({ ...a, author: resolved.login });
-        const items = await searchIssuesList(ctx.client, access, qualifiers, limit);
+        const { items } = await searchIssuesList(ctx.client, access, qualifiers, limit, skillCtx.signal);
         return formatByAuthor(spoken, resolved.login, resolved.resolved, items, limit);
       } catch (err) {
         throw mapGithubError(err, NAME);

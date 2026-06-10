@@ -2,7 +2,7 @@ import type { Skill, SkillContext, SkillResult } from '@risezome/engine/skills';
 import type { LiveSkillContext } from './live-context.js';
 import { mapGithubError } from './error.js';
 import { resolvePerson } from './person.js';
-import { searchIssuesCount, anyToken, NO_GITHUB_SOURCE_SUMMARY } from './live-helpers.js';
+import { searchIssuesCount, anyToken, accountLogins, NO_GITHUB_SOURCE_RESULT } from './live-helpers.js';
 
 const NAME = 'github_by_assignee_count';
 
@@ -33,13 +33,16 @@ export function buildByAssigneeCountSkill(ctx: LiveSkillContext): Skill {
       try {
         const access = await ctx.resolve(skillCtx.orgId);
         if (access === null) {
-          return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+          return NO_GITHUB_SOURCE_RESULT;
         }
         const token = anyToken(access);
         if (token === null) {
-          return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+          return NO_GITHUB_SOURCE_RESULT;
         }
-        const resolved = await resolvePerson(ctx.client, token, person);
+        const resolved = await resolvePerson(ctx.client, token, person, {
+          orgs: accountLogins(access),
+          signal: skillCtx.signal,
+        });
         if (resolved === null) {
           return {
             kind: 'detail',
@@ -50,6 +53,7 @@ export function buildByAssigneeCountSkill(ctx: LiveSkillContext): Skill {
           ctx.client,
           access,
           `type:issue state:open assignee:${resolved.login}`,
+          skillCtx.signal,
         );
         return formatResult(person, resolved.login, resolved.resolved, count);
       } catch (err) {

@@ -5,7 +5,7 @@ import { mapGithubError } from './error.js';
 import { buildSearchQualifiers } from './search_count.js';
 import {
   searchIssuesList,
-  NO_GITHUB_SOURCE_SUMMARY,
+  NO_GITHUB_SOURCE_RESULT,
   type GithubSearchItem,
 } from './live-helpers.js';
 
@@ -40,10 +40,16 @@ export function buildSearchListSkill(ctx: LiveSkillContext): Skill {
       const limit = clampLimit(filter.limit);
       try {
         const access = await ctx.resolve(skillCtx.orgId);
-        if (access === null) return { kind: 'detail', summary: NO_GITHUB_SOURCE_SUMMARY };
+        if (access === null) return NO_GITHUB_SOURCE_RESULT;
         const qualifiers = buildSearchQualifiers(filter);
-        const items = await searchIssuesList(ctx.client, access, qualifiers, limit);
-        return formatList(items, limit, filter);
+        const { items, totalCount } = await searchIssuesList(
+          ctx.client,
+          access,
+          qualifiers,
+          limit,
+          skillCtx.signal,
+        );
+        return formatList(items, totalCount, limit, filter);
       } catch (err) {
         throw mapGithubError(err, NAME);
       }
@@ -53,6 +59,7 @@ export function buildSearchListSkill(ctx: LiveSkillContext): Skill {
 
 function formatList(
   issues: readonly GithubSearchItem[],
+  totalCount: number,
   limit: number,
   filter: GithubFilter,
 ): SkillResult {
@@ -64,12 +71,16 @@ function formatList(
     url: i.html_url,
     subtitle: `#${String(i.number)} · ${i.state}`,
   }));
-  const cap = issues.length === limit ? ` (showing first ${String(limit)})` : '';
+  // When page-capped, state the Search API's real total ("47 matching items
+  // (showing first 25)"), not the page length — the page length reads as the
+  // whole population and is confidently wrong.
+  const total = Math.max(totalCount, issues.length);
+  const cap = total > issues.length || issues.length === limit ? ` (showing first ${String(issues.length)})` : '';
   return {
     kind: 'list',
-    summary: `${String(issues.length)} matching ${issues.length === 1 ? 'item' : 'items'}${cap}:`,
+    summary: `${String(total)} matching ${total === 1 ? 'item' : 'items'}${cap}:`,
     items,
-    raw: { qualifiers: buildSearchQualifiers(filter), limit, filter },
+    raw: { qualifiers: buildSearchQualifiers(filter), limit, totalCount, filter },
   };
 }
 

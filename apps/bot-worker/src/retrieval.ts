@@ -25,6 +25,7 @@ import {
   embedQuestion,
   isNearDuplicateQuestion,
   buildQuestionQuery,
+  QUESTION_DUP_CONFIRM_DISTANCE,
 } from './pipeline/question-trigger.js';
 
 /**
@@ -264,9 +265,26 @@ export async function maybeRetrieveAndEmit(args: {
   // understanding. Built BEFORE the grounded callback marks this call's spans
   // consumed, so the current question is never voided before it's answered.
   const effective = effectiveWindow(args.runtime.recentFinals, args.runtime.consumedFinals);
+  // Anaphora carve-out for the QUERY BUILD: a follow-up fragment's antecedent is
+  // the immediately-prior RAW final. The effective window voids a just-answered
+  // Q1, so effective[len-2] would be some OLDER unconsumed utterance — an
+  // actively-wrong antecedent concatenated into the retrieval query. Hand
+  // buildQuestionQuery a window whose [len-2] is the true raw prior final.
+  // Standalone questions ignore the window entirely, so this only affects
+  // follow-ups; dedup safety holds because the BUILT query (antecedent included)
+  // is what the near-duplicate check embeds — a literal re-ask via follow-up
+  // builds the same query and suppresses.
+  const priorRawFinal =
+    args.runtime.recentFinals.length >= 2
+      ? args.runtime.recentFinals[args.runtime.recentFinals.length - 2]
+      : undefined;
+  const questionWindow =
+    priorRawFinal !== undefined && priorRawFinal.trim().length > 0
+      ? [...effective.slice(0, -1).filter((t) => t !== priorRawFinal), priorRawFinal, args.utteranceText]
+      : effective;
   const queryText =
     lane === 'question'
-      ? buildQuestionQuery(args.utteranceText, effective, args.lastSummary)
+      ? buildQuestionQuery(args.utteranceText, questionWindow, args.lastSummary)
       : effective.join(' ').trim();
   if (queryText.length === 0) return { emitted: 0, skipped: 'empty_query' };
 
@@ -327,9 +345,24 @@ export async function maybeRetrieveAndEmit(args: {
   if (args.lastSummary !== undefined && args.lastSummary.summary.length > 0) {
     recentContext.push(args.lastSummary.summary);
   }
-  // Mechanism A: the effective window (answered spans voided) excluding the
-  // current utterance (which IS the query).
-  for (const finalText of effective.slice(0, -1)) {
+  // Mechanism A with an ANAPHORA CARVE-OUT: the effective window (answered
+  // spans voided) excluding the current utterance (which IS the query) — but the
+  // immediately-prior RAW final is always retained, even if consumed. A grounded
+  // answer voids its whole span; without this carve-out an anaphoric follow-up
+  // ("…and when does it expire?") loses the very antecedent the synthesizer
+  // needs to assemble the question, and the model refuses "it" as unanswerable.
+  // Mirrors the routerRecentFinals fix (the same starvation hit skill routing).
+  // Only the SINGLE prior final is restored — older answered spans stay voided,
+  // so a stale window still can't re-seed a duplicate answer.
+  const contextFinals = effective.slice(0, -1);
+  if (
+    priorRawFinal !== undefined &&
+    priorRawFinal.trim().length > 0 &&
+    !contextFinals.includes(priorRawFinal)
+  ) {
+    contextFinals.push(priorRawFinal);
+  }
+  for (const finalText of contextFinals) {
     recentContext.push(finalText);
   }
 
@@ -405,6 +438,19 @@ export async function maybeRetrieveAndEmit(args: {
         // key entirely under exactOptionalPropertyTypes rather than passing
         // `sourceIds: undefined`.
         ...(effectiveSourceIds !== undefined ? { sourceIds: effectiveSourceIds } : {}),
+        // Focused cross-encoder query. QUESTION lane: the BUILT question query
+        // (for a follow-up that includes the antecedent + topic — the bare
+        // fragment "and when does it expire?" is unresolvable for a
+        // cross-encoder). AMBIENT lane: topic + triggering utterance, not the
+        // whole joined window the FTS leg uses — an 8-utterance multi-topic
+        // blob dilutes the reranker's precision on exactly the chatty meetings
+        // it's meant to help.
+        rerankQuery:
+          lane === 'question'
+            ? queryText
+            : (args.lastSummary?.current_topic?.trim().length ?? 0) > 0
+              ? `${args.lastSummary!.current_topic!.trim()} ${args.utteranceText}`.trim()
+              : args.utteranceText,
       }),
     isLowConfidenceHits,
     optionalReranker,
@@ -415,23 +461,43 @@ export async function maybeRetrieveAndEmit(args: {
     logger: args.logger,
     relevanceStrict: RELEVANCE_STRICT,
     // Mechanism B (read side): true when the candidate grounded source set
-    // duplicates a recent answered set — non-empty AND every candidate docId is
-    // contained in a single recent `answeredSourceSets` entry (the new answer
-    // would add no new source). Order-independent; recency-pruned by the same
+    // duplicates a recent answered set — non-empty AND at least the overlap
+    // ratio of candidate docIds is contained in a single recent
+    // `answeredSourceSets` entry. Order-independent; recency-pruned by the same
     // window as answeredQuestions. Synchronous (no await) — read-only on the
     // runtime, safe to call from the core before card emit.
+    //
+    // QUESTION-lane CONFIRMATION: with small source sets (1-3 docs after
+    // parent-doc dedup) the overlap ratio alone is coarse — a genuinely NEW
+    // question about the same two documents hits it and was suppressed outright
+    // (the user saw nothing for a real question). So on the question lane the
+    // source-set signal must be CONFIRMED by a loose question-similarity match
+    // (≤ QUESTION_DUP_CONFIRM_DISTANCE to a recently-answered question): the
+    // suppression now reads "same sources AND reads like a rephrase", not "same
+    // sources" alone. The ambient lane (no question vector) keeps the
+    // source-set-only veto — it's the only dedup that lane has.
     isDuplicateAnswerSources: (docIds: readonly string[]): boolean => {
       // Prune the ledger by the recency window first (caller owns the runtime
       // state), then run the shared pure predicate.
       args.runtime.answeredSourceSets = args.runtime.answeredSourceSets.filter(
         (e) => now - e.at < QUESTION_DUP_WINDOW_MS,
       );
-      return isDuplicateAnswerSourceSet(
+      const sourcesOverlap = isDuplicateAnswerSourceSet(
         docIds,
         args.runtime.answeredSourceSets,
         now,
         QUESTION_DUP_WINDOW_MS,
       );
+      if (!sourcesOverlap) return false;
+      if (lane === 'question' && questionVec !== undefined) {
+        return isNearDuplicateQuestion(
+          questionVec,
+          args.runtime.answeredQuestions,
+          now,
+          QUESTION_DUP_CONFIRM_DISTANCE,
+        );
+      }
+      return true;
     },
   };
 
@@ -444,6 +510,19 @@ export async function maybeRetrieveAndEmit(args: {
     onGroundedAnswer: (text: string, sourceDocIds: readonly string[] = []): void => {
       if (lane === 'question' && questionVec !== undefined) {
         args.runtime.answeredQuestions.push({ embedding: questionVec, at: now });
+      } else if (lane === 'ambient') {
+        // Lane-flip dedup: an AMBIENT grounded answer also records into the
+        // answered-questions ledger (embedding the triggering utterance, not the
+        // joined window — that's what a future re-ask will read like). Without
+        // this, a question first answered via the ambient lane then re-asked as a
+        // clean question bypassed near-duplicate suppression entirely. Fire-and-
+        // forget: one best-effort embed per GROUNDED ambient answer (rare), never
+        // blocking the sink callback.
+        void embedQuestion(args.embedder, args.utteranceText, args.logger).then((vec) => {
+          if (vec !== undefined) {
+            args.runtime.answeredQuestions.push({ embedding: vec, at: now });
+          }
+        });
       }
       // Mechanism A: void the transcript spans that produced THIS answer — the
       // effective window for this call — so they can't re-seed the next

@@ -52,14 +52,28 @@ function strongDistance(): number {
 
 /**
  * Is this hybrid-search result set low-confidence (worth a CRAG expansion)?
- * True when there are no hits, or when no hit is "strong" — i.e. every hit is
- * a vector-only near-miss (no lexical anchor) beyond `strongDistance()`. A
- * single FTS-matched or close-vector hit makes the set confident.
+ * True when there are no hits, or when no hit is "strong". A hit is strong when
+ * it's a close vector match (distance <= strongDistance()), or it's lexically
+ * grounded (FTS-matched) AND at least semantically in-range (distance within
+ * the relevance floor).
+ *
+ * An FTS match ALONE no longer counts as strong: websearch_to_tsquery ORs the
+ * query's terms, so a chunk sharing ONE common token ("issue", "status") with
+ * the question is "FTS-matched" while being vectorally distant junk — and one
+ * such hit used to mark the whole set confident, suppressing the CRAG retry
+ * exactly when the retrieval was weakest. Lexically-grounded hits remain
+ * ELIGIBLE to surface (the fuseRrf floor is unchanged); they just don't
+ * suppress escalation unless the vector leg also puts them in range.
  */
 export function isLowConfidenceHits(hits: readonly HybridHit[]): boolean {
   if (hits.length === 0) return true;
   const strong = strongDistance();
-  return !hits.some((h) => h.ftsMatched || (h.distance !== null && h.distance <= strong));
+  const floor = envFloor();
+  return !hits.some(
+    (h) =>
+      (h.distance !== null && h.distance <= strong) ||
+      (h.ftsMatched && h.distance !== null && h.distance <= floor),
+  );
 }
 
 export interface VectorCandidate {
@@ -143,6 +157,12 @@ export interface HybridSearchParams {
   readonly queryVectorLiteral: string;
   /** Natural-ish text for websearch_to_tsquery (the rolling window). */
   readonly queryText: string;
+  /** Focused query for the cross-encoder reranker. The FTS `queryText` can be
+   *  a whole rolling window (ambient lane) — scoring documents against that
+   *  multi-topic blob dilutes the reranker's precision. When set, the reranker
+   *  scores against THIS (e.g. the question utterance) while FTS keeps the
+   *  broader text. Defaults to `queryText`. */
+  readonly rerankQuery?: string;
   readonly limit: number;
   readonly candidateLimit?: number;
   /** The meeting's effective source set (teams restructure U4): the union of its
@@ -240,7 +260,9 @@ export async function hybridSearch(
   );
   const documents = fused.map((h) => textById.get(h.chunk_id) ?? '');
   try {
-    const ranked = await params.reranker(params.queryText, documents, { topK: params.limit });
+    const ranked = await params.reranker(params.rerankQuery ?? params.queryText, documents, {
+      topK: params.limit,
+    });
     const reordered = ranked
       .map((r) => fused[r.index])
       .filter((h): h is HybridHit => h !== undefined);

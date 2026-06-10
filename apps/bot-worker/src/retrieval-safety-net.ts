@@ -27,10 +27,26 @@ export interface ToolSourceDecision {
  * transient validation failure, or unsalvageable bogus arg all converge here.
  * The caller applies this decision BEFORE invoking synthesis, so a dropped
  * result never emits a premature `synthesisStart` (KTD7 flash-fix invariant).
+ *
+ * NOT-CONNECTED demotion: when RAG sources exist, a "connect <provider> on the
+ * Sources page" tool result is DROPPED rather than kept at source[0] — it
+ * carries no answer, and at rank 1 it invited the synthesizer to reply
+ * "connect GitHub" instead of using rank-2+ evidence (the org may hold the
+ * answer in Jira or indexed issues). With no RAG sources it stays: the CTA is
+ * then genuinely the most useful response. Driven by the structured
+ * `notConnected` flag (the skill sets it) — prose-sniffing the summary was
+ * fragile and silently matched neither real CTA string. Zero-RESULT answers
+ * ("0 open issues") are deliberately NOT flagged — an empty set is a real answer.
  */
-export function decideToolSource(skillResult: SkillResult): ToolSourceDecision {
+export function decideToolSource(
+  skillResult: SkillResult,
+  opts?: { readonly ragCount?: number },
+): ToolSourceDecision {
   const status = skillResult.recovery?.status;
   if (status === 'unresolved') return { keep: false, status: 'unresolved' };
+  if (skillResult.notConnected === true && (opts?.ragCount ?? 0) > 0) {
+    return { keep: false, status: 'unresolved' };
+  }
   if (status === 'repaired') return { keep: true, status: 'repaired' };
   return { keep: true, status: 'clean' };
 }

@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { SkillResult } from '@risezome/engine/skills';
 import type { SynthesisSource } from '@risezome/engine/synthesize';
 import { decideToolSource, buildMergedSources } from '../src/retrieval-safety-net.js';
+// Import the REAL not-connected results so this test breaks if their shape
+// (esp. the notConnected flag the demotion keys on) ever drifts.
+import { NO_GITHUB_SOURCE_RESULT } from '../src/skills/github/live-helpers.js';
+import { NO_TRELLO_SOURCE_RESULT } from '../src/skills/trello/filter.js';
 
 /**
  * Router safety-net (plan U4). Characterizes the keep-vs-drop decision and the
@@ -43,6 +47,31 @@ describe('decideToolSource', () => {
 
   it('drops an unresolved result (KTD8) so synthesis falls back to RAG — R5/AE4', () => {
     expect(decideToolSource(unresolved())).toEqual({ keep: false, status: 'unresolved' });
+  });
+
+  it('drops a not-connected CTA when RAG sources exist (real GitHub/Trello results)', () => {
+    expect(decideToolSource(NO_GITHUB_SOURCE_RESULT, { ragCount: 2 })).toEqual({
+      keep: false,
+      status: 'unresolved',
+    });
+    expect(decideToolSource(NO_TRELLO_SOURCE_RESULT, { ragCount: 2 })).toEqual({
+      keep: false,
+      status: 'unresolved',
+    });
+  });
+
+  it('KEEPS a not-connected CTA when there is no RAG to fall back to', () => {
+    expect(decideToolSource(NO_GITHUB_SOURCE_RESULT, { ragCount: 0 })).toEqual({
+      keep: true,
+      status: 'clean',
+    });
+    // …and with no ragCount opt at all (the CTA is the best response).
+    expect(decideToolSource(NO_TRELLO_SOURCE_RESULT)).toEqual({ keep: true, status: 'clean' });
+  });
+
+  it('does NOT demote a real zero-result answer ("0 open issues") even with RAG present', () => {
+    const zero: SkillResult = { kind: 'count', summary: 'There are 0 open issues.' };
+    expect(decideToolSource(zero, { ragCount: 2 })).toEqual({ keep: true, status: 'clean' });
   });
 });
 
