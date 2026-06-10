@@ -117,21 +117,23 @@ export function pgCorpusWriter(client?: Sql): CorpusWriteClient {
 
           if (w.chunks.length === 0) return;
 
-          // Multi-row chunk + embedding inserts via unnest, so one round-trip
-          // each regardless of chunk count. The embedding literal is cast
-          // text -> vector explicitly.
-          const chunkIds = w.chunks.map((c) => c.chunkId);
-          const domains = w.chunks.map((c) => c.domain);
-          const texts = w.chunks.map((c) => c.text);
-          const contexts = w.chunks.map((c) => c.context ?? '');
-          const isSummary = w.chunks.map((c) => c.isSummary ?? false);
-          const positions = w.chunks.map((c) => c.position);
-
+          // Multi-row chunk insert via postgres.js's native helper, which
+          // infers each column's type from the JS values (no manual array
+          // casts — those mis-typed a single-element bool[] as scalar). One
+          // round-trip regardless of chunk count.
+          const chunkRows = w.chunks.map((c) => ({
+            chunk_id: c.chunkId,
+            org_id: w.doc.orgId,
+            source_id: w.doc.sourceId,
+            doc_id: w.docId,
+            domain: c.domain,
+            text: c.text,
+            context: c.context ?? '',
+            is_summary: c.isSummary ?? false,
+            position: c.position,
+          }));
           await tx`
-            insert into public.doc_chunks (chunk_id, org_id, source_id, doc_id, domain, text, context, is_summary, position)
-            select c, ${w.doc.orgId}, ${w.doc.sourceId}, ${w.docId}, d, t, x, s, p
-            from unnest(${chunkIds}::text[], ${domains}::text[], ${texts}::text[],
-                        ${contexts}::text[], ${isSummary}::bool[], ${positions}::int[]) as u(c, d, t, x, s, p)
+            insert into public.doc_chunks ${tx(chunkRows)}
             on conflict (chunk_id) do update set
               org_id = excluded.org_id, source_id = excluded.source_id, doc_id = excluded.doc_id,
               domain = excluded.domain, text = excluded.text, context = excluded.context,
