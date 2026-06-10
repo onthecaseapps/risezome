@@ -42,6 +42,9 @@ export const DEFAULT_VOYAGE_TEXT_MODEL = 'voyage-3-large';
 export const DEFAULT_VOYAGE_CODE_MODEL = 'voyage-code-3';
 export const DEFAULT_VOYAGE_DIMENSION = 1024;
 const DEFAULT_MAX_RETRIES = 6;
+/** Voyage caps a request at 128 inputs (and has per-request token limits);
+ *  a whole domain group in one call fails wholesale past the cap. */
+export const MAX_INPUTS_PER_REQUEST = 128;
 
 interface VoyageBatchResponse {
   readonly data: readonly { readonly index: number; readonly embedding: readonly number[] }[];
@@ -87,28 +90,35 @@ export class VoyageEmbedder implements Embedder {
     let inputTokens = 0;
     for (const [domain, indices] of byDomain) {
       const model = this.#modelForDomain(domain);
-      const texts = indices.map((i) => req.items[i]!.text);
-      const batch = await this.#callVoyage(texts, model);
-      inputTokens += batch.usage?.total_tokens ?? 0;
-      this.#options.onUsage?.({
-        model,
-        inputTokens: batch.usage?.total_tokens ?? 0,
-        cacheHits: 0,
-        providerCalls: 1,
-      });
-      for (const datum of batch.data) {
-        const targetIdx = indices[datum.index];
-        if (targetIdx === undefined) continue;
-        const vec = new Float32Array(datum.embedding);
-        if (vec.length !== this.dimension) {
-          throw new EmbeddingProviderError(
-            `Voyage returned vector of length ${String(vec.length)}, expected ${String(this.dimension)}`,
-          );
+      // Split the domain group into ≤128-input requests (Voyage's cap) and
+      // stitch the vectors back in order — each response's `index` is
+      // relative to its own request. Retry semantics stay per request
+      // (#callVoyage handles 429/backoff for each batch independently).
+      for (let offset = 0; offset < indices.length; offset += MAX_INPUTS_PER_REQUEST) {
+        const batchIndices = indices.slice(offset, offset + MAX_INPUTS_PER_REQUEST);
+        const texts = batchIndices.map((i) => req.items[i]!.text);
+        const batch = await this.#callVoyage(texts, model);
+        inputTokens += batch.usage?.total_tokens ?? 0;
+        this.#options.onUsage?.({
+          model,
+          inputTokens: batch.usage?.total_tokens ?? 0,
+          cacheHits: 0,
+          providerCalls: 1,
+        });
+        for (const datum of batch.data) {
+          const targetIdx = batchIndices[datum.index];
+          if (targetIdx === undefined) continue;
+          const vec = new Float32Array(datum.embedding);
+          if (vec.length !== this.dimension) {
+            throw new EmbeddingProviderError(
+              `Voyage returned vector of length ${String(vec.length)}, expected ${String(this.dimension)}`,
+            );
+          }
+          const item = req.items[targetIdx]!;
+          const key = contentHash(item.text, item.domain);
+          this.#cache.set(key, vec);
+          vectors[targetIdx] = { index: targetIdx, vector: vec, cached: false };
         }
-        const item = req.items[targetIdx]!;
-        const key = contentHash(item.text, item.domain);
-        this.#cache.set(key, vec);
-        vectors[targetIdx] = { index: targetIdx, vector: vec, cached: false };
       }
     }
 

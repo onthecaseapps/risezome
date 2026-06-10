@@ -79,6 +79,15 @@ const DEFAULTS: Required<FileChunkerOptions> = {
 };
 
 /**
+ * Hard per-chunk character cap. Line-based windows have no inherent char
+ * bound — a one-line minified bundle would otherwise become a single
+ * ~500KB chunk that Voyage rejects, permanently skipping the file. Any
+ * line window whose joined text exceeds this is hard-split so no emitted
+ * chunk exceeds it.
+ */
+export const MAX_CHUNK_CHARS = 8000;
+
+/**
  * Returns 'text', 'code', or null. Null means: skip this file entirely
  * (binary, unrecognized, or filename-blocked).
  */
@@ -117,6 +126,11 @@ export function chunkFile(
   if (content.length > opts.maxFileBytes) return [];
   if (content.length === 0) return [];
 
+  // Binary sniff: a NUL byte never appears in legitimate text/code, so its
+  // presence means binary content hiding under a text extension (e.g. a
+  // compiled blob named *.json). Skip entirely rather than embed garbage.
+  if (content.includes('\u0000')) return [];
+
   const lines = content.split(/\r?\n/);
   if (lines.length === 0) return [];
 
@@ -130,13 +144,29 @@ export function chunkFile(
     const slice = lines.slice(start, start + linesPerChunk);
     const text = slice.join('\n').trim();
     if (text.length === 0) continue;
-    out.push({ domain, text, position });
-    position += 1;
+    // Hard char cap: a window over MAX_CHUNK_CHARS (one giant minified
+    // line, or many very long lines) is split into ≤MAX_CHUNK_CHARS
+    // pieces so no emitted chunk can exceed the embedder's budget.
+    for (const piece of hardSplit(text, MAX_CHUNK_CHARS)) {
+      out.push({ domain, text: piece, position });
+      position += 1;
+    }
     // If this chunk reached EOF, stop — no point starting an overlap
     // chunk that would re-emit the same trailing lines.
     if (start + linesPerChunk >= lines.length) break;
   }
   return out;
+}
+
+/** Split `text` into pieces of at most `max` chars (trimmed, blanks dropped). */
+function hardSplit(text: string, max: number): string[] {
+  if (text.length <= max) return [text];
+  const pieces: string[] = [];
+  for (let i = 0; i < text.length; i += max) {
+    const piece = text.slice(i, i + max).trim();
+    if (piece.length > 0) pieces.push(piece);
+  }
+  return pieces;
 }
 
 function baseName(path: string): string {

@@ -64,10 +64,18 @@ export interface DedupGroup<T> {
 }
 
 /**
- * Greedily collapse a single meeting's misses so two phrasings of the same
- * question in one call become one group (the intra-batch hole). Each item joins
- * the first existing group whose centroid is within `maxDistance`, else starts
- * a new group. Centroids are recomputed as members are added.
+ * Collapse a single meeting's misses so two phrasings of the same question in
+ * one call become one group (the intra-batch hole). Each item joins the
+ * NEAREST existing group whose centroid is within `maxDistance`, else starts a
+ * new group. Centroids are recomputed as members are added.
+ *
+ * Nearest-group (not first-fit): greedy first-fit was order-dependent — with
+ * drifting centroids, an unrelated miss arriving between two phrasings could
+ * pull a centroid just enough that a borderline third phrasing fell outside
+ * the threshold of its true group while a wrong-but-listed-first group caught
+ * it, splitting one question into duplicate gaps managers then see twice.
+ * Joining the closest qualifying group is order-stable for the common cases
+ * and costs only O(n·groups) over a single meeting's misses (tiny n).
  */
 export function dedupeWithinBatch<T>(
   items: readonly Embedded<T>[],
@@ -75,17 +83,18 @@ export function dedupeWithinBatch<T>(
 ): DedupGroup<T>[] {
   const groups: { members: T[]; vectors: number[][]; centroid: number[] }[] = [];
   for (const { item, vector } of items) {
-    let placed = false;
+    let best: { group: (typeof groups)[number]; distance: number } | null = null;
     for (const g of groups) {
-      if (cosineDistance(g.centroid, vector) <= maxDistance) {
-        g.members.push(item);
-        g.vectors.push([...vector]);
-        g.centroid = meanVector(g.vectors);
-        placed = true;
-        break;
+      const d = cosineDistance(g.centroid, vector);
+      if (d <= maxDistance && (best === null || d < best.distance)) {
+        best = { group: g, distance: d };
       }
     }
-    if (!placed) {
+    if (best !== null) {
+      best.group.members.push(item);
+      best.group.vectors.push([...vector]);
+      best.group.centroid = meanVector(best.group.vectors);
+    } else {
       groups.push({ members: [item], vectors: [[...vector]], centroid: [...vector] });
     }
   }

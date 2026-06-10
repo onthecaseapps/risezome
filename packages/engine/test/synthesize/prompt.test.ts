@@ -306,6 +306,38 @@ describe('stripStatusPrefix — streaming gate', () => {
     const g = stripStatusPrefix('No relevant context. unrelated sources.');
     expect(g).toMatchObject({ complete: true, status: 'no_relevant_context', body: '' });
   });
+
+  it('holds on a LEADING newline/whitespace-only delta (the gate must not open before the STATUS line)', () => {
+    // Models routinely open with a bare "\n" delta. Pre-fix, the gate
+    // classified it as a complete ANSWER and began streaming — letting a
+    // refusal that followed briefly stream (R1 violation).
+    for (const partial of ['\n', '\n\n', '  \n', '\nSTATUS:', '\nSTATUS: answer']) {
+      expect(stripStatusPrefix(partial).complete).toBe(false);
+    }
+  });
+
+  it('still resolves a newline-led STATUS line once complete', () => {
+    const g = stripStatusPrefix(`\n${STATUS_NO_CONTEXT}\nreason here`);
+    expect(g).toMatchObject({ complete: true, status: 'no_relevant_context', body: '' });
+    const a = stripStatusPrefix(`\n${STATUS_ANSWER}\nThe answer.`);
+    expect(a).toMatchObject({ complete: true, status: 'answer', body: 'The answer.' });
+  });
+
+  it('still streams newline-led NON-protocol output (legacy divergence)', () => {
+    const g = stripStatusPrefix('\nThe plan is [1]. And more prose follows here.');
+    expect(g.complete).toBe(true);
+    expect(g.status).toBe('answer');
+  });
+});
+
+describe('CITATION_REGEX — adversarial input (ReDoS guard)', () => {
+  it('parses a long unterminated backslash run promptly instead of backtracking exponentially', () => {
+    const adversarial = 'STATUS: answer\nAnswer [1: "' + '\\'.repeat(400);
+    const startedAt = Date.now();
+    const parsed = parseSynthesisOutput(adversarial, 3);
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+    expect(parsed.isRefusal).toBe(false);
+  });
 });
 
 describe('verifyCitations — drops fabricated quoted citations', () => {

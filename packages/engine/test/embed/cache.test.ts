@@ -6,16 +6,22 @@ function vec(...values: number[]): Float32Array {
 }
 
 describe('normalizeText', () => {
-  it('lowercases, trims, and collapses whitespace', () => {
-    expect(normalizeText('  Hello    World\n')).toBe('hello world');
+  it('trims and collapses whitespace WITHOUT lowercasing (code is case-sensitive)', () => {
+    expect(normalizeText('  Hello    World\n')).toBe('Hello World');
   });
 });
 
 describe('contentHash', () => {
-  it('hashes normalized text + domain', () => {
+  it('hashes whitespace-normalized text + domain', () => {
     const a = contentHash('Hello World', 'text');
-    const b = contentHash('  hello   world  ', 'text');
+    const b = contentHash('  Hello   World  ', 'text');
     expect(a).toBe(b);
+  });
+
+  it('case-distinct code chunks get distinct keys (no cache collision)', () => {
+    const a = contentHash('const Foo = 1;', 'code');
+    const b = contentHash('const foo = 1;', 'code');
+    expect(a).not.toBe(b);
   });
 
   it('differs by domain', () => {

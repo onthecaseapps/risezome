@@ -89,6 +89,14 @@ export interface SkillResult {
   readonly raw?: unknown;
   /** Self-healing recovery signal. Absent ⇒ clean common path. */
   readonly recovery?: SkillRecovery;
+  /**
+   * True when the result is a "connect this provider on the Sources page" CTA
+   * rather than an answer (the org has no GitHub/Trello connected). The router
+   * safety-net DROPS such a result when real RAG sources exist, so the
+   * synthesizer answers from those instead of surfacing a connect-CTA at the
+   * top. A structured flag, not prose-sniffing — the exact CTA text varies.
+   */
+  readonly notConnected?: boolean;
 }
 
 /**
@@ -108,10 +116,10 @@ export interface SkillContext {
   readonly db: SkillDbClient;
   readonly orgId: string;
   /**
-   * Forward-compatibility: skills receive an AbortSignal but most v1
-   * skills don't poll it mid-query. The caller (pipeline) is
-   * responsible for discarding the result when a newer flush has
-   * aborted.
+   * Per-skill deadline signal set by the pipeline. Live-API skills thread
+   * it into every outbound fetch (and rate-limit backoff sleeps) so an
+   * aborted skill stops its in-flight I/O promptly; the caller (pipeline)
+   * additionally discards the result when a newer flush has aborted.
    */
   readonly signal?: AbortSignal;
   readonly now?: () => number;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chunkFile, classifyFile } from '../../src/chunker/file-chunker.js';
+import { chunkFile, classifyFile, MAX_CHUNK_CHARS } from '../../src/chunker/file-chunker.js';
 
 describe('classifyFile', () => {
   it('classifies code by extension', () => {
@@ -76,6 +76,29 @@ describe('chunkFile', () => {
   it('rejects oversized files', () => {
     const big = 'x'.repeat(1024 * 1024); // 1 MB
     expect(chunkFile('big.md', big, { maxFileBytes: 512 * 1024 })).toEqual([]);
+  });
+
+  it('skips content containing NUL bytes (binary disguised under a text extension)', () => {
+    expect(chunkFile('blob.json', 'looks like text\u0000but is binary')).toEqual([]);
+    expect(chunkFile('README.md', 'abc\u0000def')).toEqual([]);
+  });
+
+  it('hard-splits a single oversized line so no chunk exceeds MAX_CHUNK_CHARS', () => {
+    // One-line "minified" file: 3.5x the cap on a single line.
+    const oneLine = 'x'.repeat(Math.floor(MAX_CHUNK_CHARS * 3.5));
+    const chunks = chunkFile('bundle.min.js', oneLine);
+    expect(chunks.length).toBe(4);
+    for (const c of chunks) expect(c.text.length).toBeLessThanOrEqual(MAX_CHUNK_CHARS);
+    // No content lost and positions stay sequential.
+    expect(chunks.map((c) => c.position)).toEqual([0, 1, 2, 3]);
+    expect(chunks.reduce((n, c) => n + c.text.length, 0)).toBe(oneLine.length);
+  });
+
+  it('hard-splits an over-cap multi-line window (many long lines)', () => {
+    const lines = Array.from({ length: 10 }, () => 'y'.repeat(1500));
+    const chunks = chunkFile('long-lines.md', lines.join('\n'), { textChunkLines: 10 });
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) expect(c.text.length).toBeLessThanOrEqual(MAX_CHUNK_CHARS);
   });
 
   it('drops chunks that are only whitespace', () => {

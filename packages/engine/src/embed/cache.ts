@@ -15,8 +15,14 @@ interface Entry {
 export const DEFAULT_MAX_ENTRIES = 1000;
 export const DEFAULT_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * Whitespace-collapse + trim only — deliberately NO lowercasing. Much of
+ * what we embed is code, where case is semantic (`Foo` the class vs `foo`
+ * the instance); lowercasing made case-distinct chunks collide on one
+ * cache key and serve each other's vectors.
+ */
 export function normalizeText(text: string): string {
-  return text.trim().toLowerCase().replace(/\s+/g, ' ');
+  return text.trim().replace(/\s+/g, ' ');
 }
 
 export function contentHash(text: string, domain: string): string {

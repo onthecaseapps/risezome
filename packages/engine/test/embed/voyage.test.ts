@@ -8,6 +8,7 @@ import {
   DEFAULT_VOYAGE_CODE_MODEL,
   DEFAULT_VOYAGE_DIMENSION,
   DEFAULT_VOYAGE_TEXT_MODEL,
+  MAX_INPUTS_PER_REQUEST,
   VoyageEmbedder,
 } from '../../src/embed/voyage.js';
 import { EmbedCache } from '../../src/embed/cache.js';
@@ -59,6 +60,41 @@ describe('VoyageEmbedder', () => {
     const models = calls.map((c) => c.body.model);
     expect(models).toContain(DEFAULT_VOYAGE_TEXT_MODEL);
     expect(models).toContain(DEFAULT_VOYAGE_CODE_MODEL);
+  });
+
+  it('splits oversized domain groups into ≤128-input requests and stitches vectors in order', async () => {
+    const calls: string[][] = [];
+    // Encode each input's numeric text into embedding[0] so order is verifiable.
+    const fetchImpl: typeof fetch = (_input, init) => {
+      const body = JSON.parse(init?.body as string) as { input: string[] };
+      calls.push(body.input);
+      const data = body.input.map((text, index) => {
+        const v = new Array<number>(DEFAULT_VOYAGE_DIMENSION).fill(0);
+        v[0] = Number(text);
+        return { index, embedding: v };
+      });
+      return Promise.resolve(
+        new Response(JSON.stringify({ data, usage: { total_tokens: body.input.length } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    };
+    const embedder = new VoyageEmbedder({ apiKey: 'k', fetchImpl });
+    const count = MAX_INPUTS_PER_REQUEST + 5;
+    const items: EmbedItem[] = Array.from({ length: count }, (_, i) => ({
+      text: String(i),
+      domain: 'text' as const,
+    }));
+    const result = await embedder.embed({ items });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toHaveLength(MAX_INPUTS_PER_REQUEST);
+    expect(calls[1]).toHaveLength(5);
+    expect(result.vectors).toHaveLength(count);
+    for (let i = 0; i < count; i += 1) {
+      expect(result.vectors[i]?.vector[0]).toBe(i);
+    }
+    expect(result.inputTokens).toBe(count);
   });
 
   it('returns vectors with the configured dimension', async () => {
