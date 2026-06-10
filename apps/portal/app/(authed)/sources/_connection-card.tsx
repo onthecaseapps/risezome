@@ -70,7 +70,6 @@ export function ConnectionCard({
   }
 
   const allSelected = data.items.length > 0 && data.items.every((it) => selected.has(it.externalId));
-  const someSelected = selected.size > 0;
 
   function localSet(externalId: string, on: boolean): void {
     setSelected((prev) => {
@@ -135,7 +134,6 @@ export function ConnectionCard({
         <div className="relative flex flex-shrink-0 items-center gap-2">
           <MasterToggle
             checked={allSelected}
-            partial={!allSelected && someSelected}
             disabled={bulkPending || data.items.length === 0}
             onChange={masterToggle}
           />
@@ -244,21 +242,29 @@ function buildStatusLine(data: ConnectionCardData, selectedCount: number): strin
     .filter((it) => it.status !== null && it.status !== 'removed')
     .reduce((s, it) => s + (it.count ?? 0), 0);
   const noun = data.provider === 'github' ? 'files' : data.provider === 'trello' ? 'cards' : data.provider === 'jira' ? 'issues' : 'pages';
-  if (indexed > 0) return `Connected · ${indexed.toLocaleString()} ${noun} indexed`;
-  return `Connected · ${selectedCount} selected`;
+  const container =
+    data.provider === 'github' ? 'repo' : data.provider === 'trello' ? 'board' : data.provider === 'jira' ? 'project' : 'space';
+  const total = data.items.length;
+  const parts: string[] = [];
+  if (total > 0) {
+    parts.push(`${selectedCount} of ${total} ${container}${total === 1 ? '' : 's'} connected`);
+  }
+  if (indexed > 0) parts.push(`${indexed.toLocaleString()} ${noun} indexed`);
+  return parts.length > 0 ? parts.join(' · ') : 'Connected';
 }
 
 function MasterToggle({
   checked,
-  partial,
   disabled,
   onChange,
 }: {
   checked: boolean;
-  partial: boolean;
   disabled: boolean;
   onChange: () => void;
 }): ReactElement {
+  // Deliberately binary: on only when ALL items are selected. A partial
+  // selection reads from the "X of Y connected" status line instead — the
+  // earlier three-position knob looked broken, not indeterminate.
   return (
     <button
       type="button"
@@ -268,12 +274,12 @@ function MasterToggle({
       disabled={disabled}
       onClick={onChange}
       className={`relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors ${
-        checked ? 'bg-accent' : partial ? 'bg-accent/40' : 'bg-border'
+        checked ? 'bg-accent' : 'bg-border'
       } ${disabled ? 'cursor-default opacity-50' : 'cursor-pointer'}`}
     >
       <span
         className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-          checked ? 'translate-x-[18px]' : partial ? 'translate-x-[9px]' : 'translate-x-0.5'
+          checked ? 'translate-x-[18px]' : 'translate-x-0.5'
         }`}
       />
     </button>

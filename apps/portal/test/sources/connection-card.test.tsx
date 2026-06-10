@@ -63,10 +63,42 @@ describe('ConnectionCard (U2)', () => {
     expect(screen.getByRole('checkbox', { name: /acme\/web for team/i })).toBeInTheDocument();
   });
 
-  it('master toggle reflects partial selection (1 of 2 selected → not all-checked)', () => {
+  it('master toggle is binary: off under partial selection (1 of 2 selected)', () => {
     render(<ConnectionCard teamId="t1" data={card()} />);
     const master = screen.getByRole('switch', { name: /select all items/i });
     expect(master).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('master toggle is on only when every item is selected', () => {
+    render(
+      <ConnectionCard teamId="t1" data={card({ selectedExternalIds: ['acme/web', 'acme/api'] })} />,
+    );
+    const master = screen.getByRole('switch', { name: /select all items/i });
+    expect(master).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('status line shows X of Y connected plus the indexed count', () => {
+    const idleItems: SourceItem[] = [
+      { key: 's1', sourceId: 's1', externalId: 'acme/web', label: 'acme/web', count: 240, total: null, status: 'idle', installationId: 1 },
+      { key: 's2', sourceId: 's2', externalId: 'acme/api', label: 'acme/api', count: 100, total: null, status: 'idle', installationId: 1 },
+    ];
+    render(<ConnectionCard teamId="t1" data={card({ items: idleItems })} />);
+    expect(screen.getByText('1 of 2 repos connected · 340 files indexed')).toBeInTheDocument();
+  });
+
+  it('status line uses the provider container noun (trello boards) and excludes removed counts', () => {
+    const boards: SourceItem[] = [
+      { key: 'b1', sourceId: 'b1', externalId: 'board1', label: 'Risezome', count: 11, total: null, status: 'idle' },
+      { key: 'b2', sourceId: 'b2', externalId: 'board2', label: 'Tether', count: 87, total: null, status: 'removed' },
+      { key: 'b3', externalId: 'board3', label: 'Other', count: 0, total: null, status: null },
+    ];
+    render(
+      <ConnectionCard
+        teamId="t1"
+        data={card({ provider: 'trello', name: 'Trello', cardKey: 'trello', manageUrl: null, items: boards, selectedExternalIds: ['board1'] })}
+      />,
+    );
+    expect(screen.getByText('1 of 3 boards connected · 11 cards indexed')).toBeInTheDocument();
   });
 
   it('master toggle adds the unselected items when turned on', async () => {
