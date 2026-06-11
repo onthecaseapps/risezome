@@ -238,6 +238,10 @@ export interface HybridSearchParams {
    *  sources. `undefined` ⇒ no source filter (whole-org corpus, e.g. the debug
    *  page). An EMPTY array ⇒ no in-scope sources ⇒ no corpus hits. */
   readonly sourceIds?: readonly string[];
+  /** Query-time per-team filter: the meeting's attending teams. A chunk is
+   *  returned only if its `visible_team_ids` overlaps this set. `undefined` ⇒
+   *  no team filter (today's behavior; flag-gated upstream). */
+  readonly teamIds?: readonly string[];
   /** Optional cross-encoder reranker (U4). When set, the fused candidate
    *  pool is reranked by query-document relevance and truncated to `limit`;
    *  on any rerank error the RRF order is kept (graceful degrade). */
@@ -248,11 +252,11 @@ export interface HybridSearchParams {
    *  vector list(s) + FTS list to the fusion (broader recall), and the rerank
    *  against the original question restores precision. Empty/omitted ⇒ the
    *  single-query path. */
-  readonly expansionQueries?: ReadonlyArray<{
+  readonly expansionQueries?: readonly {
     readonly queryVectorLiteral: string;
     readonly codeQueryVectorLiteral?: string;
     readonly queryText: string;
-  }> | undefined;
+  }[] | undefined;
   readonly logger?: { warn: (obj: object, msg?: string) => void };
 }
 
@@ -273,11 +277,13 @@ export async function hybridSearch(
 
   // U4: an empty (but defined) source set means the meeting's attendees' teams
   // select nothing — short-circuit to no hits without touching the DB.
-  if (params.sourceIds !== undefined && params.sourceIds.length === 0) {
+  if (params.sourceIds?.length === 0) {
     return [];
   }
   // `null` p_source_ids ⇒ the RPC skips the source filter (whole-org corpus).
   const pSourceIds = params.sourceIds === undefined ? null : [...params.sourceIds];
+  // `null` p_team_ids ⇒ the RPC skips the per-team visibility filter.
+  const pTeamIds = params.teamIds === undefined ? null : [...params.teamIds];
 
   const vectorRpc = (queryVectorLiteral: string, pDomain: string | null) =>
     db.rpc('search_corpus_vector', {
@@ -286,6 +292,7 @@ export async function hybridSearch(
       p_limit: candidateLimit,
       p_source_ids: pSourceIds,
       p_domain: pDomain,
+      p_team_ids: pTeamIds,
     }) as unknown as Promise<{ data: VectorCandidate[] | null; error: { message: string } | null }>;
   const ftsRpc = (queryText: string) =>
     db.rpc('search_corpus_fts', {
@@ -293,6 +300,7 @@ export async function hybridSearch(
       p_query: queryText,
       p_limit: candidateLimit,
       p_source_ids: pSourceIds,
+      p_team_ids: pTeamIds,
     }) as unknown as Promise<{ data: FtsCandidate[] | null; error: { message: string } | null }>;
 
   // One query variant → its vector list(s) [text(+code) partition] + its FTS

@@ -140,6 +140,11 @@ export interface RetrievalRuntime {
    */
   effectiveSourceIds: readonly string[];
   effectiveSourceIdsResolved: boolean;
+  /** Query-time filtering (flag-gated): the meeting's attending teams, resolved
+   *  once. A chunk is retrievable only if its `visible_team_ids` overlaps this
+   *  set. Only populated when RISEZOME_QUERY_TIME_FILTERING is on. */
+  effectiveTeamIds: readonly string[];
+  effectiveTeamIdsResolved: boolean;
 }
 
 export function newRetrievalRuntime(): RetrievalRuntime {
@@ -161,8 +166,15 @@ export function newRetrievalRuntime(): RetrievalRuntime {
     liveCardByDocId: new Map<string, string>(),
     effectiveSourceIds: [],
     effectiveSourceIdsResolved: false,
+    effectiveTeamIds: [],
+    effectiveTeamIdsResolved: false,
   };
 }
+
+/** Query-time per-team corpus filtering. OFF by default — the corpus must be
+ *  stamped/backfilled with visible_team_ids before this is enabled, or
+ *  retrieval would filter against unstamped ('{}') rows and return nothing. */
+const QUERY_TIME_FILTERING = process.env.RISEZOME_QUERY_TIME_FILTERING === '1';
 
 /** Runtime-recording hooks the adapter owns and threads into WHATEVER sink it
  *  builds — so dedup/voiding state (answeredQuestions/consumedFinals/
@@ -419,6 +431,30 @@ export async function maybeRetrieveAndEmit(args: {
     effectiveSourceIds = args.runtime.effectiveSourceIds;
   }
 
+  // ── Effective team set (query-time filtering, U4) — flag-gated ───────
+  // When enabled, resolve the meeting's attending teams once and pass them so
+  // every corpus search filters chunks by `visible_team_ids && teamIds`. Default
+  // OFF ⇒ leave undefined ⇒ the RPC's p_team_ids is null ⇒ NO filtering (today's
+  // behavior). Skipped for the unscoped dev path. Fail closed on error.
+  let effectiveTeamIds: readonly string[] | undefined;
+  if (QUERY_TIME_FILTERING && args.unscoped !== true) {
+    if (!args.runtime.effectiveTeamIdsResolved) {
+      const { data, error } = (await args.db.rpc('meeting_attendee_team_ids', {
+        p_meeting_id: args.meetingId,
+      })) as { data: unknown; error: { message: string } | null };
+      if (error !== null) {
+        args.logger.warn({ err: error }, 'retrieval.attendee-teams.failed');
+        args.runtime.effectiveTeamIds = [];
+      } else {
+        args.runtime.effectiveTeamIds = (Array.isArray(data) ? data : []).map((r) =>
+          typeof r === 'string' ? r : (Object.values(r as object)[0] as string),
+        );
+      }
+      args.runtime.effectiveTeamIdsResolved = true;
+    }
+    effectiveTeamIds = args.runtime.effectiveTeamIds;
+  }
+
   // ── PipelineDeps (the injected capabilities) ─────────────────────────
   const deps: PipelineDeps = {
     db: args.db,
@@ -438,6 +474,8 @@ export async function maybeRetrieveAndEmit(args: {
         // key entirely under exactOptionalPropertyTypes rather than passing
         // `sourceIds: undefined`.
         ...(effectiveSourceIds !== undefined ? { sourceIds: effectiveSourceIds } : {}),
+        // Query-time per-team filter (flag-gated); undefined ⇒ no filter.
+        ...(effectiveTeamIds !== undefined ? { teamIds: effectiveTeamIds } : {}),
         // Focused cross-encoder query. QUESTION lane: the BUILT question query
         // (for a follow-up that includes the antecedent + topic — the bare
         // fragment "and when does it expire?" is unresolvable for a
@@ -449,7 +487,7 @@ export async function maybeRetrieveAndEmit(args: {
           lane === 'question'
             ? queryText
             : (args.lastSummary?.current_topic?.trim().length ?? 0) > 0
-              ? `${args.lastSummary!.current_topic!.trim()} ${args.utteranceText}`.trim()
+              ? `${args.lastSummary!.current_topic.trim()} ${args.utteranceText}`.trim()
               : args.utteranceText,
       }),
     isLowConfidenceHits,

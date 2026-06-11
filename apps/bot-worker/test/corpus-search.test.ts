@@ -334,6 +334,25 @@ describe('hybridSearch — U4 effective-source filter', () => {
     expect((captured.fts as { p_source_ids: unknown }).p_source_ids).toBeNull();
   });
 
+  it('passes teamIds as p_team_ids to BOTH legs (query-time filtering); null when absent', async () => {
+    const withTeams: { vector?: unknown; fts?: unknown } = {};
+    await hybridSearch(capturingDb(withTeams), {
+      orgId: 'o',
+      queryVectorLiteral: '[0]',
+      queryText: 'q',
+      limit: 5,
+      teamIds: ['t1', 't2'],
+    });
+    expect((withTeams.vector as { p_team_ids: string[] }).p_team_ids).toEqual(['t1', 't2']);
+    expect((withTeams.fts as { p_team_ids: string[] }).p_team_ids).toEqual(['t1', 't2']);
+
+    // Absent (flag off) ⇒ null ⇒ the RPC skips the visibility filter.
+    const noTeams: { vector?: unknown; fts?: unknown } = {};
+    await hybridSearch(capturingDb(noTeams), { orgId: 'o', queryVectorLiteral: '[0]', queryText: 'q', limit: 5 });
+    expect((noTeams.vector as { p_team_ids: unknown }).p_team_ids).toBeNull();
+    expect((noTeams.fts as { p_team_ids: unknown }).p_team_ids).toBeNull();
+  });
+
   it('short-circuits to no hits on an EMPTY source set (no DB call)', async () => {
     const captured: { vector?: unknown; fts?: unknown } = {};
     const out = await hybridSearch(capturingDb(captured), {
