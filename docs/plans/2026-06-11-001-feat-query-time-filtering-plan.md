@@ -1,6 +1,6 @@
 ---
 title: "feat: Query-time corpus filtering (per-team views of a shared source)"
-status: planned
+status: active
 date: 2026-06-11
 type: feat
 origin: docs/brainstorms/2026-06-11-query-time-filtering-requirements.md

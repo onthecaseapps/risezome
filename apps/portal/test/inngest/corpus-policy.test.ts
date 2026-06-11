@@ -3,10 +3,13 @@ import {
   resolveEffectivePolicy,
   makePathFilter,
   makeEntityFilter,
+  makePathVisibility,
+  makeEntityVisibility,
   trelloIncludeArchived,
   PRESET_KEYS,
   type CorpusPolicy,
   type EntityAttrs,
+  type TeamView,
 } from '../../src/inngest/lib/corpus-policy';
 
 describe('resolveEffectivePolicy', () => {
@@ -176,3 +179,43 @@ describe('PRESET_KEYS', () => {
 // Type-only guard so EntityAttrs stays exported/used.
 const _attrs: EntityAttrs = { status: 'x' };
 void _attrs;
+
+describe('per-team visibility (query-time filtering union)', () => {
+  // Team A = code-only (excludes prose), Team B = everything.
+  const views: TeamView[] = [
+    { teamId: 'A', policy: resolveEffectivePolicy(null, { preset: 'code_only' }) },
+    { teamId: 'B', policy: resolveEffectivePolicy(null, { preset: 'index_everything' }) },
+  ];
+
+  it('makePathVisibility: a code file is admitted by BOTH teams', () => {
+    const visible = makePathVisibility(views);
+    expect(visible('src/index.ts').sort()).toEqual(['A', 'B']);
+  });
+
+  it('makePathVisibility: a prose doc is admitted ONLY by the everything team', () => {
+    const visible = makePathVisibility(views);
+    expect(visible('docs/architecture.md')).toEqual(['B']);
+  });
+
+  it('makePathVisibility: a file no team wants returns [] (dropped from the union)', () => {
+    // Both teams exclude tests (code_only and... index_everything keeps everything,
+    // so a test file IS wanted by B). Use a path only an exclude-everything view drops.
+    const strict: TeamView[] = [
+      { teamId: 'A', policy: resolveEffectivePolicy(null, { preset: 'code_only' }) },
+      { teamId: 'C', policy: resolveEffectivePolicy(null, { preset: 'recommended' }) },
+    ];
+    const visible = makePathVisibility(strict);
+    expect(visible('app/foo.test.ts')).toEqual([]); // both presets exclude tests
+    expect(visible('src/index.ts').sort()).toEqual(['A', 'C']); // code wanted by both
+  });
+
+  it('makeEntityVisibility: a Done Jira issue is kept by everything, dropped by recommended', () => {
+    const jiraViews: TeamView[] = [
+      { teamId: 'A', policy: resolveEffectivePolicy(null, { preset: 'recommended' }) },
+      { teamId: 'B', policy: resolveEffectivePolicy(null, { preset: 'index_everything' }) },
+    ];
+    const visible = makeEntityVisibility(jiraViews, 'jira');
+    expect(visible({ status: 'Done' })).toEqual(['B']); // recommended drops Done
+    expect(visible({ status: 'In Progress' }).sort()).toEqual(['A', 'B']);
+  });
+});

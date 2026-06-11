@@ -227,6 +227,43 @@ export function makeEntityFilter(
   return (attrs: EntityAttrs): boolean => !rules.some((r) => ruleExcludes(r, attrs, now));
 }
 
+// ── Per-team visibility (query-time filtering) ───────────────────────────────
+// The same matchers, fanned out across the teams that select a source, to
+// compute each document's `visible_team_ids` at index time. A document is KEPT
+// in the shared corpus iff at least one team admits it (the minimal union); at
+// retrieval, a meeting sees a document iff its attending teams intersect that
+// document's visible set. See docs/plans/2026-06-11-001-feat-query-time-filtering-plan.md.
+
+/** A team's resolved view policy — what that team is allowed to retrieve. */
+export interface TeamView {
+  readonly teamId: string;
+  readonly policy: EffectiveCorpusPolicy;
+}
+
+/**
+ * Repo paths: given the teams that select a source, return a resolver that maps
+ * a file path → the ids of the teams whose view admits it. An empty result
+ * means NO team wants the file (drop it from the corpus — the union keep-gate).
+ */
+export function makePathVisibility(views: readonly TeamView[]): (path: string) => string[] {
+  const filters = views.map((v) => ({ teamId: v.teamId, keep: makePathFilter(v.policy) }));
+  return (path: string): string[] => filters.filter((f) => f.keep(path)).map((f) => f.teamId);
+}
+
+/**
+ * Connector entities: the same fan-out over a connector kind. Returns the
+ * admitting team ids for an entity's attributes (empty ⇒ drop). `now` is
+ * injectable for age rules.
+ */
+export function makeEntityVisibility(
+  views: readonly TeamView[],
+  kind: ConnectorKind,
+  now: number = Date.now(),
+): (attrs: EntityAttrs) => string[] {
+  const filters = views.map((v) => ({ teamId: v.teamId, keep: makeEntityFilter(v.policy, kind, now) }));
+  return (attrs: EntityAttrs): string[] => filters.filter((f) => f.keep(attrs)).map((f) => f.teamId);
+}
+
 function ruleExcludes(rule: ConnectorRule, attrs: EntityAttrs, now: number): boolean {
   switch (rule.field) {
     case 'status':
