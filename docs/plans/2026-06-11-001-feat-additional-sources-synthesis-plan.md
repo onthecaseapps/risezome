@@ -1,6 +1,6 @@
 ---
 title: "feat: Additional sources on synthesis answers"
-status: active
+status: completed
 date: 2026-06-11
 type: feat
 origin: docs/brainstorms/2026-06-11-additional-sources-section-requirements.md
