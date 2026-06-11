@@ -116,6 +116,18 @@ export interface PipelineInput {
 export type HybridSearchFn = (params: {
   readonly orgId: string;
   readonly queryVectorLiteral: string;
+  /** voyage-code-3 query vector for the code-domain dense leg (domain-
+   *  partitioned search). Wrappers MUST pass this through — dropping it
+   *  silently disables code retrieval (the eval harness once did). */
+  readonly codeQueryVectorLiteral?: string | undefined;
+  /** Speculative multi-query expansions (scattered queries). */
+  readonly expansionQueries?:
+    | ReadonlyArray<{
+        readonly queryVectorLiteral: string;
+        readonly codeQueryVectorLiteral?: string;
+        readonly queryText: string;
+      }>
+    | undefined;
   readonly queryText: string;
   readonly limit: number;
   readonly reranker?: Reranker | undefined;

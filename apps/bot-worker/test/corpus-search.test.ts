@@ -348,3 +348,54 @@ describe('hybridSearch — U4 effective-source filter', () => {
     expect(captured.fts).toBeUndefined();
   });
 });
+
+describe('fuseRrfMulti — per-domain floors (code-distance regression)', () => {
+  // voyage-code-3 NL→code distances run higher than text-to-text: the exact
+  // answer chunk sits ~0.52 while the text floor is 0.45. Without a per-list
+  // floor the entire code leg was discarded ("which embedding model…" found
+  // embed/voyage.ts at 0.525 and fusion dropped it).
+  it('keeps a code hit above the text floor when its list carries a code floor', () => {
+    const hits = fuseRrfMulti(
+      [
+        [{ chunk_id: 'text-far', distance: 0.52 }], // bare list → default 0.45 floor
+        { hits: [{ chunk_id: 'code-answer', distance: 0.525 }], floor: 0.65 },
+      ],
+      [],
+      { limit: 10 },
+    );
+    const ids = hits.map((h) => h.chunk_id);
+    expect(ids).toContain('code-answer'); // within its own 0.65 floor
+    expect(ids).not.toContain('text-far'); // still filtered by the text floor
+  });
+
+  it('a code hit beyond the code floor is still filtered', () => {
+    const hits = fuseRrfMulti(
+      [{ hits: [{ chunk_id: 'code-noise', distance: 0.9 }], floor: 0.65 }],
+      [],
+      { limit: 10 },
+    );
+    expect(hits).toEqual([]);
+  });
+
+  it('a chunk surfacing in both lists passes if either appearance is within its floor', () => {
+    const hits = fuseRrfMulti(
+      [
+        [{ chunk_id: 'both', distance: 0.6 }], // fails text floor
+        { hits: [{ chunk_id: 'both', distance: 0.6 }], floor: 0.65 }, // passes code floor
+      ],
+      [],
+      { limit: 10 },
+    );
+    expect(hits.map((h) => h.chunk_id)).toContain('both');
+    expect(hits[0]!.distance).toBe(0.6);
+  });
+
+  it('bare arrays keep the legacy default-floor behavior (back-compat)', () => {
+    const hits = fuseRrfMulti(
+      [[{ chunk_id: 'near', distance: 0.3 }, { chunk_id: 'far', distance: 0.6 }]],
+      [],
+      { limit: 10 },
+    );
+    expect(hits.map((h) => h.chunk_id)).toEqual(['near']);
+  });
+});

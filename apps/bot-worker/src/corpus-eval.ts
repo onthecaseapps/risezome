@@ -404,13 +404,12 @@ export async function evaluateQuestion(
     embedder: deps.embedder,
     synthesizer: deps.synthesizer,
     ...(deps.relevanceClassifier != null ? { relevanceClassifier: deps.relevanceClassifier } : {}),
+    // Spread params through (like the live wrapper in retrieval.ts) so the
+    // domain-partitioned code query vector + expansion queries survive —
+    // cherry-picking fields here silently disabled code retrieval in the eval.
     hybridSearch: (params) =>
       hybridSearch(deps.db, {
-        orgId: params.orgId,
-        queryVectorLiteral: params.queryVectorLiteral,
-        queryText: params.queryText,
-        limit: params.limit,
-        ...(params.reranker !== undefined ? { reranker: params.reranker } : {}),
+        ...params,
         logger: params.logger ?? silentLogger,
       }),
     isLowConfidenceHits: () => false, // no CRAG in the eval (expander disabled below)

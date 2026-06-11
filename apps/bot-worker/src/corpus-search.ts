@@ -26,11 +26,25 @@ const DEFAULT_RRF_K = 60;
 // that, absent a lexical match, it's more likely noise than signal.
 const DEFAULT_VECTOR_DISTANCE_FLOOR = 0.45;
 
+// voyage-code-3 cross-modal (NL query → code chunk) distances run HIGHER than
+// voyage-3-large text-to-text: an exact-answer code chunk sits ~0.52 (observed:
+// "which embedding model…" → embed/voyage.ts at 0.525), noise ~0.9. The text
+// floor (0.45) silently discarded every code-domain hit — the partitioned code
+// leg retrieved perfectly and fusion threw it all away.
+const DEFAULT_CODE_VECTOR_DISTANCE_FLOOR = 0.65;
+
 function envFloor(): number {
   const raw = process.env.RISEZOME_VECTOR_DISTANCE_FLOOR;
   if (raw === undefined) return DEFAULT_VECTOR_DISTANCE_FLOOR;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_VECTOR_DISTANCE_FLOOR;
+}
+
+function envCodeFloor(): number {
+  const raw = process.env.RISEZOME_CODE_VECTOR_DISTANCE_FLOOR;
+  if (raw === undefined) return DEFAULT_CODE_VECTOR_DISTANCE_FLOOR;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_CODE_VECTOR_DISTANCE_FLOOR;
 }
 
 // CRAG escalation (U10 close-out): a "strong" hit is one that is lexically
@@ -102,6 +116,15 @@ export interface FuseOptions {
   readonly vectorDistanceFloor?: number;
 }
 
+/** A vector list with its own relevance floor (per-domain: text vs code
+ *  distances aren't comparable). Bare arrays use the default floor. */
+export interface FlooredVectorList {
+  readonly hits: readonly VectorCandidate[];
+  readonly floor?: number;
+}
+
+export type VectorListInput = readonly VectorCandidate[] | FlooredVectorList;
+
 /**
  * Pure RRF fusion + floor. Separated from the DB calls so it can be unit
  * tested. `vector` is ordered best-first by ascending distance; `fts` is
@@ -127,27 +150,37 @@ export function fuseRrf(
  * (FTS-only always passes). Accepts either a single FTS list or several.
  */
 export function fuseRrfMulti(
-  vectorLists: readonly (readonly VectorCandidate[])[],
+  vectorLists: readonly VectorListInput[],
   fts: readonly FtsCandidate[] | readonly (readonly FtsCandidate[])[],
   opts: FuseOptions,
 ): HybridHit[] {
   const k = opts.rrfK ?? DEFAULT_RRF_K;
-  const floor = opts.vectorDistanceFloor ?? envFloor();
+  const defaultFloor = opts.vectorDistanceFloor ?? envFloor();
 
-  const byId = new Map<string, { distance: number | null; ftsMatched: boolean; score: number }>();
+  const byId = new Map<
+    string,
+    { distance: number | null; ftsMatched: boolean; score: number; passesFloor: boolean }
+  >();
   const get = (id: string) => {
     let e = byId.get(id);
     if (e === undefined) {
-      e = { distance: null, ftsMatched: false, score: 0 };
+      e = { distance: null, ftsMatched: false, score: 0, passesFloor: false };
       byId.set(id, e);
     }
     return e;
   };
 
-  for (const vector of vectorLists) {
-    vector.forEach((row, i) => {
+  for (const input of vectorLists) {
+    const list = Array.isArray(input) ? (input as readonly VectorCandidate[]) : (input as FlooredVectorList).hits;
+    const listFloor = Array.isArray(input)
+      ? defaultFloor
+      : ((input as FlooredVectorList).floor ?? defaultFloor);
+    list.forEach((row, i) => {
       const e = get(row.chunk_id);
-      e.distance = row.distance;
+      // Keep the BEST (lowest) distance for reporting; a candidate passes the
+      // floor if ANY of its appearances was within that list's own floor.
+      e.distance = e.distance === null ? row.distance : Math.min(e.distance, row.distance);
+      e.passesFloor = e.passesFloor || row.distance <= listFloor;
       e.score += 1 / (k + i + 1);
     });
   }
@@ -166,8 +199,9 @@ export function fuseRrfMulti(
 
   return (
     [...byId.entries()]
-      // Floor: lexical matches always pass; vector-only must be close enough.
-      .filter(([, e]) => e.ftsMatched || (e.distance !== null && e.distance <= floor))
+      // Floor: lexical matches always pass; vector-only must have been close
+      // enough within at least one list's own (per-domain) floor.
+      .filter(([, e]) => e.ftsMatched || e.passesFloor)
       .map(([chunk_id, e]) => ({
         chunk_id,
         distance: e.distance,
@@ -188,7 +222,7 @@ export interface HybridSearchParams {
    *  and code chunks with this, each within its own model's space (the two
    *  spaces aren't distance-comparable). When omitted, the legacy single-vector
    *  search runs over all chunks (back-compat for eval/debug callers). */
-  readonly codeQueryVectorLiteral?: string;
+  readonly codeQueryVectorLiteral?: string | undefined;
   /** Natural-ish text for websearch_to_tsquery (the rolling window). */
   readonly queryText: string;
   /** Focused query for the cross-encoder reranker. The FTS `queryText` can be
@@ -218,7 +252,7 @@ export interface HybridSearchParams {
     readonly queryVectorLiteral: string;
     readonly codeQueryVectorLiteral?: string;
     readonly queryText: string;
-  }>;
+  }> | undefined;
   readonly logger?: { warn: (obj: object, msg?: string) => void };
 }
 
@@ -267,7 +301,7 @@ export async function hybridSearch(
     queryVectorLiteral: string;
     codeQueryVectorLiteral?: string;
     queryText: string;
-  }): Promise<{ vectorLists: VectorCandidate[][]; fts: FtsCandidate[]; vectorFailed: boolean }> => {
+  }): Promise<{ vectorLists: FlooredVectorList[]; fts: FtsCandidate[]; vectorFailed: boolean }> => {
     const partitioned = q.codeQueryVectorLiteral !== undefined;
     const [textVecRes, codeVecRes, ftsRes] = await Promise.all([
       vectorRpc(q.queryVectorLiteral, partitioned ? 'text' : null),
@@ -286,9 +320,11 @@ export async function hybridSearch(
     if (ftsRes.error !== null) {
       params.logger?.warn({ err: ftsRes.error }, 'corpus-search.fts.failed');
     }
-    const vectorLists: VectorCandidate[][] = [textVecRes.data ?? []];
+    const vectorLists: FlooredVectorList[] = [{ hits: textVecRes.data ?? [], floor: envFloor() }];
     if (codeVecRes.error === null && (codeVecRes.data?.length ?? 0) > 0) {
-      vectorLists.push(codeVecRes.data ?? []);
+      // Code-space distances run higher; without the code floor the whole
+      // code leg is discarded by the text-calibrated default.
+      vectorLists.push({ hits: codeVecRes.data ?? [], floor: envCodeFloor() });
     }
     return { vectorLists, fts: ftsRes.error === null ? (ftsRes.data ?? []) : [], vectorFailed: false };
   };
