@@ -14,14 +14,14 @@ function repo(over: Partial<GithubSourceRow> & { id: string; repo_full_name: str
 describe('buildGithubItems', () => {
   it('marks a repo selected when its source is in the team_sources set', () => {
     const repos = [repo({ id: 's1', repo_full_name: 'acme/api' })];
-    const { items, selected } = buildGithubItems(repos, new Set(['s1']), 1);
+    const { items, selected } = buildGithubItems(repos, new Set(['s1']), 1, new Map());
     expect(selected).toEqual(['acme/api']);
     expect(items[0]).toMatchObject({ sourceId: 's1', externalId: 'acme/api', status: 'indexed', count: 10 });
   });
 
   it('shows an active-but-unselected repo with its source id + status, not selected', () => {
     const repos = [repo({ id: 's1', repo_full_name: 'acme/api' })];
-    const { items, selected } = buildGithubItems(repos, new Set(), 1);
+    const { items, selected } = buildGithubItems(repos, new Set(), 1, new Map());
     expect(selected).toEqual([]);
     expect(items[0]).toMatchObject({ sourceId: 's1', status: 'indexed' });
   });
@@ -31,7 +31,7 @@ describe('buildGithubItems', () => {
     // repo vanished and could never be re-selected. It must now appear, ready to
     // be re-selected (which revives it via addSourceToTeam).
     const repos = [repo({ id: 's1', repo_full_name: 'acme/api', status: 'removed', indexed_files: 7, total_files: 9 })];
-    const { items, selected } = buildGithubItems(repos, new Set(), 1);
+    const { items, selected } = buildGithubItems(repos, new Set(), 1, new Map());
     expect(selected).toEqual([]); // removed sources aren't in team_sources → unchecked
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
@@ -51,7 +51,7 @@ describe('buildGithubItems', () => {
       repo({ id: 's2', repo_full_name: 'acme/zeta' }),
       repo({ id: 's1', repo_full_name: 'acme/alpha', status: 'removed' }),
     ];
-    const { items, selected } = buildGithubItems(repos, new Set(['s2']), 1);
+    const { items, selected } = buildGithubItems(repos, new Set(['s2']), 1, new Map());
     expect(items.map((i) => i.externalId)).toEqual(['acme/alpha', 'acme/zeta']); // sorted
     expect(selected).toEqual(['acme/zeta']);
   });

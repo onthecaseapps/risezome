@@ -151,7 +151,7 @@ export function ConnectionCard({
   const cardPreset = uniqueOverrides.size === 1 ? (overridePresets[0] ?? null) : null;
   const filterPillLabel =
     uniqueOverrides.size > 1 ? 'Mixed' : connectorPresetLabel(data.provider, cardPreset);
-  const filter = useCardFilter({ provider: data.provider, sourceIds: cardSourceIds, currentPreset: cardPreset });
+  const filter = useCardFilter({ provider: data.provider, teamId, sourceIds: cardSourceIds, currentPreset: cardPreset });
 
   function localSet(externalId: string, on: boolean): void {
     setSelected((prev) => {

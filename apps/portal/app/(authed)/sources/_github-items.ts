@@ -30,6 +30,7 @@ export function buildGithubItems(
   repos: GithubSourceRow[],
   teamSourceIds: Set<string>,
   installationId: number,
+  viewPresetBySource: Map<string, string | null>,
 ): { items: SourceItem[]; selected: string[] } {
   const items: SourceItem[] = repos.map((s) => {
     const removed = s.status === 'removed';
@@ -42,7 +43,8 @@ export function buildGithubItems(
       total: removed ? null : s.total_files,
       status: removed ? null : s.status,
       excluded: removed ? 0 : (s.excluded_count ?? 0),
-      presetKey: s.corpus_policy?.preset ?? null,
+      // The team's view preset (query-time filtering), not the shared source policy.
+      presetKey: viewPresetBySource.get(s.id) ?? null,
       installationId,
     };
   });

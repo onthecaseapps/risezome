@@ -81,6 +81,53 @@ export async function setSourcesCorpusPolicyAction(
   return { ok: true, reindexed: updated.length };
 }
 
+/**
+ * Set a TEAM's view policy for one or more sources (query-time filtering, U5),
+ * then reindex each so the storage union + `visible_team_ids` recompute under
+ * the new view (U6). `null` clears the team's view (inherit org default). This
+ * is the per-team replacement for the shared `sources.corpus_policy` editor:
+ * two teams can now hold different views of the same source.
+ */
+export async function setTeamSourcePolicyAction(
+  teamId: string,
+  sourceIds: readonly string[],
+  policy: CorpusPolicy | null,
+): Promise<ActionResult> {
+  const ids = (sourceIds ?? []).filter((s): s is string => typeof s === 'string' && s.length > 0);
+  if (ids.length === 0 || typeof teamId !== 'string' || teamId.length === 0) {
+    return { ok: false, error: 'missing_source' };
+  }
+  const validated = validateOverride(policy);
+  if (!validated.ok) return { ok: false, error: 'invalid_preset' };
+
+  const { orgId } = await requireAdmin();
+  const service = createServiceRoleClient();
+
+  // Defense-in-depth: only this org's live sources (service-role bypasses RLS).
+  const { data: orgSources } = await service
+    .from('sources')
+    .select('id, kind')
+    .in('id', ids)
+    .eq('org_id', orgId)
+    .neq('status', 'removed');
+  const valid = (orgSources ?? []) as Array<{ id: string; kind: string | null }>;
+  if (valid.length === 0) return { ok: false, error: 'source_not_found' };
+
+  const { error } = await service
+    .from('team_sources')
+    .update({ view_policy: validated.value })
+    .eq('team_id', teamId)
+    .in(
+      'source_id',
+      valid.map((s) => s.id),
+    );
+  if (error !== null) return { ok: false, error: error.message };
+
+  await Promise.all(valid.map((s) => reindex(orgId, s.id, s.kind)));
+  revalidatePath('/sources');
+  return { ok: true, reindexed: valid.length };
+}
+
 /** Set the org-default policy, then reindex every source that has no override. */
 export async function setOrgCorpusPolicyAction(preset: string): Promise<ActionResult> {
   if (!isValidPreset(preset)) return { ok: false, error: 'invalid_preset' };

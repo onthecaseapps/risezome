@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactElement } from 'react';
 import { useMenuBehaviors } from '../_components/overlay';
-import { setSourcesCorpusPolicyAction } from './corpus-policy-action';
+import { setTeamSourcePolicyAction } from './corpus-policy-action';
 import { getTrelloListsAction } from './trello-lists-action';
 import type { Provider } from './_source-item-list';
 
@@ -176,10 +176,13 @@ export interface CardFilter {
  *  the footer (below it) can share it. */
 export function useCardFilter({
   provider,
+  teamId,
   sourceIds,
   currentPreset,
 }: {
   provider: Provider;
+  /** The team whose VIEW policy this editor writes (query-time filtering). */
+  teamId: string;
   sourceIds: string[];
   currentPreset: string | null;
 }): CardFilter {
@@ -248,7 +251,7 @@ export function useCardFilter({
   async function applyPolicy(): Promise<{ ok: boolean; reindexed?: number; error?: string }> {
     if (!dirty) return { ok: true, reindexed: 0 };
     const policy = mode === 'custom' ? buildCustomPolicy(provider, c) : buildPolicyForOption(provider, mode);
-    const res = await setSourcesCorpusPolicyAction(sourceIds, policy as never);
+    const res = await setTeamSourcePolicyAction(teamId, sourceIds, policy as never);
     if (res.ok) {
       setSavedMode(mode);
       return { ok: true, reindexed: res.reindexed };

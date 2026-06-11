@@ -14,6 +14,7 @@ vi.mock('../../src/inngest/client', () => ({ inngest: { send: (...a: unknown[]) 
 import {
   setOrgCorpusPolicyAction,
   setSourcesCorpusPolicyAction,
+  setTeamSourcePolicyAction,
 } from '../../app/(authed)/sources/corpus-policy-action';
 
 beforeEach(() => {
@@ -79,6 +80,55 @@ describe('setSourcesCorpusPolicyAction', () => {
     mockSourcesUpdate([{ id: 's1', kind: 'jira' }], (v) => { written = v; });
     await setSourcesCorpusPolicyAction(['s1'], { preset: 'recommended', customExcludes: [1, 2] } as never);
     expect((written as { corpus_policy: { customExcludes?: unknown } }).corpus_policy.customExcludes).toBeUndefined();
+  });
+});
+
+describe('setTeamSourcePolicyAction', () => {
+  // sources.select(...).in().eq().neq() → org-owned rows; team_sources update
+  // .eq('team_id').in('source_id') → captures the written view_policy.
+  function mockTeamView(orgRows: Array<{ id: string; kind: string | null }>, capture: (v: unknown) => void) {
+    createServiceRoleClient.mockReturnValue({
+      from(table: string) {
+        if (table === 'sources') {
+          return { select: () => ({ in: () => ({ eq: () => ({ neq: async () => ({ data: orgRows, error: null }) }) }) }) };
+        }
+        // team_sources
+        return {
+          update: (vals: unknown) => {
+            capture(vals);
+            return { eq: () => ({ in: async () => ({ error: null }) }) };
+          },
+        };
+      },
+    });
+  }
+
+  it('rejects when no team or no sources', async () => {
+    expect(await setTeamSourcePolicyAction('', ['s1'], { preset: 'recommended' })).toEqual({ ok: false, error: 'missing_source' });
+    expect(await setTeamSourcePolicyAction('t1', [], { preset: 'recommended' })).toEqual({ ok: false, error: 'missing_source' });
+  });
+
+  it('writes the team view_policy for the org-owned sources and reindexes each', async () => {
+    let written: unknown;
+    mockTeamView([{ id: 's1', kind: 'confluence' }, { id: 's2', kind: 'confluence' }], (v) => { written = v; });
+    const res = await setTeamSourcePolicyAction('t1', ['s1', 's2'], { preset: 'code_only' });
+    expect(res).toEqual({ ok: true, reindexed: 2 });
+    expect((written as { view_policy: { preset?: string } }).view_policy.preset).toBe('code_only');
+    expect(inngestSend).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the team view when policy is null (inherit org default)', async () => {
+    let written: unknown;
+    mockTeamView([{ id: 's1', kind: 'github' }], (v) => { written = v; });
+    const res = await setTeamSourcePolicyAction('t1', ['s1'], null);
+    expect(res).toEqual({ ok: true, reindexed: 1 });
+    expect(written).toEqual({ view_policy: null });
+  });
+
+  it('returns source_not_found when none of the ids belong to the org', async () => {
+    mockTeamView([], () => {});
+    expect(await setTeamSourcePolicyAction('t1', ['foreign'], null)).toEqual({ ok: false, error: 'source_not_found' });
+    expect(inngestSend).not.toHaveBeenCalled();
   });
 });
 

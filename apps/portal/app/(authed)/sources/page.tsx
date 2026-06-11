@@ -84,15 +84,20 @@ export default async function SourcesPage(props: {
   // but excluded from retrieval. Drives the top-level enable/disable toggle.
   const teamSourceIds = new Set<string>();
   const disabledSourceIds = new Set<string>();
+  // The team's per-source VIEW policy preset (query-time filtering) — drives the
+  // filtering editor's current preset, replacing the shared source policy.
+  const viewPresetBySource = new Map<string, string | null>();
   if (selectedTeamId !== null) {
     const { data: tsRows } = await supabase
       .from('team_sources')
-      .select('source_id, enabled')
+      .select('source_id, enabled, view_policy')
       .eq('team_id', selectedTeamId);
     for (const r of tsRows ?? []) {
       const id = r.source_id as string;
       teamSourceIds.add(id);
       if ((r.enabled as boolean) === false) disabledSourceIds.add(id);
+      const vp = r.view_policy as { preset?: string } | null;
+      viewPresetBySource.set(id, vp?.preset ?? null);
     }
   }
 
@@ -229,7 +234,7 @@ export default async function SourcesPage(props: {
 
   for (const inst of installations) {
     const repos = githubSources.filter((s) => s.installation_id === inst.installation_id);
-    const { items, selected } = buildGithubItems(repos, teamSourceIds, inst.installation_id);
+    const { items, selected } = buildGithubItems(repos, teamSourceIds, inst.installation_id, viewPresetBySource);
     cards.push({
       provider: 'github',
       cardKey: `gh-${inst.installation_id}`,
@@ -247,7 +252,7 @@ export default async function SourcesPage(props: {
 
   if (atlassianConnRow !== null) {
     cards.push(
-      buildAtlassianCard('jira', 'Jira', <JiraMark />, atlassianSources, jiraProjects, teamSourceIds, disabledSourceIds, atlassianSite),
+      buildAtlassianCard('jira', 'Jira', <JiraMark />, atlassianSources, jiraProjects, teamSourceIds, disabledSourceIds, viewPresetBySource, atlassianSite),
     );
     cards.push(
       buildAtlassianCard(
@@ -258,13 +263,14 @@ export default async function SourcesPage(props: {
         confluenceSpaces,
         teamSourceIds,
         disabledSourceIds,
+        viewPresetBySource,
         atlassianSite,
       ),
     );
   }
 
   if (trelloConnRow !== null) {
-    const items = buildItems(trelloSources, trelloBoards, teamSourceIds);
+    const items = buildItems(trelloSources, trelloBoards, teamSourceIds, viewPresetBySource);
     cards.push({
       provider: 'trello',
       cardKey: 'trello',
@@ -357,6 +363,7 @@ function buildItems(
   sources: ConnectionSourceRow[],
   available: Array<{ id: string; name: string }>,
   teamSourceIds: Set<string>,
+  viewPresetBySource: Map<string, string | null>,
 ): { items: SourceItem[]; selected: string[] } {
   const seen = new Set<string>();
   const items: SourceItem[] = [];
@@ -374,7 +381,9 @@ function buildItems(
       total: s.total_files,
       status: s.status,
       excluded: s.excluded_count ?? 0,
-      presetKey: s.corpus_policy?.preset ?? null,
+      // The TEAM's view preset (query-time filtering), not the shared source
+      // policy — so the filtering editor shows this team's view.
+      presetKey: viewPresetBySource.get(s.id) ?? null,
     });
   }
   for (const a of available) {
@@ -407,10 +416,11 @@ function buildAtlassianCard(
   available: Array<{ id: string; name: string }>,
   teamSourceIds: Set<string>,
   disabledSourceIds: Set<string>,
+  viewPresetBySource: Map<string, string | null>,
   site: string | null,
 ): ConnectionCardData {
   const kindSources = atlassianSources.filter((s) => (s.kind ?? '') === kind);
-  const { items, selected } = buildItems(kindSources, available, teamSourceIds);
+  const { items, selected } = buildItems(kindSources, available, teamSourceIds, viewPresetBySource);
   return {
     provider: kind,
     cardKey: kind,
