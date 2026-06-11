@@ -75,6 +75,9 @@ export interface CollectedSynthesis {
   readonly answer: string;
   readonly refusalReason: string | null;
   readonly citationDetails: readonly CitationDetail[];
+  /** Validated ALSO: ranks (additional supporting sources) — non-empty only
+   *  on a grounded done. Resolve against `sources` by rank for grading. */
+  readonly additionalSourceRanks: readonly number[];
 }
 
 /**
@@ -141,6 +144,7 @@ export class EvalCollectorSink implements PipelineSink {
       answer: info.text,
       refusalReason: null,
       citationDetails: info.citationDetails ?? [],
+      additionalSourceRanks: info.additionalSourceRanks ?? [],
     };
   }
 
@@ -151,6 +155,7 @@ export class EvalCollectorSink implements PipelineSink {
       answer: info.answer ?? '',
       refusalReason: info.refusalReason ?? null,
       citationDetails: info.citationDetails ?? [],
+      additionalSourceRanks: [],
     };
   }
 
@@ -167,6 +172,7 @@ export class EvalCollectorSink implements PipelineSink {
       answer: info.answer ?? '',
       refusalReason: info.refusalReason ?? null,
       citationDetails: info.citationDetails ?? [],
+      additionalSourceRanks: [],
     };
   }
 

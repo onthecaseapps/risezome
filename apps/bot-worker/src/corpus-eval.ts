@@ -57,6 +57,14 @@ export interface GoldenQuestion {
   /** When true, a refusal/suppression is the correct outcome. Implied for the
    *  `offtopic` and `adjacent` buckets. */
   readonly expect_refusal?: boolean;
+  /** Doc-id or title substrings that must match an ADDITIONAL supporting
+   *  source (the ALSO: line — retrieved, marked supporting, NOT cited).
+   *  Gates pass/fail when present; absent ⇒ ungraded. */
+  readonly expect_additional_surface?: readonly string[];
+  /** Doc-id or title substrings that must NOT match any additional
+   *  supporting source (locks irrelevant hits out of the marks). Gates
+   *  pass/fail when present; absent ⇒ ungraded. */
+  readonly expect_additional_absent?: readonly string[];
   /** Optional free-text note for humans curating the set. */
   readonly note?: string;
 }
@@ -97,6 +105,19 @@ export function validateGoldenSet(qs: readonly GoldenQuestion[]): string[] {
       (q.must_surface === undefined || q.must_surface.length === 0)
     ) {
       errors.push(`${where}: relevant needs expect_answer_contains or must_surface`);
+    }
+    // Additional-sources locks (the ALSO: line) only make sense on a question
+    // expected to ANSWER — a suppressed question has no marks to grade.
+    for (const field of ['expect_additional_surface', 'expect_additional_absent'] as const) {
+      const v = q[field];
+      if (v === undefined) continue;
+      if (!Array.isArray(v) || v.some((s) => typeof s !== 'string' || s.trim().length === 0)) {
+        errors.push(`${where}: ${field} must be an array of non-empty strings`);
+        continue;
+      }
+      if (expectsSuppression(q)) {
+        errors.push(`${where}: ${field} requires an answerable (relevant) question`);
+      }
     }
   });
   return errors;
@@ -144,6 +165,15 @@ export interface QuestionResult {
   readonly answer: string;
   readonly isRefusal: boolean;
   readonly answerContainsAll: boolean | null;
+  /** Additional-sources lock verdict (expect_additional_*). Null when the
+   *  question carries neither field (ungraded). */
+  readonly additionalPass: boolean | null;
+  /** expect_additional_surface labels that matched / didn't match an
+   *  additional source. */
+  readonly additionalSurfaced: readonly string[];
+  readonly additionalMissed: readonly string[];
+  /** expect_additional_absent labels that wrongly matched a mark. */
+  readonly additionalUnexpected: readonly string[];
   readonly pass: boolean;
 }
 
@@ -180,21 +210,65 @@ export function evaluateAnswer(
 }
 
 /**
+ * Grade the additional-sources marks (the ALSO: line) with the same
+ * docId/title substring matcher must_surface uses. `additional` is the set of
+ * docs the synthesizer marked as supporting-but-uncited. `pass` is null when
+ * the question carries neither expectation (ungraded); otherwise every
+ * surface label must match a mark AND no absent label may.
+ */
+export function evaluateAdditionalSources(
+  additional: readonly RetrievedDoc[],
+  expectSurface: readonly string[] | undefined,
+  expectAbsent: readonly string[] | undefined,
+): {
+  pass: boolean | null;
+  surfaced: string[];
+  missed: string[];
+  unexpected: string[];
+} {
+  const graded =
+    (expectSurface !== undefined && expectSurface.length > 0) ||
+    (expectAbsent !== undefined && expectAbsent.length > 0);
+  if (!graded) return { pass: null, surfaced: [], missed: [], unexpected: [] };
+  const haystack = additional.map((r) => `${norm(r.docId)} ${norm(r.title)}`);
+  const matches = (label: string): boolean => haystack.some((h) => h.includes(norm(label)));
+  const surfaced: string[] = [];
+  const missed: string[] = [];
+  for (const label of expectSurface ?? []) {
+    if (matches(label)) surfaced.push(label);
+    else missed.push(label);
+  }
+  const unexpected = (expectAbsent ?? []).filter(matches);
+  return { pass: missed.length === 0 && unexpected.length === 0, surfaced, missed, unexpected };
+}
+
+/**
  * Score one replayed question. Pass is driven by the END-TO-END answer:
  *  - expect_refusal questions pass iff the system refused (or suppressed).
- *  - otherwise: must NOT refuse, and every expected answer substring present.
+ *  - otherwise: must NOT refuse, every expected answer substring present, and
+ *    the additional-sources lock (expect_additional_*) holds when graded.
  * `recall` over must_surface is reported (meanRecall) but does NOT gate.
+ * `additionalDocs` is the resolved set of ALSO:-marked sources (empty when
+ * none were marked or the caller predates the feature).
  */
 export function scoreQuestion(
   question: GoldenQuestion,
   retrieved: readonly RetrievedDoc[],
   answer: string,
   isRefusal: boolean,
+  additionalDocs: readonly RetrievedDoc[] = [],
 ): QuestionResult {
   const { recall, surfaced, missed } = computeRecall(retrieved, question.must_surface);
   const answerContainsAll = evaluateAnswer(answer, question.expect_answer_contains);
+  const additional = evaluateAdditionalSources(
+    additionalDocs,
+    question.expect_additional_surface,
+    question.expect_additional_absent,
+  );
   const pass =
-    question.expect_refusal === true ? isRefusal : !isRefusal && answerContainsAll !== false;
+    question.expect_refusal === true
+      ? isRefusal
+      : !isRefusal && answerContainsAll !== false && additional.pass !== false;
   return {
     q: question.q,
     retrieved,
@@ -204,6 +278,10 @@ export function scoreQuestion(
     answer,
     isRefusal,
     answerContainsAll,
+    additionalPass: additional.pass,
+    additionalSurfaced: additional.surfaced,
+    additionalMissed: additional.missed,
+    additionalUnexpected: additional.unexpected,
     pass,
   };
 }
@@ -324,6 +402,9 @@ export interface EvalQuestionView {
   readonly suppressed: boolean;
   readonly refusalReason: string | null;
   readonly citations: readonly EvalCitationView[];
+  /** Validated ALSO: ranks (additional supporting sources) — resolve against
+   *  `sources` by rank. Empty when none were marked. */
+  readonly additionalRanks: readonly number[];
   readonly droppedQuoted: number;
   readonly downgradedToBare: number;
   readonly ragas: RagasScores | null;
@@ -356,6 +437,7 @@ function emptyView(
     suppressed: false,
     refusalReason: reason,
     citations: [],
+    additionalRanks: [],
     droppedQuoted: 0,
     downgradedToBare: 0,
     ragas: null,
@@ -489,9 +571,17 @@ export async function evaluateQuestion(
     );
   }
 
+  // Resolve the ALSO: marks to their docs (sources are 1-indexed by rank)
+  // so the additional-sources lock grades against docId/title.
+  const additionalRanks = synth?.additionalSourceRanks ?? [];
+  const additionalDocs = additionalRanks.flatMap((rank) => {
+    const doc = retrieved[rank - 1];
+    return doc !== undefined ? [doc] : [];
+  });
+
   return {
     question,
-    result: scoreQuestion(question, retrieved, answer, effectiveRefusal),
+    result: scoreQuestion(question, retrieved, answer, effectiveRefusal, additionalDocs),
     sources: sourceViews,
     rawSynthesis,
     answer,
@@ -499,6 +589,7 @@ export async function evaluateQuestion(
     suppressed,
     refusalReason: synth?.refusalReason ?? null,
     citations: details.map((d) => ({ rank: d.rank, quote: d.quote ?? null, status: d.status })),
+    additionalRanks,
     droppedQuoted: details.filter((d) => d.status === 'dropped').length,
     downgradedToBare: details.filter((d) => d.status === 'downgraded').length,
     ragas,

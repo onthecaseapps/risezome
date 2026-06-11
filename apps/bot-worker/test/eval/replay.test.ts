@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   bucketOf,
   computeRecall,
+  evaluateAdditionalSources,
   evaluateAnswer,
   evaluateQuestion,
   expectsSuppression,
@@ -103,6 +104,88 @@ describe('scoreQuestion', () => {
   });
 });
 
+describe('evaluateAdditionalSources (the ALSO: lock matcher)', () => {
+  const marked = [
+    doc({ docId: 'code:x:contextualize.ts', title: 'contextualize.ts' }),
+    doc({ docId: 'code:x:file-chunker.ts', title: 'file-chunker.ts' }),
+  ];
+
+  it('is ungraded (null) when neither expectation is set', () => {
+    expect(evaluateAdditionalSources(marked, undefined, undefined).pass).toBeNull();
+    expect(evaluateAdditionalSources(marked, [], []).pass).toBeNull();
+  });
+
+  it('passes when every surface label matches a marked doc (docId OR title, case-insensitive)', () => {
+    const out = evaluateAdditionalSources(marked, ['FILE-CHUNKER', 'contextualize'], undefined);
+    expect(out.pass).toBe(true);
+    expect(out.surfaced).toEqual(['FILE-CHUNKER', 'contextualize']);
+    expect(out.missed).toEqual([]);
+  });
+
+  it('fails with the missed labels when a surface label has no matching mark', () => {
+    const out = evaluateAdditionalSources(marked, ['file-chunker', 'retrieval.ts'], undefined);
+    expect(out.pass).toBe(false);
+    expect(out.missed).toEqual(['retrieval.ts']);
+  });
+
+  it('fails when an absent label DOES match a mark (irrelevant hit got marked)', () => {
+    const out = evaluateAdditionalSources(marked, undefined, ['trello', 'chunker']);
+    expect(out.pass).toBe(false);
+    expect(out.unexpected).toEqual(['chunker']);
+  });
+
+  it('absent-only expectation passes against an empty mark set', () => {
+    expect(evaluateAdditionalSources([], undefined, ['trello']).pass).toBe(true);
+  });
+
+  it('surface expectation fails against an empty mark set (nothing was marked)', () => {
+    const out = evaluateAdditionalSources([], ['file-chunker'], undefined);
+    expect(out.pass).toBe(false);
+    expect(out.missed).toEqual(['file-chunker']);
+  });
+});
+
+describe('scoreQuestion — additional-sources lock gating', () => {
+  const lockQ: GoldenQuestion = {
+    q: 'how do we contextualize each chunk',
+    must_surface: ['contextualize'],
+    expect_additional_surface: ['file-chunker'],
+    expect_additional_absent: ['trello'],
+  };
+  const retrieved = [
+    doc({ docId: 'conf:1', title: 'Indexing design' }),
+    doc({ docId: 'code:x:file-chunker.ts', title: 'file-chunker.ts' }),
+  ];
+
+  it('passes when the expected doc is marked and the absent label is not', () => {
+    const r = scoreQuestion(lockQ, retrieved, 'We prepend Haiku context [1].', false, [retrieved[1]!]);
+    expect(r.additionalPass).toBe(true);
+    expect(r.pass).toBe(true);
+  });
+
+  it('fails when nothing was marked (the motivating regression)', () => {
+    const r = scoreQuestion(lockQ, retrieved, 'We prepend Haiku context [1].', false, []);
+    expect(r.additionalPass).toBe(false);
+    expect(r.additionalMissed).toEqual(['file-chunker']);
+    expect(r.pass).toBe(false);
+  });
+
+  it('fails when an absent-locked doc is marked', () => {
+    const trello = doc({ docId: 'trello:board:9', title: 'Trello card' });
+    const r = scoreQuestion(lockQ, retrieved, 'We prepend Haiku context [1].', false, [retrieved[1]!, trello]);
+    expect(r.additionalPass).toBe(false);
+    expect(r.additionalUnexpected).toEqual(['trello']);
+    expect(r.pass).toBe(false);
+  });
+
+  it('questions without the fields are ungraded and unaffected', () => {
+    const bareQ: GoldenQuestion = { q: 'how does X work' };
+    const r = scoreQuestion(bareQ, [doc()], 'X works like so.', false);
+    expect(r.additionalPass).toBeNull();
+    expect(r.pass).toBe(true);
+  });
+});
+
 describe('summarize', () => {
   it('aggregates pass-rate and mean recall over labeled questions', () => {
     const qLabeled: GoldenQuestion = { q: 'a', must_surface: ['x'] };
@@ -174,6 +257,44 @@ describe('validateGoldenSet', () => {
         { q: 'pinecone vs weaviate?', bucket: 'adjacent', expect_refusal: true },
       ]),
     ).toEqual([]);
+  });
+
+  it('accepts the optional additional-sources lock fields on a relevant item', () => {
+    expect(
+      validateGoldenSet([
+        {
+          q: 'how do we contextualize chunks',
+          must_surface: ['contextualize'],
+          expect_additional_surface: ['file-chunker'],
+          expect_additional_absent: ['trello'],
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('rejects wrong-typed additional-sources fields', () => {
+    const errs = validateGoldenSet([
+      {
+        q: 'x',
+        must_surface: ['y'],
+        expect_additional_surface: 'file-chunker' as unknown as string[],
+      },
+      {
+        q: 'z',
+        must_surface: ['y'],
+        expect_additional_absent: ['', 'ok'], // empty-string label is invalid
+      },
+    ]);
+    expect(errs).toHaveLength(2);
+    expect(errs[0]).toMatch(/expect_additional_surface must be an array of non-empty strings/);
+    expect(errs[1]).toMatch(/expect_additional_absent must be an array of non-empty strings/);
+  });
+
+  it('rejects additional-sources locks on a suppress-bucket question', () => {
+    const errs = validateGoldenSet([
+      { q: 'lunch?', bucket: 'offtopic', expect_refusal: true, expect_additional_surface: ['x'] },
+    ]);
+    expect(errs.join(' ')).toMatch(/requires an answerable \(relevant\) question/);
   });
 });
 
@@ -297,6 +418,74 @@ describe('evaluateQuestion via the shared core', () => {
     const stages = view.trace?.stages.map((s) => s.stage) ?? [];
     expect(stages).toContain('hybrid-search');
     expect(stages).toContain('synthesis');
+  });
+
+  it('carries the ALSO: marks onto the view (additionalRanks) and grades the lock', async () => {
+    const docOneText = 'Each chunk gets a one-line Haiku-generated context prepended before embedding.';
+    const docTwoText = 'The file chunker splits source files into 40-line windows with 10-line overlap.';
+    const deps = {
+      db: fakeDb({
+        vector: [
+          { chunk_id: 'c1', distance: 0.1 },
+          { chunk_id: 'c2', distance: 0.15 },
+        ],
+        chunks: [
+          { chunk_id: 'c1', doc_id: 'd1', text: docOneText, position: 0, is_summary: false },
+          { chunk_id: 'c2', doc_id: 'd2', text: docTwoText, position: 0, is_summary: false },
+        ],
+        docs: [
+          { id: 'd1', source: 'confluence', type: 'page', title: 'Indexing design', url: null },
+          { id: 'd2', source: 'github', type: 'code', title: 'file-chunker.ts', url: null },
+        ],
+      }),
+      embedder: { embed: vi.fn().mockResolvedValue({ vectors: [{ vector: new Float32Array([0.1, 0.2]) }] }) },
+      // Cites rank 1, marks rank 2 as additional support.
+      synthesizer: fakeSynth(
+        'STATUS: answer\nA Haiku context line is prepended to each chunk [1: "Haiku-generated context"].\nALSO: 2',
+      ),
+      orgId: 'org_1',
+      judge: null,
+    } as unknown as EvalDeps;
+
+    const view = await evaluateQuestion(deps, {
+      q: 'how do we contextualize each chunk',
+      must_surface: ['indexing'],
+      expect_additional_surface: ['file-chunker'],
+      expect_additional_absent: ['trello'],
+    });
+
+    expect(view.isRefusal).toBe(false);
+    expect(view.additionalRanks).toEqual([2]);
+    // The ALSO: line is protocol, not prose — stripped from the answer.
+    expect(view.answer).not.toContain('ALSO:');
+    expect(view.result.additionalPass).toBe(true);
+    expect(view.result.additionalSurfaced).toEqual(['file-chunker']);
+    expect(view.result.pass).toBe(true);
+  });
+
+  it('fails the lock when the synthesizer marks nothing (the motivating regression)', async () => {
+    const deps = {
+      db: fakeDb({
+        vector: [{ chunk_id: 'c1', distance: 0.1 }],
+        chunks: [{ chunk_id: 'c1', doc_id: 'd1', text: 'Context line prepended.', position: 0, is_summary: false }],
+        docs: [{ id: 'd1', source: 'confluence', type: 'page', title: 'Indexing design', url: null }],
+      }),
+      embedder: { embed: vi.fn().mockResolvedValue({ vectors: [{ vector: new Float32Array([0.1, 0.2]) }] }) },
+      synthesizer: fakeSynth('STATUS: answer\nA context line is prepended [1: "Context line prepended"].'),
+      orgId: 'org_1',
+      judge: null,
+    } as unknown as EvalDeps;
+
+    const view = await evaluateQuestion(deps, {
+      q: 'how do we contextualize each chunk',
+      must_surface: ['indexing'],
+      expect_additional_surface: ['file-chunker'],
+    });
+
+    expect(view.isRefusal).toBe(false);
+    expect(view.additionalRanks).toEqual([]);
+    expect(view.result.additionalPass).toBe(false);
+    expect(view.result.pass).toBe(false);
   });
 
   it('yields gateSuppressed + isRefusal (pass-on-suppress) for an adjacent gated question', async () => {
