@@ -13,13 +13,29 @@ export const ATLASSIAN_ACCESSIBLE_RESOURCES_URL =
   'https://api.atlassian.com/oauth/token/accessible-resources';
 export const ATLASSIAN_API_BASE = 'https://api.atlassian.com';
 
-/** Classic read scopes covering Jira issues/comments + Confluence pages, plus
- *  offline_access for the refresh token. */
+/**
+ * GRANULAR read scopes covering Jira projects/issues/comments + Confluence
+ * spaces/pages, plus offline_access for the refresh token.
+ *
+ * These MUST be granular, not classic: the client calls the Confluence REST API
+ * v2 (`/wiki/api/v2/spaces`, `/wiki/api/v2/pages`), and v2 endpoints reject
+ * classic scopes (`read:confluence-content.all`) with 401/403 "scope does not
+ * match" (Atlassian CONFCLOUD-75668, closed "Not a Bug"). Classic and granular
+ * scopes also cannot be mixed in one 3LO token, so Jira is granular here too.
+ * The Developer Console app must enable the matching granular scopes under
+ * Permissions → Jira API / Confluence API.
+ */
 export const ATLASSIAN_SCOPES = [
-  'read:jira-work',
-  'read:jira-user',
-  'read:confluence-content.all',
-  'read:confluence-space.summary',
+  // Jira v3 — project search, JQL issue search, comments, assignee/user names
+  'read:project:jira',
+  'read:issue:jira',
+  'read:jql:jira',
+  'read:comment:jira',
+  'read:user:jira',
+  // Confluence v2 — list spaces, list pages + storage body
+  'read:space:confluence',
+  'read:page:confluence',
+  // refresh token
   'offline_access',
 ].join(' ');
 

@@ -28,9 +28,16 @@ describe('buildAtlassianAuthorizeUrl', () => {
     expect(url.searchParams.get('prompt')).toBe('consent');
     expect(url.searchParams.get('state')).toBe('st1');
     const scope = url.searchParams.get('scope') ?? '';
-    expect(scope).toContain('read:jira-work');
-    expect(scope).toContain('read:confluence-content.all');
+    // Granular scopes are mandatory: the client uses the Confluence REST API v2,
+    // which rejects classic scopes. Classic and granular can't be mixed, so Jira
+    // is granular too. Guard against a regression back to classic scopes.
+    expect(scope).toContain('read:space:confluence');
+    expect(scope).toContain('read:page:confluence');
+    expect(scope).toContain('read:project:jira');
+    expect(scope).toContain('read:issue:jira');
     expect(scope).toContain('offline_access');
+    expect(scope).not.toContain('read:confluence-content.all');
+    expect(scope).not.toContain('read:jira-work');
   });
 });
 
