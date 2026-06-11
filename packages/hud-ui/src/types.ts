@@ -97,6 +97,17 @@ export interface SynthesisCitation {
   readonly quote?: string;
 }
 
+/**
+ * One additional supporting source on a synthesis answer: retrieved,
+ * validated as supporting by the synthesizer (the `ALSO:` protocol line),
+ * but not cited in the answer body. cardId is resolved the same way as
+ * citations (sourceCardIds[rank - 1]) before persisting/broadcasting.
+ */
+export interface AdditionalSource {
+  readonly rank: number;
+  readonly cardId: string;
+}
+
 export interface SynthesisDoneEvent {
   readonly synthesisId: string;
   readonly stopReason: string;
@@ -108,6 +119,13 @@ export interface SynthesisDoneEvent {
    *  delta-accumulated text with it, so a dropped synthesisDelta
    *  self-heals at done. Absent on events from before this field. */
   readonly text?: string;
+  /** Resolved additional supporting sources (broadcast/persisted path).
+   *  Absent when the synthesizer marked none. */
+  readonly additionalSources?: readonly AdditionalSource[];
+  /** Rank-only variant carried by the dev WS path, where the client holds
+   *  sourceCardIds from synthesisStart and resolves rank → card locally.
+   *  Absent when the synthesizer marked none. */
+  readonly additionalSourceRanks?: readonly number[];
 }
 
 export interface SynthesisErrorEvent {

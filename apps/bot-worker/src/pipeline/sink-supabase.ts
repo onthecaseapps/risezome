@@ -240,6 +240,15 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
           logger.warn({ err, synthesisId: info.synthesisId }, 'synthesis.encrypt.failed');
           return;
         }
+        // Additional supporting sources (the ALSO: line): resolve the
+        // validated ranks against this synthesis's source set, same idiom as
+        // citations (sourceCardIds[rank - 1]); an unresolvable rank is dropped.
+        const cardIds = startedCardIds.get(info.synthesisId) ?? [];
+        const additionalSources = (info.additionalSourceRanks ?? []).flatMap((rank) => {
+          const cardId = cardIds[rank - 1];
+          return cardId !== undefined ? [{ cardId, rank }] : [];
+        });
+
         await db
           .from('syntheses')
           .update({
@@ -248,6 +257,7 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
             synth_key_version: CRYPTO_VERSION.KMS_ESDK,
             stop_reason: info.stopReason,
             citations: info.citations,
+            additional_sources: additionalSources,
             latency_ms: info.latencyMs,
           })
           .eq('synthesis_id', info.synthesisId)
@@ -262,6 +272,7 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
               synthesisId: info.synthesisId,
               stopReason: info.stopReason,
               citations: info.citations,
+              ...(additionalSources.length > 0 ? { additionalSources } : {}),
               ttftMs: 0, // not measured at this layer
               latencyMs: info.latencyMs,
               // F4b: carry the full final text so the live page self-heals a

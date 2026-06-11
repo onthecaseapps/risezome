@@ -132,6 +132,11 @@ export function createWsSink(args: WsSinkArgs): PipelineSink {
         stopReason: info.stopReason,
         accumulatedText: info.text,
         citations: info.citations,
+        // Ranks only: the page already holds sourceCardIds from synthesisStart,
+        // so it resolves rank → card locally (same idiom as citations).
+        ...(info.additionalSourceRanks !== undefined && info.additionalSourceRanks.length > 0
+          ? { additionalSourceRanks: info.additionalSourceRanks }
+          : {}),
       });
       args.onComplete?.(info.text);
       args.onGroundedAnswer?.(info.text, info.sourceDocIds ?? []);

@@ -174,6 +174,38 @@ describe('synthesis events', () => {
     expect(grounded).toEqual(['The answer.']);
   });
 
+  it('synthesisDone forwards additionalSourceRanks (page resolves rank → card locally)', () => {
+    const { socket, sent } = recordingSocket();
+    const sink = createWsSink({ socket, synthesisId: 'synth_handler', logger: noopLogger });
+    sink.synthesisDone({
+      synthesisId: 'synth_core',
+      text: 'The answer.',
+      citations: [{ rank: 1, cardId: 'c1', position: 0 }],
+      additionalSourceRanks: [2, 3],
+      stopReason: 'end_turn',
+      latencyMs: 42,
+      utteranceId: 'utt_1',
+    });
+    const doneEv = sent.find((e) => e.type === 'synthesisDone');
+    expect(doneEv?.additionalSourceRanks).toEqual([2, 3]);
+  });
+
+  it('synthesisDone omits the additionalSourceRanks key when none were marked', () => {
+    const { socket, sent } = recordingSocket();
+    const sink = createWsSink({ socket, synthesisId: 'synth_handler', logger: noopLogger });
+    sink.synthesisDone({
+      synthesisId: 'synth_core',
+      text: 'The answer.',
+      citations: [{ rank: 1, cardId: 'c1', position: 0 }],
+      stopReason: 'end_turn',
+      latencyMs: 42,
+      utteranceId: 'utt_1',
+    });
+    const doneEv = sent.find((e) => e.type === 'synthesisDone');
+    expect(doneEv).toBeDefined();
+    expect(doneEv).not.toHaveProperty('additionalSourceRanks');
+  });
+
   it('synthesisRefusal maps to a synthesisRefusal event with a reason string', () => {
     const { socket, sent } = recordingSocket();
     const sink = createWsSink({ socket, synthesisId: 'synth_handler', logger: noopLogger });

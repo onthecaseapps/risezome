@@ -347,6 +347,90 @@ describe('synthesis — flash-fix (the sink only persists once the core grounds)
     expect(misses[0]?.reason).toBe('ungrounded');
   });
 
+  it('resolves additionalSourceRanks against the started source set, in rank order (row + broadcast)', async () => {
+    const { db, writes } = recordingDb();
+    const sink = createSupabaseSink({ db, meetingId: MEETING, orgId: ORG, liveCardByDocId: new Map(), logger: noopLogger });
+
+    sink.synthesisStart({
+      synthesisId: 'synth_a',
+      sourceCardIds: ['card_1', 'card_2', 'card_3'],
+      traceId: 'trace_a',
+      utteranceId: 'utt_a',
+    });
+    sink.synthesisDone({
+      synthesisId: 'synth_a',
+      text: 'The answer.',
+      citations: [{ rank: 1, cardId: 'card_1', position: 0 }],
+      additionalSourceRanks: [2, 3],
+      stopReason: 'end_turn',
+      latencyMs: 10,
+      utteranceId: 'utt_a',
+    });
+    await vi.waitFor(() => expect(persistCalls.some((c) => c.type === 'synthesisDone')).toBe(true));
+
+    const expected = [
+      { cardId: 'card_2', rank: 2 },
+      { cardId: 'card_3', rank: 3 },
+    ];
+    // Persisted on the syntheses row (same idiom as citations).
+    const update = writes.find((w) => w.table === 'syntheses' && w.op === 'update');
+    expect(update?.row?.additional_sources).toEqual(expected);
+    // Broadcast payload carries the SAME resolved entries.
+    const doneCall = persistCalls.find((c) => c.type === 'synthesisDone');
+    expect((doneCall?.payload.done as { additionalSources?: unknown }).additionalSources).toEqual(expected);
+  });
+
+  it('drops a rank beyond the source set at resolution (no broken refs persisted)', async () => {
+    const { db, writes } = recordingDb();
+    const sink = createSupabaseSink({ db, meetingId: MEETING, orgId: ORG, liveCardByDocId: new Map(), logger: noopLogger });
+
+    sink.synthesisStart({
+      synthesisId: 'synth_b',
+      sourceCardIds: ['card_1', 'card_2'],
+      traceId: 'trace_b',
+      utteranceId: 'utt_b',
+    });
+    sink.synthesisDone({
+      synthesisId: 'synth_b',
+      text: 'The answer.',
+      citations: [{ rank: 1, cardId: 'card_1', position: 0 }],
+      additionalSourceRanks: [2, 9], // 9 has no card — must vanish, not crash
+      stopReason: 'end_turn',
+      latencyMs: 10,
+      utteranceId: 'utt_b',
+    });
+    await vi.waitFor(() => expect(persistCalls.some((c) => c.type === 'synthesisDone')).toBe(true));
+
+    const update = writes.find((w) => w.table === 'syntheses' && w.op === 'update');
+    expect(update?.row?.additional_sources).toEqual([{ cardId: 'card_2', rank: 2 }]);
+  });
+
+  it('absent ranks → empty column default, NO additionalSources key on the broadcast', async () => {
+    const { db, writes } = recordingDb();
+    const sink = createSupabaseSink({ db, meetingId: MEETING, orgId: ORG, liveCardByDocId: new Map(), logger: noopLogger });
+
+    sink.synthesisStart({
+      synthesisId: 'synth_c',
+      sourceCardIds: ['card_1'],
+      traceId: 'trace_c',
+      utteranceId: 'utt_c',
+    });
+    sink.synthesisDone({
+      synthesisId: 'synth_c',
+      text: 'The answer.',
+      citations: [{ rank: 1, cardId: 'card_1', position: 0 }],
+      stopReason: 'end_turn',
+      latencyMs: 10,
+      utteranceId: 'utt_c',
+    });
+    await vi.waitFor(() => expect(persistCalls.some((c) => c.type === 'synthesisDone')).toBe(true));
+
+    const update = writes.find((w) => w.table === 'syntheses' && w.op === 'update');
+    expect(update?.row?.additional_sources).toEqual([]);
+    const doneCall = persistCalls.find((c) => c.type === 'synthesisDone');
+    expect(doneCall?.payload.done).not.toHaveProperty('additionalSources');
+  });
+
   it('onSynthesisRequested fires exactly once per synthesis (on the first terminal)', async () => {
     const { db } = recordingDb();
     const requested: number[] = [];
