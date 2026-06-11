@@ -121,6 +121,7 @@ export function pgCorpusWriter(client?: Sql): CorpusWriteClient {
           // infers each column's type from the JS values (no manual array
           // casts — those mis-typed a single-element bool[] as scalar). One
           // round-trip regardless of chunk count.
+          const visibleTeamIds = [...w.doc.visibleTeamIds];
           const chunkRows = w.chunks.map((c) => ({
             chunk_id: c.chunkId,
             org_id: w.doc.orgId,
@@ -131,13 +132,15 @@ export function pgCorpusWriter(client?: Sql): CorpusWriteClient {
             context: c.context ?? '',
             is_summary: c.isSummary ?? false,
             position: c.position,
+            visible_team_ids: visibleTeamIds,
           }));
           await tx`
             insert into public.doc_chunks ${tx(chunkRows)}
             on conflict (chunk_id) do update set
               org_id = excluded.org_id, source_id = excluded.source_id, doc_id = excluded.doc_id,
               domain = excluded.domain, text = excluded.text, context = excluded.context,
-              is_summary = excluded.is_summary, position = excluded.position`;
+              is_summary = excluded.is_summary, position = excluded.position,
+              visible_team_ids = excluded.visible_team_ids`;
 
           // Embeddings per-row: the literal is bound as an unspecified param
           // so `${lit}::vector` parses via pgvector's input function. (Going
@@ -146,11 +149,12 @@ export function pgCorpusWriter(client?: Sql): CorpusWriteClient {
           // per doc (small), all inside the one transaction.
           for (let i = 0; i < w.chunks.length; i += 1) {
             await tx`
-              insert into public.corpus_chunk_embeddings (chunk_id, org_id, source_id, domain, embedding)
-              values (${w.chunks[i]!.chunkId}, ${w.doc.orgId}, ${w.doc.sourceId}, ${w.chunks[i]!.domain}, ${w.embeddings[i]!}::vector)
+              insert into public.corpus_chunk_embeddings (chunk_id, org_id, source_id, domain, embedding, visible_team_ids)
+              values (${w.chunks[i]!.chunkId}, ${w.doc.orgId}, ${w.doc.sourceId}, ${w.chunks[i]!.domain}, ${w.embeddings[i]!}::vector, ${visibleTeamIds})
               on conflict (chunk_id) do update set
                 org_id = excluded.org_id, source_id = excluded.source_id,
-                domain = excluded.domain, embedding = excluded.embedding`;
+                domain = excluded.domain, embedding = excluded.embedding,
+                visible_team_ids = excluded.visible_team_ids`;
           }
         }),
       );

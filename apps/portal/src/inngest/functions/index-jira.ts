@@ -12,7 +12,7 @@ import {
 } from '../../../app/_lib/atlassian-client';
 import { buildIssueDocText, jiraIssueDocId } from '../../../app/_lib/atlassian-doc';
 import { runConnectorIndex, type PreparedDoc } from '../lib/connector-index';
-import { loadEffectivePolicy } from '../lib/corpus-policy-store';
+import { loadEffectivePolicy, loadTeamViews } from '../lib/corpus-policy-store';
 import { optionalContextGenerator, optionalDocSummarizer } from '../lib/contextualizer';
 
 const RECONNECT_MSG = 'Atlassian access was revoked or expired. Reconnect Atlassian to re-index.';
@@ -115,6 +115,7 @@ export const indexJiraFn = inngest.createFunction(
     const siteUrl = token.siteUrl ?? '';
 
     const corpusPolicy = await loadEffectivePolicy(createServiceRoleClient(), orgId, ctx.corpusPolicy);
+    const teamViews = await loadTeamViews(createServiceRoleClient(), orgId, sourceId);
 
     const result = await runConnectorIndex<JiraIssue>({
       step,
@@ -123,6 +124,7 @@ export const indexJiraFn = inngest.createFunction(
       mode,
       source: 'jira',
       corpusPolicy,
+      teamViews,
       entityAttrs: (issue) => ({ status: issue.status ?? null, issueType: issue.issueType ?? null, updatedAt: issue.updated ?? null }),
       docType: 'issue',
       provenance: 'trusted',

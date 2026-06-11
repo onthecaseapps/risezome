@@ -16,8 +16,8 @@ import { sanitizeStatusMessage } from '../lib/status-message';
 import { getInstallationOctokit } from '../../../app/_lib/github-app';
 import { reconcile, writeReconciledDoc, type CorpusWriteClient } from '../lib/corpus-reconcile';
 import { pgCorpusWriter } from '../lib/corpus-pg';
-import { loadEffectivePolicy } from '../lib/corpus-policy-store';
-import { makePathFilter, type EffectiveCorpusPolicy } from '../lib/corpus-policy';
+import { loadEffectivePolicy, loadTeamViews } from '../lib/corpus-policy-store';
+import { makePathFilter, makePathVisibility, type EffectiveCorpusPolicy, type TeamView } from '../lib/corpus-policy';
 
 /** Doc types this indexer owns — reconcile must never touch issue/PR docs
  *  that share this source_id (see corpus-reconcile R8). */
@@ -214,7 +214,15 @@ export const indexRepoFn = inngest.createFunction(
     // indexed doc for them is pruned by reconcile (R5). `excluded_count` counts
     // ONLY policy exclusions (not extension/binary/size) for the UI.
     const effectivePolicy = await loadEffectivePolicy(createServiceRoleClient(), orgId, source.corpus_policy);
-    const { targets, excludedByPolicy } = selectTargetsByPolicy(indexable, effectivePolicy);
+    // Per-team views drive the storage UNION (a file is kept iff ≥1 team admits
+    // it) and each kept file's visible_team_ids. `pathVis` is null when no team
+    // selects the source — fall back to the single-policy keep (today's path).
+    const teamViews: TeamView[] = await loadTeamViews(createServiceRoleClient(), orgId, sourceId);
+    const pathVis = teamViews.length > 0 ? makePathVisibility(teamViews) : null;
+    const { targets, excludedByPolicy } =
+      pathVis !== null
+        ? selectTargetsByVisibility(indexable, pathVis)
+        : selectTargetsByPolicy(indexable, effectivePolicy);
 
     const totalFiles = targets.length;
     await step.run('set-total', async () => {
@@ -335,6 +343,7 @@ export const indexRepoFn = inngest.createFunction(
           docSummarizer,
           structureChunking,
           corpusWriter,
+          pathVis,
         });
         // Counter update folded into the batch step (one step per batch keeps
         // big repos under Inngest's ~1000-step cap).
@@ -392,8 +401,11 @@ async function indexBatch(args: {
    *  re-indexes everything (or never re-chunks). */
   structureChunking: boolean;
   corpusWriter: CorpusWriteClient;
+  /** Path → admitting team ids (storage union + per-doc visibility). Null when
+   *  no team selects the source (fall back to no team visibility). */
+  pathVis: ((path: string) => string[]) | null;
 }): Promise<{ files: number; chunks: number }> {
-  const { batch, orgId, sourceId, owner, repo, branch, installationId, embedder, contextGenerator, docSummarizer, structureChunking, corpusWriter } = args;
+  const { batch, orgId, sourceId, owner, repo, branch, installationId, embedder, contextGenerator, docSummarizer, structureChunking, corpusWriter, pathVis } = args;
   const octokit = await getInstallationOctokit(installationId);
 
   const perFile = await mapWithConcurrency(batch, docConcurrency(), async (entry) => {
@@ -508,6 +520,7 @@ async function indexBatch(args: {
         url: `https://github.com/${owner}/${repo}/blob/${branch}/${entry.path}`,
         provenance: 'trusted',
         updatedAt: new Date().toISOString(),
+        visibleTeamIds: pathVis !== null ? pathVis(entry.path) : [],
       },
       chunks: writeChunks,
       embeddings: writeChunks.map((_, i) => arrayToVectorLiteral(embeddings.vectors[i]!.vector)),
@@ -549,6 +562,19 @@ export function selectTargetsByPolicy<T extends { path: string }>(
 ): { targets: T[]; excludedByPolicy: number } {
   const keep = makePathFilter(policy);
   const targets = indexable.filter((b) => keep(b.path));
+  return { targets, excludedByPolicy: indexable.length - targets.length };
+}
+
+/**
+ * Team-view variant: keep a file iff ≥1 team's view admits it (the storage
+ * union). `pathVis(path)` returns the admitting team ids; empty ⇒ no team wants
+ * the file, so it is excluded. `excludedByPolicy` = files no team admits.
+ */
+export function selectTargetsByVisibility<T extends { path: string }>(
+  indexable: readonly T[],
+  pathVis: (path: string) => string[],
+): { targets: T[]; excludedByPolicy: number } {
+  const targets = indexable.filter((b) => pathVis(b.path).length > 0);
   return { targets, excludedByPolicy: indexable.length - targets.length };
 }
 

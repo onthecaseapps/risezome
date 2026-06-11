@@ -6,6 +6,7 @@ import { getInstallationOctokit } from '../../../app/_lib/github-app';
 import { chunkIssue } from '../../lib/github/chunk-issues';
 import type { GithubIssue } from '../../lib/github/issue-types';
 import { reconcile, writeReconciledDoc, type CorpusWriteClient } from '../lib/corpus-reconcile';
+import { loadTeamViews } from '../lib/corpus-policy-store';
 import { pgCorpusWriter } from '../lib/corpus-pg';
 import { mapWithConcurrency } from '../lib/concurrency';
 import {
@@ -178,12 +179,16 @@ export const indexGithubIssuesFn = inngest.createFunction(
     const contextGenerator = optionalContextGenerator();
     const docSummarizer = optionalDocSummarizer();
     const corpusWriter = pgCorpusWriter(); // direct Postgres write (bypasses REST/WAF)
+    // GitHub issues have no per-team content filter (path globs apply to files,
+    // connector rules to jira/trello/confluence), so every team that selects the
+    // source sees all its issues: visible_team_ids = the selecting team ids.
+    const visibleTeamIds = (await loadTeamViews(createServiceRoleClient(), orgId, sourceId)).map((v) => v.teamId);
     const BATCH_SIZE = 20;
     let totalChunks = 0;
     for (let i = 0; i < toIndexIssues.length; i += BATCH_SIZE) {
       const batch = toIndexIssues.slice(i, i + BATCH_SIZE);
       const result = await step.run(`index-issues-batch-${String(i)}`, async () => {
-        return await indexBatch({ batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator, docSummarizer, corpusWriter });
+        return await indexBatch({ batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator, docSummarizer, corpusWriter, visibleTeamIds });
       });
       totalChunks += result.chunks;
     }
@@ -221,8 +226,9 @@ async function indexBatch(args: {
   contextGenerator: ContextGenerator | undefined;
   docSummarizer: DocSummarizer | undefined;
   corpusWriter: CorpusWriteClient;
+  visibleTeamIds: readonly string[];
 }): Promise<{ issues: number; chunks: number }> {
-  const { batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator, docSummarizer, corpusWriter } = args;
+  const { batch, orgId, sourceId, ownerRepo, embedder, kindByDocId, contextGenerator, docSummarizer, corpusWriter, visibleTeamIds } = args;
 
   const perDoc = await mapWithConcurrency(batch, docConcurrency(), async (issue) => {
     const { doc, chunks } = chunkIssue(orgId, ownerRepo, issue);
@@ -310,6 +316,7 @@ async function indexBatch(args: {
         url: doc.url,
         provenance: 'untrusted',
         updatedAt: doc.updatedAt,
+        visibleTeamIds,
         bodySummary: doc.bodySummary,
         entities: doc.entities,
         authors: doc.authors,

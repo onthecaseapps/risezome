@@ -305,6 +305,7 @@ describe('writeReconciledDoc', () => {
       url: null,
       provenance: 'trusted',
       updatedAt: '2026-01-01T00:00:00.000Z',
+      visibleTeamIds: [],
     },
     chunks: [{ chunkId: 'd1::0', domain: 'text', text: 'x', position: 0 }],
     embeddings: ['[0.1]'],

@@ -35,6 +35,7 @@ const baseWrite: ReconciledDocWrite = {
     url: null,
     provenance: 'trusted',
     updatedAt: '2026-06-10T00:00:00.000Z',
+    visibleTeamIds: [],
   },
   // A chunk whose body is exactly the kind of HTML the WAF blocked.
   chunks: [{ chunkId: 'doc:1::0', domain: 'code', text: '<!DOCTYPE html><script>x</script>', context: '', position: 0 }],

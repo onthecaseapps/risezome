@@ -269,6 +269,11 @@ export interface ReconciledDocWrite {
     readonly url: string | null;
     readonly provenance: 'trusted' | 'untrusted';
     readonly updatedAt: string;
+    /** Team ids whose view-policy admits this doc — stamped (denormalized) onto
+     *  every chunk + embedding for the query-time `visible_team_ids` filter.
+     *  Empty only transiently (pre-backfill); a doc with no admitting team is
+     *  not written at all (the union keep-gate). */
+    readonly visibleTeamIds: readonly string[];
     /** Optional doc-level metadata (issues/PRs set these; file/card docs leave
      *  them at their column defaults). */
     readonly bodySummary?: string;

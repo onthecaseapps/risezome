@@ -12,7 +12,7 @@ import {
 } from '../../../app/_lib/trello-client';
 import { buildCardDocText, trelloCardDocId } from '../../../app/_lib/trello-doc';
 import { runConnectorIndex, type PreparedDoc } from '../lib/connector-index';
-import { loadEffectivePolicy } from '../lib/corpus-policy-store';
+import { loadEffectivePolicy, loadTeamViews } from '../lib/corpus-policy-store';
 import { trelloIncludeArchived } from '../lib/corpus-policy';
 import { optionalContextGenerator, optionalDocSummarizer } from '../lib/contextualizer';
 
@@ -137,6 +137,7 @@ export const indexTrelloFn = inngest.createFunction(
     const trello: TrelloClientOptions = { token: trelloToken, apiKey: requireTrelloApiKey() };
 
     const corpusPolicy = await loadEffectivePolicy(createServiceRoleClient(), orgId, ctx.corpusPolicy);
+    const teamViews = await loadTeamViews(createServiceRoleClient(), orgId, sourceId);
 
     const result = await runConnectorIndex<TrelloCard>({
       step,
@@ -145,6 +146,7 @@ export const indexTrelloFn = inngest.createFunction(
       mode,
       source: 'trello',
       corpusPolicy,
+      teamViews,
       entityAttrs: (card) => ({ list: card.listName ?? null, updatedAt: card.dateLastActivity ?? null }),
       docType: 'card',
       provenance: 'trusted',

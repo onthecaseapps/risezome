@@ -7,7 +7,7 @@ import { getValidAtlassianToken } from '../../../app/_lib/atlassian-token';
 import { listConfluencePages, type AtlassianContext, type ConfluencePage } from '../../../app/_lib/atlassian-client';
 import { buildPageDocText, confluencePageDocId } from '../../../app/_lib/atlassian-doc';
 import { runConnectorIndex, type PreparedDoc } from '../lib/connector-index';
-import { loadEffectivePolicy } from '../lib/corpus-policy-store';
+import { loadEffectivePolicy, loadTeamViews } from '../lib/corpus-policy-store';
 import { optionalContextGenerator, optionalDocSummarizer } from '../lib/contextualizer';
 
 const RECONNECT_MSG = 'Atlassian access was revoked or expired. Reconnect Atlassian to re-index.';
@@ -109,6 +109,7 @@ export const indexConfluenceFn = inngest.createFunction(
     const siteUrl = token.siteUrl ?? '';
 
     const corpusPolicy = await loadEffectivePolicy(createServiceRoleClient(), orgId, ctx.corpusPolicy);
+    const teamViews = await loadTeamViews(createServiceRoleClient(), orgId, sourceId);
 
     const result = await runConnectorIndex<ConfluencePage>({
       step,
@@ -117,6 +118,7 @@ export const indexConfluenceFn = inngest.createFunction(
       mode,
       source: 'confluence',
       corpusPolicy,
+      teamViews,
       entityAttrs: (page) => ({ updatedAt: page.updatedAt ?? null }),
       docType: 'page',
       provenance: 'trusted',

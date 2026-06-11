@@ -20,9 +20,11 @@ import {
 import { pgCorpusWriter } from './corpus-pg';
 import {
   makeEntityFilter,
+  makeEntityVisibility,
   type ConnectorKind,
   type EffectiveCorpusPolicy,
   type EntityAttrs,
+  type TeamView,
 } from './corpus-policy';
 
 /**
@@ -106,6 +108,11 @@ export interface ConnectorIndexConfig<E> {
    *  `entityAttrs`, entities the policy excludes are dropped before prepare
    *  (and pruned by reconcile). Omitted ⇒ no entity filtering. */
   readonly corpusPolicy?: EffectiveCorpusPolicy | undefined;
+  /** The per-team view policies for this source (query-time filtering). When
+   *  non-empty, a document is kept iff ≥1 team admits it (the storage union)
+   *  and each kept doc's `visible_team_ids` records the admitting teams. Empty
+   *  ⇒ fall back to the single `corpusPolicy` keep-gate (no team visibility). */
+  readonly teamViews?: readonly TeamView[] | undefined;
   /** Maps one entity to the normalized attributes the policy matcher reads
    *  (status/list/updatedAt). Required for entity filtering. */
   readonly entityAttrs?: ((entity: E) => EntityAttrs) | undefined;
@@ -136,10 +143,18 @@ export async function runConnectorIndex<E>(
     throw err;
   }
 
-  // Apply the corpus policy's connector rules. Excluded entities never enter
-  // the desired set, so reconcile prunes any previously-indexed doc for them
-  // (R5). `excludedByPolicy` drives the UI's "K excluded by policy".
-  const entities = filterEntitiesByPolicy(fetched, source, config.corpusPolicy, config.entityAttrs);
+  // Apply the policy. With team views, keep an entity iff ≥1 team admits it
+  // (the storage union) and record the admitting teams per entity for
+  // visible_team_ids; without, fall back to the single-policy keep. Excluded
+  // entities never enter the desired set, so reconcile prunes any previously
+  // indexed doc for them (R5). `excludedByPolicy` drives the UI's K-excluded.
+  const { entities, keptVis } = keepWithVisibility(
+    fetched,
+    source,
+    config.teamViews ?? [],
+    config.corpusPolicy,
+    config.entityAttrs,
+  );
   const excludedByPolicy = fetched.length - entities.length;
 
   await step.run('set-total', async () => {
@@ -153,13 +168,19 @@ export async function runConnectorIndex<E>(
   // ── Prepare phase: chunk every entity to fingerprint it (no paid embed
   // here). Drives the indexing progress bar across the full set. ──────────
   const prepared: PreparedDoc[] = [];
+  // docId → the admitting team ids (stamped onto the doc's chunks at write).
+  // Built OUTSIDE step.run so it survives Inngest step replay (memoized steps
+  // don't re-run their body); the step returns raw results (nulls included) so
+  // we can zip them back to each entity's visibility by position.
+  const visByDocId = new Map<string, readonly string[]>();
   let scanned = 0;
   for (let i = 0; i < entities.length; i += PREPARE_BATCH) {
     const batch = entities.slice(i, i + PREPARE_BATCH);
+    const batchVis = keptVis.slice(i, i + PREPARE_BATCH);
     const progress = scanned + batch.length;
-    let batchPrepared: PreparedDoc[];
+    let batchResults: (PreparedDoc | null)[];
     try {
-      batchPrepared = (await step.run(`prepare-${String(i)}`, async () => {
+      batchResults = (await step.run(`prepare-${String(i)}`, async () => {
         const results = await Promise.all(batch.map((e) => config.prepare(e)));
         // Progress counter folded into the batch step (one step per batch
         // keeps big sources under Inngest's ~1000-step cap).
@@ -168,8 +189,8 @@ export async function runConnectorIndex<E>(
           .update({ indexed_files: progress })
           .eq('id', sourceId)
           .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
-        return results.filter((p): p is PreparedDoc => p !== null);
-      })) as PreparedDoc[];
+        return results;
+      })) as (PreparedDoc | null)[];
     } catch (err) {
       if (config.isAuthError(err)) {
         await markErrored(step, orgId, sourceId, config.reconnectMessage);
@@ -177,7 +198,12 @@ export async function runConnectorIndex<E>(
       }
       throw err;
     }
-    prepared.push(...batchPrepared);
+    batchResults.forEach((p, idx) => {
+      if (p !== null) {
+        prepared.push(p);
+        visByDocId.set(p.docId, batchVis[idx] ?? []);
+      }
+    });
     scanned += batch.length;
   }
 
@@ -302,6 +328,7 @@ export async function runConnectorIndex<E>(
             url: doc.url,
             provenance,
             updatedAt: doc.updatedAt,
+            visibleTeamIds: visByDocId.get(doc.docId) ?? [],
           },
           chunks: writeChunks,
           embeddings: embedItems.map((_, idx) => arrayToVectorLiteral(embeddings.vectors[idx]!.vector)),
@@ -369,6 +396,47 @@ export function filterEntitiesByPolicy<E>(
   }
   const keep = makeEntityFilter(policy, source as ConnectorKind);
   return fetched.filter((e) => keep(entityAttrs(e)));
+}
+
+/**
+ * Keep-gate + per-entity visibility (query-time filtering). With team views,
+ * keep an entity iff ≥1 team admits it (the storage union) and return the
+ * admitting team ids per kept entity (parallel to `entities`). Without views,
+ * fall back to the single-policy keep with empty visibility (today's behavior).
+ */
+export function keepWithVisibility<E>(
+  fetched: readonly E[],
+  source: string,
+  views: readonly TeamView[],
+  corpusPolicy: EffectiveCorpusPolicy | undefined,
+  entityAttrs: ((entity: E) => EntityAttrs) | undefined,
+): { entities: E[]; keptVis: string[][] } {
+  if (views.length > 0) {
+    const allTeamIds = views.map((v) => v.teamId);
+    // Connector attributes filter visibility when present; otherwise every
+    // selecting team admits the entity (nothing to exclude on).
+    const visForEntity: (entity: E) => string[] =
+      entityAttrs !== undefined && CONNECTOR_KINDS.has(source)
+        ? ((): ((entity: E) => string[]) => {
+            const vis = makeEntityVisibility(views, source as ConnectorKind);
+            const attrs = entityAttrs;
+            return (entity: E) => vis(attrs(entity));
+          })()
+        : () => allTeamIds;
+    const entities: E[] = [];
+    const keptVis: string[][] = [];
+    for (const e of fetched) {
+      const teams = visForEntity(e);
+      if (teams.length > 0) {
+        entities.push(e);
+        keptVis.push(teams);
+      }
+    }
+    return { entities, keptVis };
+  }
+  // Fallback: today's single-policy keep; no per-team visibility.
+  const kept = filterEntitiesByPolicy(fetched, source, corpusPolicy, entityAttrs);
+  return { entities: kept, keptVis: kept.map(() => []) };
 }
 
 async function markErrored(

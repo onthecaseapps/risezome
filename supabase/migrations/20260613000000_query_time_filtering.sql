@@ -28,13 +28,15 @@ update public.team_sources ts
 ------------------------------------------------------------
 -- 2. Per-chunk visibility (denormalized onto the search tables, like source_id)
 ------------------------------------------------------------
--- The set of team ids whose view-policy admits this chunk's document. A
--- document is stored iff this set is non-empty for at least one of its chunks
--- (the minimal union). Empty default => invisible to every team until stamped.
+-- The set of team ids (as text) whose view-policy admits this chunk's document.
+-- A document is stored iff this set is non-empty (the minimal union). Empty
+-- default => invisible to every team until stamped by the indexer backfill.
+-- text[] (not uuid[]) so the direct-Postgres writer inserts JS string arrays
+-- without per-row casts; retrieval passes the attending team ids as text too.
 alter table public.doc_chunks
-  add column visible_team_ids uuid[] not null default '{}';
+  add column visible_team_ids text[] not null default '{}';
 alter table public.corpus_chunk_embeddings
-  add column visible_team_ids uuid[] not null default '{}';
+  add column visible_team_ids text[] not null default '{}';
 
 -- GIN indexes for the `&&` overlap predicate the search RPCs will add.
 create index doc_chunks_visible_team_ids_idx

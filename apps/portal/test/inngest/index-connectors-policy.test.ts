@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { filterEntitiesByPolicy } from '../../src/inngest/lib/connector-index';
-import { resolveEffectivePolicy, type EntityAttrs } from '../../src/inngest/lib/corpus-policy';
+import { filterEntitiesByPolicy, keepWithVisibility } from '../../src/inngest/lib/connector-index';
+import { resolveEffectivePolicy, type EntityAttrs, type TeamView } from '../../src/inngest/lib/corpus-policy';
 
 interface Issue { key: string; status: string }
 interface Card { id: string; list: string; updated: string }
@@ -64,5 +64,45 @@ describe('filterEntitiesByPolicy (U5)', () => {
     const policy = resolveEffectivePolicy(null, { preset: 'index_everything' });
     const issues: Issue[] = [{ key: 'A-2', status: 'Done' }];
     expect(filterEntitiesByPolicy(issues, 'jira', policy, issueAttrs)).toHaveLength(1);
+  });
+});
+
+describe('keepWithVisibility (query-time union, U3)', () => {
+  const issueAttrs2 = (i: Issue): EntityAttrs => ({ status: i.status });
+  // Team A = recommended (drops Done), Team B = everything.
+  const views: TeamView[] = [
+    { teamId: 'A', policy: resolveEffectivePolicy(null, { preset: 'recommended' }) },
+    { teamId: 'B', policy: resolveEffectivePolicy(null, { preset: 'index_everything' }) },
+  ];
+
+  it('keeps an entity admitted by ANY team (union) and records the admitting teams', () => {
+    const issues: Issue[] = [
+      { key: 'A-1', status: 'In Progress' }, // both teams
+      { key: 'A-2', status: 'Done' }, // only B (recommended drops Done)
+    ];
+    const { entities, keptVis } = keepWithVisibility(issues, 'jira', views, undefined, issueAttrs2);
+    expect(entities.map((e) => e.key)).toEqual(['A-1', 'A-2']); // union keeps both
+    expect(keptVis[0]!.sort()).toEqual(['A', 'B']);
+    expect(keptVis[1]).toEqual(['B']); // Done visible only to the everything team
+  });
+
+  it('drops an entity NO team admits (empty union)', () => {
+    const onlyRecommended: TeamView[] = [
+      { teamId: 'A', policy: resolveEffectivePolicy(null, { preset: 'recommended' }) },
+    ];
+    const issues: Issue[] = [{ key: 'A-2', status: 'Done' }];
+    const { entities } = keepWithVisibility(issues, 'jira', onlyRecommended, undefined, issueAttrs2);
+    expect(entities).toEqual([]); // Done dropped — no team wants it
+  });
+
+  it('falls back to single-policy keep (empty visibility) when no team views', () => {
+    const issues: Issue[] = [
+      { key: 'A-1', status: 'In Progress' },
+      { key: 'A-2', status: 'Done' },
+    ];
+    const policy = resolveEffectivePolicy(null, null); // recommended
+    const { entities, keptVis } = keepWithVisibility(issues, 'jira', [], policy, issueAttrs2);
+    expect(entities.map((e) => e.key)).toEqual(['A-1']); // Done dropped by single policy
+    expect(keptVis).toEqual([[]]); // no per-team visibility in the fallback
   });
 });
