@@ -18,6 +18,13 @@ export interface NormalizedAdditionalSource {
   cardId: string;
 }
 
+/** The executed-skill result riding as source[0] (tool_source jsonb). */
+export interface NormalizedToolSource {
+  cardId: string;
+  title: string;
+  body: string;
+}
+
 export interface InitialSynthesis {
   synthesisId: string;
   sourceCardIds: string[];
@@ -32,6 +39,10 @@ export interface InitialSynthesis {
    *  cardIds by the bot-worker before persisting. Absent/empty on rows from
    *  before the feature. */
   additionalSources?: NormalizedAdditionalSource[];
+  /** The executed-skill result riding as source[0] — lets the review page
+   *  render a rank-1 (tool) citation as a cited-source row. Absent without
+   *  a skill (and on rows from before the column). */
+  toolSource?: NormalizedToolSource;
   pinned: boolean;
   pinnedAt: string | null;
   /** The transcript utterance that triggered this synthesis (U6). Null for
@@ -101,6 +112,22 @@ export function normalizeAdditionalSources(raw: unknown): NormalizedAdditionalSo
 }
 
 /**
+ * Normalize the tool_source jsonb ({cardId, title, body}, written by the
+ * bot-worker when a skill's result rode synthesis as source[0]). Returns
+ * null for pre-feature rows and malformed values.
+ */
+export function normalizeToolSource(raw: unknown): NormalizedToolSource | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const t = raw as Record<string, unknown>;
+  const cardId = t['cardId'];
+  const title = t['title'];
+  const body = t['body'];
+  if (typeof cardId !== 'string' || cardId.length === 0) return null;
+  if (typeof title !== 'string' || typeof body !== 'string') return null;
+  return { cardId, title, body };
+}
+
+/**
  * Map a raw `syntheses` row (with the full column set both pages select) into
  * the `InitialSynthesis` shape the reducer seeds from.
  */
@@ -119,6 +146,8 @@ export function mapSynthesisRow(s: Record<string, unknown>): InitialSynthesis {
   };
   const additionalSources = normalizeAdditionalSources(s['additional_sources']);
   if (additionalSources.length > 0) out.additionalSources = additionalSources;
+  const toolSource = normalizeToolSource(s['tool_source']);
+  if (toolSource !== null) out.toolSource = toolSource;
   if (s['trigger_utterance_id'] != null) out.triggerUtteranceId = s['trigger_utterance_id'] as string;
   if (s['stop_reason'] != null) out.stopReason = s['stop_reason'] as string;
   if (s['error_code'] != null) out.errorCode = s['error_code'] as SynthesisErrorCode;

@@ -19,6 +19,7 @@ import type {
   SynthesisErrorEvent,
   SynthesisRetractedEvent,
   SynthesisStartEvent,
+  SynthesisToolSource,
   TranscriptUtterance,
 } from '../types';
 /**
@@ -63,6 +64,10 @@ export interface SynthesisRecord {
    *  the answer (the ALSO: line). Resolved refs into sourceCardIds. Absent
    *  when none were marked. */
   readonly additionalSources?: readonly AdditionalSource[];
+  /** The executed-skill result riding as source[0] (no retrieval card backs
+   *  it). Render surfaces resolve a rank-1 citation against this so the tool
+   *  answer shows as a CITED source row. Absent without a skill. */
+  readonly toolSource?: SynthesisToolSource;
 }
 
 export type MeetingMode = 'idle' | 'live';
@@ -266,6 +271,7 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
         ...(action.start.triggerUtteranceId != null
           ? { triggerUtteranceId: action.start.triggerUtteranceId }
           : {}),
+        ...(action.start.toolSource !== undefined ? { toolSource: action.start.toolSource } : {}),
       };
       syntheses.set(action.start.synthesisId, rec);
       return { ...state, syntheses };

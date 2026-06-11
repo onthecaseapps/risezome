@@ -70,7 +70,7 @@ export function SourceCardExpanded({
         {source.source.toUpperCase()}
       </span>
       <span
-        className={`source-row-title${source.type === 'code' ? ' is-mono' : ''}`}
+        className={`source-row-title${source.type === 'code' || source.type === 'tool' ? ' is-mono' : ''}`}
         title={source.title}
       >
         {source.title}

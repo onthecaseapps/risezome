@@ -10,6 +10,7 @@ import {
 import type { StructuredRecap } from '../src/inngest/lib/meeting-recap';
 import {
   normalizeAdditionalSources,
+  normalizeToolSource,
   normalizeCitations,
   resolveSynthesisAnchors,
   type AnchorSynthesis,
@@ -262,6 +263,21 @@ describe('normalizeAdditionalSources', () => {
         'not-an-object',
       ]),
     ).toEqual([{ rank: 4, cardId: 'good' }]);
+  });
+});
+
+describe('normalizeToolSource', () => {
+  it('passes through a valid tool source', () => {
+    expect(
+      normalizeToolSource({ cardId: 'tool_tr1', title: 'Tool: github_count({})', body: '32 open issues.' }),
+    ).toEqual({ cardId: 'tool_tr1', title: 'Tool: github_count({})', body: '32 open issues.' });
+  });
+
+  it('returns null for pre-feature rows and malformed values', () => {
+    expect(normalizeToolSource(null)).toBeNull();
+    expect(normalizeToolSource(undefined)).toBeNull();
+    expect(normalizeToolSource({ cardId: '', title: 't', body: 'b' })).toBeNull();
+    expect(normalizeToolSource({ cardId: 'x', title: 7, body: 'b' })).toBeNull();
   });
 });
 

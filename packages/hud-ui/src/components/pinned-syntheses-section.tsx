@@ -5,6 +5,7 @@ import { useAppState, type SynthesisRecord } from '../state/app-state';
 import { useSynthesisActivate, SynthesisCard, type SynthesisPhase } from './synthesis-card';
 import { CitationChip } from './citation-chip';
 import type { CardEvent, SynthesisCitation } from '../types';
+import { toolSourceCard } from '../lib/tool-source-card';
 
 /**
  * Pinned syntheses section — renders above the chronological
@@ -65,6 +66,10 @@ function PinnedSynthesisItem({ syn }: { syn: SynthesisRecord }): ReactElement {
   for (const id of syn.sourceCardIds) {
     const rec = state.cards.get(id);
     if (rec !== undefined) sources.push(rec.card);
+    else if (syn.toolSource !== undefined && syn.toolSource.cardId === id) {
+      // The executed-skill result rides as source[0] with no card behind it.
+      sources.push(toolSourceCard(syn.toolSource, syn.traceId));
+    }
   }
 
   // Pinned syntheses are always done (you can't pin a streaming one —

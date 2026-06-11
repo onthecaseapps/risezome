@@ -42,6 +42,7 @@ import type {
   PipelineCard,
   StageRecord,
   PipelineStage,
+  SynthesisToolSource,
   TraceHit,
 } from './contract.js';
 
@@ -780,8 +781,6 @@ export async function runPipeline(
   const toolSource = await collectToolSource(
     input,
     deps,
-    sink,
-    traceId,
     classifierTimer,
     classifierPromise,
     trace,
@@ -805,6 +804,12 @@ export async function runPipeline(
       trace,
       sources: mergedSources,
       surfacedCardIds: mergedCardIds,
+      // The tool source has no retrieval card behind it — hand the sinks
+      // enough to render a rank-1 citation as a visible cited-source row.
+      toolSource:
+        toolSource !== null
+          ? { cardId: `tool_${traceId}`, title: toolSource.title, body: toolSource.text }
+          : null,
     });
   } else if (trace !== null) {
     trace.push(
@@ -919,8 +924,6 @@ const SKILL_TIMEOUT_MS = (() => {
 async function collectToolSource(
   input: PipelineInput,
   deps: PipelineDeps,
-  sink: PipelineSink,
-  traceId: string,
   classifierTimer: ReturnType<typeof setTimeout> | null,
   classifierPromise: ReturnType<NonNullable<PipelineDeps['routerClassifier']>['classify']> | null,
   trace: TraceBuilder | null,
@@ -985,21 +988,10 @@ async function collectToolSource(
         signal: skillController.signal,
       };
       const skillResult = await skill.handler(result.args, skillContext);
-      // Surface the raw structured answer as a standalone signal (the dev page
-      // renders it as its own card) so the executed-skill result is always
-      // visible, INDEPENDENT of whether the synthesizer relays it (it can
-      // refuse) and of whether the safety-net keeps the tool source below. The
-      // tool result still rides into synthesis at [0] either way. Optional +
-      // `?.`-guarded so prod/eval sinks (which omit it) are unaffected.
-      sink.recordSkillResult?.({
-        traceId,
-        utteranceId: input.utteranceId,
-        skillName: result.skillName,
-        args: result.args,
-        kind: skillResult.kind,
-        summary: skillResult.summary,
-        items: skillResult.items ?? [],
-      });
+      // The executed-skill result is NOT surfaced as a standalone card — it
+      // rides into synthesis as source[0] and renders as a CITED source row
+      // (synthesisStart carries `toolSource` for resolution). The skill stage
+      // trace below remains the debugging record for dropped/refused cases.
       clearTimeout(skillTimer);
       const decision = decideToolSource(skillResult, { ragCount });
       if (decision.keep) {
@@ -1101,8 +1093,9 @@ async function runSynthesis(args: {
   trace: TraceBuilder | null;
   sources: readonly SynthesisSource[];
   surfacedCardIds: readonly string[];
+  toolSource: SynthesisToolSource | null;
 }): Promise<void> {
-  const { input, deps, sink, traceId, trace, sources, surfacedCardIds } = args;
+  const { input, deps, sink, traceId, trace, sources, surfacedCardIds, toolSource } = args;
   if (deps.synthesizer === undefined) return;
 
   const synthStart = Date.now();
@@ -1128,6 +1121,7 @@ async function runSynthesis(args: {
       sourceCardIds: surfacedCardIds,
       traceId,
       utteranceId: input.utteranceId,
+      ...(toolSource !== null ? { toolSource } : {}),
     });
   };
 

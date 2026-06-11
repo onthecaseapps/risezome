@@ -23,7 +23,7 @@ import type { Synthesizer, CitationDetail } from '@risezome/engine/synthesize';
 import type { MissRecord } from '@risezome/engine/gaps';
 import type { RelevanceClassifier, RelevanceContext } from '@risezome/engine/relevance';
 import type { Classifier } from '@risezome/engine/router';
-import type { SkillRegistry, SkillResultKind, SkillResultItem } from '@risezome/engine/skills';
+import type { SkillRegistry } from '@risezome/engine/skills';
 import type { Reranker } from '@risezome/engine/embed';
 import type { QueryExpander } from '@risezome/engine/query-expand';
 import type { MeetingSummary } from '@risezome/engine/summarize';
@@ -263,12 +263,27 @@ export interface EmittedCard {
   readonly cardId: string;
 }
 
+/** The executed-skill result riding synthesis as source[0]. Sinks carry it
+ *  so render surfaces can resolve a rank-1 (tool) citation to a visible
+ *  cited-source row — the tool source has no retrieval card behind it. */
+export interface SynthesisToolSource {
+  /** The synthetic card id the core assigned (`tool_<traceId>`) — matches
+   *  sourceCardIds[0] and any rank-1 citation's cardId. */
+  readonly cardId: string;
+  /** Display title, e.g. `Tool: github_count({"state":"open"})`. */
+  readonly title: string;
+  /** The formatted tool output the synthesizer saw (summary + items). */
+  readonly body: string;
+}
+
 /** Start-of-synthesis signal (the source cards + the trace anchor). */
 export interface SynthesisStartInfo {
   readonly synthesisId: string;
   readonly sourceCardIds: readonly string[];
   readonly traceId: string;
   readonly utteranceId: string;
+  /** Present when an executed skill's result rides as source[0]. */
+  readonly toolSource?: SynthesisToolSource;
 }
 
 /** A verified, card-resolved citation (the grounded-or-nothing survivors). */
@@ -381,24 +396,6 @@ export interface SkipInfo {
 }
 
 /**
- * A raw tool/skill answer the router stage produced — the structured result of
- * an executed skill (e.g. `github_count`), surfaced INDEPENDENTLY of synthesis.
- * The tool result still rides into synthesis at source[0]; this is the standalone
- * "the skill answered" signal a dev surface renders as its own card so the raw
- * answer is always visible even when the synthesizer refuses. Mirrors
- * `SkillResult` (kind/summary/items) plus the skill name + args + trace anchors.
- */
-export interface SkillResultInfo {
-  readonly traceId: string;
-  readonly utteranceId: string;
-  readonly skillName: string;
-  readonly args: Record<string, unknown>;
-  readonly kind: SkillResultKind;
-  readonly summary: string;
-  readonly items: readonly SkillResultItem[];
-}
-
-/**
  * The output seam (KTD6). The core calls these at each emit point and never
  * imports a transport. `emitCard` returns the sink's card id so the core can
  * build the synthesis's source-card list. `recordTrace` is OPTIONAL — when a
@@ -423,12 +420,6 @@ export interface PipelineSink {
   synthesisRetract(info: SynthesisRetractInfo): void;
   recordMiss(miss: MissRecord): void;
   recordSkip(info: SkipInfo): void;
-  /** OPTIONAL. Present ⇒ the core emits the raw executed-skill answer as a
-   *  standalone signal (the dev page renders it as its own card, independent of
-   *  synthesis). Absent (prod/eval) ⇒ the core skips it; the tool result still
-   *  rides into synthesis at source[0] either way. Guarded with `?.` at the
-   *  call site so a sink that omits it is unaffected. */
-  recordSkillResult?(result: SkillResultInfo): void;
   /** OPTIONAL (KTD4/R5). Present ⇒ the core assembles + emits a per-stage
    *  trace; absent ⇒ the core does zero trace work. */
   recordTrace?(trace: PipelineTrace): void;

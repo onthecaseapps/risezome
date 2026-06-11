@@ -70,6 +70,7 @@ function seedState(
       ...(s.additionalSources !== undefined && s.additionalSources.length > 0
         ? { additionalSources: s.additionalSources }
         : {}),
+      ...(s.toolSource !== undefined ? { toolSource: s.toolSource } : {}),
       pinned: s.pinned,
       pinnedAt: s.pinnedAt,
       ...(s.triggerUtteranceId != null ? { triggerUtteranceId: s.triggerUtteranceId } : {}),

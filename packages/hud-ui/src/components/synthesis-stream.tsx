@@ -5,6 +5,7 @@ import { useAppState, type SynthesisRecord } from '../state/app-state';
 import { CitationChip } from './citation-chip';
 import { SynthesisCard, useSynthesisActivate, type SynthesisPhase } from './synthesis-card';
 import type { CardEvent, SynthesisCitation } from '../types';
+import { toolSourceCard } from '../lib/tool-source-card';
 
 /**
  * Streaming + final synthesis rendering.
@@ -63,6 +64,10 @@ export function SynthesisStreamItem({ syn }: { syn: SynthesisRecord }): ReactEle
   for (const id of syn.sourceCardIds) {
     const rec = state.cards.get(id);
     if (rec !== undefined) sources.push(rec.card);
+    else if (syn.toolSource !== undefined && syn.toolSource.cardId === id) {
+      // The executed-skill result rides as source[0] with no card behind it.
+      sources.push(toolSourceCard(syn.toolSource, syn.traceId));
+    }
   }
 
   // Phase derives from streaming + accumulatedText. Placeholder is the

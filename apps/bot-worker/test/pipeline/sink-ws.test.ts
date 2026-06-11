@@ -242,34 +242,47 @@ describe('synthesis events', () => {
   });
 });
 
-describe('recordSkillResult → `skillResult` event', () => {
-  it('DEFINES recordSkillResult (the dev card; prod/eval omit it)', () => {
-    const { socket } = recordingSocket();
-    const sink = createWsSink({ socket, synthesisId: 'synth_1', logger: noopLogger });
-    expect(sink.recordSkillResult).toBeDefined();
-  });
-
-  it('emits the standalone skillResult event in the exact pre-U3 shape', () => {
+describe('toolSource rides synthesisStart (skill-result-as-cited-source)', () => {
+  it('forwards toolSource on the synthesisStart event when a skill rode source[0]', () => {
     const { socket, sent } = recordingSocket();
-    const sink = createWsSink({ socket, synthesisId: 'synth_1', logger: noopLogger });
-    sink.recordSkillResult?.({
+    const sink = createWsSink({ socket, synthesisId: 'synth_handler', logger: noopLogger });
+    sink.synthesisStart({
+      synthesisId: 'synth_core',
+      sourceCardIds: ['tool_trace_7', 'c1'],
       traceId: 'trace_7',
       utteranceId: 'utt_7',
-      skillName: 'github_count',
-      args: { state: 'open' },
-      kind: 'count',
-      summary: '12 open issues',
-      items: [{ title: 'issue-1', url: 'https://x/1' }],
+      toolSource: {
+        cardId: 'tool_trace_7',
+        title: 'Tool: github_count({"state":"open"})',
+        body: '12 open issues',
+      },
     });
-    const ev = sent.find((e) => e.type === 'skillResult');
+    const ev = sent.find((e) => e.type === 'synthesisStart');
+    expect(ev?.toolSource).toEqual({
+      cardId: 'tool_trace_7',
+      title: 'Tool: github_count({"state":"open"})',
+      body: '12 open issues',
+    });
+  });
+
+  it('omits the toolSource key when no skill rode the synthesis', () => {
+    const { socket, sent } = recordingSocket();
+    const sink = createWsSink({ socket, synthesisId: 'synth_handler', logger: noopLogger });
+    sink.synthesisStart({
+      synthesisId: 'synth_core',
+      sourceCardIds: ['c1'],
+      traceId: 'trace_8',
+      utteranceId: 'utt_8',
+    });
+    const ev = sent.find((e) => e.type === 'synthesisStart');
     expect(ev).toBeDefined();
-    expect(ev?.traceId).toBe('trace_7');
-    expect(ev?.utteranceId).toBe('utt_7');
-    expect(ev?.skillName).toBe('github_count');
-    expect(ev?.args).toEqual({ state: 'open' });
-    expect(ev?.kind).toBe('count');
-    expect(ev?.summary).toBe('12 open issues');
-    expect(ev?.items).toEqual([{ title: 'issue-1', url: 'https://x/1' }]);
+    expect(ev).not.toHaveProperty('toolSource');
+  });
+
+  it('does NOT define recordSkillResult — the skill answer is not a separate card', () => {
+    const { socket } = recordingSocket();
+    const sink = createWsSink({ socket, synthesisId: 'synth_1', logger: noopLogger });
+    expect((sink as { recordSkillResult?: unknown }).recordSkillResult).toBeUndefined();
   });
 });
 

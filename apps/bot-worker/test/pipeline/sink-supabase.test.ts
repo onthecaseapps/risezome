@@ -347,6 +347,48 @@ describe('synthesis — flash-fix (the sink only persists once the core grounds)
     expect(misses[0]?.reason).toBe('ungrounded');
   });
 
+  it('persists tool_source on the running row + forwards it on the start broadcast', async () => {
+    const { db, writes } = recordingDb();
+    const sink = createSupabaseSink({ db, meetingId: MEETING, orgId: ORG, liveCardByDocId: new Map(), logger: noopLogger });
+
+    const toolSource = {
+      cardId: 'tool_trace_t',
+      title: 'Tool: github_count({"state":"open"})',
+      body: '32 open issues.',
+    };
+    sink.synthesisStart({
+      synthesisId: 'synth_t',
+      sourceCardIds: ['tool_trace_t', 'card_1'],
+      traceId: 'trace_t',
+      utteranceId: 'utt_t',
+      toolSource,
+    });
+    await vi.waitFor(() => expect(persistCalls.some((c) => c.type === 'synthesisStart')).toBe(true));
+
+    const insert = writes.find((w) => w.table === 'syntheses' && w.op === 'insert');
+    expect(insert?.row?.tool_source).toEqual(toolSource);
+    const startCall = persistCalls.find((c) => c.type === 'synthesisStart');
+    expect((startCall?.payload.start as { toolSource?: unknown }).toolSource).toEqual(toolSource);
+  });
+
+  it('without a skill, tool_source persists null and the broadcast omits the key', async () => {
+    const { db, writes } = recordingDb();
+    const sink = createSupabaseSink({ db, meetingId: MEETING, orgId: ORG, liveCardByDocId: new Map(), logger: noopLogger });
+
+    sink.synthesisStart({
+      synthesisId: 'synth_n',
+      sourceCardIds: ['card_1'],
+      traceId: 'trace_n',
+      utteranceId: 'utt_n',
+    });
+    await vi.waitFor(() => expect(persistCalls.some((c) => c.type === 'synthesisStart')).toBe(true));
+
+    const insert = writes.find((w) => w.table === 'syntheses' && w.op === 'insert');
+    expect(insert?.row?.tool_source).toBeNull();
+    const startCall = persistCalls.find((c) => c.type === 'synthesisStart');
+    expect(startCall?.payload.start).not.toHaveProperty('toolSource');
+  });
+
   it('resolves additionalSourceRanks against the started source set, in rank order (row + broadcast)', async () => {
     const { db, writes } = recordingDb();
     const sink = createSupabaseSink({ db, meetingId: MEETING, orgId: ORG, liveCardByDocId: new Map(), logger: noopLogger });

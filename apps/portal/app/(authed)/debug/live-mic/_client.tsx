@@ -87,6 +87,9 @@ interface SynthesisStartEvent {
   sourceCardIds: string[];
   traceId: string;
   utteranceId: string;
+  /** The executed-skill result riding as source[0] — renders as a CITED
+   *  row in the answer's sources ledger (no separate skill card). */
+  toolSource?: { cardId: string; title: string; body: string };
 }
 
 interface SynthesisDeltaEvent {
@@ -112,23 +115,6 @@ interface RetrievalSkipEvent {
   reason: string;
   traceId?: string;
   detail?: string;
-}
-
-interface SkillResultItemPayload {
-  title: string;
-  url?: string;
-  subtitle?: string;
-}
-
-interface SkillResultEvent {
-  type: 'skillResult';
-  traceId: string;
-  utteranceId: string;
-  skillName: string;
-  args: Record<string, unknown>;
-  kind: 'count' | 'list' | 'detail';
-  summary: string;
-  items: SkillResultItemPayload[];
 }
 
 interface MeetingSummaryPayload {
@@ -175,22 +161,11 @@ type DebugEvent =
   | SynthesisAbortedEvent
   | SynthesisRetractEvent
   | RetrievalSkipEvent
-  | SkillResultEvent
   | SummaryEvent
   | TraceEvent
   | ReplayScopeEvent
   | OtherEvent;
 
-
-interface SkillResultRecord {
-  traceId: string;
-  utteranceId: string;
-  skillName: string;
-  args: Record<string, unknown>;
-  kind: 'count' | 'list' | 'detail';
-  summary: string;
-  items: SkillResultItemPayload[];
-}
 
 interface CardGroup {
   utteranceId: string;
@@ -230,7 +205,6 @@ function DebugInner({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [utterances, setUtterances] = useState<UtteranceEvent[]>([]);
   const [cardGroups, setCardGroups] = useState<CardGroup[]>([]);
-  const [skillResults, setSkillResults] = useState<SkillResultRecord[]>([]);
   const [systemEvents, setSystemEvents] = useState<string[]>([]);
   const [currentSummary, setCurrentSummary] = useState<MeetingSummaryPayload | null>(null);
   const [summaryAt, setSummaryAt] = useState<number | null>(null);
@@ -316,6 +290,7 @@ function DebugInner({
             sourceCardIds: s.sourceCardIds,
             traceId: s.traceId,
             triggerUtteranceId: s.utteranceId,
+            ...(s.toolSource !== undefined ? { toolSource: s.toolSource } : {}),
           },
         });
         return;
@@ -348,24 +323,6 @@ function DebugInner({
         const s = evt as SummaryEvent;
         setCurrentSummary(s.summary);
         setSummaryAt(s.at);
-        return;
-      }
-      case 'skillResult': {
-        const s = evt as SkillResultEvent;
-        setSkillResults((prev) =>
-          [
-            ...prev,
-            {
-              traceId: s.traceId,
-              utteranceId: s.utteranceId,
-              skillName: s.skillName,
-              args: s.args,
-              kind: s.kind,
-              summary: s.summary,
-              items: s.items,
-            },
-          ].slice(-10),
-        );
         return;
       }
       case 'synthesisDone':
@@ -643,7 +600,6 @@ function DebugInner({
     setReplayState('idle');
     setUtterances([]);
     setCardGroups([]);
-    setSkillResults([]);
     setSystemEvents([]);
     setCurrentSummary(null);
     setSummaryAt(null);
@@ -954,52 +910,14 @@ function DebugInner({
             trace={selectedTrace}
             outcomeType={selectedOutcome}
             synthesis={
-              <>
-                {/* Skill answers: structured tool results (github_count etc.)
-                    shown directly, independent of synthesis. The synthesizer
-                    can refuse; the raw skill answer never hides. */}
-                {skillResults.length > 0 && (
-                  <ul className="mb-3 space-y-2 text-sm">
-                    {skillResults.slice().reverse().map((sr) => (
-                      <li
-                        key={`${sr.traceId}-${sr.skillName}`}
-                        className="rounded border border-accent/50 bg-accent-soft/40 p-3"
-                      >
-                        <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-accent">
-                          <span className="rounded bg-accent/20 px-1.5 py-0.5 font-semibold">Skill</span>
-                          <span className="font-mono normal-case text-muted">
-                            {sr.skillName}({JSON.stringify(sr.args)})
-                          </span>
-                        </div>
-                        <div className="mt-1 font-medium">{sr.summary}</div>
-                        {sr.items.length > 0 && (
-                          <ol className="mt-1.5 space-y-1 text-xs">
-                            {sr.items.map((item, i) => (
-                              <li key={`${sr.traceId}-item-${String(i)}`} className="border-l-2 border-accent/40 pl-2">
-                                {item.url !== undefined ? (
-                                  <a href={item.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
-                                    {item.title}
-                                  </a>
-                                ) : (
-                                  <span>{item.title}</span>
-                                )}
-                                {item.subtitle !== undefined && (
-                                  <span className="text-muted"> — {item.subtitle}</span>
-                                )}
-                              </li>
-                            ))}
-                          </ol>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {synthesisCount === 0 && skillResults.length === 0 ? (
-                  <EmptyHint text='Synthesis streams here exactly as on the live meeting page — click a [N] citation to expand the source card with its quote highlighted.' />
-                ) : (
-                  <SynthesisStream />
-                )}
-              </>
+              /* Skill answers are NOT a separate card: an executed skill's
+                 result rides synthesis as source[0] and renders as a CITED
+                 row in the answer's sources ledger. */
+              synthesisCount === 0 ? (
+                <EmptyHint text='Synthesis streams here exactly as on the live meeting page — click a [N] citation to expand the source card with its quote highlighted.' />
+              ) : (
+                <SynthesisStream />
+              )
             }
           />
         </section>

@@ -1043,3 +1043,57 @@ describe('runPipeline — ALSO: additional supporting sources', () => {
     expect(sink.dones[0]!.additionalSourceRanks).toBeUndefined();
   });
 });
+
+describe('runPipeline — toolSource rides synthesisStart (skill-result-as-cited-source)', () => {
+  function instantToolClassifier(): NonNullable<PipelineDeps['routerClassifier']> {
+    return {
+      classify: () => Promise.resolve({ intent: 'tool', skillName: 'github_count', args: {} }),
+    } as unknown as NonNullable<PipelineDeps['routerClassifier']>;
+  }
+  function countRegistry(): SkillRegistry {
+    const reg = new SkillRegistry();
+    const skill: Skill = {
+      source: 'github',
+      name: 'github_count',
+      description: 'count issues',
+      inputSchema: { type: 'object', properties: {} },
+      handler: () => Promise.resolve({ kind: 'count', summary: '47 open issues' }),
+    };
+    reg.register(skill);
+    return reg;
+  }
+
+  it('a kept skill result → synthesisStart carries toolSource matching sourceCardIds[0]', async () => {
+    const { deps } = makeDeps({
+      routerClassifier: instantToolClassifier(),
+      skillRegistry: countRegistry(),
+      // Cite the tool source (rank 1) with a verbatim quote so it grounds.
+      synthesizer: fakeSynthesizer('STATUS: answer\nThere are 47 open issues [1: "47 open issues"].'),
+    });
+    const sink = new RecordingSink();
+    await runPipeline(input({ utteranceText: 'how many github issues are there' }), deps, sink);
+
+    expect(sink.starts).toHaveLength(1);
+    const start = sink.starts[0]!;
+    const tool = start.toolSource;
+    expect(tool).toBeDefined();
+    // The synthetic card id is sourceCardIds[0] — a rank-1 citation resolves to it.
+    expect(tool?.cardId).toBe(`tool_${start.traceId}`);
+    expect(start.sourceCardIds[0]).toBe(tool?.cardId);
+    expect(tool?.title).toBe('Tool: github_count({})');
+    expect(tool?.body).toContain('47 open issues');
+    // The grounded done cites rank 1 → resolves to the tool cardId.
+    expect(sink.dones).toHaveLength(1);
+    expect(sink.dones[0]!.citations[0]).toMatchObject({ rank: 1, cardId: tool?.cardId });
+  });
+
+  it('no skill → synthesisStart has no toolSource key', async () => {
+    const { deps } = makeDeps({
+      synthesizer: fakeSynthesizer('STATUS: answer\nThe answer is [1: "forty two"].'),
+    });
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+    expect(sink.starts).toHaveLength(1);
+    expect(sink.starts[0]).not.toHaveProperty('toolSource');
+  });
+});

@@ -198,6 +198,10 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
           citations: [],
           trace_id: info.traceId,
           trigger_utterance_id: info.utteranceId,
+          // The executed-skill result riding as source[0] (null without a
+          // skill). Persisted so the review page can render a rank-1 (tool)
+          // citation as a cited-source row — no retrieval card backs it.
+          tool_source: info.toolSource ?? null,
         });
         if (insertResult.error !== null) {
           logger.warn({ err: insertResult.error, synthesisId: info.synthesisId }, 'synthesis.insert.failed');
@@ -213,6 +217,7 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
               sourceCardIds: info.sourceCardIds,
               traceId: info.traceId,
               triggerUtteranceId: info.utteranceId,
+              ...(info.toolSource !== undefined ? { toolSource: info.toolSource } : {}),
             },
           },
         });

@@ -245,6 +245,7 @@ function seedState(
       ...(s.additionalSources !== undefined && s.additionalSources.length > 0
         ? { additionalSources: s.additionalSources }
         : {}),
+      ...(s.toolSource !== undefined ? { toolSource: s.toolSource } : {}),
       pinned: s.pinned ?? false,
       pinnedAt: s.pinnedAt ?? null,
       ...(s.triggerUtteranceId != null ? { triggerUtteranceId: s.triggerUtteranceId } : {}),

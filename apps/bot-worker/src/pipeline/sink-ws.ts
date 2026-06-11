@@ -19,9 +19,6 @@
 //   recordMiss         → log only (the dev page has no knowledge-gap surface).
 //   recordSkip         → `retrieval-skip` event (reason carries the gate/miss
 //                        reason: `heuristic-filler` / `classifier-skip`).
-//   recordSkillResult  → a `skillResult` event (the raw executed-skill answer as
-//                        its own card — independent of synthesis; dev-only, prod/
-//                        eval omit it. The tool source still rides synthesis[0]).
 //   recordTrace        → a NEW `trace` event carrying the PipelineTrace. This is
 //                        the ONLY behavioral difference from the prod sink: dev
 //                        = trace ON (KTD4/R5 — prod omits recordTrace entirely).
@@ -42,7 +39,6 @@ import type {
   SynthesisRefusalInfo,
   SynthesisRetractInfo,
   SkipInfo,
-  SkillResultInfo,
   PipelineTrace,
   PipelineLogger,
 } from './contract.js';
@@ -118,6 +114,9 @@ export function createWsSink(args: WsSinkArgs): PipelineSink {
         sourceCardIds: info.sourceCardIds,
         traceId: info.traceId,
         utteranceId: info.utteranceId,
+        // An executed skill's result rides as source[0]; the page resolves a
+        // rank-1 citation to this so the tool answer renders as a CITED row.
+        ...(info.toolSource !== undefined ? { toolSource: info.toolSource } : {}),
       });
     },
 
@@ -183,22 +182,6 @@ export function createWsSink(args: WsSinkArgs): PipelineSink {
         reason: info.stage === 'heuristic-gate' ? 'heuristic-filler' : 'classifier-skip',
         ...(info.confidence !== undefined ? { confidence: info.confidence } : {}),
         detail: info.reason,
-      });
-    },
-
-    recordSkillResult(result: SkillResultInfo): void {
-      // Emit the structured tool answer as its own `skillResult` event so the
-      // page renders the raw skill answer as a standalone card, independent of
-      // whether the synthesizer relays it (it can refuse). Exact pre-U3 shape.
-      send(socket, {
-        type: 'skillResult',
-        traceId: result.traceId,
-        utteranceId: result.utteranceId,
-        skillName: result.skillName,
-        args: result.args,
-        kind: result.kind,
-        summary: result.summary,
-        items: result.items,
       });
     },
 

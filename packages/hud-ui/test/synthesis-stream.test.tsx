@@ -409,3 +409,49 @@ describe('SynthesisStream — related (additional) sources resolution', () => {
     expect(container.querySelector('.synthesis-ledger')?.textContent).not.toContain('related');
   });
 });
+
+describe('SynthesisStream — tool source renders as a CITED ledger row', () => {
+  it('resolves a rank-1 (tool) citation to the toolSource — no card backs it', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    const codeCard = mkCard({ cardId: 'src_code', title: 'search_count.ts', type: 'code' });
+    const syn = mkSyn({
+      sourceCardIds: ['tool_tr1', 'src_code'],
+      traceId: 'tr1',
+      accumulatedText: 'There are 32 open issues [1]. Counted by the workspace query [2].',
+      streaming: false,
+      citations: [
+        { rank: 1, cardId: 'tool_tr1', position: 0, quote: '32 open issues' },
+        { rank: 2, cardId: 'src_code', position: 10 },
+      ],
+      toolSource: {
+        cardId: 'tool_tr1',
+        title: 'Tool: github_count({"state":"open"})',
+        body: '32 open issues.',
+      },
+    });
+    const { container } = render(
+      <AppStateProvider initial={stateWith({ cards: [codeCard], syntheses: [syn] })}>
+        <SynthesisStream />
+      </AppStateProvider>,
+    );
+    // Both chips render — the tool citation is NOT a ghost.
+    expect(container.querySelectorAll('button.citation-chip')).toHaveLength(2);
+    expect(container.querySelector('.synthesis-grounded')?.textContent).toBe('grounded in 2 cited');
+
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.ledger-toggle')!);
+    const toolRow = container.querySelector('article.source-card-expanded[data-card-id="tool_tr1"]');
+    expect(toolRow).not.toBeNull();
+    expect(toolRow?.querySelector('.source-row-badge')?.textContent).toBe('1');
+    expect(toolRow?.querySelector('.source-row-status')?.textContent).toBe('Top match');
+    expect(toolRow?.querySelector('.source-row-pill')?.textContent).toBe('SKILL');
+    expect(toolRow?.querySelector('.source-row-title')?.textContent).toBe(
+      'Tool: github_count({"state":"open"})',
+    );
+
+    // Clicking the [1] chip opens the tool row with the quote highlighted.
+    fireEvent.click(container.querySelector('button.citation-chip[data-rank="1"]')!);
+    expect(
+      container.querySelector('article[data-card-id="tool_tr1"] mark.quote-highlight')?.textContent,
+    ).toBe('32 open issues');
+  });
+});

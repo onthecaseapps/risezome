@@ -252,6 +252,21 @@ describe('appStateReducer', () => {
     expect(s.lastSynthesisAnnounce).toBe('Body');
   });
 
+  it('synthesisStart stores the toolSource (skill-result-as-cited-source)', () => {
+    const toolSource = { cardId: 'tool_tr1', title: 'Tool: github_count({})', body: '32 open issues.' };
+    const s = appStateReducer(initialAppState, {
+      type: 'synthesisStart',
+      start: { synthesisId: 'syn1', sourceCardIds: ['tool_tr1', 'c1'], traceId: 'tr1', toolSource },
+    });
+    expect(s.syntheses.get('syn1')?.toolSource).toEqual(toolSource);
+    // Absent without a skill.
+    const s2 = appStateReducer(initialAppState, {
+      type: 'synthesisStart',
+      start: { synthesisId: 'syn2', sourceCardIds: ['c1'], traceId: 'tr2' },
+    });
+    expect(s2.syntheses.get('syn2')?.toolSource).toBeUndefined();
+  });
+
   it('synthesisDone stores resolved additionalSources from the broadcast path', () => {
     const start: SynthesisStartEvent = {
       synthesisId: 'syn1',

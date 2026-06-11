@@ -58,6 +58,21 @@ export type SynthesisErrorCode =
   | 'request-too-large'
   | 'unknown';
 
+/**
+ * The executed-skill result riding a synthesis as source[0]. No retrieval
+ * card backs it (its cardId is the synthetic `tool_<traceId>` =
+ * sourceCardIds[0]), so the render surfaces resolve a rank-1 citation
+ * against this instead of the card map — the tool answer renders as a
+ * CITED source row, not a separate card.
+ */
+export interface SynthesisToolSource {
+  readonly cardId: string;
+  /** Display title, e.g. `Tool: github_count({"state":"open"})`. */
+  readonly title: string;
+  /** The formatted tool output the synthesizer saw (summary + items). */
+  readonly body: string;
+}
+
 export interface SynthesisStartEvent {
   readonly synthesisId: string;
   readonly sourceCardIds: readonly string[];
@@ -66,6 +81,8 @@ export interface SynthesisStartEvent {
    *  UI show the question above the answer. Optional/null for events from
    *  before this field existed. */
   readonly triggerUtteranceId?: string | null;
+  /** Present when an executed skill's result rides as source[0]. */
+  readonly toolSource?: SynthesisToolSource;
 }
 
 export interface SynthesisDeltaEvent {
