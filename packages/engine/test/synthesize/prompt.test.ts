@@ -581,3 +581,50 @@ describe('buildSystemPrefix', () => {
     }
   });
 });
+
+describe('parseSynthesisOutput — ALSO: additional-sources line', () => {
+  it('extracts ranks and strips the line from the body', () => {
+    const out = parseSynthesisOutput('STATUS: answer\nThe corpus uses Postgres [1: "pgvector"].\nALSO: 2,3', 4);
+    expect(out.additionalRanks).toEqual([2, 3]);
+    expect(out.text).toBe('The corpus uses Postgres [1: "pgvector"].');
+    expect(out.citations).toHaveLength(1);
+  });
+
+  it('drops out-of-range and duplicate ranks', () => {
+    const out = parseSynthesisOutput('STATUS: answer\nBody [1].\nALSO: 2, 2, 99, 0', 3);
+    expect(out.additionalRanks).toEqual([2]);
+  });
+
+  it('absent line ⇒ empty ranks, body untouched', () => {
+    const out = parseSynthesisOutput('STATUS: answer\nBody [1].', 3);
+    expect(out.additionalRanks).toEqual([]);
+    expect(out.text).toBe('Body [1].');
+  });
+
+  it('a garbled payload (non-numeric) is not treated as the protocol line', () => {
+    const out = parseSynthesisOutput('STATUS: answer\nBody [1].\nALSO: see the docs', 3);
+    expect(out.additionalRanks).toEqual([]);
+    // The non-protocol line stays in the body (never eat answer prose).
+    expect(out.text).toContain('ALSO: see the docs');
+  });
+
+  it('an empty ALSO: payload yields no ranks and strips the line', () => {
+    const out = parseSynthesisOutput('STATUS: answer\nBody [1].\nALSO:', 3);
+    expect(out.additionalRanks).toEqual([]);
+    expect(out.text).toBe('Body [1].');
+  });
+
+  it('refusals never carry additional ranks, even with an ALSO line', () => {
+    const out = parseSynthesisOutput('STATUS: no_relevant_context\nALSO: 1,2', 3);
+    expect(out.isRefusal).toBe(true);
+    expect(out.additionalRanks).toEqual([]);
+  });
+
+  it('a mid-body ALSO line is stripped without disturbing surrounding prose', () => {
+    const out = parseSynthesisOutput('STATUS: answer\nFirst fact [1].\nALSO: 2\nSecond fact [3].', 3);
+    expect(out.additionalRanks).toEqual([2]);
+    expect(out.text).toContain('First fact [1].');
+    expect(out.text).toContain('Second fact [3].');
+    expect(out.text).not.toMatch(/ALSO/);
+  });
+});

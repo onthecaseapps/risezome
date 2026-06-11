@@ -115,6 +115,12 @@ BEHAVIOR RULES FOR THE ANSWER BODY (follow every one):
 
 12. DO NOT STATE A FLAGGED-UNCERTAIN RESULT AS A PLAIN FACT. A source whose header is marked "[UNCERTAIN: ...]" and whose body starts with a "Note:" line has been REPAIRED: one of its filters did not exist and was dropped, so its number answers a BROADER query than was asked. Never present that number as if it answered the original question exactly. Surface the caveat in your own words FIRST, then give the number, for example "there is no 'case' label, so across all open issues there are 47 [1]". Lean on the other sources where they help. A confident "47 open case issues" off a repaired source is exactly the confidently-wrong answer this rule exists to prevent.
 
+ADDITIONAL SUPPORTING SOURCES (the optional ALSO line):
+
+After the answer body, when one or more sources you did NOT cite ALSO independently support your answer, add exactly one final line of the form:
+ALSO: 2,3
+listing those source numbers, comma-separated. Rules: only numbers from the provided source list; never a number you already cited; only sources that genuinely corroborate the answer you gave (a source that is merely on the same broad topic does NOT qualify); omit the line entirely when no uncited source qualifies. The line is machine-parsed and never shown as text, so it must contain nothing but the tag and numbers.
+
 The examples below are about a fictional boat-rental marketplace called Marina. They exist ONLY to show the format: a recent-transcript window (when present), the sources, and a correctly-cited answer that leads with a STATUS line. Never reuse Marina's facts in a real answer.`;
 
 interface FewShot {
@@ -397,13 +403,19 @@ export interface ParsedCitation {
 }
 
 export interface ParsedSynthesis {
-  /** The answer body with the STATUS line stripped. Empty string on refusal. */
+  /** The answer body with the STATUS + ALSO lines stripped. Empty on refusal. */
   readonly text: string;
   readonly citations: readonly ParsedCitation[];
   readonly isRefusal: boolean;
   /** Debug-only explanation the model gave for declining (the line after
    *  STATUS: no_relevant_context). Production must not surface this. */
   readonly refusalReason?: string;
+  /** Source ranks the model marked via the optional trailing `ALSO:` line —
+   *  retrieved sources that also support the answer but weren't cited.
+   *  Range-checked against sourceCount and deduped here; "not already cited"
+   *  is the caller's job (it owns the verified citation set). [] on refusal
+   *  or when the line is absent/garbled (never blocks the answer). */
+  readonly additionalRanks: readonly number[];
 }
 
 // Matches both citation formats in a single walk:
@@ -457,16 +469,38 @@ function classifyStatus(text: string): StatusClassification {
   return { status: 'answer', body: text, reason: '' };
 }
 
+// The optional trailing additional-sources line: `ALSO: 2,3`. Anchored to its
+// own line so a literal "ALSO:" inside prose can't be misread; only digits,
+// commas and spaces qualify as a payload (anything else ⇒ not the protocol
+// line, leave the text alone — a garbled line must never eat answer prose).
+const ALSO_LINE_REGEX = /^\s*ALSO:[ \t]*([\d, \t]*)$/im;
+
+/** Extract + strip the `ALSO:` line. Returns the body without the line and
+ *  the deduped, range-valid ranks (possibly empty). */
+function extractAlsoLine(body: string, sourceCount: number): { body: string; ranks: number[] } {
+  const m = ALSO_LINE_REGEX.exec(body);
+  if (m === null) return { body, ranks: [] };
+  const ranks: number[] = [];
+  for (const piece of (m[1] ?? '').split(',')) {
+    const n = Number(piece.trim());
+    if (Number.isInteger(n) && n >= 1 && n <= sourceCount && !ranks.includes(n)) ranks.push(n);
+  }
+  const stripped = (body.slice(0, m.index) + body.slice(m.index + m[0].length)).replace(/\n{3,}/g, '\n\n');
+  return { body: stripped.trimEnd(), ranks };
+}
+
 export function parseSynthesisOutput(text: string, sourceCount: number): ParsedSynthesis {
-  const { status, body, reason } = classifyStatus(text);
+  const { status, body: rawBody, reason } = classifyStatus(text);
   if (status === 'no_relevant_context') {
     return {
       text: '',
       citations: [],
       isRefusal: true,
       ...(reason.length > 0 ? { refusalReason: reason } : {}),
+      additionalRanks: [],
     };
   }
+  const { body, ranks: additionalRanks } = extractAlsoLine(rawBody, sourceCount);
   const citations: ParsedCitation[] = [];
   for (const match of body.matchAll(CITATION_REGEX)) {
     const n = Number(match[1]);
@@ -478,7 +512,7 @@ export function parseSynthesisOutput(text: string, sourceCount: number): ParsedS
       quote: rawQuote === undefined ? undefined : unescapeQuote(rawQuote),
     });
   }
-  return { text: body, citations, isRefusal: false };
+  return { text: body, citations, isRefusal: false, additionalRanks };
 }
 
 export interface StatusGate {
