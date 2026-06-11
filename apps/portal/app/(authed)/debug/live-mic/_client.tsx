@@ -20,6 +20,7 @@ import {
   type UtteranceTrace,
 } from './_trace-panel';
 import { OutputsPanel, type OutputCard, type OutputTab } from './_outputs-panel';
+import { ColResizeHandle, useStoredColumnWidth } from './_resize';
 import { deriveOutcome, type OutcomeType } from './_pipeline-model';
 import { parseTranscriptFile, type ReplayUtterance } from './_replay-source';
 import {
@@ -682,6 +683,12 @@ function DebugInner({
     setOutputTab(tab);
   }, []);
 
+  // Resizable columns: utterances (left) and outputs (right) are draggable via
+  // handles; the trace column takes the remainder. Widths persist locally.
+  const leftCol = useStoredColumnWidth('live-mic.col.utterances', 260, 180, 560, 1);
+  const rightCol = useStoredColumnWidth('live-mic.col.outputs', 420, 280, 760, -1);
+  const colsDragging = leftCol.dragging || rightCol.dragging;
+
   return (
     <div className="flex h-dvh flex-col px-6 py-6">
       <header className="mb-4 flex items-center justify-between gap-4">
@@ -837,7 +844,10 @@ function DebugInner({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(220px,260px)_1fr_minmax(340px,440px)] gap-4">
+      <div
+        className={`grid min-h-0 flex-1 gap-1 ${colsDragging ? 'select-none' : ''}`}
+        style={{ gridTemplateColumns: `${String(leftCol.width)}px auto 1fr auto ${String(rightCol.width)}px` }}
+      >
         <Panel title={`Utterances (${utterances.length})`}>
           {utterances.length === 0 ? (
             <EmptyHint text="Start a session and start speaking. Partials appear as they stream; finals trigger retrieval." />
@@ -887,6 +897,12 @@ function DebugInner({
           )}
         </Panel>
 
+        <ColResizeHandle
+          onPointerDown={leftCol.onPointerDown}
+          dragging={leftCol.dragging}
+          label="Resize utterances column"
+        />
+
         <Panel
           title={
             selectedUtteranceId !== null
@@ -912,6 +928,12 @@ function DebugInner({
             />
           </>
         </Panel>
+
+        <ColResizeHandle
+          onPointerDown={rightCol.onPointerDown}
+          dragging={rightCol.dragging}
+          label="Resize outputs column"
+        />
 
         <section className="flex min-h-0 flex-col rounded-xl border border-border bg-card/40 p-3">
           <OutputsPanel
