@@ -13,6 +13,11 @@ vi.mock('../../app/(authed)/sources/reindex-action', () => ({
   reindexSourceAction: (...a: unknown[]) => reindexSourceAction(...a),
 }));
 
+const setConnectionEnabledAction = vi.fn();
+vi.mock('../../app/(authed)/sources/set-connection-enabled-action', () => ({
+  setConnectionEnabledAction: (...a: unknown[]) => setConnectionEnabledAction(...a),
+}));
+
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock('../../app/(authed)/sources/trello-lists-action', () => ({
   getTrelloListsAction: async () => ({ ok: true, lists: [] }),
@@ -41,6 +46,7 @@ function card(over: Partial<ConnectionCardData> = {}): ConnectionCardData {
     manageUrl: 'https://github.com/x',
     items: ghItems(),
     selectedExternalIds: ['acme/web'],
+    enabled: true,
     installationId: 1,
     ...over,
   };
@@ -50,6 +56,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   setItemForTeamAction.mockResolvedValue({ ok: true });
   reindexSourceAction.mockResolvedValue({ ok: true });
+  setConnectionEnabledAction.mockResolvedValue({ ok: true });
 });
 
 describe('ConnectionCard (U2)', () => {
@@ -71,18 +78,20 @@ describe('ConnectionCard (U2)', () => {
     expect(screen.getByRole('checkbox', { name: /acme\/web for team/i })).toBeInTheDocument();
   });
 
-  it('master toggle is binary: off under partial selection (1 of 2 selected)', () => {
-    render(<ConnectionCard teamId="t1" data={card()} />);
-    const master = screen.getByRole('switch', { name: /select all items/i });
-    expect(master).toHaveAttribute('aria-checked', 'false');
+  it('top toggle reflects the enabled (pause) state, not the selection', () => {
+    // 1 of 2 selected but enabled → toggle is ON (it is NOT a select-all switch).
+    render(<ConnectionCard teamId="t1" data={card({ enabled: true })} />);
+    expect(screen.getByRole('switch', { name: /enable or disable/i })).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('master toggle is on only when every item is selected', () => {
-    render(
-      <ConnectionCard teamId="t1" data={card({ selectedExternalIds: ['acme/web', 'acme/api'] })} />,
-    );
-    const master = screen.getByRole('switch', { name: /select all items/i });
-    expect(master).toHaveAttribute('aria-checked', 'true');
+  it('top toggle is OFF when the source is paused', () => {
+    render(<ConnectionCard teamId="t1" data={card({ enabled: false })} />);
+    expect(screen.getByRole('switch', { name: /enable or disable/i })).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('top toggle is disabled when the team has nothing selected (nothing to pause)', () => {
+    render(<ConnectionCard teamId="t1" data={card({ selectedExternalIds: [], enabled: false })} />);
+    expect(screen.getByRole('switch', { name: /enable or disable/i })).toBeDisabled();
   });
 
   it('status line shows X of Y connected plus the indexed count', () => {
@@ -117,13 +126,45 @@ describe('ConnectionCard (U2)', () => {
     expect(screen.getByText('1 of 3 boards connected · 11 cards indexed')).toBeInTheDocument();
   });
 
-  it('master toggle adds the unselected items when turned on', async () => {
+  it('top toggle pauses IMMEDIATELY (non-destructive) — flips enabled, never stages or de-indexes', async () => {
+    render(<ConnectionCard teamId="t1" data={card({ enabled: true })} />);
+    await userEvent.click(screen.getByRole('switch', { name: /enable or disable/i }));
+    // Immediate, not staged: no save bar, no membership change.
+    expect(screen.queryByText(/Unsaved changes/i)).not.toBeInTheDocument();
+    expect(setItemForTeamAction).not.toHaveBeenCalled();
+    // Flips enabled for the team's CURRENT member (acme/web → source s1).
+    expect(setConnectionEnabledAction).toHaveBeenCalledWith(
+      expect.objectContaining({ teamId: 't1', sourceIds: ['s1'], enabled: false }),
+    );
+  });
+
+  it('per-item check then Save adds + indexes the space (the enable path)', async () => {
     render(<ConnectionCard teamId="t1" data={card()} />);
-    await userEvent.click(screen.getByRole('switch', { name: /select all items/i }));
-    // Only acme/api was unselected → exactly one add call, with on: true.
-    expect(setItemForTeamAction).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole('button', { name: /expand/i }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /acme\/api for team/i }));
+    // Staged — no action yet, bar appears.
+    expect(setItemForTeamAction).not.toHaveBeenCalled();
+    expect(screen.getByText(/Unsaved changes/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^Save$/ }));
     expect(setItemForTeamAction).toHaveBeenCalledWith(
       expect.objectContaining({ externalId: 'acme/api', on: true, provider: 'github' }),
+    );
+  });
+
+  it('Save with a destructive uncheck shows a confirm dialog before de-indexing', async () => {
+    render(<ConnectionCard teamId="t1" data={card()} />);
+    await userEvent.click(screen.getByRole('button', { name: /expand/i }));
+    // Uncheck the one selected member (acme/web) → destructive.
+    await userEvent.click(screen.getByRole('checkbox', { name: /acme\/web for team/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    // Confirm dialog appears; nothing applied yet.
+    expect(screen.getByText(/removed from the index/i)).toBeInTheDocument();
+    expect(setItemForTeamAction).not.toHaveBeenCalled();
+    // Confirm → the removal is applied.
+    const dialog = screen.getByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /^Save$/ }));
+    expect(setItemForTeamAction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalId: 'acme/web', on: false }),
     );
   });
 
@@ -170,23 +211,28 @@ describe('ConnectionCard (U2)', () => {
     expect(within(menu).queryByRole('menuitem', { name: /Reindex/i })).not.toBeInTheDocument();
   });
 
-  it('Trello master toggle opens the board picker instead of auto-selecting all boards', async () => {
-    const boards: SourceItem[] = [
-      { key: 'b1', externalId: 'board1', label: 'Board One', count: 0, total: null, status: null },
-      { key: 'b2', externalId: 'board2', label: 'Board Two', count: 0, total: null, status: null },
+  it('Confluence: enabling a space is via the picker + Save (toggle never bulk-selects)', async () => {
+    const spaces: SourceItem[] = [
+      { key: 'sp1', sourceId: 'sp1', externalId: 'RZ', label: 'Risezome', count: 90, total: null, status: 'idle' },
+      { key: 'sp2', externalId: 'MFS', label: 'My first space', count: 0, total: null, status: null },
+      { key: 'sp3', externalId: 'NC', label: 'Nathan Case', count: 0, total: null, status: null },
     ];
     render(
       <ConnectionCard
         teamId="t1"
-        data={card({ provider: 'trello', name: 'Trello', cardKey: 'trello', manageUrl: null, items: boards, selectedExternalIds: [] })}
+        data={card({ provider: 'confluence', name: 'Confluence', cardKey: 'confluence', manageUrl: null, items: spaces, selectedExternalIds: ['RZ'], enabled: true })}
       />,
     );
-    // Picker starts collapsed.
-    expect(screen.queryByRole('checkbox', { name: /board one for team/i })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('switch', { name: /select all items/i }));
-    // Turning Trello on expands the picker and adds NOTHING — the user picks.
-    expect(screen.getByRole('checkbox', { name: /board one for team/i })).toBeInTheDocument();
-    expect(setItemForTeamAction).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: /expand/i }));
+    // Adding a new space goes through the checkbox + Save — never the toggle.
+    await userEvent.click(screen.getByRole('checkbox', { name: /My first space for team/i }));
+    expect(screen.getByRole('checkbox', { name: /Nathan Case for team/i })).not.toBeChecked(); // no bulk-select
+    await userEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    expect(setItemForTeamAction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalId: 'MFS', on: true, provider: 'confluence' }),
+    );
+    // Adds aren't destructive → no confirm dialog.
+    expect(setConnectionEnabledAction).not.toHaveBeenCalled();
   });
 
   it('does not clip the kebab dropdown — card root is not overflow-hidden', () => {

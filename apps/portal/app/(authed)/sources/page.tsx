@@ -78,14 +78,22 @@ export default async function SourcesPage(props: {
       ? requestedTeam
       : teams[0]?.id ?? null;
 
-  // ── The selected team's current sources (checked set) ─────────────────────
-  let teamSourceIds = new Set<string>();
+  // ── The selected team's current sources (checked set) + paused set ────────
+  // `teamSourceIds` = membership (drives the checkboxes); `disabledSourceIds` =
+  // sources the team has PAUSED (team_sources.enabled = false) — kept + indexed
+  // but excluded from retrieval. Drives the top-level enable/disable toggle.
+  const teamSourceIds = new Set<string>();
+  const disabledSourceIds = new Set<string>();
   if (selectedTeamId !== null) {
     const { data: tsRows } = await supabase
       .from('team_sources')
-      .select('source_id')
+      .select('source_id, enabled')
       .eq('team_id', selectedTeamId);
-    teamSourceIds = new Set((tsRows ?? []).map((r) => r.source_id as string));
+    for (const r of tsRows ?? []) {
+      const id = r.source_id as string;
+      teamSourceIds.add(id);
+      if ((r.enabled as boolean) === false) disabledSourceIds.add(id);
+    }
   }
 
   // ── GitHub: ALL installations + their repo sources ────────────────────────
@@ -189,11 +197,30 @@ export default async function SourcesPage(props: {
     try {
       const token = await getValidAtlassianToken(orgId, serviceRole);
       const client = { accessToken: token.accessToken, cloudId: token.cloudId };
-      const [projects, spaces] = await Promise.all([listJiraProjects(client), listConfluenceSpaces(client)]);
-      jiraProjects = projects.map((p) => ({ id: p.key, name: p.name }));
-      confluenceSpaces = spaces.map((s) => ({ id: s.id, name: s.name }));
+      // Jira and Confluence are independent products: a site can have one
+      // without the other (a Confluence-only site 404s on the Jira API, and
+      // vice versa). Settle them separately so one product's failure doesn't
+      // blank out the other's available items.
+      const [projects, spaces] = await Promise.allSettled([
+        listJiraProjects(client),
+        listConfluenceSpaces(client),
+      ]);
+      // A product that isn't provisioned on the site 404s here — that's an
+      // expected condition (e.g. Confluence-only sites have no Jira), so log at
+      // warn level. Passing the Error object to console.error would also trip
+      // Next's dev error overlay for a handled, routine case.
+      if (projects.status === 'fulfilled') {
+        jiraProjects = projects.value.map((p) => ({ id: p.key, name: p.name }));
+      } else {
+        console.warn('[sources.atlassian] listJiraProjects unavailable:', String(projects.reason));
+      }
+      if (spaces.status === 'fulfilled') {
+        confluenceSpaces = spaces.value.map((s) => ({ id: s.id, name: s.name }));
+      } else {
+        console.warn('[sources.atlassian] listConfluenceSpaces unavailable:', String(spaces.reason));
+      }
     } catch {
-      // Token stale / listing failed — fall back to indexed-only items.
+      // Token stale (reconnect needed) — fall back to indexed-only items.
     }
   }
 
@@ -213,13 +240,14 @@ export default async function SourcesPage(props: {
       manageUrl: buildManageUrl(inst.account_login, inst.account_type, inst.installation_id),
       items,
       selectedExternalIds: selected,
+      enabled: connectionEnabled(repos, teamSourceIds, disabledSourceIds),
       installationId: inst.installation_id,
     });
   }
 
   if (atlassianConnRow !== null) {
     cards.push(
-      buildAtlassianCard('jira', 'Jira', <JiraMark />, atlassianSources, jiraProjects, teamSourceIds, atlassianSite),
+      buildAtlassianCard('jira', 'Jira', <JiraMark />, atlassianSources, jiraProjects, teamSourceIds, disabledSourceIds, atlassianSite),
     );
     cards.push(
       buildAtlassianCard(
@@ -229,6 +257,7 @@ export default async function SourcesPage(props: {
         atlassianSources,
         confluenceSpaces,
         teamSourceIds,
+        disabledSourceIds,
         atlassianSite,
       ),
     );
@@ -245,6 +274,7 @@ export default async function SourcesPage(props: {
       manageUrl: '/sources/trello/connect',
       items: items.items,
       selectedExternalIds: items.selected,
+      enabled: connectionEnabled(trelloSources, teamSourceIds, disabledSourceIds),
     });
   }
 
@@ -357,6 +387,18 @@ function buildItems(
   return { items, selected };
 }
 
+/** A connection's top-level enable state: ON only when it has selected sources
+ *  and none of them are paused (team_sources.enabled = false). With nothing
+ *  selected the toggle is OFF (and disabled in the UI — there's nothing to pause). */
+function connectionEnabled(
+  sources: Array<{ id: string }>,
+  teamSourceIds: Set<string>,
+  disabledSourceIds: Set<string>,
+): boolean {
+  const selected = sources.filter((s) => teamSourceIds.has(s.id));
+  return selected.length > 0 && selected.every((s) => !disabledSourceIds.has(s.id));
+}
+
 function buildAtlassianCard(
   kind: 'jira' | 'confluence',
   name: string,
@@ -364,6 +406,7 @@ function buildAtlassianCard(
   atlassianSources: ConnectionSourceRow[],
   available: Array<{ id: string; name: string }>,
   teamSourceIds: Set<string>,
+  disabledSourceIds: Set<string>,
   site: string | null,
 ): ConnectionCardData {
   const kindSources = atlassianSources.filter((s) => (s.kind ?? '') === kind);
@@ -377,6 +420,7 @@ function buildAtlassianCard(
     manageUrl: '/sources/atlassian/connect',
     items,
     selectedExternalIds: selected,
+    enabled: connectionEnabled(kindSources, teamSourceIds, disabledSourceIds),
   };
 }
 

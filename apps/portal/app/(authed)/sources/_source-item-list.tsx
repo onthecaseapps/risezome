@@ -1,7 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition, type ReactElement } from 'react';
-import { setItemForTeamAction } from './team-source-toggle-action';
+import { useMemo, useState, type ReactElement } from 'react';
 
 /**
  * Provider-agnostic per-item checklist inside an expanded connection card (U3).
@@ -10,8 +9,13 @@ import { setItemForTeamAction } from './team-source-toggle-action';
  * normalized to the same shape regardless of provider. The checkbox's checked
  * state = the item's source is in the selected team's `team_sources`. An
  * All|Selected tab, a filter box, and per-item counts / indexing progress sit on
- * top. Toggling calls setItemForTeamAction (U4) — ensure-source + the refcount
- * lifecycle — with optimistic local state reverted on failure.
+ * top.
+ *
+ * Fully CONTROLLED: toggling an item only reports the change up via
+ * `onSelectionChange` — it does NOT call the server. The parent connection card
+ * stages the change and applies it (index/de-index) when the user clicks Save,
+ * so nothing indexes on a stray click. `selectedKeys` is the single source of
+ * truth for checked state.
  */
 export type Provider = 'github' | 'trello' | 'jira' | 'confluence';
 
@@ -51,44 +55,34 @@ const ITEM_NOUN: Record<Provider, string> = {
 
 export function SourceItemList({
   provider,
-  teamId,
   items,
   selectedKeys,
   onSelectionChange,
+  disabled = false,
 }: {
   provider: Provider;
-  teamId: string;
   items: SourceItem[];
-  /** Keys (externalId) currently selected for the team. */
+  /** Keys (externalId) currently selected for the team — the controlled value. */
   selectedKeys: Set<string>;
-  /** Notifies the parent card of a local selection change (master-toggle sync). */
+  /** Reports a staged selection change up to the parent card. */
   onSelectionChange?: (externalId: string, on: boolean) => void;
+  /** Freeze toggles while a save is in flight (avoids staging into an
+   *  already-dispatched diff). */
+  disabled?: boolean;
 }): ReactElement {
   const [tab, setTab] = useState<'all' | 'selected'>('all');
   const [query, setQuery] = useState('');
-  // Local mirror of selection so optimistic toggles re-render this list.
-  const [localSelected, setLocalSelected] = useState<Set<string>>(() => new Set(selectedKeys));
-
-  function applyLocal(externalId: string, on: boolean): void {
-    setLocalSelected((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(externalId);
-      else next.delete(externalId);
-      return next;
-    });
-    onSelectionChange?.(externalId, on);
-  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return items.filter((it) => {
-      if (tab === 'selected' && !localSelected.has(it.externalId)) return false;
+      if (tab === 'selected' && !selectedKeys.has(it.externalId)) return false;
       if (q.length > 0 && !it.label.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [items, tab, query, localSelected]);
+  }, [items, tab, query, selectedKeys]);
 
-  const selectedCount = localSelected.size;
+  const selectedCount = selectedKeys.size;
 
   return (
     <div className="border-t border-border bg-bg/30 px-4 py-3">
@@ -131,10 +125,10 @@ export function SourceItemList({
             <ItemRow
               key={it.key}
               provider={provider}
-              teamId={teamId}
               item={it}
-              checked={localSelected.has(it.externalId)}
-              onToggle={applyLocal}
+              checked={selectedKeys.has(it.externalId)}
+              disabled={disabled}
+              onToggle={(externalId, on) => onSelectionChange?.(externalId, on)}
             />
           ))}
         </ul>
@@ -145,54 +139,30 @@ export function SourceItemList({
 
 function ItemRow({
   provider,
-  teamId,
   item,
   checked,
+  disabled,
   onToggle,
 }: {
   provider: Provider;
-  teamId: string;
   item: SourceItem;
   checked: boolean;
+  disabled: boolean;
   onToggle: (externalId: string, on: boolean) => void;
 }): ReactElement {
-  const [error, setError] = useState<string | null>(null);
-  const [pending, start] = useTransition();
-
-  function toggle(): void {
-    const next = !checked;
-    onToggle(item.externalId, next); // optimistic
-    setError(null);
-    start(async () => {
-      const result = await setItemForTeamAction({
-        teamId,
-        provider,
-        externalId: item.externalId,
-        label: item.label,
-        installationId: item.installationId,
-        on: next,
-      });
-      if (!result.ok) {
-        onToggle(item.externalId, !next); // revert
-        setError(itemErrorMessage(result.error));
-      }
-    });
-  }
-
   return (
     <li>
-      <label className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-accent-soft/40">
+      <label className={`flex items-center gap-3 rounded-lg px-2 py-1.5 ${disabled ? 'cursor-default opacity-60' : 'cursor-pointer hover:bg-accent-soft/40'}`}>
         <input
           type="checkbox"
           checked={checked}
-          disabled={pending}
-          onChange={toggle}
+          disabled={disabled}
+          onChange={() => onToggle(item.externalId, !checked)}
           aria-label={`${item.label} for team`}
           className="h-4 w-4 flex-none accent-[var(--accent)] disabled:opacity-50"
         />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm text-fg">{item.label}</span>
-          {error !== null ? <span role="alert" className="block text-[11px] text-error">{error}</span> : null}
         </span>
         <ItemMeta provider={provider} item={item} />
       </label>
@@ -231,11 +201,4 @@ function labelFor(provider: Provider): string {
   if (provider === 'trello') return 'boards';
   if (provider === 'jira') return 'projects';
   return 'spaces';
-}
-
-function itemErrorMessage(error: string): string {
-  if (error === 'source_not_found') return 'Not found — re-grant access on the provider.';
-  if (error === 'trello_not_connected') return 'Trello is not connected.';
-  if (error === 'atlassian_not_connected') return 'Jira/Confluence is not connected.';
-  return 'Could not update. Try again.';
 }

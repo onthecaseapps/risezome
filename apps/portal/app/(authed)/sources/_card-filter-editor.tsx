@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, useTransition, type ReactElement } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState, type ReactElement } from 'react';
+import { useMenuBehaviors } from '../_components/overlay';
 import { setSourcesCorpusPolicyAction } from './corpus-policy-action';
 import { getTrelloListsAction } from './trello-lists-action';
 import type { Provider } from './_source-item-list';
@@ -148,9 +148,10 @@ export interface CardFilter {
   provider: Provider;
   hasSources: boolean;
   dirty: boolean;
-  pending: boolean;
-  note: string | null;
-  save: () => void;
+  /** Persist the current policy to the connection's sources. Resolves with the
+   *  reindex count, or an error. A no-op (ok, reindexed 0) when not dirty. The
+   *  card owns the save transition + notice; this just runs the action. */
+  applyPolicy: () => Promise<{ ok: boolean; reindexed?: number; error?: string }>;
   discard: () => void;
   // panel-only internals
   opts: Opt[];
@@ -190,9 +191,6 @@ export function useCardFilter({
   // Save. Discard reverts to this.
   const [savedMode, setSavedMode] = useState<string>(initial);
   const [c, setC] = useState<CustomState>(EMPTY_CUSTOM);
-  const [pending, start] = useTransition();
-  const [note, setNote] = useState<string | null>(null);
-  const router = useRouter();
   // Trello: lazily-fetched board list names for togglable exclusion.
   // undefined = not loaded, null = load failed/empty (fall back to free-text).
   const [trelloLists, setTrelloLists] = useState<string[] | null | undefined>(undefined);
@@ -245,37 +243,29 @@ export function useCardFilter({
       setC({ ...c, patterns: [...CUSTOM_SEED[provider]] });
     }
     setMode(next);
-    setNote(null);
   }
 
-  function save(): void {
+  async function applyPolicy(): Promise<{ ok: boolean; reindexed?: number; error?: string }> {
+    if (!dirty) return { ok: true, reindexed: 0 };
     const policy = mode === 'custom' ? buildCustomPolicy(provider, c) : buildPolicyForOption(provider, mode);
-    setNote(null);
-    start(async () => {
-      const res = await setSourcesCorpusPolicyAction(sourceIds, policy as never);
-      if (res.ok) {
-        setSavedMode(mode);
-        setNote(res.reindexed > 0 ? `Saved — reindexing ${String(res.reindexed)} source${res.reindexed === 1 ? '' : 's'}…` : 'Saved.');
-        router.refresh(); // re-fetch server data so the header pill + counts reflect the new policy
-      } else {
-        setNote(`Couldn't save: ${res.error}`);
-      }
-    });
+    const res = await setSourcesCorpusPolicyAction(sourceIds, policy as never);
+    if (res.ok) {
+      setSavedMode(mode);
+      return { ok: true, reindexed: res.reindexed };
+    }
+    return { ok: false, error: res.error };
   }
 
   function discard(): void {
     setMode(savedMode);
     setC(EMPTY_CUSTOM);
-    setNote(null);
   }
 
   return {
     provider,
     hasSources: sourceIds.length > 0,
     dirty,
-    pending,
-    note,
-    save,
+    applyPolicy,
     discard,
     opts,
     mode,
@@ -296,26 +286,108 @@ export function useCardFilter({
   };
 }
 
+/**
+ * Preset selector dropdown. A native <select> can only render the option label,
+ * but the mockup wants each option's short description on a second line (and a
+ * check on the active one), so this is a custom listbox: a button showing the
+ * current label + a menu of two-line label/description rows.
+ */
+function PresetDropdown({
+  opts,
+  value,
+  disabled,
+  onChange,
+}: {
+  opts: Opt[];
+  value: string;
+  disabled: boolean;
+  onChange: (v: string) => void;
+}): ReactElement {
+  const [open, setOpen] = useState(false);
+  useMenuBehaviors(open, () => setOpen(false));
+  const selected = opts.find((o) => o.value === value) ?? opts[0]!;
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-sm text-fg hover:bg-bg disabled:opacity-50"
+      >
+        <span>{selected.label}</span>
+        <ChevronDownIcon />
+      </button>
+      {open ? (
+        <>
+          <button
+            type="button"
+            aria-hidden
+            tabIndex={-1}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-10 cursor-default"
+          />
+          <div
+            role="listbox"
+            aria-label="Filtering preset"
+            className="absolute left-0 top-full z-20 mt-1 w-72 overflow-hidden rounded-lg border border-border bg-card py-1 shadow-[var(--shadow-pop)]"
+          >
+            {opts.map((o) => {
+              const isSel = o.value === value;
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="option"
+                  aria-selected={isSel}
+                  onClick={() => {
+                    onChange(o.value);
+                    setOpen(false);
+                  }}
+                  className={`block w-full px-3 py-2 text-left hover:bg-bg ${isSel ? 'bg-accent-soft' : ''}`}
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className={`text-sm font-semibold ${isSel ? 'text-accent' : 'text-fg'}`}>{o.label}</span>
+                    {isSel ? <CheckIcon /> : null}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-muted">{o.desc}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function ChevronDownIcon(): ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+function CheckIcon(): ReactElement {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="flex-none text-accent">
+      <path d="M20 6L9 17l-5-5" />
+    </svg>
+  );
+}
+
 /** The filter editor body (dropdown + chip box), rendered above the repo list. */
-export function CardFilterPanel({ f }: { f: CardFilter }): ReactElement {
+export function CardFilterPanel({ f, disabled }: { f: CardFilter; disabled: boolean }): ReactElement {
   if (!f.hasSources) return <p className="text-xs text-muted">Nothing connected to filter yet.</p>;
   const { c, setC, mode } = f;
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="font-medium text-fg">{f.provider === 'github' ? 'File filtering' : 'Filtering'}</span>
-        <select
-          value={mode}
-          disabled={f.pending}
-          onChange={(e) => f.onMode(e.target.value)}
-          className="rounded-md border border-border bg-card px-2 py-1 text-sm text-fg disabled:opacity-50"
-        >
-          {f.opts.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+        <PresetDropdown opts={f.opts} value={mode} disabled={disabled} onChange={f.onMode} />
         <span className="text-xs text-muted">{f.selectedDesc}</span>
       </div>
 
@@ -457,47 +529,6 @@ export function CardFilterPanel({ f }: { f: CardFilter }): ReactElement {
               </div>
             </div>
           ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/** The sticky save/discard bar, rendered at the bottom of the card when there
- *  are unsaved filtering changes. */
-export function CardFilterFooter({ f }: { f: CardFilter }): ReactElement | null {
-  if (!f.dirty && f.note === null) return null;
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-accent-soft/50 px-4 py-3">
-      <div className="flex items-center gap-2 text-sm">
-        {f.dirty ? (
-          <>
-            <span className="h-2 w-2 flex-none rounded-full bg-accent" />
-            <span className="font-medium text-accent">Unsaved filtering changes</span>
-            <span className="text-xs text-muted">Saving will re-index this source.</span>
-          </>
-        ) : f.note !== null ? (
-          <span className="text-xs text-muted">{f.note}</span>
-        ) : null}
-      </div>
-      {f.dirty ? (
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={f.pending}
-            onClick={f.discard}
-            className="rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-fg hover:bg-bg disabled:opacity-50"
-          >
-            Discard
-          </button>
-          <button
-            type="button"
-            disabled={f.pending}
-            onClick={f.save}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-          >
-            Save &amp; re-index
-          </button>
         </div>
       ) : null}
     </div>
