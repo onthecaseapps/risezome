@@ -13,6 +13,14 @@ vi.mock('../../app/(authed)/sources/reindex-action', () => ({
   reindexSourceAction: (...a: unknown[]) => reindexSourceAction(...a),
 }));
 
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock('../../app/(authed)/sources/trello-lists-action', () => ({
+  getTrelloListsAction: async () => ({ ok: true, lists: [] }),
+}));
+vi.mock('../../app/(authed)/sources/corpus-policy-action', () => ({
+  setSourcesCorpusPolicyAction: async () => ({ ok: true, reindexed: 1 }),
+}));
+
 import { ConnectionCard, type ConnectionCardData } from '../../app/(authed)/sources/_connection-card';
 import type { SourceItem } from '../../app/(authed)/sources/_source-item-list';
 

@@ -278,7 +278,7 @@ export default async function SourcesPage(props: {
         <div
           className={
             banner.kind === 'error'
-              ? 'mb-6 rounded-lg border border-rose-300/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200'
+              ? 'mb-6 rounded-lg border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-200'
               : 'mb-6 rounded-lg border border-accent/40 bg-accent-soft px-4 py-3 text-sm text-fg'
           }
         >
