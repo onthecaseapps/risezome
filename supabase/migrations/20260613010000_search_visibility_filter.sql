@@ -26,7 +26,10 @@ create function public.search_corpus_vector(
   language sql
   security invoker
   stable
-  set search_path = pg_catalog, public
+  -- `extensions` is required: pgvector (the `vector` type + `<=>` operator) was
+  -- moved there by 20260612060000, so a pg_catalog/public-only search_path can't
+  -- resolve it when this function is (re)created.
+  set search_path = pg_catalog, public, extensions
 as $$
   select c.chunk_id, (c.embedding <=> p_query_vector::vector)::double precision as distance
   from public.corpus_chunk_embeddings c
