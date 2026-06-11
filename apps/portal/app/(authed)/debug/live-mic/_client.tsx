@@ -384,6 +384,10 @@ function DebugInner({
             synthesisId: d.synthesisId,
             stopReason: d.stopReason,
             citations: d.citations,
+            // F4b self-heal, same as the broadcast path: done carries the
+            // PARSED final text (protocol lines stripped), replacing the
+            // delta-accumulated text so a streamed ALSO:/fragment can't stand.
+            text: d.accumulatedText,
             ...(d.additionalSourceRanks !== undefined && d.additionalSourceRanks.length > 0
               ? { additionalSourceRanks: d.additionalSourceRanks }
               : {}),

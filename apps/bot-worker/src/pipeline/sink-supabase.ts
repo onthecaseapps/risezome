@@ -249,7 +249,7 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
           return cardId !== undefined ? [{ cardId, rank }] : [];
         });
 
-        await db
+        const { error: updateErr } = await db
           .from('syntheses')
           .update({
             status: 'done',
@@ -262,6 +262,13 @@ export function createSupabaseSink(args: SupabaseSinkArgs): PipelineSink {
           })
           .eq('synthesis_id', info.synthesisId)
           .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
+        if (updateErr !== null) {
+          // Persist-before-broadcast (R23a): a done we couldn't store must not
+          // be announced — the row would stay `running` while viewers saw an
+          // answer that a reconnect/review could never rebuild.
+          logger.warn({ err: updateErr, synthesisId: info.synthesisId }, 'synthesis.done.update.failed');
+          return;
+        }
 
         await persistAndBroadcast(db, {
           meetingId,
