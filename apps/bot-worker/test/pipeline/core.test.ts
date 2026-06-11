@@ -997,3 +997,49 @@ describe('runPipeline — router classifier context (U2)', () => {
     expect(captured[0]!.context?.recent_finals).toEqual(['are there any open github issues']);
   });
 });
+
+describe('runPipeline — ALSO: additional supporting sources', () => {
+  // Two retrieved sources; the answer cites [1] and marks 2 as also-supporting.
+  function twoSourceDeps(synthBody: string) {
+    const search = vi.fn(
+      async (..._args: Parameters<HybridSearchFn>): Promise<HybridHit[]> => [
+        hit('chunk_1', 0.1),
+        hit('chunk_2', 0.2),
+      ],
+    );
+    const db = fakeDb(
+      [
+        { chunk_id: 'chunk_1', doc_id: 'doc_1', domain: 'text', text: 'The answer is forty two.', position: 0, is_summary: false },
+        { chunk_id: 'chunk_2', doc_id: 'doc_2', domain: 'code', text: 'export const ANSWER = 42;', position: 0, is_summary: false },
+      ],
+      [
+        { id: 'doc_1', source: 'github', type: 'doc', title: 'Doc One', url: null },
+        { id: 'doc_2', source: 'github', type: 'file', title: 'answer.ts', url: null },
+      ],
+    );
+    return makeDeps({ db, hybridSearch: search, synthesizer: fakeSynthesizer(synthBody) });
+  }
+
+  it('validated ALSO ranks ride synthesisDone; the line never reaches the text', async () => {
+    const { deps } = twoSourceDeps('STATUS: answer\nThe answer is [1: "forty two"].\nALSO: 2');
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+    expect(sink.dones).toHaveLength(1);
+    expect(sink.dones[0]!.additionalSourceRanks).toEqual([2]);
+    expect(sink.dones[0]!.text).not.toMatch(/ALSO/);
+  });
+
+  it('a rank that is also cited is removed (never cited AND additional)', async () => {
+    const { deps } = twoSourceDeps('STATUS: answer\nThe answer is [1: "forty two"].\nALSO: 1,2');
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+    expect(sink.dones[0]!.additionalSourceRanks).toEqual([2]);
+  });
+
+  it('no ALSO line ⇒ the field is absent from synthesisDone', async () => {
+    const { deps } = twoSourceDeps('STATUS: answer\nThe answer is [1: "forty two"].');
+    const sink = new RecordingSink();
+    await runPipeline(input(), deps, sink);
+    expect(sink.dones[0]!.additionalSourceRanks).toBeUndefined();
+  });
+});

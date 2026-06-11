@@ -294,6 +294,13 @@ export interface SynthesisDoneInfo {
    * and order-independent on the consumer side.
    */
   readonly sourceDocIds?: readonly string[];
+  /**
+   * Retrieved-but-uncited source ranks the model marked as ALSO supporting the
+   * answer (the optional `ALSO:` protocol line). Validated by the core:
+   * range-checked, deduped, and minus the cited ranks — sinks can trust it.
+   * Renders as the "Additional sources" row; empty/absent ⇒ no row.
+   */
+  readonly additionalSourceRanks?: readonly number[];
   // ── Eval-only intermediates (ignored by the supabase + ws sinks) ──
   /** The raw synthesizer output including the leading STATUS line (the eval's
    *  `rawSynthesis`). The card surface only needs the parsed body. */

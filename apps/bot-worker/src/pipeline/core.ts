@@ -1349,10 +1349,16 @@ async function runSynthesis(args: {
           startStreamingIfNeeded();
           sink.synthesisDelta(synthesisId, parsed.text);
         }
+        // Additional supporting sources (the ALSO: line): the parser already
+        // range-checked + deduped; subtract the verified citation ranks so a
+        // source is never both cited and "additional".
+        const citedRanks = new Set(richCitations.map((c) => c.rank));
+        const additionalSourceRanks = parsed.additionalRanks.filter((r) => !citedRanks.has(r));
         sink.synthesisDone({
           synthesisId,
           text: parsed.text,
           citations: richCitations,
+          ...(additionalSourceRanks.length > 0 ? { additionalSourceRanks } : {}),
           stopReason: chunk.stopReason,
           latencyMs,
           utteranceId: input.utteranceId,
