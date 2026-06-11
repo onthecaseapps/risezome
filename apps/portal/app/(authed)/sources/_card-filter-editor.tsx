@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useTransition, type ReactElement } from 'react';
+import { useRouter } from 'next/navigation';
 import { setSourcesCorpusPolicyAction } from './corpus-policy-action';
 import { getTrelloListsAction } from './trello-lists-action';
 import type { Provider } from './_source-item-list';
@@ -162,6 +163,7 @@ export function CardFilterEditor({
   const [c, setC] = useState<CustomState>(EMPTY_CUSTOM);
   const [pending, start] = useTransition();
   const [note, setNote] = useState<string | null>(null);
+  const router = useRouter();
   // Trello: lazily-fetched board list names for togglable exclusion.
   // undefined = not loaded, null = load failed/empty (fall back to free-text).
   const [trelloLists, setTrelloLists] = useState<string[] | null | undefined>(undefined);
@@ -225,6 +227,7 @@ export function CardFilterEditor({
       if (res.ok) {
         setSavedMode(mode);
         setNote(res.reindexed > 0 ? `Saved — reindexing ${String(res.reindexed)} source${res.reindexed === 1 ? '' : 's'}…` : 'Saved.');
+        router.refresh(); // re-fetch server data so the header pill + counts reflect the new policy
       } else {
         setNote(`Couldn't save: ${res.error}`);
       }
@@ -482,4 +485,13 @@ function mapPresetToOption(provider: Provider, preset: string | null): string {
   if (preset === 'code_only') return provider === 'github' ? 'code' : 'active';
   // recommended (or null) → the connector's default "active"/"recommended" option.
   return OPTIONS[provider][0]!.value;
+}
+
+/** The connector's menu LABEL for a stored preset key (null = inherit → the
+ *  default option). Used by the card's header pill so Trello shows "Everything",
+ *  not the generic "Index everything". */
+export function connectorPresetLabel(provider: Provider, preset: string | null): string {
+  if (preset === null) return OPTIONS[provider][0]!.label;
+  const value = mapPresetToOption(provider, preset);
+  return OPTIONS[provider].find((o) => o.value === value)?.label ?? OPTIONS[provider][0]!.label;
 }

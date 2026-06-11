@@ -5,7 +5,7 @@ import { useMenuBehaviors } from '../_components/overlay';
 import { setItemForTeamAction } from './team-source-toggle-action';
 import { reindexSourceAction } from './reindex-action';
 import { SourceItemList, type Provider, type SourceItem } from './_source-item-list';
-import { CardFilterEditor } from './_card-filter-editor';
+import { CardFilterEditor, connectorPresetLabel } from './_card-filter-editor';
 
 /**
  * A single connection card (U2): GitHub renders one per installation; Jira,
@@ -86,9 +86,8 @@ export function ConnectionCard({
   );
   const uniqueOverrides = new Set(overridePresets);
   const cardPreset = uniqueOverrides.size === 1 ? (overridePresets[0] ?? null) : null;
-  const orgDefaultPreset = data.orgDefaultPreset ?? 'recommended';
   const filterPillLabel =
-    uniqueOverrides.size > 1 ? 'Mixed' : cardPreset === null ? presetLabel(orgDefaultPreset) : presetLabel(cardPreset);
+    uniqueOverrides.size > 1 ? 'Mixed' : connectorPresetLabel(data.provider, cardPreset);
 
   function localSet(externalId: string, on: boolean): void {
     setSelected((prev) => {
@@ -267,17 +266,6 @@ export function ConnectionCard({
   );
 }
 
-function presetLabel(key: string): string {
-  return key === 'index_everything'
-    ? 'Index everything'
-    : key === 'code_only'
-      ? 'Code only'
-      : key === 'recommended'
-        ? 'Recommended'
-        : key === 'custom'
-          ? 'Custom'
-          : key;
-}
 
 function FilterIcon(): ReactElement {
   return (
