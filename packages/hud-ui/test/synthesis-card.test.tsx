@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import { SynthesisCard } from '../src/components/synthesis-card.js';
 import type { CardEvent } from '../src/types.js';
 
@@ -234,7 +234,7 @@ describe('SynthesisCard — pin button (U5)', () => {
 });
 
 describe('SynthesisCard — phase: done', () => {
-  it('hides cursor; renders sources; no trailing citations row', () => {
+  it('hides cursor; renders the collapsed sources ledger; no trailing citations row', () => {
     const sources = [mkCard()];
     const { container } = render(
       <SynthesisCard
@@ -246,11 +246,71 @@ describe('SynthesisCard — phase: done', () => {
       />,
     );
     expect(container.querySelector('.synthesis-cursor')).toBeNull();
-    expect(container.querySelector('.synthesis-sources')).not.toBeNull();
+    // The ledger renders collapsed by default: header line present, no rows.
+    const ledger = container.querySelector('.synthesis-ledger');
+    expect(ledger).not.toBeNull();
+    expect(ledger?.getAttribute('data-open')).toBe('false');
+    expect(ledger?.textContent).toContain('Grounded in 1 cited source');
+    expect(container.querySelector('.ledger-rows')).toBeNull();
     // The trailing consolidated citation-chip row was removed; inline chips
     // in the answer body are the only citation affordance now.
     expect(container.querySelector('.citations')).toBeNull();
     expect(container.querySelector('article')?.getAttribute('aria-busy')).toBe('false');
+  });
+
+  it('clicking the ledger header expands the rows; Expand all opens every passage', () => {
+    const { container } = render(
+      <SynthesisCard
+        synthesisId="s1"
+        phase="done"
+        answer={<>Final answer</>}
+        sources={[mkCard()]}
+        citationRecords={[{ rank: 1, cardId: 'src1', position: 0 }]}
+        additionalSources={[mkCard({ cardId: 'rel1', title: 'Related doc' })]}
+      />,
+    );
+    const toggle = container.querySelector<HTMLButtonElement>('.ledger-toggle')!;
+    fireEvent.click(toggle);
+    const rows = container.querySelectorAll('.source-card-expanded');
+    expect(rows).toHaveLength(2);
+    // Cited row badge + related row label.
+    expect(container.querySelector('.source-row-badge')?.textContent).toBe('1');
+    expect([...container.querySelectorAll('.source-row-status')].map((s) => s.textContent)).toEqual([
+      'Top match',
+      'Related',
+    ]);
+    // Expand all passages opens both rows.
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.ledger-expand-all')!);
+    expect(container.querySelectorAll('.source-card-expanded.is-open')).toHaveLength(2);
+    expect(container.querySelector<HTMLButtonElement>('.ledger-expand-all')?.textContent).toBe(
+      'Collapse all passages',
+    );
+  });
+
+  it('header reads "grounded in N cited · M related" when related sources exist', () => {
+    const { container } = render(
+      <SynthesisCard
+        synthesisId="s1"
+        phase="done"
+        answer={<>Final answer</>}
+        sources={[mkCard()]}
+        citationRecords={[{ rank: 1, cardId: 'src1', position: 0 }]}
+        additionalSources={[
+          mkCard({ cardId: 'rel1' }),
+          mkCard({ cardId: 'rel2', source: 'confluence' }),
+        ]}
+      />,
+    );
+    expect(container.querySelector('.synthesis-grounded')?.textContent).toBe(
+      'grounded in 1 cited · 2 related',
+    );
+    const ledger = container.querySelector('.synthesis-ledger');
+    expect(ledger?.textContent).toContain('Grounded in 1 cited + 2 related sources');
+    // Per-source dots: related dots render dimmed.
+    expect(container.querySelectorAll('.ledger-dot')).toHaveLength(3);
+    expect(container.querySelectorAll('.ledger-dot.is-related')).toHaveLength(2);
+    // Collapsed line lists the distinct apps.
+    expect(container.querySelector('.ledger-apps')?.textContent).toBe('· Github · Confluence');
   });
 });
 
@@ -319,8 +379,8 @@ describe('SynthesisCard — B4 in-place transition (no remount)', () => {
   });
 });
 
-describe('SynthesisCard — additional sources row (ALSO: line)', () => {
-  it('renders title links for each additional source when done', () => {
+describe('SynthesisCard — related sources in the ledger (ALSO: line)', () => {
+  it('renders RELATED rows for the additional sources when expanded; passage has the Open link', () => {
     const { container } = render(
       <SynthesisCard
         synthesisId="s1"
@@ -329,50 +389,56 @@ describe('SynthesisCard — additional sources row (ALSO: line)', () => {
         sources={[mkCard()]}
         citationRecords={[{ rank: 1, cardId: 'src1', position: 0 }]}
         additionalSources={[
-          mkCard({ cardId: 'extra1', title: 'contextualize.ts', url: 'https://x/contextualize' }),
-          mkCard({ cardId: 'extra2', title: 'file-chunker.ts', url: 'https://x/chunker' }),
+          mkCard({ cardId: 'extra1', title: 'contextualize.ts', type: 'code', url: 'https://x/contextualize' }),
+          mkCard({ cardId: 'extra2', title: 'file-chunker.ts', type: 'code', url: 'https://x/chunker' }),
         ]}
       />,
     );
-    const row = container.querySelector('.synthesis-additional-sources');
-    expect(row).not.toBeNull();
-    expect(row?.textContent).toContain('Additional sources');
-    const links = row?.querySelectorAll('a') ?? [];
-    expect(links).toHaveLength(2);
-    expect(links[0]?.textContent).toBe('contextualize.ts');
-    expect(links[0]?.getAttribute('href')).toBe('https://x/contextualize');
-    expect(links[1]?.textContent).toBe('file-chunker.ts');
-    expect(links[1]?.getAttribute('href')).toBe('https://x/chunker');
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.ledger-toggle')!);
+    const related = [...container.querySelectorAll('.source-card-expanded.is-related')];
+    expect(related).toHaveLength(2);
+    expect(related.map((r) => r.querySelector('.source-row-title')?.textContent)).toEqual([
+      'contextualize.ts',
+      'file-chunker.ts',
+    ]);
+    // Opening a related row shows its passage with the source link.
+    fireEvent.click(related[0]!.querySelector<HTMLButtonElement>('.source-card-toggle')!);
+    expect(
+      container.querySelector('.source-card-expanded.is-related .source-card-open')?.getAttribute('href'),
+    ).toBe('https://x/contextualize');
   });
 
-  it('a source without a url renders as plain text, not a dead link', () => {
+  it('a related card that is also cited renders once, as cited', () => {
     const { container } = render(
       <SynthesisCard
         synthesisId="s1"
         phase="done"
-        answer={<>Answer.</>}
-        sources={[]}
-        additionalSources={[mkCard({ cardId: 'extra1', title: 'No-url doc' })]}
+        answer={<>Answer [1].</>}
+        sources={[mkCard()]}
+        citationRecords={[{ rank: 1, cardId: 'src1', position: 0 }]}
+        additionalSources={[mkCard()]}
       />,
     );
-    const row = container.querySelector('.synthesis-additional-sources');
-    expect(row?.textContent).toContain('No-url doc');
-    expect(row?.querySelectorAll('a')).toHaveLength(0);
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.ledger-toggle')!);
+    expect(container.querySelectorAll('.source-card-expanded')).toHaveLength(1);
+    expect(container.querySelector('.source-card-expanded.is-related')).toBeNull();
   });
 
-  it('row is absent when there are no additional sources (renders exactly as today)', () => {
+  it('ledger reads plain cited-only copy when there are no related sources', () => {
     const { container } = render(
       <SynthesisCard
         synthesisId="s1"
         phase="done"
         answer={<>Answer.</>}
         sources={[mkCard()]}
+        citationRecords={[{ rank: 1, cardId: 'src1', position: 0 }]}
       />,
     );
-    expect(container.querySelector('.synthesis-additional-sources')).toBeNull();
+    expect(container.querySelector('.synthesis-ledger')?.textContent).not.toContain('related');
+    expect(container.querySelector('.synthesis-grounded')?.textContent).toBe('grounded in 1 cited');
   });
 
-  it('row is absent while streaming even if marks already arrived', () => {
+  it('ledger is absent while streaming even if marks already arrived', () => {
     const { container } = render(
       <SynthesisCard
         synthesisId="s1"
@@ -382,6 +448,6 @@ describe('SynthesisCard — additional sources row (ALSO: line)', () => {
         additionalSources={[mkCard({ cardId: 'extra1' })]}
       />,
     );
-    expect(container.querySelector('.synthesis-additional-sources')).toBeNull();
+    expect(container.querySelector('.synthesis-ledger')).toBeNull();
   });
 });

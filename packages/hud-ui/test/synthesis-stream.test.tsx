@@ -127,7 +127,8 @@ describe('SynthesisStream', () => {
     expect(body).not.toContain('[9]');
   });
 
-  it('renders the cited source card beneath the answer when finished', () => {
+  it('renders the sources ledger beneath the answer when finished; cited row inside', async () => {
+    const { fireEvent } = await import('@testing-library/react');
     const syn = mkSyn({
       accumulatedText: 'Answer body [1].',
       streaming: false,
@@ -141,14 +142,16 @@ describe('SynthesisStream', () => {
         <SynthesisStream />
       </AppStateProvider>,
     );
-    expect(container.querySelector('.synthesis-sources')).not.toBeNull();
+    expect(container.querySelector('.synthesis-ledger')).not.toBeNull();
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.ledger-toggle')!);
     expect(
-      container.querySelector('.synthesis-sources article[data-card-id="src1"]'),
+      container.querySelector('.synthesis-ledger article[data-card-id="src1"]'),
     ).not.toBeNull();
   });
 
-  it('omits an uncited retrieved source from the synthesis sources panel', () => {
-    // src1 is cited, src2 is retrieved but never cited → only src1 shows.
+  it('omits an uncited retrieved source from the ledger', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    // src1 is cited, src2 is retrieved but never cited (nor marked) → only src1.
     const syn = mkSyn({
       accumulatedText: 'Answer body [1].',
       streaming: false,
@@ -165,13 +168,14 @@ describe('SynthesisStream', () => {
         <SynthesisStream />
       </AppStateProvider>,
     );
-    expect(container.querySelector('.synthesis-sources article[data-card-id="src1"]')).not.toBeNull();
-    expect(container.querySelector('.synthesis-sources article[data-card-id="src2"]')).toBeNull();
-    // "grounded in 1 source" reflects cited, not retrieved (2).
-    expect(container.querySelector('.synthesis-grounded')?.textContent).toContain('1 source');
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.ledger-toggle')!);
+    expect(container.querySelector('.synthesis-ledger article[data-card-id="src1"]')).not.toBeNull();
+    expect(container.querySelector('.synthesis-ledger article[data-card-id="src2"]')).toBeNull();
+    // "grounded in 1 cited" reflects cited, not retrieved (2).
+    expect(container.querySelector('.synthesis-grounded')?.textContent).toBe('grounded in 1 cited');
   });
 
-  it('does not render consolidated sources while streaming', () => {
+  it('does not render the ledger while streaming', () => {
     const syn = mkSyn({
       accumulatedText: 'Streaming…',
       streaming: true,
@@ -182,7 +186,7 @@ describe('SynthesisStream', () => {
         <SynthesisStream />
       </AppStateProvider>,
     );
-    expect(container.querySelector('.synthesis-sources')).toBeNull();
+    expect(container.querySelector('.synthesis-ledger')).toBeNull();
   });
 
   it('U3 integration: click inline chip expands the matching source with the quote highlighted', async () => {
@@ -199,21 +203,19 @@ describe('SynthesisStream', () => {
         <SynthesisStream />
       </AppStateProvider>,
     );
-    // Source starts collapsed (no .source-body inside src1's source-card-expanded).
-    const sourceArticle = container.querySelector(
-      'article.source-card-expanded[data-card-id="src1"]',
-    );
-    expect(sourceArticle).not.toBeNull();
-    expect(sourceArticle?.querySelector('.source-body')).toBeNull();
+    // The ledger starts collapsed — no rows in the DOM yet.
+    expect(container.querySelector('.synthesis-ledger')?.getAttribute('data-open')).toBe('false');
+    expect(container.querySelector('article.source-card-expanded')).toBeNull();
 
-    // Click the inline chip in the answer body.
+    // Click the inline chip in the answer body — it expands the ledger AND
+    // opens the cited row at that occurrence's quote.
     const inlineChip = container.querySelector(
       '.synthesis-body button.citation-chip',
     );
     expect(inlineChip).not.toBeNull();
     fireEvent.click(inlineChip!);
 
-    // Source is now expanded and the quote is highlighted.
+    // Source row is now expanded and the quote is highlighted.
     const body = container.querySelector(
       'article.source-card-expanded[data-card-id="src1"] .source-body',
     );
@@ -223,16 +225,17 @@ describe('SynthesisStream', () => {
     );
     expect(mark?.textContent).toBe('edition = "2021"');
 
-    // Re-clicking the same chip collapses.
+    // Re-clicking the same chip collapses the row (ledger stays open).
     fireEvent.click(inlineChip!);
     expect(
       container.querySelector(
         'article.source-card-expanded[data-card-id="src1"] .source-body',
       ),
     ).toBeNull();
+    expect(container.querySelector('.synthesis-ledger')?.getAttribute('data-open')).toBe('true');
   });
 
-  it('clicking the source card header expands it with the first cited quote highlighted', async () => {
+  it('clicking a source row expands it with the first cited quote highlighted', async () => {
     const { fireEvent } = await import('@testing-library/react');
     const card = mkCard({ cardId: 'src1', body: 'the full chunk body text' });
     const syn = mkSyn({
@@ -247,6 +250,7 @@ describe('SynthesisStream', () => {
       </AppStateProvider>,
     );
 
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.ledger-toggle')!);
     const toggle = container.querySelector(
       'article.source-card-expanded[data-card-id="src1"] button.source-card-toggle',
     );
@@ -363,8 +367,9 @@ describe('SynthesisStream', () => {
   });
 });
 
-describe('SynthesisStream — additional sources resolution', () => {
-  it('resolves additionalSources refs to cards and renders the row', () => {
+describe('SynthesisStream — related (additional) sources resolution', () => {
+  it('resolves additionalSources refs to cards and renders RELATED ledger rows', async () => {
+    const { fireEvent } = await import('@testing-library/react');
     const cited = mkCard();
     const extra = mkCard({ cardId: 'src2', title: 'Corroborating doc', url: 'https://x/doc' });
     const syn = mkSyn({
@@ -379,12 +384,15 @@ describe('SynthesisStream — additional sources resolution', () => {
         <SynthesisStream />
       </AppStateProvider>,
     );
-    const row = container.querySelector('.synthesis-additional-sources');
-    expect(row).not.toBeNull();
-    expect(row?.querySelector('a')?.textContent).toBe('Corroborating doc');
+    expect(container.querySelector('.synthesis-ledger')?.textContent).toContain(
+      'Grounded in 1 cited + 1 related sources',
+    );
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.ledger-toggle')!);
+    const related = container.querySelector('.source-card-expanded.is-related');
+    expect(related?.querySelector('.source-row-title')?.textContent).toBe('Corroborating doc');
   });
 
-  it('a mark whose card is missing locally is skipped without error (row absent when none resolve)', () => {
+  it('a mark whose card is missing locally is skipped without error (cited-only ledger)', () => {
     const syn = mkSyn({
       sourceCardIds: ['src1', 'src_gone'],
       accumulatedText: 'Done answer [1].',
@@ -398,6 +406,6 @@ describe('SynthesisStream — additional sources resolution', () => {
       </AppStateProvider>,
     );
     expect(container.querySelector('article[data-kind="synthesis"]')).not.toBeNull();
-    expect(container.querySelector('.synthesis-additional-sources')).toBeNull();
+    expect(container.querySelector('.synthesis-ledger')?.textContent).not.toContain('related');
   });
 });

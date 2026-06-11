@@ -677,58 +677,110 @@ body {
   animation: cite-pulse 700ms ease-out;
 }
 
-/* Cards consolidated under a synthesis card. The grid uses Tailwind-style
-   utilities via raw CSS to avoid pulling per-element classNames into the
-   sidebar code (the consolidated cards keep their original markup). */
-/* Sources now sit OUTSIDE the answer card as a standalone section (the dashed
-   in-card separator + top margin are gone; the .synthesis-block gap provides
-   the separation from the card above). */
-.synthesis-sources {
+/* Sources ledger ("Sources Ledger Refined" design) — one collapsed line per
+   synthesis ("Grounded in N cited + M related sources" with per-source dots),
+   expanding into unified cited + related rows below the answer card. */
+.synthesis-ledger {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+
+.ledger-header {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
 }
 
-.synthesis-sources-label {
-  font-size: 10.5px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.ledger-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ledger-chevron {
+  flex: none;
   color: var(--muted);
+  transition: transform 150ms ease-out;
+}
+.ledger-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.ledger-summary {
+  font-size: 12px;
   font-weight: 600;
-  padding-left: 2px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.ledger-summary strong {
+  color: var(--fg);
+  font-weight: 600;
 }
 
-.synthesis-sources-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px;
-}
-
-/* Additional supporting sources (the ALSO: line) — a single muted inline
-   row of title links beneath the cited SOURCES panel. Deliberately lighter
-   than the source cards: corroboration, not citation. */
-.synthesis-additional-sources {
+/* Distinct app names ("· Confluence · GitHub") — collapsed line only. */
+.ledger-apps {
   font-size: 11.5px;
   color: var(--muted);
-  line-height: 1.5;
-  padding-left: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
-.synthesis-additional-sources-label {
-  font-size: 10.5px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+/* Per-source dots: color rides the chip palette's chip-source-* classes via
+   currentColor; related (uncited supporting) dots render dimmed. */
+.ledger-dots {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.ledger-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.ledger-dot.is-related {
+  opacity: 0.45;
+}
+
+.ledger-expand-all {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11.5px;
   font-weight: 600;
-}
-
-.synthesis-additional-sources a {
-  color: var(--muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.synthesis-additional-sources a:hover {
   color: var(--accent);
+  white-space: nowrap;
+}
+.ledger-expand-all:hover {
+  text-decoration: underline;
+}
+
+.ledger-rows {
+  border-top: 1px solid var(--border);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
 }
 
 /* A "consolidated" card is a normal card living inside a synthesis card's
@@ -760,89 +812,33 @@ body {
   display: none;
 }
 
-/* Source-card-expanded — the inline, click-to-expand source rendered
- * beneath a synthesis answer. Collapsed: header + title only (looks
- * like the old "consolidated" card). Expanded: full chunk body shown
- * with optional `<mark>` highlight on the LLM-emitted quote. Plan U3.
- */
-.synthesis-sources-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
+/* Source row — one line of the sources ledger: rank badge (cited) or spacer
+ * (related), source kind pill, ellipsized title, status label, chevron.
+ * Expanded: the matched-passage panel below the line with optional `<mark>`
+ * highlight on the LLM-emitted quotes ("Sources Ledger Refined" design). */
 .source-card-expanded {
-  padding: 13px 15px;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--code-bg);
+  background: var(--card-bg);
   font-size: 13.5px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  cursor: default;
   transition: background-color 120ms ease-out;
 }
-
+.source-card-expanded:not(.is-open):hover {
+  background: var(--code-bg);
+}
 .source-card-expanded.is-open {
-  background: var(--card-bg);
-  outline: 1px solid var(--border);
-  outline-offset: -1px;
+  background: var(--code-bg);
+  border-color: color-mix(in srgb, var(--fg) 18%, var(--border));
 }
 
-/* The source-card header (GITHUB · FILE … TOP MATCH). The base `.card .header`
-   flex layout is scoped under `.card`, but the source-card <article> is NOT a
-   `.card` — so without an explicit layout here the source / type / score
-   collapse into one run ("·fileMatch"). Lay it out, and size it a step larger
-   than the dense live HUD (this is the roomier capture surface). */
-.source-card-expanded .header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  font-size: 11px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 600;
-}
-.source-card-expanded .header .source {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.source-card-expanded .chip-source {
-  font-size: 10.5px;
-  padding: 2px 9px;
-}
-.source-card-expanded .chip-type {
-  font-size: 12px;
-  gap: 5px;
-}
-.source-card-expanded .score {
-  flex: none;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-}
-.source-card-expanded .score.top {
-  color: var(--accent);
-}
-
-.source-card-expanded .title {
-  font-size: 13px;
-  line-height: 1.3;
-}
-
-/* Clickable header — expand/collapse the source card by clicking it
- * (in addition to the inline [N] citation chips). */
+/* The clickable row line (a real <button> when a toggle handler is wired). */
 .source-card-toggle {
   display: flex;
-  flex-direction: column;
-  gap: 7px;
+  align-items: center;
+  gap: 9px;
   width: 100%;
   margin: 0;
-  padding: 0;
+  padding: 9px 12px;
   border: 0;
   background: none;
   color: inherit;
@@ -850,15 +846,73 @@ body {
   text-align: left;
   cursor: pointer;
 }
-.source-card-header-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.source-card-toggle.is-inert {
+  cursor: default;
 }
-.source-card-header-row .header {
+
+.source-row-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  font-weight: 700;
+}
+.source-row-badge-spacer {
+  width: 16px;
+  flex: 0 0 auto;
+}
+
+/* Kind pill (GITHUB / CONFLUENCE / …): hue rides the chip palette's
+   chip-source-* color classes; border via currentColor. */
+.source-row-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  border: 1px solid currentColor;
+  border-radius: 12px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.source-row-title {
   flex: 1;
   min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.source-row-title.is-mono {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+/* Status label: TOP MATCH / CITED (accent) vs RELATED (faint). */
+.source-row-status {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.source-row-status.is-cited {
+  color: var(--accent);
+}
+
 .source-card-chevron {
   flex: none;
   color: var(--muted);
@@ -867,61 +921,10 @@ body {
 .source-card-expanded.is-open .source-card-chevron {
   transform: rotate(180deg);
 }
-.source-card-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.source-card-title .title-link {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--fg);
-  line-height: 1.35;
-  min-width: 0;
-}
-.source-card-expanded:not(.is-open) .source-card-title .title-link {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.source-card-toggle:hover .title-link {
-  text-decoration: underline;
-}
-.source-card-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 5px;
-  flex: 0 0 auto;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--accent);
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 11px;
-  font-weight: 700;
-}
-.source-card-snippet {
-  padding-left: 28px;
-  font-size: 13.5px;
-  line-height: 1.55;
-  color: var(--muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-/* Top-match accent edge, matching the design. */
-.source-card-expanded.is-top:not(.is-open) {
-  outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  outline-offset: -1px;
-}
 
 /* Expanded "matched passage" box. */
 .source-card-passage {
-  margin-top: 9px;
+  margin: 0 12px 12px;
   padding: 12px 13px;
   border-radius: 9px;
   background: var(--card-bg);

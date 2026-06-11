@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { CardEvent, SynthesisCitation } from '../types';
-import { SourceCardExpanded } from './source-card-expanded';
+import { SourceCardExpanded, sourceChipClass, sourceLabel } from './source-card-expanded';
 import { useSynthesisActions } from '../state/synthesis-actions';
 
 /**
@@ -52,7 +52,7 @@ export interface SynthesisCardProps {
   readonly citationRecords?: readonly SynthesisCitation[];
   /** Cards the synthesizer marked as also supporting the answer without
    *  citing them (the ALSO: line), already resolved by the caller. Rendered
-   *  as a muted links row beneath the cited sources; omitted when empty. */
+   *  as RELATED rows in the sources ledger; omitted when empty. */
   readonly additionalSources?: readonly CardEvent[];
   /** Pin state from the reducer. Drives the pin button glyph + ARIA
    *  label. The actual pin/unpin call goes through SynthesisActions
@@ -64,14 +64,6 @@ export interface SynthesisCardProps {
    *  provided, renders above the answer card. Resolved by the caller from
    *  the synthesis's triggerUtteranceId + the transcript. */
   readonly question?: string;
-}
-
-interface ExpansionState {
-  readonly cardId: string;
-  /** Quotes to highlight in the expanded body. A single-element list when a
-   *  specific [N] chip was clicked; the card's full set when the card header
-   *  itself was expanded. */
-  readonly quotes: readonly string[];
 }
 
 /** Distinct non-empty quotes the synthesis cited for one source card. */
@@ -109,45 +101,56 @@ export function SynthesisCard({
 
   const synthesisActions = useSynthesisActions();
 
-  // Per-synthesis expansion state. Cleared on every render of a different
-  // synthesisId because useState binds to component instance + key.
-  const [expansion, setExpansion] = useState<ExpansionState | null>(null);
+  // Per-synthesis ledger state ("Sources Ledger Refined" design): the whole
+  // ledger collapses to one line by default; each row's passage opens
+  // independently, keyed by cardId with the quote set to highlight. Cleared
+  // on every render of a different synthesisId because useState binds to
+  // component instance + key.
+  const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [openRows, setOpenRows] = useState<ReadonlyMap<string, readonly string[]>>(new Map());
 
-  // Chip-facing activation: clicking an inline [N] chip highlights just that
-  // occurrence's quote. Clicking the same card+quote again collapses.
+  // Chip-facing activation: clicking an inline [N] chip expands the ledger
+  // and opens the cited row at that occurrence's quote. Clicking the same
+  // chip again (with the ledger already open) collapses the row.
   const activate = useCallback(
     (args: { rank: number; cardId: string; quote: string | undefined }) => {
-      setExpansion((current) => {
-        const quotes = args.quote !== undefined ? [args.quote] : [];
-        if (
-          current !== null &&
-          current.cardId === args.cardId &&
-          current.quotes.length === quotes.length &&
-          current.quotes[0] === quotes[0]
-        ) {
-          return null;
-        }
-        return { cardId: args.cardId, quotes };
+      const quotes = args.quote !== undefined ? [args.quote] : [];
+      setOpenRows((current) => {
+        const existing = current.get(args.cardId);
+        const same =
+          existing?.length === quotes.length && existing[0] === quotes[0];
+        const next = new Map(current);
+        if (ledgerOpen && same) next.delete(args.cardId);
+        else next.set(args.cardId, quotes);
+        return next;
       });
+      setLedgerOpen(true);
     },
-    [],
+    [ledgerOpen],
   );
 
-  // Card-facing toggle: expanding the source card itself highlights ALL of
-  // that card's cited quotes. Clicking an open card collapses it.
-  const toggleCard = useCallback((cardId: string, quotes: readonly string[]) => {
-    setExpansion((current) => (current !== null && current.cardId === cardId ? null : { cardId, quotes }));
+  // Row-facing toggle: expanding a row itself highlights ALL of that card's
+  // cited quotes (none for a related row). Clicking an open row collapses it.
+  const toggleRow = useCallback((cardId: string, quotes: readonly string[]) => {
+    setOpenRows((current) => {
+      const next = new Map(current);
+      if (next.has(cardId)) next.delete(cardId);
+      else next.set(cardId, quotes);
+      return next;
+    });
   }, []);
 
   const isDone = phase === 'done';
-  // The SOURCES panel and the "grounded in N" count reflect the sources the
-  // model actually CITED, not every card retrieval surfaced — uncited cards
-  // (often an off-topic top match) are noise here and live in the raw card
-  // feed instead. sourceCardIds stays unfiltered for inline rank→cardId
-  // mapping; only the displayed list is filtered.
+  // The ledger and the "grounded in" count reflect the sources the model
+  // actually USED: cited rows (in the answer) + related rows (retrieved-but-
+  // uncited sources the synthesizer marked as supporting via the ALSO: line).
+  // Other retrieved cards are noise here and live in the raw card feed.
+  // sourceCardIds stays unfiltered for inline rank→cardId mapping.
   const citedCardIds = new Set((citationRecords ?? []).map((c) => c.cardId));
   const citedSources = sources.filter((s) => citedCardIds.has(s.cardId));
-  const groundedCount = isDone ? citedSources.length : sources.length;
+  // Defensive dedupe: a related card that somehow also got cited renders once,
+  // as cited.
+  const relatedSources = additionalSources.filter((s) => !citedCardIds.has(s.cardId));
   const ariaBusy = phase !== 'done';
   // Stream phase reads politely so SRs follow along; placeholder is
   // intentionally silent (the shimmer means nothing to announce).
@@ -181,7 +184,16 @@ export function SynthesisCard({
               Summary
             </span>
             <span className="synthesis-grounded">
-              grounded in {groundedCount} {groundedCount === 1 ? 'source' : 'sources'}
+              {isDone ? (
+                <>
+                  grounded in {citedSources.length} cited
+                  {relatedSources.length > 0 && <> · {relatedSources.length} related</>}
+                </>
+              ) : (
+                <>
+                  grounded in {sources.length} {sources.length === 1 ? 'source' : 'sources'}
+                </>
+              )}
             </span>
             {phase === 'done' && (
               <PinButton
@@ -212,34 +224,17 @@ export function SynthesisCard({
           )}
         </article>
 
-        {isDone && citedSources.length > 0 && (
-          <section className="synthesis-sources" aria-label="Sources">
-            <div className="synthesis-sources-label">
-              Sources ({String(citedSources.length)})
-            </div>
-            <div className="synthesis-sources-list">
-              {citedSources.map((source, idx) => {
-                const isOpen = expansion !== null && expansion.cardId === source.cardId;
-                // Expanding the card highlights ALL of its cited quotes;
-                // clicking a specific [N] chip narrows to that one.
-                const cardQuotes = quotesForCard(citationRecords, source.cardId);
-                return (
-                  <SourceCardExpanded
-                    key={source.cardId}
-                    source={source}
-                    index={idx}
-                    open={isOpen}
-                    onToggle={() => toggleCard(source.cardId, cardQuotes)}
-                    quotes={isOpen ? expansion.quotes : []}
-                  />
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {isDone && additionalSources.length > 0 && (
-          <AdditionalSourcesRow sources={additionalSources} />
+        {isDone && (citedSources.length > 0 || relatedSources.length > 0) && (
+          <SourcesLedger
+            cited={citedSources}
+            related={relatedSources}
+            citationRecords={citationRecords}
+            open={ledgerOpen}
+            onToggleOpen={() => setLedgerOpen((o) => !o)}
+            openRows={openRows}
+            onToggleRow={toggleRow}
+            onSetAllRows={setOpenRows}
+          />
         )}
       </div>
     </SynthesisCardActivateContext.Provider>
@@ -247,32 +242,121 @@ export function SynthesisCard({
 }
 
 /**
- * Muted links row for retrieved-but-uncited sources the synthesizer marked
- * as also supporting the answer (the ALSO: line). Deliberately lighter than
- * the cited SOURCES panel — title-only inline links, no cards, no expansion —
- * so corroboration is one click away without competing with the citations.
+ * The sources ledger ("Sources Ledger Refined" design): one collapsed line
+ * per synthesis — "Grounded in N cited + M related sources" with per-source
+ * colored dots (related dots dimmed) and the distinct app names — expanding
+ * into unified rows for cited and related sources, each with its own
+ * matched-passage panel. An "Expand all passages" shortcut opens every row
+ * at once (cited rows highlight their full quote sets).
  */
-function AdditionalSourcesRow({
-  sources,
+function SourcesLedger({
+  cited,
+  related,
+  citationRecords,
+  open,
+  onToggleOpen,
+  openRows,
+  onToggleRow,
+  onSetAllRows,
 }: {
-  sources: readonly CardEvent[];
+  cited: readonly CardEvent[];
+  related: readonly CardEvent[];
+  citationRecords: readonly SynthesisCitation[] | undefined;
+  open: boolean;
+  onToggleOpen: () => void;
+  openRows: ReadonlyMap<string, readonly string[]>;
+  onToggleRow: (cardId: string, quotes: readonly string[]) => void;
+  onSetAllRows: (rows: ReadonlyMap<string, readonly string[]>) => void;
 }): ReactElement {
+  // First citation rank per cited card — the row badge (rank 1 = TOP MATCH).
+  const rankByCard = new Map<string, number>();
+  for (const c of citationRecords ?? []) {
+    const existing = rankByCard.get(c.cardId);
+    if (existing === undefined || c.rank < existing) rankByCard.set(c.cardId, c.rank);
+  }
+  const rows: { card: CardEvent; rank?: number }[] = [
+    ...cited.map((card) => {
+      const rank = rankByCard.get(card.cardId);
+      return rank !== undefined ? { card, rank } : { card };
+    }),
+    ...related.map((card) => ({ card })),
+  ];
+  const total = cited.length + related.length;
+  const apps = [...new Set(rows.map(({ card }) => sourceLabel(card.source)))];
+  const allOpen = rows.every(({ card }) => openRows.has(card.cardId));
+
+  const quotesFor = (row: { card: CardEvent; rank?: number }): readonly string[] =>
+    row.rank !== undefined ? quotesForCard(citationRecords, row.card.cardId) : [];
+
+  const toggleAll = (): void => {
+    onSetAllRows(allOpen ? new Map() : new Map(rows.map((row) => [row.card.cardId, quotesFor(row)])));
+  };
+
   return (
-    <section className="synthesis-additional-sources" aria-label="Additional sources">
-      <span className="synthesis-additional-sources-label">Additional sources:</span>{' '}
-      {sources.map((s, idx) => (
-        <span key={s.cardId} className="synthesis-additional-source">
-          {idx > 0 && <span aria-hidden="true"> · </span>}
-          {s.url !== undefined && s.url.length > 0 ? (
-            <a href={s.url} target="_blank" rel="noreferrer">
-              {s.title}
-            </a>
-          ) : (
-            <span>{s.title}</span>
-          )}
-        </span>
-      ))}
+    <section className="synthesis-ledger" aria-label="Sources" data-open={open ? 'true' : 'false'}>
+      <div className="ledger-header">
+        <button type="button" className="ledger-toggle" aria-expanded={open} onClick={onToggleOpen}>
+          <LedgerChevron open={open} />
+          <span className="ledger-summary">
+            Grounded in <strong>{cited.length} cited</strong>
+            {related.length > 0 && (
+              <>
+                {' '}
+                + <strong>{related.length} related</strong>
+              </>
+            )}{' '}
+            {total === 1 ? 'source' : 'sources'}
+          </span>
+          {!open && apps.length > 0 && <span className="ledger-apps">· {apps.join(' · ')}</span>}
+          <span className="ledger-dots" aria-hidden="true">
+            {rows.map(({ card, rank }) => (
+              <span
+                key={card.cardId}
+                className={`ledger-dot ${sourceChipClass(card.source)}${rank === undefined ? ' is-related' : ''}`}
+              />
+            ))}
+          </span>
+        </button>
+        {open && (
+          <button type="button" className="ledger-expand-all" onClick={toggleAll}>
+            {allOpen ? 'Collapse all passages' : 'Expand all passages'}
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="ledger-rows">
+          {rows.map((row) => (
+            <SourceCardExpanded
+              key={row.card.cardId}
+              source={row.card}
+              open={openRows.has(row.card.cardId)}
+              quotes={openRows.get(row.card.cardId) ?? []}
+              onToggle={() => onToggleRow(row.card.cardId, quotesFor(row))}
+              {...(row.rank !== undefined ? { rank: row.rank } : {})}
+            />
+          ))}
+        </div>
+      )}
     </section>
+  );
+}
+
+function LedgerChevron({ open }: { open: boolean }): ReactElement {
+  return (
+    <svg
+      className={`ledger-chevron${open ? ' is-open' : ''}`}
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
   );
 }
 

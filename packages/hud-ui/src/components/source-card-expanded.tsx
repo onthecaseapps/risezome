@@ -1,50 +1,44 @@
 'use client';
 
 import { useEffect, useMemo, useRef, type ReactElement, type ReactNode } from 'react';
-import type { CardEvent } from '../types';
-import { CardHeaderRow } from './card-bits';
+import type { CardEvent, KnownSource } from '../types';
+import { KNOWN_SOURCES } from '../types';
 import { findQuoteInBody } from '../lib/quote-match';
 
 /**
- * Inline-expandable source card rendered beneath a SynthesisCard's
- * answer. When `open` is false, just the collapsed header (source pill,
- * title) renders. When `open` is true, the full chunk body is shown.
+ * One row of a synthesis card's sources ledger ("Sources Ledger Refined"
+ * design). Collapsed: a single line — citation-rank badge (cited rows) or
+ * spacer (related rows), source kind pill, ellipsized title (mono for code),
+ * a status label (TOP MATCH / CITED / RELATED), and a chevron. Expanded: the
+ * matched-passage panel below the same line — full chunk body with optional
+ * `<mark>` highlight on the LLM-emitted quotes + an "Open in {app}" link.
  *
- * If `quote` is provided AND a match for it is found in the body
- * (via findQuoteInBody — raw indexOf with a whitespace-normalized
- * fallback per S5), the matching span is wrapped in `<mark>` and
- * scrolled into view via a ref. Re-rendering with a different quote
- * updates the highlight position in place — same component instance,
- * effect re-fires on quote change.
+ * Cited vs related is signaled by `rank`: a number ⇒ cited (badge shows it;
+ * rank 1 reads TOP MATCH, others CITED); undefined ⇒ related — a retrieved
+ * source the synthesizer marked as supporting (the ALSO: line) without
+ * citing it.
  *
  * Security note (H2 from review): both the LLM-emitted quote and the
  * source body are untrusted text. The render path uses pure React text
  * nodes (`<>{before}<mark>{matched}</mark>{after}</>`) — never
  * `dangerouslySetInnerHTML`. Tests assert that `<script>` payloads
  * render as literal characters, not as DOM.
- *
- * Retracted source: when the parent passes `open=true` for a card that
- * doesn't exist (synthesis citing a card that's since been retracted —
- * pinned-synthesis preservation per S2), render a "source no longer
- * available" marker instead of body content. The card's id is the
- * caller's signal: this component just renders whatever `source` it
- * gets; the parent decides what to pass.
  */
 export interface SourceCardExpandedProps {
   readonly source: CardEvent;
   readonly open: boolean;
   /** Verbatim quotes from the LLM citations to highlight in the body. A
    *  single quote when a specific [N] chip was clicked; all of the card's
-   *  cited quotes when the card itself was expanded. Empty (or all-miss) →
+   *  cited quotes when the row itself was expanded. Empty (or all-miss) →
    *  the body renders with no `<mark>`. */
   readonly quotes?: readonly string[];
-  /** Toggle handler — clicking the card header expands/collapses it,
-   *  in addition to the inline `[N]` citation chips. Omitted → inert
-   *  header (SSR / preview embeds). */
+  /** Toggle handler — clicking the row expands/collapses it, in addition
+   *  to the inline `[N]` citation chips. Omitted → inert row (SSR /
+   *  preview embeds). */
   readonly onToggle?: (() => void) | undefined;
-  /** 0-based position in the source list; rendered as the `[N]` badge
-   *  next to the title (matches the inline citation number). */
-  readonly index?: number;
+  /** Citation rank for a CITED row (1-based, shown in the badge; rank 1
+   *  is the TOP MATCH). Undefined ⇒ a RELATED (uncited supporting) row. */
+  readonly rank?: number;
 }
 
 export function SourceCardExpanded({
@@ -52,25 +46,37 @@ export function SourceCardExpanded({
   open,
   quotes,
   onToggle,
-  index,
+  rank,
 }: SourceCardExpandedProps): ReactElement {
-  const cls = ['source-card-expanded', open ? 'is-open' : null, source.rank === 1 ? 'is-top' : null]
+  const cited = rank !== undefined;
+  const cls = [
+    'source-card-expanded',
+    open ? 'is-open' : null,
+    cited && rank === 1 ? 'is-top' : null,
+    cited ? null : 'is-related',
+  ]
     .filter(Boolean)
     .join(' ');
+  const statusLabel = !cited ? 'Related' : rank === 1 ? 'Top match' : 'Cited';
 
-  const inner = (
+  const row = (
     <>
-      <span className="source-card-header-row">
-        <CardHeaderRow card={source} />
-        <ChevronToggle />
+      {cited ? (
+        <span className="source-row-badge">{rank}</span>
+      ) : (
+        <span className="source-row-badge-spacer" aria-hidden="true" />
+      )}
+      <span className={`source-row-pill ${sourceChipClass(source.source)}`}>
+        {source.source.toUpperCase()}
       </span>
-      <span className="source-card-title">
-        {index !== undefined ? <span className="source-card-index">{index + 1}</span> : null}
-        <span className="title-link">{source.title}</span>
+      <span
+        className={`source-row-title${source.type === 'code' ? ' is-mono' : ''}`}
+        title={source.title}
+      >
+        {source.title}
       </span>
-      {!open && source.snippet.length > 0 ? (
-        <span className="source-card-snippet">{source.snippet}</span>
-      ) : null}
+      <span className={`source-row-status${cited ? ' is-cited' : ''}`}>{statusLabel}</span>
+      <ChevronToggle />
     </>
   );
 
@@ -78,10 +84,10 @@ export function SourceCardExpanded({
     <article className={cls} data-card-id={source.cardId} data-open={open ? 'true' : 'false'}>
       {onToggle !== undefined ? (
         <button type="button" className="source-card-toggle" onClick={onToggle} aria-expanded={open}>
-          {inner}
+          {row}
         </button>
       ) : (
-        inner
+        <span className="source-card-toggle is-inert">{row}</span>
       )}
       {open && (
         <div className="source-card-passage">
@@ -110,7 +116,16 @@ export function SourceCardExpanded({
   );
 }
 
-function sourceLabel(source: string): string {
+/** Reuse the chip palette's per-source color classes for the kind pill (and
+ *  the ledger header's per-source dots — they color via currentColor). */
+export function sourceChipClass(source: string): string {
+  const known = (KNOWN_SOURCES as readonly string[]).includes(source)
+    ? (source as KnownSource)
+    : 'default';
+  return `chip-source-${known}`;
+}
+
+export function sourceLabel(source: string): string {
   return source.length === 0 ? 'source' : source.charAt(0).toUpperCase() + source.slice(1);
 }
 

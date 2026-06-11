@@ -23,14 +23,46 @@ function mkSource(over: Partial<CardEvent> = {}): CardEvent {
 }
 
 describe('SourceCardExpanded', () => {
-  it('renders collapsed header only when open=false (no body, no highlight)', () => {
+  it('renders the collapsed row line only when open=false (no body, no highlight)', () => {
     const { container } = render(
       <SourceCardExpanded source={mkSource()} open={false} />,
     );
     expect(container.querySelector('.source-card-expanded')?.getAttribute('data-open')).toBe('false');
-    expect(container.querySelector('.title-link')?.textContent).toBe('Test source');
+    expect(container.querySelector('.source-row-title')?.textContent).toBe('Test source');
+    expect(container.querySelector('.source-row-pill')?.textContent).toBe('GITHUB');
     expect(container.querySelector('.source-body')).toBeNull();
     expect(container.querySelector('mark.quote-highlight')).toBeNull();
+  });
+
+  it('a cited row shows the rank badge + status; rank 1 reads TOP MATCH', () => {
+    const { container } = render(<SourceCardExpanded source={mkSource()} open={false} rank={1} />);
+    expect(container.querySelector('.source-row-badge')?.textContent).toBe('1');
+    expect(container.querySelector('.source-row-status')?.textContent).toBe('Top match');
+    expect(container.querySelector('.source-row-status')?.classList.contains('is-cited')).toBe(true);
+    expect(container.querySelector('.source-card-expanded')?.classList.contains('is-top')).toBe(true);
+  });
+
+  it('a cited row beyond rank 1 reads CITED', () => {
+    const { container } = render(<SourceCardExpanded source={mkSource()} open={false} rank={3} />);
+    expect(container.querySelector('.source-row-badge')?.textContent).toBe('3');
+    expect(container.querySelector('.source-row-status')?.textContent).toBe('Cited');
+    expect(container.querySelector('.source-card-expanded')?.classList.contains('is-top')).toBe(false);
+  });
+
+  it('a related row (no rank) shows a spacer + faint RELATED label', () => {
+    const { container } = render(<SourceCardExpanded source={mkSource()} open={false} />);
+    expect(container.querySelector('.source-row-badge')).toBeNull();
+    expect(container.querySelector('.source-row-badge-spacer')).not.toBeNull();
+    expect(container.querySelector('.source-row-status')?.textContent).toBe('Related');
+    expect(container.querySelector('.source-row-status')?.classList.contains('is-cited')).toBe(false);
+    expect(container.querySelector('.source-card-expanded')?.classList.contains('is-related')).toBe(true);
+  });
+
+  it('a code-typed source renders its title in mono', () => {
+    const { container } = render(
+      <SourceCardExpanded source={mkSource({ type: 'code', title: 'a/b/c.ts' })} open={false} />,
+    );
+    expect(container.querySelector('.source-row-title')?.classList.contains('is-mono')).toBe(true);
   });
 
   it('renders body and is-open class when open=true', () => {
