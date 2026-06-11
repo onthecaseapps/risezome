@@ -144,7 +144,36 @@ export function buildCustomPolicy(provider: Provider, c: CustomState): Record<st
   return policy;
 }
 
-export function CardFilterEditor({
+export interface CardFilter {
+  provider: Provider;
+  hasSources: boolean;
+  dirty: boolean;
+  pending: boolean;
+  note: string | null;
+  save: () => void;
+  discard: () => void;
+  // panel-only internals
+  opts: Opt[];
+  mode: string;
+  selectedDesc: string;
+  onMode: (v: string) => void;
+  c: CustomState;
+  setC: (c: CustomState) => void;
+  chips: string[];
+  mono: boolean;
+  ageNoun: string;
+  githubInclude: boolean;
+  trelloToggleLists: boolean;
+  customHeader: string;
+  addPlaceholder: string;
+  trelloLists: string[] | null | undefined;
+  toggleList: (l: string) => void;
+  setGithubMode: (m: 'exclude' | 'include') => void;
+}
+
+/** Owns all per-connection filter state so the panel (above the repo list) and
+ *  the footer (below it) can share it. */
+export function useCardFilter({
   provider,
   sourceIds,
   currentPreset,
@@ -152,7 +181,7 @@ export function CardFilterEditor({
   provider: Provider;
   sourceIds: string[];
   currentPreset: string | null;
-}): ReactElement {
+}): CardFilter {
   const opts = OPTIONS[provider];
   // Map the stored preset back to a menu value for the initial selection.
   const initial = mapPresetToOption(provider, currentPreset);
@@ -240,43 +269,71 @@ export function CardFilterEditor({
     setNote(null);
   }
 
-  if (sourceIds.length === 0) return <p className="text-xs text-muted">Nothing connected to filter yet.</p>;
+  return {
+    provider,
+    hasSources: sourceIds.length > 0,
+    dirty,
+    pending,
+    note,
+    save,
+    discard,
+    opts,
+    mode,
+    selectedDesc: selected.desc,
+    onMode,
+    c,
+    setC,
+    chips,
+    mono,
+    ageNoun,
+    githubInclude,
+    trelloToggleLists,
+    customHeader,
+    addPlaceholder,
+    trelloLists,
+    toggleList,
+    setGithubMode,
+  };
+}
 
+/** The filter editor body (dropdown + chip box), rendered above the repo list. */
+export function CardFilterPanel({ f }: { f: CardFilter }): ReactElement {
+  if (!f.hasSources) return <p className="text-xs text-muted">Nothing connected to filter yet.</p>;
+  const { c, setC, mode } = f;
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="font-medium text-fg">{provider === 'github' ? 'File filtering' : 'Filtering'}</span>
+        <span className="font-medium text-fg">{f.provider === 'github' ? 'File filtering' : 'Filtering'}</span>
         <select
           value={mode}
-          disabled={pending}
-          onChange={(e) => onMode(e.target.value)}
+          disabled={f.pending}
+          onChange={(e) => f.onMode(e.target.value)}
           className="rounded-md border border-border bg-card px-2 py-1 text-sm text-fg disabled:opacity-50"
         >
-          {opts.map((o) => (
+          {f.opts.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
             </option>
           ))}
         </select>
-        <span className="text-xs text-muted">{selected.desc}</span>
-        {note !== null ? <span className="text-xs text-accent">{note}</span> : null}
+        <span className="text-xs text-muted">{f.selectedDesc}</span>
       </div>
 
-      {mode !== 'everything' && mode !== 'recommended-empty' ? (
+      {mode !== 'everything' ? (
         <div className="rounded-lg border border-border bg-bg p-3">
-          {mode === 'custom' && provider === 'github' ? (
-            <div className="mb-3 inline-flex rounded-md border border-border bg-card p-0.5 text-xs">
+          {mode === 'custom' && f.provider === 'github' ? (
+            <div className="mb-3 inline-flex rounded-md bg-bg p-0.5 text-xs">
               <button
                 type="button"
-                onClick={() => setGithubMode('exclude')}
-                className={`rounded px-2 py-1 ${c.githubMode === 'exclude' ? 'bg-accent text-white' : 'text-muted'}`}
+                onClick={() => f.setGithubMode('exclude')}
+                className={`rounded px-2.5 py-1 ${c.githubMode === 'exclude' ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'}`}
               >
                 Exclude these paths
               </button>
               <button
                 type="button"
-                onClick={() => setGithubMode('include')}
-                className={`rounded px-2 py-1 ${c.githubMode === 'include' ? 'bg-accent text-white' : 'text-muted'}`}
+                onClick={() => f.setGithubMode('include')}
+                className={`rounded px-2.5 py-1 ${c.githubMode === 'include' ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'}`}
               >
                 Only index these paths
               </button>
@@ -284,22 +341,18 @@ export function CardFilterEditor({
           ) : null}
 
           <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.08em] text-muted">
-            {mode === 'custom'
-              ? trelloToggleLists
-                ? 'Exclude lists · tap to toggle'
-                : customHeader
-              : 'Excluded by this preset'}
+            {mode === 'custom' ? (f.trelloToggleLists ? 'Exclude lists · tap to toggle' : f.customHeader) : 'Excluded by this preset'}
           </div>
 
-          {trelloToggleLists ? (
+          {f.trelloToggleLists ? (
             <div className="flex flex-wrap items-center gap-1.5">
-              {(trelloLists as string[]).map((list) => {
+              {(f.trelloLists as string[]).map((list) => {
                 const on = c.patterns.includes(list);
                 return (
                   <button
                     key={list}
                     type="button"
-                    onClick={() => toggleList(list)}
+                    onClick={() => f.toggleList(list)}
                     className={`rounded border px-2 py-0.5 text-xs ${
                       on ? 'border-accent bg-accent/10 text-fg' : 'border-border bg-card text-muted hover:text-fg'
                     }`}
@@ -309,17 +362,17 @@ export function CardFilterEditor({
                   </button>
                 );
               })}
-              {(trelloLists as string[]).length === 0 ? <span className="text-xs text-muted">No lists found.</span> : null}
+              {(f.trelloLists as string[]).length === 0 ? <span className="text-xs text-muted">No lists found.</span> : null}
             </div>
           ) : (
             <>
               <div className="flex flex-wrap items-center gap-1.5">
-                {chips.map((chip) => (
+                {f.chips.map((chip) => (
                   <span
                     key={chip}
                     className={`inline-flex items-center gap-1.5 rounded border border-border px-2 py-0.5 text-xs ${
                       mode === 'custom' ? 'bg-card text-fg' : 'bg-card text-muted'
-                    } ${mono ? 'font-mono' : ''}`}
+                    } ${f.mono ? 'font-mono' : ''}`}
                   >
                     {chip}
                     {mode === 'custom' ? (
@@ -334,7 +387,7 @@ export function CardFilterEditor({
                     ) : null}
                   </span>
                 ))}
-                {chips.length === 0 && mode !== 'custom' ? <span className="text-xs text-muted">Nothing excluded.</span> : null}
+                {f.chips.length === 0 && mode !== 'custom' ? <span className="text-xs text-muted">Nothing excluded.</span> : null}
               </div>
               {mode === 'custom' ? (
                 <input
@@ -346,17 +399,17 @@ export function CardFilterEditor({
                       setC({ ...c, patterns: [...c.patterns, c.draft.trim()], draft: '' });
                     }
                   }}
-                  placeholder={addPlaceholder}
-                  className={`mt-2 w-full rounded-md border border-dashed border-border bg-card px-3 py-2 text-sm text-fg outline-none focus:border-accent ${mono ? 'font-mono' : ''}`}
+                  placeholder={f.addPlaceholder}
+                  className={`mt-2 w-full rounded-md border border-dashed border-border bg-card px-3 py-2 text-sm text-fg outline-none focus:border-accent ${f.mono ? 'font-mono' : ''}`}
                 />
               ) : null}
             </>
           )}
-          {provider === 'trello' && mode === 'custom' && trelloLists === undefined ? (
+          {f.provider === 'trello' && mode === 'custom' && f.trelloLists === undefined ? (
             <p className="mt-1 text-xs text-muted">Loading lists…</p>
           ) : null}
 
-          {mode === 'custom' && provider === 'jira' ? (
+          {mode === 'custom' && f.provider === 'jira' ? (
             <ChipRow
               label="Exclude issue types"
               values={c.jiraTypes}
@@ -368,7 +421,7 @@ export function CardFilterEditor({
             />
           ) : null}
 
-          {mode === 'custom' && provider === 'trello' ? (
+          {mode === 'custom' && f.provider === 'trello' ? (
             <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm">
               <input
                 type="checkbox"
@@ -380,9 +433,9 @@ export function CardFilterEditor({
             </label>
           ) : null}
 
-          {mode === 'custom' && provider !== 'github' ? (
+          {mode === 'custom' && f.provider !== 'github' ? (
             <div className="mt-3">
-              <div className="mb-1.5 text-sm font-semibold text-fg">Exclude {ageNoun} not updated in</div>
+              <div className="mb-1.5 text-sm font-semibold text-fg">Exclude {f.ageNoun} not updated in</div>
               <div className="flex items-center gap-2">
                 <input
                   type="number"
@@ -404,27 +457,46 @@ export function CardFilterEditor({
               </div>
             </div>
           ) : null}
-
         </div>
       ) : null}
+    </div>
+  );
+}
 
-      {dirty ? (
+/** The sticky save/discard bar, rendered at the bottom of the card when there
+ *  are unsaved filtering changes. */
+export function CardFilterFooter({ f }: { f: CardFilter }): ReactElement | null {
+  if (!f.dirty && f.note === null) return null;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-accent-soft/50 px-4 py-3">
+      <div className="flex items-center gap-2 text-sm">
+        {f.dirty ? (
+          <>
+            <span className="h-2 w-2 flex-none rounded-full bg-accent" />
+            <span className="font-medium text-accent">Unsaved filtering changes</span>
+            <span className="text-xs text-muted">Saving will re-index this source.</span>
+          </>
+        ) : f.note !== null ? (
+          <span className="text-xs text-muted">{f.note}</span>
+        ) : null}
+      </div>
+      {f.dirty ? (
         <div className="flex items-center gap-2">
           <button
             type="button"
-            disabled={pending}
-            onClick={save}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            disabled={f.pending}
+            onClick={f.discard}
+            className="rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-fg hover:bg-bg disabled:opacity-50"
           >
-            Save &amp; reindex
+            Discard
           </button>
           <button
             type="button"
-            disabled={pending}
-            onClick={discard}
-            className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-fg hover:bg-bg disabled:opacity-50"
+            disabled={f.pending}
+            onClick={f.save}
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
           >
-            Discard changes
+            Save &amp; re-index
           </button>
         </div>
       ) : null}

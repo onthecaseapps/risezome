@@ -5,7 +5,7 @@ import { useMenuBehaviors } from '../_components/overlay';
 import { setItemForTeamAction } from './team-source-toggle-action';
 import { reindexSourceAction } from './reindex-action';
 import { SourceItemList, type Provider, type SourceItem } from './_source-item-list';
-import { CardFilterEditor, connectorPresetLabel } from './_card-filter-editor';
+import { useCardFilter, CardFilterPanel, CardFilterFooter, connectorPresetLabel } from './_card-filter-editor';
 
 /**
  * A single connection card (U2): GitHub renders one per installation; Jira,
@@ -88,6 +88,7 @@ export function ConnectionCard({
   const cardPreset = uniqueOverrides.size === 1 ? (overridePresets[0] ?? null) : null;
   const filterPillLabel =
     uniqueOverrides.size > 1 ? 'Mixed' : connectorPresetLabel(data.provider, cardPreset);
+  const filter = useCardFilter({ provider: data.provider, sourceIds: cardSourceIds, currentPreset: cardPreset });
 
   function localSet(externalId: string, on: boolean): void {
     setSelected((prev) => {
@@ -246,11 +247,7 @@ export function ConnectionCard({
         <div className="overflow-hidden rounded-b-xl">
           {cardSourceIds.length > 0 ? (
             <div className="border-t border-border px-4 py-4">
-              <CardFilterEditor
-                provider={data.provider}
-                sourceIds={cardSourceIds}
-                currentPreset={cardPreset}
-              />
+              <CardFilterPanel f={filter} />
             </div>
           ) : null}
           <SourceItemList
@@ -260,6 +257,7 @@ export function ConnectionCard({
             selectedKeys={selected}
             onSelectionChange={localSet}
           />
+          <CardFilterFooter f={filter} />
         </div>
       ) : null}
     </div>
