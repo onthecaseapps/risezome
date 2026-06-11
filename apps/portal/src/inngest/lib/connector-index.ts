@@ -204,6 +204,14 @@ export async function runConnectorIndex<E>(
   const embedder = new VoyageEmbedder({ apiKey: requireEnv('VOYAGE_API_KEY') });
   const writer = config.corpusWriter ?? pgCorpusWriter();
 
+  // Progress through the embed phase — the expensive, user-visible work
+  // (contextualize + summarize + embed + write). The prepare loop above only
+  // SCANS, which is instant for inline-body connectors (e.g. Confluence), so
+  // without advancing the counter here the bar would sit pinned at total/total
+  // for the entire embed phase. Unchanged docs (entities − toWrite) are already
+  // in the corpus, so they count as done; the bar climbs from that baseline to
+  // `entities.length` as changed/new docs actually embed.
+  const alreadyDone = entities.length - toWrite.length;
   for (let i = 0; i < toWrite.length; i += EMBED_BATCH) {
     const batch = toWrite.slice(i, i + EMBED_BATCH);
     await step.run(`embed-${String(i)}`, async () => {
@@ -299,6 +307,12 @@ export async function runConnectorIndex<E>(
           embeddings: embedItems.map((_, idx) => arrayToVectorLiteral(embeddings.vectors[idx]!.vector)),
         });
       });
+      // Advance the live progress counter as this batch's docs finish embedding.
+      await createServiceRoleClient()
+        .from('sources')
+        .update({ indexed_files: alreadyDone + Math.min(i + batch.length, toWrite.length) })
+        .eq('id', sourceId)
+        .eq('org_id', orgId); // defense-in-depth: service-role bypasses RLS, scope by org explicitly
     });
   }
 
