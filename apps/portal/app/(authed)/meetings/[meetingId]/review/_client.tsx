@@ -67,6 +67,9 @@ function seedState(
       accumulatedText: s.accumulatedText,
       streaming: false,
       citations: s.citations,
+      ...(s.additionalSources !== undefined && s.additionalSources.length > 0
+        ? { additionalSources: s.additionalSources }
+        : {}),
       pinned: s.pinned,
       pinnedAt: s.pinnedAt,
       ...(s.triggerUtteranceId != null ? { triggerUtteranceId: s.triggerUtteranceId } : {}),

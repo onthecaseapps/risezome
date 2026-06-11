@@ -318,3 +318,70 @@ describe('SynthesisCard — B4 in-place transition (no remount)', () => {
     expect(container.querySelector('article')?.classList.contains('synthesis-phase-streaming')).toBe(true);
   });
 });
+
+describe('SynthesisCard — additional sources row (ALSO: line)', () => {
+  it('renders title links for each additional source when done', () => {
+    const { container } = render(
+      <SynthesisCard
+        synthesisId="s1"
+        phase="done"
+        answer={<>Answer [1].</>}
+        sources={[mkCard()]}
+        citationRecords={[{ rank: 1, cardId: 'src1', position: 0 }]}
+        additionalSources={[
+          mkCard({ cardId: 'extra1', title: 'contextualize.ts', url: 'https://x/contextualize' }),
+          mkCard({ cardId: 'extra2', title: 'file-chunker.ts', url: 'https://x/chunker' }),
+        ]}
+      />,
+    );
+    const row = container.querySelector('.synthesis-additional-sources');
+    expect(row).not.toBeNull();
+    expect(row?.textContent).toContain('Additional sources');
+    const links = row?.querySelectorAll('a') ?? [];
+    expect(links).toHaveLength(2);
+    expect(links[0]?.textContent).toBe('contextualize.ts');
+    expect(links[0]?.getAttribute('href')).toBe('https://x/contextualize');
+    expect(links[1]?.textContent).toBe('file-chunker.ts');
+    expect(links[1]?.getAttribute('href')).toBe('https://x/chunker');
+  });
+
+  it('a source without a url renders as plain text, not a dead link', () => {
+    const { container } = render(
+      <SynthesisCard
+        synthesisId="s1"
+        phase="done"
+        answer={<>Answer.</>}
+        sources={[]}
+        additionalSources={[mkCard({ cardId: 'extra1', title: 'No-url doc' })]}
+      />,
+    );
+    const row = container.querySelector('.synthesis-additional-sources');
+    expect(row?.textContent).toContain('No-url doc');
+    expect(row?.querySelectorAll('a')).toHaveLength(0);
+  });
+
+  it('row is absent when there are no additional sources (renders exactly as today)', () => {
+    const { container } = render(
+      <SynthesisCard
+        synthesisId="s1"
+        phase="done"
+        answer={<>Answer.</>}
+        sources={[mkCard()]}
+      />,
+    );
+    expect(container.querySelector('.synthesis-additional-sources')).toBeNull();
+  });
+
+  it('row is absent while streaming even if marks already arrived', () => {
+    const { container } = render(
+      <SynthesisCard
+        synthesisId="s1"
+        phase="streaming"
+        answer={<>Partial</>}
+        sources={[]}
+        additionalSources={[mkCard({ cardId: 'extra1' })]}
+      />,
+    );
+    expect(container.querySelector('.synthesis-additional-sources')).toBeNull();
+  });
+});

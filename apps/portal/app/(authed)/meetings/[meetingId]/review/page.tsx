@@ -141,7 +141,7 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
   const { data: synthRows } = await supabase
     .from('syntheses')
     .select(
-      'synthesis_id, source_card_ids, accumulated_text_enc, status, stop_reason, error_code, error_message, citations, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, ttft_ms, latency_ms, trace_id, pinned, pinned_at, trigger_utterance_id, retracted_at, created_at',
+      'synthesis_id, source_card_ids, accumulated_text_enc, status, stop_reason, error_code, error_message, citations, additional_sources, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, ttft_ms, latency_ms, trace_id, pinned, pinned_at, trigger_utterance_id, retracted_at, created_at',
     )
     .eq('meeting_id', meetingId)
     .eq('status', 'done')

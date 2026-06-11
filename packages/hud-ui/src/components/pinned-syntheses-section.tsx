@@ -88,6 +88,14 @@ function PinnedSynthesisItem({ syn }: { syn: SynthesisRecord }): ReactElement {
     phase !== 'done',
   );
 
+  // Additional supporting sources (ALSO: line) resolve to cards the same way
+  // sources do; a missing card (retracted locally) is skipped silently.
+  const additionalSources: CardEvent[] = [];
+  for (const ref of syn.additionalSources ?? []) {
+    const rec = state.cards.get(ref.cardId);
+    if (rec !== undefined) additionalSources.push(rec.card);
+  }
+
   return (
     <SynthesisCard
       synthesisId={syn.synthesisId}
@@ -95,6 +103,7 @@ function PinnedSynthesisItem({ syn }: { syn: SynthesisRecord }): ReactElement {
       answer={answer}
       sources={sources}
       citationRecords={syn.citations}
+      additionalSources={additionalSources}
       pinned={syn.pinned}
     />
   );

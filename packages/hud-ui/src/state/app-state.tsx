@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import type {
+  AdditionalSource,
   CardEvent,
   CardRetracted,
   CardUpdated,
@@ -58,6 +59,10 @@ export interface SynthesisRecord {
    *  show the question above the answer; resolved to text via the transcript
    *  map. Absent on syntheses written before this field existed. */
   readonly triggerUtteranceId?: string | null;
+  /** Retrieved-but-uncited sources the synthesizer marked as also supporting
+   *  the answer (the ALSO: line). Resolved refs into sourceCardIds. Absent
+   *  when none were marked. */
+  readonly additionalSources?: readonly AdditionalSource[];
 }
 
 export type MeetingMode = 'idle' | 'live';
@@ -290,6 +295,16 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
       const existing = state.syntheses.get(action.done.synthesisId);
       if (existing === undefined) return state;
       const syntheses = cloneMap(state.syntheses);
+      // Additional supporting sources arrive resolved on the broadcast path
+      // (additionalSources) or as bare ranks on the dev WS path
+      // (additionalSourceRanks) — resolve the latter against this record's
+      // source set, same lookup citations use; unresolvable ranks drop.
+      const additionalSources =
+        action.done.additionalSources ??
+        (action.done.additionalSourceRanks ?? []).flatMap((rank) => {
+          const cardId = existing.sourceCardIds[rank - 1];
+          return cardId !== undefined ? [{ cardId, rank }] : [];
+        });
       const updated: SynthesisRecord = {
         ...existing,
         streaming: false,
@@ -300,6 +315,7 @@ export function appStateReducer(state: AppState, action: AppAction): AppState {
         stopReason: action.done.stopReason,
         ttftMs: action.done.ttftMs,
         latencyMs: action.done.latencyMs,
+        ...(additionalSources.length > 0 ? { additionalSources } : {}),
       };
       syntheses.set(action.done.synthesisId, updated);
       // U8: a successful done resets the paused-pill streak.

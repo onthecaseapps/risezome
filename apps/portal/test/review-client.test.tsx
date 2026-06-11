@@ -9,6 +9,7 @@ import {
 } from '../app/(authed)/meetings/[meetingId]/review/_client';
 import type { StructuredRecap } from '../src/inngest/lib/meeting-recap';
 import {
+  normalizeAdditionalSources,
   normalizeCitations,
   resolveSynthesisAnchors,
   type AnchorSynthesis,
@@ -229,6 +230,38 @@ describe('normalizeCitations (R8 — old rows render correctly)', () => {
 
   it('drops out-of-range legacy ranks', () => {
     expect(normalizeCitations([3], ['only-one'], 'x')).toEqual([]);
+  });
+});
+
+describe('normalizeAdditionalSources', () => {
+  it('passes through valid resolved entries', () => {
+    expect(
+      normalizeAdditionalSources([
+        { cardId: 'cardB', rank: 2 },
+        { cardId: 'cardC', rank: 3 },
+      ]),
+    ).toEqual([
+      { rank: 2, cardId: 'cardB' },
+      { rank: 3, cardId: 'cardC' },
+    ]);
+  });
+
+  it('returns [] for pre-feature rows (null / missing column)', () => {
+    expect(normalizeAdditionalSources(null)).toEqual([]);
+    expect(normalizeAdditionalSources(undefined)).toEqual([]);
+    expect(normalizeAdditionalSources([])).toEqual([]);
+  });
+
+  it('drops malformed entries (missing cardId, non-integer rank)', () => {
+    expect(
+      normalizeAdditionalSources([
+        { cardId: '', rank: 2 },
+        { rank: 2 },
+        { cardId: 'ok', rank: 1.5 },
+        { cardId: 'good', rank: 4 },
+        'not-an-object',
+      ]),
+    ).toEqual([{ rank: 4, cardId: 'good' }]);
   });
 });
 

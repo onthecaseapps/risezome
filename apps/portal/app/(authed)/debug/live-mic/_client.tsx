@@ -101,6 +101,9 @@ interface SynthesisDoneEvent {
   stopReason: string;
   accumulatedText: string;
   citations: SynthesisCitation[];
+  /** Validated ALSO: ranks; the reducer resolves them against the
+   *  synthesis's sourceCardIds (same lookup citations use). */
+  additionalSourceRanks?: number[];
   usage?: Record<string, unknown>;
 }
 
@@ -381,6 +384,9 @@ function DebugInner({
             synthesisId: d.synthesisId,
             stopReason: d.stopReason,
             citations: d.citations,
+            ...(d.additionalSourceRanks !== undefined && d.additionalSourceRanks.length > 0
+              ? { additionalSourceRanks: d.additionalSourceRanks }
+              : {}),
             usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
             ttftMs: 0,
             latencyMs: 0,

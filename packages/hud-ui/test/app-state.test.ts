@@ -252,6 +252,73 @@ describe('appStateReducer', () => {
     expect(s.lastSynthesisAnnounce).toBe('Body');
   });
 
+  it('synthesisDone stores resolved additionalSources from the broadcast path', () => {
+    const start: SynthesisStartEvent = {
+      synthesisId: 'syn1',
+      sourceCardIds: ['c1', 'c2', 'c3'],
+      traceId: 'tr1',
+    };
+    let s = appStateReducer(initialAppState, { type: 'synthesisStart', start });
+    s = appStateReducer(s, {
+      type: 'synthesisDone',
+      done: {
+        synthesisId: 'syn1',
+        stopReason: 'end_turn',
+        citations: [{ rank: 1, cardId: 'c1', position: 0 }],
+        additionalSources: [
+          { cardId: 'c2', rank: 2 },
+          { cardId: 'c3', rank: 3 },
+        ],
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
+        ttftMs: 0,
+        latencyMs: 0,
+      },
+    });
+    expect(s.syntheses.get('syn1')?.additionalSources).toEqual([
+      { cardId: 'c2', rank: 2 },
+      { cardId: 'c3', rank: 3 },
+    ]);
+  });
+
+  it('synthesisDone resolves additionalSourceRanks (dev WS path) against sourceCardIds, dropping out-of-range', () => {
+    const start: SynthesisStartEvent = {
+      synthesisId: 'syn1',
+      sourceCardIds: ['c1', 'c2'],
+      traceId: 'tr1',
+    };
+    let s = appStateReducer(initialAppState, { type: 'synthesisStart', start });
+    s = appStateReducer(s, {
+      type: 'synthesisDone',
+      done: {
+        synthesisId: 'syn1',
+        stopReason: 'end_turn',
+        citations: [{ rank: 1, cardId: 'c1', position: 0 }],
+        additionalSourceRanks: [2, 9], // 9 has no card — dropped at resolution
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
+        ttftMs: 0,
+        latencyMs: 0,
+      },
+    });
+    expect(s.syntheses.get('syn1')?.additionalSources).toEqual([{ cardId: 'c2', rank: 2 }]);
+  });
+
+  it('synthesisDone with no additional marks leaves the field absent', () => {
+    const start: SynthesisStartEvent = { synthesisId: 'syn1', sourceCardIds: ['c1'], traceId: 'tr1' };
+    let s = appStateReducer(initialAppState, { type: 'synthesisStart', start });
+    s = appStateReducer(s, {
+      type: 'synthesisDone',
+      done: {
+        synthesisId: 'syn1',
+        stopReason: 'end_turn',
+        citations: [],
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
+        ttftMs: 0,
+        latencyMs: 0,
+      },
+    });
+    expect(s.syntheses.get('syn1')?.additionalSources).toBeUndefined();
+  });
+
   it('synthesisDelta is a no-op once a synthesis is done (S6 replay guard — no doubling)', () => {
     // Regression: on the live page the channel's reconnect-replay re-delivers
     // synthesisStart/Delta/Done for a synthesis already hydrated from the DB

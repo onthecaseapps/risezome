@@ -362,3 +362,42 @@ describe('SynthesisStream', () => {
     ).toBe('second thing');
   });
 });
+
+describe('SynthesisStream — additional sources resolution', () => {
+  it('resolves additionalSources refs to cards and renders the row', () => {
+    const cited = mkCard();
+    const extra = mkCard({ cardId: 'src2', title: 'Corroborating doc', url: 'https://x/doc' });
+    const syn = mkSyn({
+      sourceCardIds: ['src1', 'src2'],
+      accumulatedText: 'Done answer [1].',
+      streaming: false,
+      citations: [{ rank: 1, cardId: 'src1', position: 0 }],
+      additionalSources: [{ cardId: 'src2', rank: 2 }],
+    });
+    const { container } = render(
+      <AppStateProvider initial={stateWith({ cards: [cited, extra], syntheses: [syn] })}>
+        <SynthesisStream />
+      </AppStateProvider>,
+    );
+    const row = container.querySelector('.synthesis-additional-sources');
+    expect(row).not.toBeNull();
+    expect(row?.querySelector('a')?.textContent).toBe('Corroborating doc');
+  });
+
+  it('a mark whose card is missing locally is skipped without error (row absent when none resolve)', () => {
+    const syn = mkSyn({
+      sourceCardIds: ['src1', 'src_gone'],
+      accumulatedText: 'Done answer [1].',
+      streaming: false,
+      citations: [{ rank: 1, cardId: 'src1', position: 0 }],
+      additionalSources: [{ cardId: 'src_gone', rank: 2 }],
+    });
+    const { container } = render(
+      <AppStateProvider initial={stateWith({ cards: [mkCard()], syntheses: [syn] })}>
+        <SynthesisStream />
+      </AppStateProvider>,
+    );
+    expect(container.querySelector('article[data-kind="synthesis"]')).not.toBeNull();
+    expect(container.querySelector('.synthesis-additional-sources')).toBeNull();
+  });
+});

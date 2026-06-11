@@ -242,6 +242,9 @@ function seedState(
       accumulatedText: s.accumulatedText,
       streaming: s.status === 'running',
       citations: s.citations,
+      ...(s.additionalSources !== undefined && s.additionalSources.length > 0
+        ? { additionalSources: s.additionalSources }
+        : {}),
       pinned: s.pinned ?? false,
       pinnedAt: s.pinnedAt ?? null,
       ...(s.triggerUtteranceId != null ? { triggerUtteranceId: s.triggerUtteranceId } : {}),

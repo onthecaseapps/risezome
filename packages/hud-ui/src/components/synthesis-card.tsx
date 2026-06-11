@@ -50,6 +50,10 @@ export interface SynthesisCardProps {
    *  chip activations to look up the right quote when the chip fires
    *  onActivate. */
   readonly citationRecords?: readonly SynthesisCitation[];
+  /** Cards the synthesizer marked as also supporting the answer without
+   *  citing them (the ALSO: line), already resolved by the caller. Rendered
+   *  as a muted links row beneath the cited sources; omitted when empty. */
+  readonly additionalSources?: readonly CardEvent[];
   /** Pin state from the reducer. Drives the pin button glyph + ARIA
    *  label. The actual pin/unpin call goes through SynthesisActions
    *  context (host-injected). When the host doesn't provide actions
@@ -88,6 +92,7 @@ export function SynthesisCard({
   answer,
   sources,
   citationRecords,
+  additionalSources = [],
   pinned = false,
   entering = false,
   question,
@@ -232,8 +237,42 @@ export function SynthesisCard({
             </div>
           </section>
         )}
+
+        {isDone && additionalSources.length > 0 && (
+          <AdditionalSourcesRow sources={additionalSources} />
+        )}
       </div>
     </SynthesisCardActivateContext.Provider>
+  );
+}
+
+/**
+ * Muted links row for retrieved-but-uncited sources the synthesizer marked
+ * as also supporting the answer (the ALSO: line). Deliberately lighter than
+ * the cited SOURCES panel — title-only inline links, no cards, no expansion —
+ * so corroboration is one click away without competing with the citations.
+ */
+function AdditionalSourcesRow({
+  sources,
+}: {
+  sources: readonly CardEvent[];
+}): ReactElement {
+  return (
+    <section className="synthesis-additional-sources" aria-label="Additional sources">
+      <span className="synthesis-additional-sources-label">Additional sources:</span>{' '}
+      {sources.map((s, idx) => (
+        <span key={s.cardId} className="synthesis-additional-source">
+          {idx > 0 && <span aria-hidden="true"> · </span>}
+          {s.url !== undefined && s.url.length > 0 ? (
+            <a href={s.url} target="_blank" rel="noreferrer">
+              {s.title}
+            </a>
+          ) : (
+            <span>{s.title}</span>
+          )}
+        </span>
+      ))}
+    </section>
   );
 }
 

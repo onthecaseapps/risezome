@@ -704,6 +704,33 @@ body {
   gap: 8px;
 }
 
+/* Additional supporting sources (the ALSO: line) — a single muted inline
+   row of title links beneath the cited SOURCES panel. Deliberately lighter
+   than the source cards: corroboration, not citation. */
+.synthesis-additional-sources {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  padding-left: 2px;
+}
+
+.synthesis-additional-sources-label {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.synthesis-additional-sources a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.synthesis-additional-sources a:hover {
+  color: var(--accent);
+}
+
 /* A "consolidated" card is a normal card living inside a synthesis card's
    grid: tighter padding, smaller text, snippet hidden to keep the grid
    readable. Clicking the title still navigates to the source. */
