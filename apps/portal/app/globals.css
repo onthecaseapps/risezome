@@ -16,6 +16,10 @@
  * components (U5) reuse the same card/source/synthesis tokens.
  */
 :root {
+  /* Tie native controls (checkboxes, number spinners, the <select> arrow,
+     scrollbars) to the app theme. Without this they render in the OS scheme —
+     a dark-OS user saw dark checkboxes/arrows even on the light theme. */
+  color-scheme: light;
   /* Crisp Light: tighter cool surfaces; cards sit on the page via a hairline +
      a whisper shadow (not flat — that read as cut-outs on the gray sheet). */
   --bg: #f3f5f8;
@@ -58,6 +62,7 @@
 }
 
 :root.dark {
+  color-scheme: dark; /* native controls follow the dark theme */
   /* Crisp Slate (dark): cooler near-black slate; flat by default. */
   --bg: #0b0e15;
   --fg: #e9edf6;

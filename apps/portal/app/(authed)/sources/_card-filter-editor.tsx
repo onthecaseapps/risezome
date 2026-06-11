@@ -366,11 +366,12 @@ export function CardFilterEditor({
           ) : null}
 
           {mode === 'custom' && provider === 'trello' ? (
-            <label className="mt-3 flex items-center gap-2 text-sm">
+            <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={c.trelloIncludeArchived}
                 onChange={(e) => setC({ ...c, trelloIncludeArchived: e.target.checked })}
+                className="h-4 w-4 flex-none accent-[var(--accent)]"
               />
               <span className="text-fg">Index completed / archived cards</span>
             </label>
