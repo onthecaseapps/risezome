@@ -24,7 +24,7 @@ import { classifyRelevanceHeuristic } from '@risezome/engine/relevance';
 import type { RelevanceResult } from '@risezome/engine/relevance';
 import { shouldRecordMiss } from '@risezome/engine/gaps';
 import { augmentQuery } from '@risezome/engine/query-expand';
-import { shouldExpandOnMiss, classifyQueryComplexity } from '@risezome/engine/query-route';
+import { shouldExpandOnMiss } from '@risezome/engine/query-route';
 import { isToolShaped, ClassifierProviderError } from '@risezome/engine/router';
 import {
   type Skill,
@@ -262,7 +262,7 @@ export async function runPipeline(
         judgeResolvedMs = Date.now() - judgeStart;
         return r;
       })
-      .catch((err): RelevanceResult => {
+      .catch((err: unknown): RelevanceResult => {
         judgeResolvedMs = Date.now() - judgeStart;
         deps.logger.warn(
           { err, meetingId: input.meetingId, utteranceId: input.utteranceId },
@@ -355,20 +355,15 @@ export async function runPipeline(
   // embed (latency U1); the code vector is always embedded fresh. The two voyage
   // calls run concurrently. The code leg is best-effort — on its failure
   // retrieval degrades to text + FTS, never hard-fails.
-  // Proactive MULTI-QUERY for scattered/overview questions: fire the term
-  // expander CONCURRENTLY with the primary embed (it overlaps, so it doesn't
-  // add the serial CRAG round-trip), then union the augmented query's candidate
-  // pool into the SAME rerank. Bounded to scattered questions to cap the extra
-  // LLM call + searches; the primary rerank against the original question keeps
-  // precision while the extra query broadens recall.
+  // Query expansion is REACTIVE-ONLY (CRAG on miss, below). The old speculative
+  // multi-query path fired the expander on every "scattered" query and AWAITED
+  // its Haiku call + augmented re-embed BEFORE the primary search — measured at
+  // 1.1–1.6s of serial delay on most real questions (conversational windows
+  // almost always classify scattered), while its expansions were essentially
+  // never adopted (the confident-adoption bar). The primary search now starts
+  // the moment the embed lands; the expander runs only when there is nothing
+  // to show (a miss), where its latency hides nothing.
   const expander = deps.optionalQueryExpander();
-  const speculativeScattered = expander !== undefined && classifyQueryComplexity(queryText) === 'scattered';
-  const expansionTermsPromise: Promise<string[]> | null = speculativeScattered
-    ? expander(queryText).catch((err: unknown) => {
-        deps.logger.warn({ err, meetingId: input.meetingId }, 'pipeline.multiquery.expand.failed');
-        return [] as string[];
-      })
-    : null;
 
   const embedStart = Date.now();
   let queryEmbedding: Float32Array;
@@ -422,42 +417,6 @@ export async function runPipeline(
     );
   }
 
-  // Build the expansion query (scattered questions only): await the expander
-  // terms that have been resolving since before the embed, then embed the
-  // augmented query in both spaces. The augmented embeds run concurrently.
-  let expansionQueries:
-    | { queryVectorLiteral: string; codeQueryVectorLiteral?: string; queryText: string }[]
-    | undefined;
-  let speculativeExpanded = false;
-  if (expansionTermsPromise !== null) {
-    const terms = await expansionTermsPromise;
-    const augmented = augmentQuery(queryText, terms);
-    if (augmented !== queryText) {
-      const [augTextVec, augCodeVec] = await Promise.all([
-        deps.embedder
-          .embed({ items: [{ text: augmented, domain: 'text' }], purpose: 'query' })
-          .then((r) => r.vectors[0]?.vector)
-          .catch(() => undefined),
-        deps.embedder
-          .embed({ items: [{ text: augmented, domain: 'code' }], purpose: 'query' })
-          .then((r) => r.vectors[0]?.vector)
-          .catch(() => undefined),
-      ]);
-      if (augTextVec !== undefined) {
-        speculativeExpanded = true;
-        expansionQueries = [
-          {
-            queryVectorLiteral: `[${Array.from(augTextVec).join(',')}]`,
-            ...(augCodeVec !== undefined
-              ? { codeQueryVectorLiteral: `[${Array.from(augCodeVec).join(',')}]` }
-              : {}),
-            queryText: augmented,
-          },
-        ];
-      }
-    }
-  }
-
   // ── Stage: hybrid search ──────────────────────────────────────────────
   const searchStart = Date.now();
   const queryLiteral = `[${Array.from(queryEmbedding).join(',')}]`;
@@ -471,7 +430,6 @@ export async function runPipeline(
     orgId: input.orgId,
     queryVectorLiteral: queryLiteral,
     ...(codeQueryLiteral !== undefined ? { codeQueryVectorLiteral: codeQueryLiteral } : {}),
-    ...(expansionQueries !== undefined ? { expansionQueries } : {}),
     queryText,
     limit: topK,
     reranker,
@@ -540,15 +498,21 @@ export async function runPipeline(
     }
   }
 
-  // ── Stage: CRAG expansion on miss/weak (bounded to one retry) ─────────
+  // ── Stage: CRAG expansion on MISS (bounded to one retry) ──────────────
+  // Miss-only (latency): a WEAK-but-nonempty set used to trigger the same
+  // expansion, adding ~1.5–2s (expander + re-embed + re-search) on the critical
+  // path before cards — and the confident-adoption bar below meant weak
+  // expansions were essentially never adopted. The weak set now surfaces
+  // immediately (synthesis remains the ground-or-refuse backstop); only a true
+  // miss — where the user would otherwise see nothing — pays for expansion.
   const cragStart = Date.now();
   const missed = hits.length === 0;
   const weak = !missed && deps.isLowConfidenceHits(hits);
   let cragRan = false;
   let cragAdopted = false;
-  // Skip reactive CRAG when speculative multi-query already expanded this
-  // (scattered) question — re-running the same expander would just repeat it.
-  if ((missed || weak) && !speculativeExpanded) {
+  let cragTermCount: number | undefined;
+  let cragExpandedCount: number | undefined;
+  if (missed) {
     // QUESTION lane: a detected substantive question is by definition worth one
     // expansion retry — `shouldExpandOnMiss`'s word-count floor was built for
     // ambient windows and excluded exactly the short, high-value questions
@@ -559,6 +523,7 @@ export async function runPipeline(
       cragRan = true;
       try {
         const terms = await expander(queryText);
+        cragTermCount = terms.length;
         const augmented = augmentQuery(queryText, terms);
         if (augmented !== queryText) {
           // Embed the augmented query in both spaces (same partitioning as the
@@ -592,6 +557,7 @@ export async function runPipeline(
             // word would ground a confidently-wrong answer). A weak expanded set
             // on a miss now stays a miss (knowledge gap) instead.
             const adopt = !deps.isLowConfidenceHits(expandedHits);
+            cragExpandedCount = expandedHits.length;
             if (adopt) {
               hits = expandedHits;
               cragAdopted = true;
@@ -618,7 +584,11 @@ export async function runPipeline(
       stageRecord('crag', cragRan ? 'ran' : 'skipped', cragStart, {
         ...(cragRan ? { decision: cragAdopted ? 'adopted' : 'kept_original' } : {}),
         reason: missed ? 'miss' : weak ? 'low_confidence' : 'confident',
-        data: { hits: hits.length },
+        data: {
+          hits: hits.length,
+          ...(cragTermCount !== undefined ? { terms: cragTermCount } : {}),
+          ...(cragExpandedCount !== undefined ? { expandedHits: cragExpandedCount } : {}),
+        },
       }),
     );
   }
@@ -716,6 +686,16 @@ export async function runPipeline(
     if (deps.isDuplicateAnswerSources(candidateDocIds)) {
       sink.recordSkip({ stage: 'answer-dedup', reason: 'duplicate_answer_sources' });
       if (trace !== null) {
+        // The enriched hybrid-search record (with hit titles) is normally pushed
+        // at emit time, which this early return never reaches — push a basic one
+        // here so a dedup-skipped run still shows its search latency/timings.
+        trace.push({
+          stage: 'hybrid-search',
+          status: 'ran',
+          latencyMs: searchLatencyMs,
+          atMs: trace.offsetOf(searchStart),
+          data: { hits: [], count: hits.length, ...(searchTimings ?? {}) },
+        });
         trace.push(
           stageRecord('dedup-expand', 'short_circuited', dedupStart, {
             decision: 'skip',
@@ -916,13 +896,32 @@ interface Enriched {
 }
 
 /** Fetch chunk + doc metadata for the hit set (org-scoped, defense-in-depth).
- *  The only raw DB reads the core does — a future engine-pure core would inject
- *  these rows (KTD2). */
+ *  FAST PATH (C1-lite): when every hit carries the enriched RPC fields, build
+ *  the maps from them with ZERO round-trips — the search already joined
+ *  doc_chunks + docs server-side. The DB fallback below covers mocks/older
+ *  function versions. */
 async function enrichHits(
   input: PipelineInput,
   deps: PipelineDeps,
   hits: readonly HybridHit[],
 ): Promise<Enriched> {
+  if (hits.length > 0 && hits.every((h) => h.enrich !== undefined)) {
+    const chunkById = new Map<string, EnrichedChunk>();
+    const docById = new Map<string, EnrichedDoc>();
+    for (const h of hits) {
+      const e = h.enrich!;
+      chunkById.set(h.chunk_id, {
+        docId: e.docId,
+        text: e.body,
+        position: e.position,
+        isSummary: e.isSummary,
+      });
+      if (!docById.has(e.docId)) {
+        docById.set(e.docId, { source: e.source, type: e.docType, title: e.title, url: e.url });
+      }
+    }
+    return { chunkById, docById };
+  }
   const chunkIds = hits.map((h) => h.chunk_id);
   const { data: chunkRows } = await deps.db
     .from('doc_chunks')
@@ -1167,7 +1166,7 @@ async function runSynthesis(args: {
   const startStreamingIfNeeded = (): void => {
     if (streaming) return;
     streaming = true;
-    if (firstProseMs === null) firstProseMs = Date.now() - synthStart;
+    firstProseMs ??= Date.now() - synthStart;
     sink.synthesisStart({
       synthesisId,
       sourceCardIds: surfacedCardIds,
@@ -1221,7 +1220,7 @@ async function runSynthesis(args: {
         startUsage = chunk.usage;
       } else if (chunk.type === 'textDelta') {
         accumulated += chunk.delta;
-        if (firstDeltaMs === null) firstDeltaMs = Date.now() - synthStart;
+        firstDeltaMs ??= Date.now() - synthStart;
         // Inspect the buffer for the STATUS prefix as it forms. Until it
         // resolves we hold output; once it resolves to 'answer' we stream the
         // post-prefix prose at sentence boundaries; a refusal never streams.

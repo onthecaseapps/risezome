@@ -262,8 +262,11 @@ describe('runPipeline — query embedding (U1: single embed)', () => {
   });
 });
 
-describe('runPipeline — proactive multi-query (scattered questions)', () => {
-  it('a SCATTERED question fires the expander and passes expansionQueries to search', async () => {
+describe('runPipeline — reactive-only expansion (latency: no speculative multi-query)', () => {
+  it('a scattered question with HITS never fires the expander — search starts unblocked', async () => {
+    // The old speculative path awaited the expander's LLM call BEFORE the
+    // primary search (~1.1–1.6s measured serial delay) while its expansions
+    // were essentially never adopted. Expansion is now reactive (CRAG on miss).
     const expander = vi.fn(async () => ['Clerk', 'NextAuth', 'OAuth']);
     const { deps, search } = makeDeps({ optionalQueryExpander: () => expander });
     await runPipeline(
@@ -271,22 +274,43 @@ describe('runPipeline — proactive multi-query (scattered questions)', () => {
       deps,
       new RecordingSink(),
     );
-    expect(expander).toHaveBeenCalledTimes(1);
-    const params = search.mock.calls[0]![0] as {
-      expansionQueries?: { queryText: string }[];
-    };
-    expect(params.expansionQueries).toHaveLength(1);
-    // The expansion query is the augmented (term-broadened) variant.
-    expect(params.expansionQueries![0]!.queryText).toContain('Clerk');
-  });
-
-  it('a SIMPLE lookup does NOT fire the expander or add expansionQueries', async () => {
-    const expander = vi.fn(async () => ['x']);
-    const { deps, search } = makeDeps({ optionalQueryExpander: () => expander });
-    await runPipeline(input({ queryText: 'what time is standup' }), deps, new RecordingSink());
     expect(expander).not.toHaveBeenCalled();
     const params = search.mock.calls[0]![0] as { expansionQueries?: unknown };
     expect(params.expansionQueries).toBeUndefined();
+  });
+
+  it('a WEAK (non-empty) hit set surfaces immediately — no expansion on the critical path', async () => {
+    const expander = vi.fn(async () => ['x']);
+    const { deps, search } = makeDeps({
+      optionalQueryExpander: () => expander,
+      isLowConfidenceHits: () => true, // every set reads weak
+    });
+    const sink = new RecordingSink();
+    await runPipeline(input({ queryText: 'how does this project work do we use ai models' }), deps, sink);
+    expect(expander).not.toHaveBeenCalled(); // weak ≠ miss: no expansion
+    expect(search.mock.calls).toHaveLength(1); // no re-search either
+    expect(sink.cards.length).toBeGreaterThan(0); // the weak set still surfaced
+  });
+
+  it('a MISS still expands reactively (CRAG): expander + one re-search', async () => {
+    const expander = vi.fn(async () => ['Clerk']);
+    const search = vi.fn(async (params: Parameters<HybridSearchFn>[0]): Promise<HybridHit[]> => {
+      // Primary query misses; the augmented re-search finds the hit.
+      return params.queryText.includes('Clerk') ? [hit('chunk_1', 0.1)] : [];
+    });
+    const { deps } = makeDeps({
+      hybridSearch: search as unknown as HybridSearchFn,
+      optionalQueryExpander: () => expander,
+    });
+    const sink = new RecordingSink();
+    await runPipeline(
+      input({ lane: 'question', queryText: 'what do we use for the auth library' }),
+      deps,
+      sink,
+    );
+    expect(expander).toHaveBeenCalledTimes(1);
+    expect(search.mock.calls).toHaveLength(2); // primary miss + augmented retry
+    expect(sink.cards.length).toBeGreaterThan(0);
   });
 });
 
@@ -1146,5 +1170,44 @@ describe('trace timing fields (latency instrumentation)', () => {
     const embed = sink.traces[0]!.stages.find((s) => s.stage === 'embed')!;
     expect(embed.decision).toBe('reused');
     expect(embed.data?.adapterEmbedMs).toBe(240);
+  });
+});
+
+describe('enriched-hit fast path (C1-lite: zero enrichment round-trips)', () => {
+  it('grounds an answer with NO doc_chunks/docs reads when hits carry enrichment', async () => {
+    const enrichedHit: HybridHit = {
+      chunk_id: 'chunk_1',
+      distance: 0.1,
+      score: 0.9,
+      ftsMatched: true,
+      enrich: {
+        docId: 'doc_1',
+        domain: 'text',
+        body: 'The answer is forty two.',
+        position: 0,
+        isSummary: false,
+        title: 'Doc One',
+        url: null,
+        source: 'github',
+        docType: 'doc',
+      },
+    };
+    // A db whose .from() throws proves the core never falls back to its
+    // enrichment reads when the search rows carried everything.
+    const explodingDb = {
+      from: () => {
+        throw new Error('enrichment must not read the DB for enriched hits');
+      },
+    } as unknown as PipelineDeps['db'];
+    const { deps } = makeDeps({
+      db: explodingDb,
+      hybridSearch: (async () => [enrichedHit]) as unknown as HybridSearchFn,
+      synthesizer: fakeSynthesizer('STATUS: answer\n[1: "forty two"]'),
+    });
+    const sink = new RecordingSink();
+    const result = await runPipeline(input(), deps, sink);
+    expect(result.emitted).toBe(1);
+    expect(sink.cards[0]!.title).toBe('Doc One');
+    expect(sink.dones).toHaveLength(1); // grounded end-to-end, zero DB reads
   });
 });

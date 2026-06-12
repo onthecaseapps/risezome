@@ -90,13 +90,42 @@ export function isLowConfidenceHits(hits: readonly HybridHit[]): boolean {
   );
 }
 
-export interface VectorCandidate {
+/** Chunk + doc metadata the search RPCs now return INLINE (C1-lite), so the
+ *  reranker and the core's enrichment step need no follow-up round-trips.
+ *  Optional: rows from older function versions / test mocks omit them and the
+ *  downstream fallbacks (text fetch, enrichment RPCs) still apply. */
+export interface EnrichedSearchFields {
+  readonly doc_id?: string;
+  readonly domain?: string;
+  readonly body?: string;
+  readonly chunk_position?: number;
+  readonly is_summary?: boolean;
+  readonly title?: string;
+  readonly url?: string | null;
+  readonly doc_source?: string;
+  readonly doc_type?: string;
+}
+
+export interface VectorCandidate extends EnrichedSearchFields {
   readonly chunk_id: string;
   readonly distance: number;
 }
-export interface FtsCandidate {
+export interface FtsCandidate extends EnrichedSearchFields {
   readonly chunk_id: string;
   readonly rank: number;
+}
+
+/** The carried enrichment on a fused hit (normalized from the RPC row). */
+export interface HitEnrichment {
+  readonly docId: string;
+  readonly domain: string;
+  readonly body: string;
+  readonly position: number;
+  readonly isSummary: boolean;
+  readonly title: string;
+  readonly url: string | null;
+  readonly source: string;
+  readonly docType: string;
 }
 
 export interface HybridHit {
@@ -108,6 +137,32 @@ export interface HybridHit {
   readonly score: number;
   /** Whether the chunk matched the lexical (full-text) query. */
   readonly ftsMatched: boolean;
+  /** Inline chunk+doc metadata when the RPC returned it (C1-lite). Absent on
+   *  hits from mocks/older functions — consumers fall back to DB reads. */
+  readonly enrich?: HitEnrichment;
+}
+
+/** Normalize an RPC row's enriched fields, when present and complete. */
+function enrichOf(row: EnrichedSearchFields): HitEnrichment | undefined {
+  if (
+    row.doc_id === undefined ||
+    row.body === undefined ||
+    row.title === undefined ||
+    row.doc_source === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    docId: row.doc_id,
+    domain: row.domain ?? 'text',
+    body: row.body,
+    position: row.chunk_position ?? 0,
+    isSummary: row.is_summary === true,
+    title: row.title,
+    url: row.url ?? null,
+    source: row.doc_source,
+    docType: row.doc_type ?? 'doc',
+  };
 }
 
 export interface FuseOptions {
@@ -159,12 +214,18 @@ export function fuseRrfMulti(
 
   const byId = new Map<
     string,
-    { distance: number | null; ftsMatched: boolean; score: number; passesFloor: boolean }
+    {
+      distance: number | null;
+      ftsMatched: boolean;
+      score: number;
+      passesFloor: boolean;
+      enrich: HitEnrichment | undefined;
+    }
   >();
   const get = (id: string) => {
     let e = byId.get(id);
     if (e === undefined) {
-      e = { distance: null, ftsMatched: false, score: 0, passesFloor: false };
+      e = { distance: null, ftsMatched: false, score: 0, passesFloor: false, enrich: undefined };
       byId.set(id, e);
     }
     return e;
@@ -182,6 +243,7 @@ export function fuseRrfMulti(
       e.distance = e.distance === null ? row.distance : Math.min(e.distance, row.distance);
       e.passesFloor = e.passesFloor || row.distance <= listFloor;
       e.score += 1 / (k + i + 1);
+      e.enrich ??= enrichOf(row);
     });
   }
   // Normalize fts to a list-of-lists (a single list is wrapped once).
@@ -194,6 +256,7 @@ export function fuseRrfMulti(
       const e = get(row.chunk_id);
       e.ftsMatched = true;
       e.score += 1 / (k + i + 1);
+      e.enrich ??= enrichOf(row);
     });
   }
 
@@ -207,6 +270,7 @@ export function fuseRrfMulti(
         distance: e.distance,
         score: e.score,
         ftsMatched: e.ftsMatched,
+        ...(e.enrich !== undefined ? { enrich: e.enrich } : {}),
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, opts.limit)
@@ -373,28 +437,29 @@ export async function hybridSearch(
     return fused.slice(0, params.limit);
   }
 
-  // Rerank the pool by query-document relevance. Fetch the verbatim chunk
-  // bodies (what a reader sees) for the cross-encoder; on any failure keep
-  // the RRF order.
+  // Rerank the pool by query-document relevance. The chunk bodies normally ride
+  // on the hits (the enriched RPC returns, C1-lite) — fetch only those missing
+  // (mocks / older function versions); on any failure keep the RRF order.
   const rerankStart = Date.now();
   const stampRerank = (): void => {
     if (params.timings !== undefined) params.timings.rerankMs = Date.now() - rerankStart;
   };
-  const ids = fused.map((h) => h.chunk_id);
-  const { data: rows, error: textErr } = await db
-    .from('doc_chunks')
-    .select('chunk_id, text')
-    .eq('org_id', params.orgId) // U11: redundant org scope (defense-in-depth; db.ts convention)
-    .in('chunk_id', ids);
-  if (textErr !== null || rows === null) {
-    params.logger?.warn({ err: textErr }, 'corpus-search.rerank.text-fetch-failed');
-    stampRerank();
-    return fused.slice(0, params.limit);
+  const textById = new Map<string, string>();
+  const missingIds = fused.filter((h) => h.enrich === undefined).map((h) => h.chunk_id);
+  if (missingIds.length > 0) {
+    const { data: rows, error: textErr } = await db
+      .from('doc_chunks')
+      .select('chunk_id, text')
+      .eq('org_id', params.orgId) // U11: redundant org scope (defense-in-depth; db.ts convention)
+      .in('chunk_id', missingIds);
+    if (textErr !== null || rows === null) {
+      params.logger?.warn({ err: textErr }, 'corpus-search.rerank.text-fetch-failed');
+      stampRerank();
+      return fused.slice(0, params.limit);
+    }
+    for (const r of rows as { chunk_id: string; text: string }[]) textById.set(r.chunk_id, r.text);
   }
-  const textById = new Map(
-    (rows as { chunk_id: string; text: string }[]).map((r) => [r.chunk_id, r.text]),
-  );
-  const documents = fused.map((h) => textById.get(h.chunk_id) ?? '');
+  const documents = fused.map((h) => h.enrich?.body ?? textById.get(h.chunk_id) ?? '');
   try {
     const ranked = await params.reranker(params.rerankQuery ?? params.queryText, documents, {
       topK: params.limit,

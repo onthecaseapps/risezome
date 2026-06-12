@@ -418,3 +418,66 @@ describe('fuseRrfMulti — per-domain floors (code-distance regression)', () => 
     expect(hits.map((h) => h.chunk_id)).toEqual(['near']);
   });
 });
+
+describe('enriched RPC returns (C1-lite: zero follow-up round-trips)', () => {
+  const enrichedRow = {
+    chunk_id: 'A',
+    distance: 0.1,
+    doc_id: 'doc_1',
+    domain: 'text',
+    body: 'alpha body',
+    chunk_position: 0,
+    is_summary: false,
+    title: 'Doc One',
+    url: 'https://x/1',
+    doc_source: 'github',
+    doc_type: 'file',
+  };
+
+  it('fused hits carry the normalized enrichment from the RPC row', () => {
+    const hits = fuseRrf([enrichedRow], [], { limit: 5 });
+    expect(hits[0]!.enrich).toEqual({
+      docId: 'doc_1',
+      domain: 'text',
+      body: 'alpha body',
+      position: 0,
+      isSummary: false,
+      title: 'Doc One',
+      url: 'https://x/1',
+      source: 'github',
+      docType: 'file',
+    });
+  });
+
+  it('hits without enriched fields (mocks / older functions) carry no enrich', () => {
+    const hits = fuseRrf([{ chunk_id: 'A', distance: 0.1 }], [], { limit: 5 });
+    expect(hits[0]!.enrich).toBeUndefined();
+  });
+
+  it('rerank uses carried bodies and NEVER touches the DB when all hits are enriched', async () => {
+    const reranker: Reranker = async (_q, docs) => {
+      // Prove the carried body reached the cross-encoder.
+      expect(docs[0]).toBe('alpha body');
+      return docs.map((_d, i) => ({ index: i, score: 1 - i * 0.1 }));
+    };
+    const db = {
+      rpc: (name: string) =>
+        Promise.resolve(
+          name === 'search_corpus_vector'
+            ? { data: [enrichedRow, { ...enrichedRow, chunk_id: 'B', distance: 0.2, body: 'beta body', doc_id: 'doc_2' }], error: null }
+            : { data: [], error: null },
+        ),
+      from: () => {
+        throw new Error('rerank must not fetch chunk text when bodies are carried');
+      },
+    } as unknown as SupabaseClient;
+    const out = await hybridSearch(db, {
+      orgId: 'o',
+      queryVectorLiteral: '[0]',
+      queryText: 'q',
+      limit: 2,
+      reranker,
+    });
+    expect(out).toHaveLength(2);
+  });
+});
