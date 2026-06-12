@@ -1,14 +1,16 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState, type ReactElement } from 'react';
+import { useState, useTransition, type ReactElement } from 'react';
 import { useMenuBehaviors } from '../_components/overlay';
+import { switchTeam } from '../_components/switch-team-action';
 
 /**
- * "Configuring {team}" selector for the Sources page (KTD1). The page is a
- * per-team editor scoped by a `?team=<teamId>` search param — a deliberate admin
- * choice, distinct from the browse-lens cookie. Picking a team navigates to
- * `/sources?team=<id>`, which re-scopes every connection card's checked state.
+ * "Configuring {team}" selector for the Sources page (KTD1). Unified with the
+ * app-wide team lens: picking a team writes the global team-lens cookie (via
+ * switchTeam) so the top-bar switcher and this pill stay in sync, then drops any
+ * stale `?team=` override and refreshes — the page reads the cookie and
+ * re-scopes every connection card's checked state to the new team.
  *
  * Mirrors the top-bar team-switcher dropdown styling (bordered pill + chevron,
  * outside-click overlay) so the surface stays visually consistent.
@@ -27,14 +29,20 @@ export function ConfigTeamSelector({
 }): ReactElement {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
   useMenuBehaviors(open, () => setOpen(false));
   const selected = teams.find((t) => t.id === selectedTeamId) ?? teams[0] ?? null;
 
   function choose(id: string): void {
     setOpen(false);
-    if (id !== selectedTeamId) {
-      router.push(`/sources?team=${encodeURIComponent(id)}`);
-    }
+    if (id === selectedTeamId) return;
+    startTransition(async () => {
+      const fd = new FormData();
+      fd.set('teamId', id);
+      await switchTeam(fd); // set the global team-lens cookie (top-bar follows)
+      router.replace('/sources'); // drop any ?team= override → cookie drives
+      router.refresh(); // re-render so the page reads the new cookie
+    });
   }
 
   return (
@@ -43,8 +51,9 @@ export function ConfigTeamSelector({
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
+        disabled={pending}
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3.5 py-2 text-sm font-medium text-fg transition-colors hover:border-accent/40"
+        className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3.5 py-2 text-sm font-medium text-fg transition-colors hover:border-accent/40 disabled:opacity-50"
       >
         <span className="text-xs uppercase tracking-wider text-muted">Configuring</span>
         <span className="text-fg">{selected !== null ? selected.name : 'a team'}</span>

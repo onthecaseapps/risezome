@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
-import { requireAdmin } from '../../_lib/auth';
+import { cookies } from 'next/headers';
+import { requireAdmin, CURRENT_TEAM_COOKIE } from '../../_lib/auth';
 import { createServerClient, createServiceRoleClient } from '../../_lib/supabase-server';
 import { decryptForOrgFromBytea, EnvelopeCryptoError } from '@risezome/crypto';
 import { requireTrelloApiKey } from '../../_lib/trello';
@@ -70,12 +71,21 @@ export default async function SourcesPage(props: {
     name: t.name as string,
   }));
 
-  // Resolve the selected team from ?team=, validated against the org's teams;
-  // default to the first team (KTD1).
+  // Resolve the team to configure, unified with the app-wide team lens so the
+  // top-bar switcher and this page's "Configuring {team}" selector stay in sync:
+  //   1. `?team=` (an explicit deep-link override), else
+  //   2. the global team lens cookie (CURRENT_TEAM_COOKIE — what the selector
+  //      writes via switchTeam), else
+  //   3. the first team.
+  // Each candidate is validated against the org's teams before use.
+  const valid = (id: string | null | undefined): id is string =>
+    typeof id === 'string' && teams.some((t) => t.id === id);
   const requestedTeam = first(searchParams['team']);
-  const selectedTeamId =
-    requestedTeam !== null && teams.some((t) => t.id === requestedTeam)
-      ? requestedTeam
+  const cookieTeam = (await cookies()).get(CURRENT_TEAM_COOKIE)?.value ?? null;
+  const selectedTeamId = valid(requestedTeam)
+    ? requestedTeam
+    : valid(cookieTeam)
+      ? cookieTeam
       : teams[0]?.id ?? null;
 
   // ── The selected team's current sources (checked set) + paused set ────────
