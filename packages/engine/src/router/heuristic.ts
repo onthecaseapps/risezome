@@ -36,6 +36,14 @@ export const HEURISTIC_PATTERNS: readonly RegExp[] = [
   /\bwho has\b/,
   /\bwho owns\b/,
   /\bassigned to\b/,
+  // "what issues are assigned …" / "who is assigned …" — the assignee intent
+  // without a literal "to". Speech-to-text also mangles org names into
+  // prepositions ("assigned on the case apps" = "assigned to onthecaseapps"),
+  // which broke the `assigned to` shape and killed the skill route entirely.
+  // Bare "assigned" is strongly tool-ish in this domain; a false positive only
+  // costs one parallel classifier call.
+  /\b(is|are|was|were) assigned\b/,
+  /\bwho('s| is) assigned\b/,
   /\bauthored by\b/,
   // Temporal
   /\brecently updated\b/,

@@ -72,6 +72,21 @@ describe('isToolShaped — edge cases', () => {
     expect(isToolShaped('  how many open issues?!  ')).toBe(true);
   });
 
+
+  it('matches passive assignee phrasing without a literal "to" (STT-mangled org names)', () => {
+    // Deepgram transcribed "assigned to onthecaseapps" as "assigned on the case
+    // apps", which broke the `assigned to` shape and the skill never routed.
+    expect(isToolShaped('what github issues are assigned on the case apps')).toBe(true);
+    expect(isToolShaped('which tickets were assigned last week')).toBe(true);
+    expect(isToolShaped("who's assigned on the retrieval work")).toBe(true);
+    expect(isToolShaped('who is assigned here')).toBe(true);
+  });
+
+  it('plain past-tense chatter still requires the assigned verb (no over-trigger)', () => {
+    expect(isToolShaped('we discussed the plan yesterday')).toBe(false);
+    expect(isToolShaped('how does the assignment algorithm work')).toBe(false);
+  });
+
   it('exports a non-empty pattern list for inspection', () => {
     expect(HEURISTIC_PATTERNS.length).toBeGreaterThan(5);
   });
