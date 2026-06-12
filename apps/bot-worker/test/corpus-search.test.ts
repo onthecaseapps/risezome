@@ -195,10 +195,13 @@ function mockDb(
 }
 
 describe('hybridSearch — reranker integration', () => {
+  // Distances sit in the WEAK band (above the 0.30 strong bar, below the 0.45
+  // floor) and the pool exceeds the limit, so the B2 gate does NOT skip and the
+  // reranker's behavior stays under test.
   const vector = [
-    { chunk_id: 'A', distance: 0.1 },
-    { chunk_id: 'B', distance: 0.2 },
-    { chunk_id: 'C', distance: 0.3 },
+    { chunk_id: 'A', distance: 0.35 },
+    { chunk_id: 'B', distance: 0.38 },
+    { chunk_id: 'C', distance: 0.42 },
   ];
   const texts = { A: 'alpha', B: 'beta', C: 'gamma (the real answer)' };
 
@@ -455,17 +458,22 @@ describe('enriched RPC returns (C1-lite: zero follow-up round-trips)', () => {
   });
 
   it('rerank uses carried bodies and NEVER touches the DB when all hits are enriched', async () => {
+    let sawBody = '';
     const reranker: Reranker = async (_q, docs) => {
-      // Prove the carried body reached the cross-encoder.
-      expect(docs[0]).toBe('alpha body');
+      sawBody = docs[0] ?? '';
       return docs.map((_d, i) => ({ index: i, score: 1 - i * 0.1 }));
     };
+    // Weak pool (0.35–0.42) larger than the limit so the B2 gate lets the
+    // rerank run; every row enriched so it needs no text fetch.
+    const rows = [
+      { ...enrichedRow, distance: 0.35, body: 'alpha body' },
+      { ...enrichedRow, chunk_id: 'B', distance: 0.38, body: 'beta body', doc_id: 'doc_2' },
+      { ...enrichedRow, chunk_id: 'C', distance: 0.42, body: 'gamma body', doc_id: 'doc_3' },
+    ];
     const db = {
       rpc: (name: string) =>
         Promise.resolve(
-          name === 'search_corpus_vector'
-            ? { data: [enrichedRow, { ...enrichedRow, chunk_id: 'B', distance: 0.2, body: 'beta body', doc_id: 'doc_2' }], error: null }
-            : { data: [], error: null },
+          name === 'search_corpus_vector' ? { data: rows, error: null } : { data: [], error: null },
         ),
       from: () => {
         throw new Error('rerank must not fetch chunk text when bodies are carried');
@@ -479,5 +487,73 @@ describe('enriched RPC returns (C1-lite: zero follow-up round-trips)', () => {
       reranker,
     });
     expect(out).toHaveLength(2);
+    expect(sawBody).toBe('alpha body'); // the carried body reached the cross-encoder
+  });
+});
+
+describe('B2 rerank gating — skip the cross-encoder when it cannot change the outcome', () => {
+  const weakPool = [
+    { chunk_id: 'A', distance: 0.35 },
+    { chunk_id: 'B', distance: 0.38 },
+    { chunk_id: 'C', distance: 0.42 },
+  ];
+
+  it('skips rerank when the fused pool is no bigger than the limit (reorder-only)', async () => {
+    const reranker: Reranker = async () => {
+      throw new Error('reranker must not be called for a pool <= limit');
+    };
+    const timings: Record<string, number> = {};
+    const out = await hybridSearch(mockDb(weakPool, [], {}), {
+      orgId: 'o',
+      queryVectorLiteral: '[0]',
+      queryText: 'q',
+      limit: 5, // pool of 3 <= limit 5
+      reranker,
+      timings,
+    });
+    expect(out.map((h) => h.chunk_id)).toEqual(['A', 'B', 'C']); // RRF order stands
+    expect(timings.rerankSkipped).toBe(1);
+    expect(timings.rerankMs).toBeUndefined();
+  });
+
+  it('skips rerank when the RRF head is already confident (strong vector match)', async () => {
+    const reranker: Reranker = async () => {
+      throw new Error('reranker must not be called for a confident head');
+    };
+    const timings: Record<string, number> = {};
+    const strongHead = [
+      { chunk_id: 'S', distance: 0.12 }, // <= 0.30 strong bar
+      ...weakPool,
+    ];
+    const out = await hybridSearch(mockDb(strongHead, [], {}), {
+      orgId: 'o',
+      queryVectorLiteral: '[0]',
+      queryText: 'q',
+      limit: 2, // pool of 4 > limit, but the head is strong
+      reranker,
+      timings,
+    });
+    expect(out.map((h) => h.chunk_id)).toEqual(['S', 'A']);
+    expect(timings.rerankSkipped).toBe(1);
+  });
+
+  it('still reranks a weak head with a pool larger than the limit', async () => {
+    let called = false;
+    const reranker: Reranker = async (_q, docs) => {
+      called = true;
+      return docs.map((_d, i) => ({ index: i, score: 1 - i * 0.1 }));
+    };
+    const timings: Record<string, number> = {};
+    await hybridSearch(mockDb(weakPool, [], { A: 'a', B: 'b', C: 'c' }), {
+      orgId: 'o',
+      queryVectorLiteral: '[0]',
+      queryText: 'q',
+      limit: 2, // pool of 3 > limit 2, all weak
+      reranker,
+      timings,
+    });
+    expect(called).toBe(true);
+    expect(timings.rerankMs).toBeTypeOf('number');
+    expect(timings.rerankSkipped).toBeUndefined();
   });
 });

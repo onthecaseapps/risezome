@@ -437,6 +437,21 @@ export async function hybridSearch(
     return fused.slice(0, params.limit);
   }
 
+  // B2 rerank gating: skip the cross-encoder round-trip (~0.4–0.7s on the
+  // critical path) when it can't meaningfully change the outcome:
+  //   (a) the fused pool is no bigger than the final cut — the rerank would
+  //       only REORDER the same ≤ limit hits, never select different ones; or
+  //   (b) the RRF head is already CONFIDENT (a strong vector match or a
+  //       lexically-grounded in-range hit) — the rerank's selection value is
+  //       in murky pools, not ones with a clear head.
+  // The skip is observable: timings.rerankSkipped=1 and no rerankMs in the
+  // trace. Quality-gated by the golden-question eval (precision/over-refusal).
+  const head = fused.slice(0, params.limit);
+  if (fused.length <= params.limit || !isLowConfidenceHits(head)) {
+    if (params.timings !== undefined) params.timings.rerankSkipped = 1;
+    return head;
+  }
+
   // Rerank the pool by query-document relevance. The chunk bodies normally ride
   // on the hits (the enriched RPC returns, C1-lite) — fetch only those missing
   // (mocks / older function versions); on any failure keep the RRF order.
