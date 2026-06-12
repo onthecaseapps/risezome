@@ -52,6 +52,18 @@ export const HEURISTIC_PATTERNS: readonly RegExp[] = [
   /\bwhat('s| is) new\b/,
 ];
 
+// Keyword CO-OCCURRENCE gate: an entity noun (the things skills query) plus an
+// operation word (the things skills do), in ANY order. The enumerated phrase
+// patterns above are order-sensitive and miss legitimate paraphrases ("give me
+// the open issues", "issues created by nathan", "to whom are these issues
+// assigned") — each miss kills the skill route silently. A false positive only
+// costs one parallel Haiku classifier call (~$0.001, awaited after cards, zero
+// critical-path latency), so the gate leans open.
+const ENTITY_NOUNS =
+  /\b(issues?|prs?|pull requests?|tickets?|bugs?|cards?|repos?|repositor(?:y|ies)|boards?)\b/;
+const OPERATION_WORDS =
+  /\b(assigned|assignees?|unassigned|open|closed|merged|counts?|list(?:ed)?|created|updated|authored|authors?|who|whose|recently|newest|oldest|stale|progress)\b/;
+
 export function isToolShaped(text: string): boolean {
   if (typeof text !== 'string') return false;
   const normalized = text.toLowerCase().trim();
@@ -59,5 +71,5 @@ export function isToolShaped(text: string): boolean {
   for (const pattern of HEURISTIC_PATTERNS) {
     if (pattern.test(normalized)) return true;
   }
-  return false;
+  return ENTITY_NOUNS.test(normalized) && OPERATION_WORDS.test(normalized);
 }

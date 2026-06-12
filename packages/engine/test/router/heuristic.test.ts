@@ -87,6 +87,22 @@ describe('isToolShaped — edge cases', () => {
     expect(isToolShaped('how does the assignment algorithm work')).toBe(false);
   });
 
+
+  it('keyword co-occurrence: entity noun + operation word in ANY order', () => {
+    expect(isToolShaped('give me the open issues')).toBe(true);
+    expect(isToolShaped('issues created by nathan')).toBe(true);
+    expect(isToolShaped('to whom are these issues assigned')).toBe(true);
+    expect(isToolShaped('whose tickets are stale')).toBe(true);
+    expect(isToolShaped('newest prs in the repo')).toBe(true);
+  });
+
+  it('co-occurrence requires BOTH halves — topic talk alone stays RAG', () => {
+    expect(isToolShaped('how does the issue page render')).toBe(false); // noun, no op
+    expect(isToolShaped('we shipped the cards feature yesterday')).toBe(false); // noun, no op
+    expect(isToolShaped('who broke the build')).toBe(false); // op, no noun
+    expect(isToolShaped('the open bar at the retention party')).toBe(false); // op, no noun
+  });
+
   it('exports a non-empty pattern list for inspection', () => {
     expect(HEURISTIC_PATTERNS.length).toBeGreaterThan(5);
   });

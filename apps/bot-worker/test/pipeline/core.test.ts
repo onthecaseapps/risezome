@@ -1211,3 +1211,50 @@ describe('enriched-hit fast path (C1-lite: zero enrichment round-trips)', () => 
     expect(sink.dones).toHaveLength(1); // grounded end-to-end, zero DB reads
   });
 });
+
+describe('runPipeline — question-lane router bypass (heuristic false negatives)', () => {
+  function toolRegistry(): SkillRegistry {
+    const reg = new SkillRegistry();
+    const skill: Skill = {
+      source: 'github',
+      name: 'github_by_assignee_list',
+      description: 'list issues by assignee',
+      inputSchema: { type: 'object', properties: {} },
+      handler: () => Promise.resolve({ kind: 'list', summary: '3 issues assigned' }),
+    };
+    reg.register(skill);
+    return reg;
+  }
+
+  it('question lane fires the classifier even when the text is NOT tool-shaped', async () => {
+    const classify = vi.fn(async () => ({ intent: 'rag' as const }));
+    const { deps } = makeDeps({
+      routerClassifier: { classify } as unknown as NonNullable<PipelineDeps['routerClassifier']>,
+      skillRegistry: toolRegistry(),
+      synthesizer: fakeSynthesizer('STATUS: answer\n[1: "forty two"]'),
+    });
+    // No heuristic pattern matches this paraphrase — the old gate killed the
+    // skill route here; the question lane now bypasses it.
+    await runPipeline(
+      input({ lane: 'question', utteranceText: "what's on nathan's plate this week" }),
+      deps,
+      new RecordingSink(),
+    );
+    expect(classify).toHaveBeenCalledTimes(1);
+  });
+
+  it('AMBIENT non-tool-shaped chatter still skips the classifier (the cost gate holds)', async () => {
+    const classify = vi.fn(async () => ({ intent: 'rag' as const }));
+    const { deps } = makeDeps({
+      routerClassifier: { classify } as unknown as NonNullable<PipelineDeps['routerClassifier']>,
+      skillRegistry: toolRegistry(),
+      synthesizer: fakeSynthesizer('STATUS: answer\n[1: "forty two"]'),
+    });
+    await runPipeline(
+      input({ lane: 'ambient', utteranceText: 'we should grab lunch after this meeting' }),
+      deps,
+      new RecordingSink(),
+    );
+    expect(classify).not.toHaveBeenCalled();
+  });
+});

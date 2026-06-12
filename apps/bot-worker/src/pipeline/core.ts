@@ -285,11 +285,17 @@ export async function runPipeline(
   // and the utterance is tool-shaped. Awaited AFTER cards emit (below) so it
   // never delays surfacing. Sink-agnostic: the resulting tool source rides into
   // synthesis at [0]; the sink decides how toolSource is surfaced.
+  // QUESTION lane bypasses the tool-shape heuristic: a detected substantive
+  // question is exactly where skill intent lives, questions are few (rate-
+  // limited), and the classifier is parallel + awaited after cards — so a
+  // heuristic false negative (a paraphrase or an STT-mangled phrase the regex
+  // doesn't enumerate) silently killing the skill route costs far more than
+  // one extra Haiku call. Ambient chatter keeps the heuristic cost gate.
   const routerEligible =
     deps.routerClassifier !== undefined &&
     deps.skillRegistry !== undefined &&
     deps.skillRegistry.size() > 0 &&
-    isToolShaped(input.utteranceText);
+    (input.lane === 'question' || isToolShaped(input.utteranceText));
   let classifierController: AbortController | null = null;
   let classifierTimer: ReturnType<typeof setTimeout> | null = null;
   let classifierPromise: ReturnType<
@@ -338,7 +344,9 @@ export async function runPipeline(
       stageRecord('router', 'ran', Date.now(), {
         decision: routerEligible ? 'fired' : 'not_fired',
         reason: routerEligible
-          ? 'tool_shaped — classifying in parallel'
+          ? input.lane === 'question' && !isToolShaped(input.utteranceText)
+            ? 'question_lane — classifying in parallel (heuristic bypassed)'
+            : 'tool_shaped — classifying in parallel'
           : deps.routerClassifier === undefined || deps.skillRegistry === undefined
             ? 'no_classifier_or_registry'
             : deps.skillRegistry.size() === 0
