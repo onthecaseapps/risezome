@@ -344,7 +344,13 @@ export default async function SourcesPage(props: {
           </div>
           <div className="flex flex-col gap-3">
             {cards.map((card) => (
-              <ConnectionCard key={card.cardKey} teamId={selectedTeamId!} data={card} />
+              // Key on the team so switching teams REMOUNTS the card with fresh
+              // state. The card's selected/savedSelected/enabled are useState
+              // initializers (run once per instance); without the team in the
+              // key, React reuses the instance across a `?team=` switch and the
+              // card keeps the previous team's checkmarks/toggle even though the
+              // server passed the new team's data.
+              <ConnectionCard key={`${selectedTeamId!}:${card.cardKey}`} teamId={selectedTeamId!} data={card} />
             ))}
           </div>
           <AddSourceSection
