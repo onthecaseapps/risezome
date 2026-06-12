@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState, useTransition, type ReactElement, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import {
   AppStateProvider,
   SynthesisActionsProvider,
@@ -18,7 +18,6 @@ import {
 } from '@risezome/hud-ui';
 import type { InitialSynthesis } from '../_synthesis-seed';
 import type { RecapParticipant, StructuredRecap } from '../../../../../src/inngest/lib/meeting-recap';
-import type { RegenerateRecapResult } from './regenerate-recap-core';
 import { pinSynthesisAction } from '../live/synthesis-actions-server';
 
 /**
@@ -46,8 +45,6 @@ export interface ReviewClientProps {
   initialCards: CardEvent[];
   /** utteranceId → synthesisId for the transcript anchors. */
   anchorMap: Record<string, string>;
-  /** Server action to re-fire the recap (U6); omitted in tests/contexts without it. */
-  onRegenerate?: (meetingId: string) => Promise<RegenerateRecapResult>;
 }
 
 function seedState(
@@ -115,11 +112,9 @@ export function ReviewClient(props: ReviewClientProps): ReactElement {
           section and the split grid are direct flex children of the column. */}
       <AppStateProvider initial={seeded}>
         <RecapSection
-          meetingId={props.meetingId}
           structuredRecap={props.structuredRecap ?? null}
           recapText={props.recapText}
           recapStatus={props.recapStatus}
-          onRegenerate={props.onRegenerate}
         />
         <ReviewSynthesisActions>
           <ReviewSplit anchorMap={props.anchorMap} transcript={props.initialTranscript} />
@@ -302,36 +297,21 @@ function ActiveSynthesis({ synthesisId }: { synthesisId: string }): ReactElement
 /**
  * The meeting-recap section. Prefers the structured recap (new meetings); falls
  * back to the legacy markdown for old meetings; degrades to a muted state for
- * generating / failed / absent. A live generating/failed status wins over a
- * stale structured recap so a Regenerate-in-flight reads honestly.
+ * generating / failed / absent.
  */
 function RecapSection({
-  meetingId,
   structuredRecap,
   recapText,
   recapStatus,
-  onRegenerate,
 }: {
-  meetingId: string;
   structuredRecap: StructuredRecap | null;
   recapText: string | null;
   recapStatus: RecapStatus;
-  onRegenerate?: ((meetingId: string) => Promise<RegenerateRecapResult>) | undefined;
 }): ReactElement {
-  const mkRegen = (block: boolean): ReactNode =>
-    onRegenerate !== undefined ? (
-      <RegenerateButton
-        meetingId={meetingId}
-        recapStatus={recapStatus}
-        onRegenerate={onRegenerate}
-        block={block}
-      />
-    ) : null;
-
   if (recapStatus === 'done' && structuredRecap !== null) {
     return (
       <section className="border-b border-border px-6 py-6 sm:px-8">
-        <StructuredRecapView recap={structuredRecap} regenerate={mkRegen(true)} />
+        <StructuredRecapView recap={structuredRecap} />
       </section>
     );
   }
@@ -339,49 +319,9 @@ function RecapSection({
     <section className="border-b border-border px-6 py-6 sm:px-8">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-xs font-medium uppercase tracking-wider text-muted">Meeting recap</h2>
-        {mkRegen(false)}
       </div>
       <RecapBody text={recapText} status={recapStatus} />
     </section>
-  );
-}
-
-/** Re-fire the recap generation. Disabled while a recap is generating/in-flight. */
-function RegenerateButton({
-  meetingId,
-  recapStatus,
-  onRegenerate,
-  block = false,
-}: {
-  meetingId: string;
-  recapStatus: RecapStatus;
-  onRegenerate: (meetingId: string) => Promise<RegenerateRecapResult>;
-  block?: boolean;
-}): ReactElement {
-  const [pending, startTransition] = useTransition();
-  const [error, setError] = useState(false);
-  const busy = pending || recapStatus === 'generating';
-  return (
-    <div className={`flex flex-col gap-1${block ? '' : ' items-end'}`}>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => {
-          setError(false);
-          startTransition(async () => {
-            // The server action revalidates the route on success, re-rendering
-            // the page with the new 'generating' status.
-            const res = await onRegenerate(meetingId);
-            if (!res.ok) setError(true);
-          });
-        }}
-        className={`inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-muted transition-colors hover:border-accent/40 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:text-muted${block ? ' w-full justify-center' : ''}`}
-      >
-        <Icon path={<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4" />} size={14} sw={2} />
-        {busy ? 'Regenerating…' : 'Regenerate'}
-      </button>
-      {error ? <span className="text-[11px] text-rose-400">Could not regenerate.</span> : null}
-    </div>
   );
 }
 
@@ -499,7 +439,8 @@ function scrollToMoment(ms: number): void {
   target.classList.remove('rz-ts-pulse');
   void target.offsetWidth;
   target.classList.add('rz-ts-pulse');
-  window.setTimeout(() => target.classList.remove('rz-ts-pulse'), 1600);
+  // Past the 3.4s animation so the cleanup never clips the fade.
+  window.setTimeout(() => target.classList.remove('rz-ts-pulse'), 3500);
 }
 
 /** A jump-to-moment timestamp chip (clock + mm:ss). Click scrolls the transcript
@@ -610,13 +551,7 @@ const STAT_ICONS: Record<string, ReactNode> = {
 };
 
 /** The structured recap layout: stat tiles, AI-summary lead, topics, decisions, action items, rail. */
-function StructuredRecapView({
-  recap,
-  regenerate,
-}: {
-  recap: StructuredRecap;
-  regenerate: ReactNode;
-}): ReactElement {
+function StructuredRecapView({ recap }: { recap: StructuredRecap }): ReactElement {
   const stats: { label: string; value: number; testid: string }[] = [
     { label: 'Key topics', value: recap.topics.length, testid: 'stat-topics' },
     { label: 'Decisions', value: recap.decisions.length, testid: 'stat-decisions' },
@@ -751,7 +686,7 @@ function StructuredRecapView({
         ) : null}
       </div>
 
-      <RecapRail participants={recap.participants} regenerate={regenerate} />
+      <RecapRail participants={recap.participants} />
     </div>
   );
 }
@@ -763,14 +698,8 @@ const NAV_ITEMS: { label: string; id: string }[] = [
   { label: 'Action items', id: 'sec-actions' },
 ];
 
-/** Right rail: jump-nav + participants card (collapsed when none) + recap-meta/Regenerate. */
-function RecapRail({
-  participants,
-  regenerate,
-}: {
-  participants: readonly RecapParticipant[];
-  regenerate: ReactNode;
-}): ReactElement {
+/** Right rail: jump-nav + participants card (collapsed when none) + recap-meta. */
+function RecapRail({ participants }: { participants: readonly RecapParticipant[] }): ReactElement {
   return (
     <aside className="flex flex-col gap-3.5 lg:sticky lg:top-6">
       <nav className="rounded-xl border border-border bg-card p-2 shadow-[var(--card-shadow)]">
@@ -804,7 +733,6 @@ function RecapRail({
         <p className="text-xs leading-relaxed text-muted">
           Recap generated by Risezome from the meeting transcript.
         </p>
-        {regenerate !== null ? <div className="mt-3">{regenerate}</div> : null}
       </div>
     </aside>
   );

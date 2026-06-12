@@ -13,7 +13,6 @@ import {
   type UtteranceTime,
 } from '../_synthesis-seed';
 import { ReviewClient, type RecapStatus } from './_client';
-import { regenerateRecapAction } from './regenerate-recap-server';
 import type { StructuredRecap } from '../../../../../src/inngest/lib/meeting-recap';
 
 /**
@@ -249,7 +248,6 @@ export default async function ReviewPage(props: PageProps): Promise<ReactElement
       initialSyntheses={initialSyntheses}
       initialCards={initialCards}
       anchorMap={anchorMap}
-      onRegenerate={regenerateRecapAction}
     />
   );
 }

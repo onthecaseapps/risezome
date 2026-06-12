@@ -213,15 +213,19 @@ body {
  * inline utterance span.
  */
 @keyframes rz-ts-pulse {
-  0% {
-    background-color: var(--accent-soft);
+  /* Hold the bright phase (~1.2s) so the eye finds the line, then fade. */
+  0%,
+  35% {
+    background-color: color-mix(in srgb, var(--accent) 26%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
   }
   100% {
     background-color: transparent;
+    box-shadow: 0 0 0 4px transparent;
   }
 }
 .rz-ts-pulse {
-  animation: rz-ts-pulse 1.5s ease-out;
+  animation: rz-ts-pulse 3.4s ease-out;
   border-radius: 4px;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;

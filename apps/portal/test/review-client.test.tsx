@@ -194,22 +194,8 @@ describe('ReviewClient structured recap (U4)', () => {
   });
 });
 
-describe('ReviewClient Regenerate control (U6)', () => {
-  it('calls the regenerate action with the meetingId on click', async () => {
-    const user = userEvent.setup();
-    const onRegenerate = vi.fn(async () => ({ ok: true as const }));
-    renderReview({ meetingId: 'm-42', structuredRecap: STRUCTURED, onRegenerate });
-    await user.click(screen.getByRole('button', { name: /regenerate/i }));
-    expect(onRegenerate).toHaveBeenCalledWith('m-42');
-  });
-
-  it('disables the control while the recap is generating', () => {
-    const onRegenerate = vi.fn(async () => ({ ok: true as const }));
-    renderReview({ structuredRecap: STRUCTURED, recapStatus: 'generating', onRegenerate });
-    expect(screen.getByRole('button', { name: /regenerating/i })).toBeDisabled();
-  });
-
-  it('omits the control when no action is provided', () => {
+describe('ReviewClient recap section', () => {
+  it('renders no Regenerate control (removed after recap pipeline stabilized)', () => {
     renderReview({ structuredRecap: STRUCTURED });
     expect(screen.queryByRole('button', { name: /regenerate/i })).not.toBeInTheDocument();
   });
