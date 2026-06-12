@@ -1088,6 +1088,13 @@ body {
   cursor: pointer;
   transition: color 120ms ease-out, background-color 120ms ease-out;
 }
+/* Explicit CSS sizing: as a flex item the svg's attribute-based size was
+   collapsed to zero by the host app's global resets — pin the box here. */
+.pin-button svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
 .pin-button:hover {
   color: var(--fg);
   background: var(--accent-soft, rgba(0, 0, 0, 0.04));
