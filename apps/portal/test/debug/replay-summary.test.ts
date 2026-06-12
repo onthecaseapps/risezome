@@ -259,3 +259,51 @@ describe('formatReplaySummary (U5)', () => {
     });
   });
 });
+
+describe('timing visibility (question lane + timeline)', () => {
+  // A QUESTION-lane grounded run with full timing data — the shape that used to
+  // render only PRE+S05 rows (the bypass was treated as a terminal stop).
+  const questionStages: StageRecord[] = [
+    { stage: 'empty-query', status: 'ran', latencyMs: 0, atMs: 0, decision: 'pass' },
+    { stage: 'heuristic-gate', status: 'short_circuited', latencyMs: 0, atMs: 0, decision: 'bypassed', reason: 'question_lane' },
+    { stage: 'llm-judge', status: 'skipped', latencyMs: 0, atMs: 0, reason: 'not_routed' },
+    { stage: 'embed', status: 'ran', latencyMs: 1, atMs: 0, decision: 'reused', data: { reused: true, adapterEmbedMs: 240 } },
+    { stage: 'hybrid-search', status: 'ran', latencyMs: 1851, atMs: 250, data: { hits: [], count: 4, rpcMs: 400, rerankMs: 1400 } },
+    { stage: 'emit', status: 'ran', latencyMs: 176, atMs: 2280, decision: 'emitted', data: { emitted: 4, cards: 4 } },
+    { stage: 'synthesis', status: 'ran', latencyMs: 8000, atMs: 2460, decision: 'generated', data: { streamed: true, ttftMs: 900, firstProseMs: 1400, chars: 400, sources: 4 } },
+    { stage: 'reveal', status: 'ran', decision: 'revealed', data: { citations: 3 }, latencyMs: 3, atMs: 10463 },
+  ];
+
+  it('renders the full ledger for a question-lane run (no truncation at the bypass)', () => {
+    const out = formatReplaySummary(
+      [u({ utteranceId: 'q1' })],
+      new Map([['q1', trace('q1', questionStages)]]),
+    );
+    expect(out).toContain('S08 Hybrid search');
+    expect(out).toContain('S14 Synthesis');
+    expect(out).toContain('(1851ms @t+250ms)');
+  });
+
+  it('emits a derived timing line: search split, cards@, ttft, first prose, done', () => {
+    const out = formatReplaySummary(
+      [u({ utteranceId: 'q1' })],
+      new Map([['q1', trace('q1', questionStages)]]),
+    );
+    expect(out).toContain('timing: ');
+    expect(out).toContain('embed 240ms (adapter)');
+    expect(out).toContain('search 1851ms (rpc 400ms + rerank 1400ms)');
+    expect(out).toContain('cards@t+2456ms'); // emit at 2280 + 176
+    expect(out).toContain('synth ttft 900ms');
+    expect(out).toContain('first prose@t+3860ms'); // synth at 2460 + firstProse 1400
+    expect(out).toContain('synth done@t+10460ms'); // synth at 2460 + 8000
+  });
+
+  it('reports a not-routed judge honestly (no more "judge ran")', () => {
+    const out = formatReplaySummary(
+      [u({ utteranceId: 'q1' })],
+      new Map([['q1', trace('q1', questionStages)]]),
+    );
+    expect(out).toContain('judge not run (not_routed)');
+    expect(out).not.toContain('judge ran');
+  });
+});

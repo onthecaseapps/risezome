@@ -334,7 +334,7 @@ describe('runPipeline — pre-retrieval gate (KTD3)', () => {
     });
     const classifier = { classify: vi.fn(() => gate) };
     const { deps, search } = makeDeps({
-      relevanceClassifier: classifier as never,
+      relevanceClassifier: classifier,
       relevanceStrict: true,
       relevanceSkipThreshold: 0.7,
     });
@@ -1095,5 +1095,56 @@ describe('runPipeline — toolSource rides synthesisStart (skill-result-as-cited
     await runPipeline(input(), deps, sink);
     expect(sink.starts).toHaveLength(1);
     expect(sink.starts[0]).not.toHaveProperty('toolSource');
+  });
+});
+
+describe('trace timing fields (latency instrumentation)', () => {
+  it('every trace record carries atMs (start offset from pipeline entry)', async () => {
+    const { deps } = makeDeps({ synthesizer: fakeSynthesizer('STATUS: answer\n[1: "forty two"]') });
+    const sink = new TracingSink();
+    await runPipeline(input(), deps, sink);
+    const stages = sink.traces[0]!.stages;
+    expect(stages.length).toBeGreaterThan(3);
+    for (const s of stages) {
+      expect(s.atMs).toBeTypeOf('number');
+      expect(s.atMs!).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('synthesis record carries ttftMs + streamed; search record carries timings', async () => {
+    const search = vi.fn(async (params: Parameters<HybridSearchFn>[0]): Promise<HybridHit[]> => {
+      // The core passes a timings collector when tracing — fill it like the
+      // real corpus-search does.
+      if (params.timings !== undefined) {
+        params.timings.rpcMs = 40;
+        params.timings.rerankMs = 99;
+      }
+      return [hit('chunk_1', 0.1)];
+    });
+    const { deps } = makeDeps({
+      hybridSearch: search as unknown as HybridSearchFn,
+      synthesizer: fakeSynthesizer('STATUS: answer\n[1: "forty two"]'),
+    });
+    const sink = new TracingSink();
+    await runPipeline(input(), deps, sink);
+    const stages = sink.traces[0]!.stages;
+    const synth = stages.find((s) => s.stage === 'synthesis')!;
+    expect(synth.data?.ttftMs).toBeTypeOf('number');
+    const searchRec = stages.find((s) => s.stage === 'hybrid-search')!;
+    expect(searchRec.data?.rpcMs).toBe(40);
+    expect(searchRec.data?.rerankMs).toBe(99);
+  });
+
+  it('embed record surfaces the adapter pre-embed cost for a reused vector', async () => {
+    const { deps } = makeDeps({ synthesizer: fakeSynthesizer('STATUS: answer\n[1: "forty two"]') });
+    const sink = new TracingSink();
+    await runPipeline(
+      input({ lane: 'question', queryVector: [0.1, 0.2, 0.3], queryVectorEmbedMs: 240 }),
+      deps,
+      sink,
+    );
+    const embed = sink.traces[0]!.stages.find((s) => s.stage === 'embed')!;
+    expect(embed.decision).toBe('reused');
+    expect(embed.data?.adapterEmbedMs).toBe(240);
   });
 });

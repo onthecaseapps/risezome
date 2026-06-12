@@ -63,6 +63,9 @@ export interface StageRecord {
   /** Why — the explanation string surfaced on this panel. */
   reason?: string;
   latencyMs: number;
+  /** Stage START offset (ms) from pipeline entry — reconstructs the real
+   *  timeline incl. parallel overlap. Absent on records from older traces. */
+  atMs?: number;
   /** Stage-specific structured payload (hits, counts, citation breakdown). */
   data?: Record<string, unknown>;
 }
@@ -201,6 +204,9 @@ export const STAGE_CATALOG: readonly CatalogRow[] = [
 export interface LedgerRow extends CatalogRow {
   status: DisplayStatus;
   latencyMs: number | null;
+  /** Stage start offset from pipeline entry (earliest record's atMs), when the
+   *  trace carries it — renders the timeline (`@t+2101ms`) incl. overlap. */
+  atMs: number | null;
   result: string;
   detail: [string, string][];
   /** The underlying wire record(s) — for the JSON tab + debugging. */
@@ -210,6 +216,13 @@ export interface LedgerRow extends CatalogRow {
 /** Map a single wire record to a display status (pre-stop-propagation). */
 function statusOf(rec: StageRecord): DisplayStatus {
   if (rec.status === 'short_circuited') {
+    // QUESTION lane: the heuristic gate is BYPASSED (not applied) and the run
+    // continues — that's informational, NOT a stop. Treating it as a skip used
+    // to mark every later stage (embed/search/synthesis) "not reached" and
+    // hide their recorded timings for every question-lane utterance.
+    if (rec.stage === 'heuristic-gate' && rec.decision === 'bypassed') {
+      return 'info';
+    }
     // A relevance/heuristic/dedup stop is a skip; a no-hits/refusal stop is a miss.
     if (
       rec.stage === 'heuristic-gate' ||
@@ -260,6 +273,7 @@ export function buildLedger(trace: UtteranceTrace | null): LedgerRow[] {
         ...cat,
         status: 'info',
         latencyMs: null,
+        atMs: null,
         result: 'did not gate this utterance',
         detail: [['gate', 'ran in the adapter — no suppression recorded']],
         records: [],
@@ -275,7 +289,7 @@ export function buildLedger(trace: UtteranceTrace | null): LedgerRow[] {
     if (records.length === 0) {
       // No record for this stage. If we're past a stop it never ran; otherwise
       // it was a skipped/not-applicable stage on this path.
-      return { ...cat, status: 'notreached', latencyMs: null, result: stopped ? 'not reached' : '—', detail: [], records: [] };
+      return { ...cat, status: 'notreached', latencyMs: null, atMs: null, result: stopped ? 'not reached' : '—', detail: [], records: [] };
     }
 
     // Display status: for a merged row, the most "advanced" sub-status wins
@@ -286,11 +300,15 @@ export function buildLedger(trace: UtteranceTrace | null): LedgerRow[] {
       : (subStatuses.find(isStop) ?? subStatuses.find((s) => s === 'failopen') ?? subStatuses[0] ?? 'pass');
 
     const latencyMs = records.reduce((a, r) => a + r.latencyMs, 0);
+    const atMs = records.reduce<number | null>(
+      (min, r) => (r.atMs !== undefined && (min === null || r.atMs < min) ? r.atMs : min),
+      null,
+    );
     const result = resultLine(cat.id, records);
     const detail = records.flatMap(stageDetailRows);
 
     if (!stopped && isStop(status)) stopped = true;
-    return { ...cat, status, latencyMs, result, detail, records };
+    return { ...cat, status, latencyMs, atMs, result, detail, records };
   });
 }
 
@@ -324,7 +342,16 @@ const OUTCOME_HEADLINE: Record<OutcomeType, string> = {
 export function deriveOutcome(trace: UtteranceTrace | null): Outcome {
   const byStage = new Map<PipelineStage, StageRecord>();
   if (trace) for (const rec of trace.stages) byStage.set(rec.stage, rec);
-  const ms = trace ? trace.stages.reduce((a, s) => a + s.latencyMs, 0) : 0;
+  // True wall-clock = the latest stage END offset (atMs + latency) when the
+  // trace carries start offsets. Summing latencies double-counts parallel
+  // stages (judge ∥ embed ∥ search) and any re-anchored record — the old sum
+  // reported ~3× the real elapsed time on grounded answers. Old traces without
+  // atMs keep the sum as a rough fallback.
+  const ms = trace
+    ? trace.stages.some((s) => s.atMs !== undefined)
+      ? trace.stages.reduce((a, s) => Math.max(a, (s.atMs ?? 0) + s.latencyMs), 0)
+      : trace.stages.reduce((a, s) => a + s.latencyMs, 0)
+    : 0;
 
   const has = (s: PipelineStage): StageRecord | undefined => byStage.get(s);
   let type: OutcomeType = 'pending';

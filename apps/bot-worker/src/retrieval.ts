@@ -310,11 +310,14 @@ export async function maybeRetrieveAndEmit(args: {
   // an await and both bypass it. The resulting vector is REUSED for retrieval
   // (latency U1), eliminating a second embed round-trip per question.
   let questionVec: number[] | undefined;
+  let questionVecEmbedMs: number | undefined;
   if (lane === 'question') {
     args.runtime.answeredQuestions = args.runtime.answeredQuestions.filter(
       (e) => now - e.at < QUESTION_DUP_WINDOW_MS,
     );
+    const embedStart = Date.now();
     questionVec = await embedQuestion(args.embedder, queryText, args.logger);
+    questionVecEmbedMs = Date.now() - embedStart;
     if (questionVec !== undefined && isNearDuplicateQuestion(questionVec, args.runtime.answeredQuestions, now)) {
       return { emitted: 0, skipped: 'duplicate_question' };
     }
@@ -395,6 +398,9 @@ export async function maybeRetrieveAndEmit(args: {
     lane,
     // Latency U1: reuse the dedup embed as the retrieval embed (question lane).
     ...(questionVec !== undefined ? { queryVector: questionVec } : {}),
+    ...(questionVec !== undefined && questionVecEmbedMs !== undefined
+      ? { queryVectorEmbedMs: questionVecEmbedMs }
+      : {}),
     ...(recentContext.length > 0 ? { recentContext } : {}),
     ...(routerRecentFinals.length > 0 ? { routerRecentFinals } : {}),
     ...(args.lastSummary !== undefined ? { lastSummary: args.lastSummary } : {}),

@@ -74,6 +74,11 @@ export interface PipelineInput {
    * would have produced.
    */
   readonly queryVector?: readonly number[];
+  /** How long the adapter's pre-pipeline embed of `queryVector` took (the
+   *  question-lane dedup embed, U1). Trace-only: surfaces the otherwise
+   *  invisible adapter-side Voyage round-trip on the embed stage record so the
+   *  timeline is complete ('reused' would otherwise read as ~0ms). */
+  readonly queryVectorEmbedMs?: number;
   /**
    * Oldest-first prior context for the synthesizer (pronoun/fragment
    * resolution). Head entry is typically the rolling-summary prose; the
@@ -122,16 +127,20 @@ export type HybridSearchFn = (params: {
   readonly codeQueryVectorLiteral?: string | undefined;
   /** Speculative multi-query expansions (scattered queries). */
   readonly expansionQueries?:
-    | ReadonlyArray<{
+    | readonly {
         readonly queryVectorLiteral: string;
         readonly codeQueryVectorLiteral?: string;
         readonly queryText: string;
-      }>
+      }[]
     | undefined;
   readonly queryText: string;
   readonly limit: number;
   readonly reranker?: Reranker | undefined;
   readonly logger?: { warn: (obj: object, msg?: string) => void };
+  /** Optional timing collector (debug/trace only): the search impl records its
+   *  internal phase durations here (rpcMs, rerankMs, …) so the trace can split
+   *  the search stage's latency. Mutated in place; omit in prod (zero cost). */
+  readonly timings?: Record<string, number> | undefined;
 }) => Promise<HybridHit[]>;
 
 /** True when the hit set is weak enough to warrant a CRAG expansion. */
@@ -472,6 +481,11 @@ export interface StageRecord {
   /** Why — the explanation string surfaced on the dev panel. */
   readonly reason?: string;
   readonly latencyMs: number;
+  /** Stage START offset in ms from pipeline entry (stamped by the trace
+   *  builder). Lets the panel/summary reconstruct the real timeline including
+   *  parallel overlap (judge ∥ embed ∥ search) instead of implying the stages
+   *  ran back-to-back. Absent on records from older traces. */
+  readonly atMs?: number;
   /** Stage-specific structured payload (hit counts, scores, citation
    *  breakdown, …). */
   readonly data?: Record<string, unknown>;

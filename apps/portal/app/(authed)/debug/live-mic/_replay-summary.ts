@@ -78,9 +78,66 @@ function relevanceLine(trace: UtteranceTrace): string {
   const parts: string[] = [];
   if (heur) parts.push(`heuristic ${heur.decision ?? heur.reason ?? 'ran'}`);
   if (judge) {
-    parts.push(judge.status === 'short_circuited' ? `judge SKIP (${judge.reason ?? 'n/a'})` : `judge ${judge.decision ?? 'ran'}`);
+    // status 'skipped' = the judge was NEVER ROUTED (question lane / strict
+    // off / no classifier) — say so; the old fallback printed "judge ran".
+    parts.push(
+      judge.status === 'skipped'
+        ? `judge not run (${judge.reason ?? 'not_routed'})`
+        : judge.status === 'short_circuited'
+          ? `judge SKIP (${judge.reason ?? 'n/a'})`
+          : `judge ${judge.decision ?? 'ran'}`,
+    );
   }
   return parts.length > 0 ? parts.join(' → ') : 'not recorded';
+}
+
+/** Derived per-utterance timeline: where the wall-clock went, anchored at
+ *  pipeline entry (`@t+X` = offset). Judge shows its OWN duration plus how long
+ *  the verdict was awaited; search splits RPC vs rerank when recorded; synthesis
+ *  shows TTFT, when prose became user-visible, and when it finished. */
+function timingLine(trace: UtteranceTrace): string | null {
+  const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+  const judge = findStage(trace, 'llm-judge');
+  const embed = findStage(trace, 'embed');
+  const search = findStage(trace, 'hybrid-search');
+  const emit = findStage(trace, 'emit');
+  const skill = findStage(trace, 'skill');
+  const synth = findStage(trace, 'synthesis');
+  const parts: string[] = [];
+  if (judge !== undefined && judge.status !== 'skipped') {
+    const awaited = num(judge.data?.['awaitedMs']);
+    const extra = awaited !== undefined && awaited > judge.latencyMs ? `, awaited ${String(awaited)}ms` : '';
+    parts.push(`judge ${String(judge.latencyMs)}ms${extra}`);
+  }
+  if (embed !== undefined) {
+    const adapter = num(embed.data?.['adapterEmbedMs']);
+    parts.push(`embed ${String(adapter ?? embed.latencyMs)}ms${adapter !== undefined ? ' (adapter)' : ''}`);
+  }
+  if (search !== undefined) {
+    const rpc = num(search.data?.['rpcMs']);
+    const rerank = num(search.data?.['rerankMs']);
+    const split = [
+      ...(rpc !== undefined ? [`rpc ${String(rpc)}ms`] : []),
+      ...(rerank !== undefined ? [`rerank ${String(rerank)}ms`] : []),
+    ];
+    parts.push(`search ${String(search.latencyMs)}ms${split.length > 0 ? ` (${split.join(' + ')})` : ''}`);
+  }
+  if (emit !== undefined && emit.atMs !== undefined) {
+    parts.push(`cards@t+${String(emit.atMs + emit.latencyMs)}ms`);
+  }
+  if (skill !== undefined) parts.push(`skill ${String(skill.latencyMs)}ms`);
+  if (synth !== undefined) {
+    const ttft = num(synth.data?.['ttftMs']);
+    const firstProse = num(synth.data?.['firstProseMs']);
+    if (ttft !== undefined) parts.push(`synth ttft ${String(ttft)}ms`);
+    if (synth.atMs !== undefined && firstProse !== undefined) {
+      parts.push(`first prose@t+${String(synth.atMs + firstProse)}ms`);
+    }
+    if (synth.atMs !== undefined) {
+      parts.push(`synth done@t+${String(synth.atMs + synth.latencyMs)}ms`);
+    }
+  }
+  return parts.length > 0 ? `timing: ${parts.join(' · ')}` : null;
 }
 
 /** Any stage that genuinely STOPPED the pipeline (skip/miss/ungrounded/refusal),
@@ -107,7 +164,10 @@ function gateLedgerLines(trace: UtteranceTrace): string[] {
   const lines: string[] = ['gates:'];
   for (const row of ledger) {
     if (row.status === 'notreached') continue;
-    const ms = row.latencyMs != null ? ` (${String(row.latencyMs)}ms)` : '';
+    // `@t+X` = the stage's START offset from pipeline entry — exposes parallel
+    // overlap (judge ∥ embed ∥ search) that a flat duration list hides.
+    const at = row.atMs != null ? ` @t+${String(row.atMs)}ms` : '';
+    const ms = row.latencyMs != null ? ` (${String(row.latencyMs)}ms${at})` : '';
     let line = `  ${row.code} ${row.name} [${STATUS_LABEL[row.status]}] ${row.result}${ms}`;
     // Append data-bearing detail (counts/scores/etc.) that the one-line result
     // doesn't already carry — skip decision/reason (already in `result`) + the
@@ -146,6 +206,8 @@ function utteranceBlock(
   lines.push(`outcome: ${outcome.type} — ${outcome.headline}${outcome.sub ? ` · ${outcome.sub}` : ''} (${String(outcome.ms)}ms)`);
   lines.push(`route: ${routeLine(trace)}`);
   lines.push(`relevance: ${relevanceLine(trace)}`);
+  const timing = timingLine(trace);
+  if (timing !== null) lines.push(timing);
   const supp = suppressionLine(trace);
   if (supp !== null) lines.push(`suppressed at: ${supp}`);
 

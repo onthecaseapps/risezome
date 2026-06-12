@@ -258,6 +258,11 @@ export interface HybridSearchParams {
     readonly queryText: string;
   }[] | undefined;
   readonly logger?: { warn: (obj: object, msg?: string) => void };
+  /** Optional timing collector (debug/trace only): filled with internal phase
+   *  durations (`rpcMs` = all vector+FTS RPC legs, `rerankMs` = chunk-text
+   *  fetch + cross-encoder) so the trace can split the search stage's latency.
+   *  Mutated in place; omit in prod (zero cost). */
+  readonly timings?: Record<string, number> | undefined;
 }
 
 /** Fused candidates fetched for reranking before the final top-K cut. */
@@ -349,7 +354,9 @@ export async function hybridSearch(
     },
     ...(params.expansionQueries ?? []),
   ];
+  const rpcStart = Date.now();
   const results = await Promise.all(queries.map(runQuery));
+  if (params.timings !== undefined) params.timings.rpcMs = Date.now() - rpcStart;
   // The PRIMARY query's dense leg failing hard-fails (matches prior behavior);
   // an expansion's failure just contributes nothing.
   if (results[0]!.vectorFailed) return [];
@@ -369,6 +376,10 @@ export async function hybridSearch(
   // Rerank the pool by query-document relevance. Fetch the verbatim chunk
   // bodies (what a reader sees) for the cross-encoder; on any failure keep
   // the RRF order.
+  const rerankStart = Date.now();
+  const stampRerank = (): void => {
+    if (params.timings !== undefined) params.timings.rerankMs = Date.now() - rerankStart;
+  };
   const ids = fused.map((h) => h.chunk_id);
   const { data: rows, error: textErr } = await db
     .from('doc_chunks')
@@ -377,6 +388,7 @@ export async function hybridSearch(
     .in('chunk_id', ids);
   if (textErr !== null || rows === null) {
     params.logger?.warn({ err: textErr }, 'corpus-search.rerank.text-fetch-failed');
+    stampRerank();
     return fused.slice(0, params.limit);
   }
   const textById = new Map(
@@ -390,9 +402,11 @@ export async function hybridSearch(
     const reordered = ranked
       .map((r) => fused[r.index])
       .filter((h): h is HybridHit => h !== undefined);
+    stampRerank();
     return reordered.slice(0, params.limit);
   } catch (err) {
     params.logger?.warn({ err }, 'corpus-search.rerank.failed');
+    stampRerank();
     return fused.slice(0, params.limit);
   }
 }

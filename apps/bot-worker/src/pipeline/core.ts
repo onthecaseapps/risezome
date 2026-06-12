@@ -91,8 +91,21 @@ export interface PipelineResult {
  *  trace (R5) — guarded at every call site via `tracing`. */
 class TraceBuilder {
   readonly #stages: StageRecord[] = [];
+  /** Pipeline entry time — anchors every record's `atMs` start offset. */
+  readonly #createdAt = Date.now();
   push(record: StageRecord): void {
-    this.#stages.push(record);
+    // Stamp the stage's START offset from pipeline entry. Records are pushed
+    // at stage END, so start ≈ (now − entry) − latency. This makes parallel
+    // overlap (judge ∥ embed ∥ search) visible in the timeline without
+    // touching every stageRecord call site. A record pushed LATE (after other
+    // stages ran, e.g. the enriched hybrid-search record) supplies its own
+    // exact atMs via offsetOf().
+    const atMs = record.atMs ?? Math.max(0, Date.now() - this.#createdAt - record.latencyMs);
+    this.#stages.push({ ...record, atMs });
+  }
+  /** Exact start offset for a stage whose absolute start time is known. */
+  offsetOf(absoluteMs: number): number {
+    return Math.max(0, absoluteMs - this.#createdAt);
   }
   stages(): readonly StageRecord[] {
     return this.#stages;
@@ -231,6 +244,11 @@ export async function runPipeline(
   // no gap). Fail-open (timeout/error → surface) is preserved.
   const judgeStart = Date.now();
   let judgePromise: Promise<RelevanceResult> | null = null;
+  // Actual judge duration (resolve − start). The stage record is pushed at
+  // COLLECT time (after search, U2), so anchoring its latency there would
+  // report max(judge, search) instead of the judge's own cost — exactly the
+  // number we need when deciding whether the judge is the latency pole.
+  let judgeResolvedMs: number | null = null;
   if (routeToJudge && deps.relevanceClassifier !== undefined) {
     const context = relevanceContextFrom(input);
     const controller = new AbortController();
@@ -240,7 +258,12 @@ export async function runPipeline(
         signal: controller.signal,
         ...(context !== undefined ? { context } : {}),
       })
+      .then((r) => {
+        judgeResolvedMs = Date.now() - judgeStart;
+        return r;
+      })
       .catch((err): RelevanceResult => {
+        judgeResolvedMs = Date.now() - judgeStart;
         deps.logger.warn(
           { err, meetingId: input.meetingId, utteranceId: input.utteranceId },
           'pipeline.gate.llm.failed',
@@ -341,7 +364,7 @@ export async function runPipeline(
   const expander = deps.optionalQueryExpander();
   const speculativeScattered = expander !== undefined && classifyQueryComplexity(queryText) === 'scattered';
   const expansionTermsPromise: Promise<string[]> | null = speculativeScattered
-    ? expander!(queryText).catch((err: unknown) => {
+    ? expander(queryText).catch((err: unknown) => {
         deps.logger.warn({ err, meetingId: input.meetingId }, 'pipeline.multiquery.expand.failed');
         return [] as string[];
       })
@@ -387,7 +410,14 @@ export async function runPipeline(
     trace.push(
       stageRecord('embed', 'ran', embedStart, {
         decision: input.queryVector !== undefined ? 'reused' : 'embedded',
-        data: { dims: queryEmbedding.length, reused: input.queryVector !== undefined, code: codeQueryEmbedding !== undefined },
+        data: {
+          dims: queryEmbedding.length,
+          reused: input.queryVector !== undefined,
+          code: codeQueryEmbedding !== undefined,
+          // A 'reused' vector was embedded in the ADAPTER (question-lane dedup,
+          // U1) — surface that round-trip's cost or the timeline under-counts.
+          ...(input.queryVectorEmbedMs !== undefined ? { adapterEmbedMs: input.queryVectorEmbedMs } : {}),
+        },
       }),
     );
   }
@@ -396,7 +426,7 @@ export async function runPipeline(
   // terms that have been resolving since before the embed, then embed the
   // augmented query in both spaces. The augmented embeds run concurrently.
   let expansionQueries:
-    | Array<{ queryVectorLiteral: string; codeQueryVectorLiteral?: string; queryText: string }>
+    | { queryVectorLiteral: string; codeQueryVectorLiteral?: string; queryText: string }[]
     | undefined;
   let speculativeExpanded = false;
   if (expansionTermsPromise !== null) {
@@ -434,6 +464,9 @@ export async function runPipeline(
   const codeQueryLiteral =
     codeQueryEmbedding !== undefined ? `[${Array.from(codeQueryEmbedding).join(',')}]` : undefined;
   const reranker = deps.optionalReranker();
+  // Trace-only: the search impl splits its internal phases (RPCs vs rerank)
+  // into this collector so the search stage's latency is diagnosable.
+  const searchTimings: Record<string, number> | undefined = trace !== null ? {} : undefined;
   let hits = await deps.hybridSearch({
     orgId: input.orgId,
     queryVectorLiteral: queryLiteral,
@@ -443,6 +476,7 @@ export async function runPipeline(
     limit: topK,
     reranker,
     logger: deps.logger,
+    ...(searchTimings !== undefined ? { timings: searchTimings } : {}),
   });
   // The hybrid-search trace stage carries its OWN ranked hits (so a persisted/
   // after-the-fact trace is self-contained — the panel no longer has to splice
@@ -474,26 +508,35 @@ export async function runPipeline(
         confidence: decision.confidence,
       });
       if (trace !== null) {
-        trace.push(
-          stageRecord('llm-judge', 'short_circuited', judgeStart, {
-            decision: 'skip',
-            reason: decision.reason,
-            data: { confidence: decision.confidence },
-          }),
-        );
+        // latencyMs = the judge's OWN duration; awaitedMs = wall time until the
+        // verdict was collected (≥ latency when search outlasted the judge).
+        const judgeAwaitedMs = Date.now() - judgeStart;
+        trace.push({
+          stage: 'llm-judge',
+          status: 'short_circuited',
+          decision: 'skip',
+          reason: decision.reason,
+          latencyMs: judgeResolvedMs ?? judgeAwaitedMs,
+          atMs: trace.offsetOf(judgeStart),
+          data: { confidence: decision.confidence, awaitedMs: judgeAwaitedMs },
+        });
         emitTrace();
       }
       return { emitted: 0, skipped: 'relevance_skip' };
     }
     if (trace !== null) {
-      trace.push(
-        stageRecord('llm-judge', 'ran', judgeStart, {
-          decision: 'surface',
-          ...(decision.decision === 'skip'
-            ? { reason: `below_threshold(${String(decision.confidence)})` }
-            : {}),
-        }),
-      );
+      const judgeAwaitedMs = Date.now() - judgeStart;
+      trace.push({
+        stage: 'llm-judge',
+        status: 'ran',
+        decision: 'surface',
+        ...(decision.decision === 'skip'
+          ? { reason: `below_threshold(${String(decision.confidence)})` }
+          : {}),
+        latencyMs: judgeResolvedMs ?? judgeAwaitedMs,
+        atMs: trace.offsetOf(judgeStart),
+        data: { awaitedMs: judgeAwaitedMs },
+      });
     }
   }
 
@@ -606,7 +649,8 @@ export async function runPipeline(
         stage: 'hybrid-search',
         status: 'ran',
         latencyMs: searchLatencyMs,
-        data: { hits: [], count: 0 },
+        atMs: trace.offsetOf(searchStart),
+        data: { hits: [], count: 0, ...(searchTimings ?? {}) },
       });
       trace.push(
         stageRecord('no-hits', 'short_circuited', nohitsStart, {
@@ -767,7 +811,10 @@ export async function runPipeline(
       stage: 'hybrid-search',
       status: 'ran',
       latencyMs: searchLatencyMs,
-      data: { hits: traceHits, count: traceHits.length },
+      // Pushed late (after enrich/emit) with latency frozen at search time —
+      // supply the exact start offset rather than letting push() derive it.
+      atMs: trace.offsetOf(searchStart),
+      data: { hits: traceHits, count: traceHits.length, ...(searchTimings ?? {}) },
     });
     trace.push(
       stageRecord('emit', 'ran', dedupStart, {
@@ -1112,10 +1159,15 @@ async function runSynthesis(args: {
   // nothing, R1).
   let streaming = false;
   let streamedLen = 0;
+  // Trace timing: model's first token (TTFT) and the first moment prose became
+  // visible to the user (synthesisStart emit) — the FELT latency endpoints.
+  let firstDeltaMs: number | null = null;
+  let firstProseMs: number | null = null;
 
   const startStreamingIfNeeded = (): void => {
     if (streaming) return;
     streaming = true;
+    if (firstProseMs === null) firstProseMs = Date.now() - synthStart;
     sink.synthesisStart({
       synthesisId,
       sourceCardIds: surfacedCardIds,
@@ -1169,6 +1221,7 @@ async function runSynthesis(args: {
         startUsage = chunk.usage;
       } else if (chunk.type === 'textDelta') {
         accumulated += chunk.delta;
+        if (firstDeltaMs === null) firstDeltaMs = Date.now() - synthStart;
         // Inspect the buffer for the STATUS prefix as it forms. Until it
         // resolves we hold output; once it resolves to 'answer' we stream the
         // post-prefix prose at sentence boundaries; a refusal never streams.
@@ -1190,12 +1243,22 @@ async function runSynthesis(args: {
           );
         }
         const parsed = parseSynthesisOutput(accumulated, sources.length);
-        // S14 — the model produced output.
+        // S14 — the model produced output. ttftMs = model's first token;
+        // firstProseMs = when prose became user-visible (synthesisStart).
+        // Anchor for the POST-synthesis gates (refusal/verify/reveal) so their
+        // records measure their own work instead of re-counting the synthesis.
+        const postSynthStart = Date.now();
         if (trace !== null) {
           trace.push(
             stageRecord('synthesis', 'ran', synthStart, {
               decision: 'generated',
-              data: { chars: accumulated.length, sources: sources.length, streamed: streaming },
+              data: {
+                chars: accumulated.length,
+                sources: sources.length,
+                streamed: streaming,
+                ...(firstDeltaMs !== null ? { ttftMs: firstDeltaMs } : {}),
+                ...(firstProseMs !== null ? { firstProseMs } : {}),
+              },
             }),
           );
         }
@@ -1242,7 +1305,7 @@ async function runSynthesis(args: {
           // S15 — refusal gate caught a STATUS: no_relevant_context.
           if (trace !== null) {
             trace.push(
-              stageRecord('refusal-gate', 'short_circuited', synthStart, {
+              stageRecord('refusal-gate', 'short_circuited', postSynthStart, {
                 decision: 'refusal',
                 reason: parsed.refusalReason ?? 'no_relevant_context',
               }),
@@ -1254,7 +1317,7 @@ async function runSynthesis(args: {
         // S15 — refusal gate passed (not a no_relevant_context refusal).
         if (trace !== null) {
           trace.push(
-            stageRecord('refusal-gate', 'ran', synthStart, { decision: 'pass' }),
+            stageRecord('refusal-gate', 'ran', postSynthStart, { decision: 'pass' }),
           );
         }
 
@@ -1263,7 +1326,7 @@ async function runSynthesis(args: {
         const survivors = detail.filter((d) => d.status !== 'dropped');
         if (trace !== null) {
           trace.push(
-            stageRecord('citation-verify', 'ran', synthStart, {
+            stageRecord('citation-verify', 'ran', postSynthStart, {
               decision: survivors.length === 0 ? 'ungrounded' : 'pass',
               data: {
                 total: detail.length,
@@ -1368,7 +1431,7 @@ async function runSynthesis(args: {
         // S17 — reveal: the grounded answer was streamed + persisted.
         if (trace !== null) {
           trace.push(
-            stageRecord('reveal', 'ran', synthStart, {
+            stageRecord('reveal', 'ran', postSynthStart, {
               decision: 'revealed',
               data: { citations: richCitations.length, encrypted: true, streamed: streaming },
             }),
