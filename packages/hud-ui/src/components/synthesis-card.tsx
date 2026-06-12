@@ -10,6 +10,7 @@ import {
 } from 'react';
 import type { CardEvent, SynthesisCitation } from '../types';
 import { SourceCardExpanded, sourceChipClass, sourceLabel } from './source-card-expanded';
+import { PinGlyph } from './glyphs';
 import { useSynthesisActions } from '../state/synthesis-actions';
 
 /**
@@ -395,7 +396,9 @@ function PinButton({
         void handler(synthesisId);
       }}
     >
-      {pinned ? <PinFilledGlyph /> : <PinOutlineGlyph />}
+      {/* Same thumbtack glyph the card pin action uses; pinned state reads
+          through the button's aria-pressed accent color. */}
+      <PinGlyph />
     </button>
   );
 }
@@ -405,36 +408,6 @@ function SparkleGlyph(): ReactElement {
     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M12 3l1.7 4.5L18 9l-4.3 1.5L12 15l-1.7-4.5L6 9l4.3-1.5z" />
       <path d="M18.5 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" opacity=".7" />
-    </svg>
-  );
-}
-
-function PinOutlineGlyph(): ReactElement {
-  // Fill-based (not stroke) so it renders reliably — stroke-only glyphs show
-  // invisibly faint in the portal, while fill glyphs (e.g. the sparkle) render.
-  // Unpinned reads as "inactive" via the button's muted color alone; the pinned
-  // glyph switches to the solid accent color (aria-pressed CSS). NOTE: do NOT
-  // dim this with opacity — muted gray at <1 opacity on a light card reads as an
-  // empty button (the glyph "disappears").
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M9 10.5V4h6v6.5l3 3.5v1H6v-1l3-3.5z" />
-      <path d="M11.4 16h1.2v6h-1.2z" />
-    </svg>
-  );
-}
-
-function PinFilledGlyph(): ReactElement {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <path d="M9 10.5V4h6v6.5l3 3.5v1H6v-1l3-3.5z" />
-      <path d="M11.4 16h1.2v6h-1.2z" />
     </svg>
   );
 }
